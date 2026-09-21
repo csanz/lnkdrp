@@ -1,7 +1,21 @@
 /**
  * Admin API route: `GET /api/admin/data/requests/:requestId`
  *
- * Returns a request repo (Project) plus related docs/uploads for admin inspection.
+ * Returns a request repo (Project) plus related docs/uploads/reviews for admin inspection.
+ *
+ * This handler redacted two of its four collections and served the other two whole, which is the
+ * same as serving all four:
+ *
+ * - `request.raw` was the entire Project row. `requestViewToken` in it is read access to every PDF
+ *   in the repo through `/api/request-view/:token/docs/:docId/pdf`, a route that resolves on the
+ *   token alone — no session, so the read is not attributable to anyone. `requestUploadToken` is
+ *   write access to the same repo. The page rendered the row as a "Raw record" JSON tab.
+ * - Review rows carry the review agent's prompts, and those prompts are the deck's extracted text,
+ *   fed in whole; the outputs are the AI's reading of it. Stripping `rawExtractedText` from the doc
+ *   row in one tab while printing the same text as a prompt in the next is not a privacy control.
+ *
+ * Reviews are now selected for their shape only — status, model, timing, `inputTextChars` — with
+ * the prompts and outputs left in the database.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -11,7 +25,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { ReviewModel } from "@/lib/models/Review";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
-import { redactDocRow } from "@/lib/admin/docPrivacy";
+import { redactDocRow, redactReviewRow, stripSecrets } from "@/lib/admin/docPrivacy";
 
 export const runtime = "nodejs";
 
@@ -112,6 +126,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ requ
           originalFileName: 1,
           contentType: 1,
           sizeBytes: 1,
+          // Selected so `redactDocRow` can report whether each exists; it deletes all three before
+          // the row leaves this route, the same trade the doc detail route makes.
           blobUrl: 1,
           blobPathname: 1,
           uploadSecret: 1,
@@ -135,15 +151,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ requ
           version: 1,
           status: 1,
           model: 1,
-          prompt: 1,
+          // `inputTextChars` is the stored size of the prompt, which is the whole diagnostic:
+          // a review that came back empty or ran on nothing shows up here. The prompt itself
+          // (`prompt`, `agentUserPrompt`) and the analysis written from it (`outputMarkdown`,
+          // `intel`, `agentOutput`, `agentRawOutputText`) are the customer's deck and stay out.
           inputTextChars: 1,
-          outputMarkdown: 1,
-          intel: 1,
           agentKind: 1,
-          agentOutput: 1,
-          agentRawOutputText: 1,
-          agentSystemPrompt: 1,
-          agentUserPrompt: 1,
           priorReviewId: 1,
           priorReviewVersion: 1,
           error: 1,
@@ -157,14 +170,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ requ
     ok: true,
     request: {
       id: String((project as { _id: unknown })._id),
-      raw: pickPlainObject(project),
+      raw: stripSecrets(pickPlainObject(project) ?? {}),
     },
     docs: dedupedDocs.map((d) => ({
       id: String(d._id),
       userId: d.userId ? String(d.userId) : null,
       title: typeof d.title === "string" ? d.title : null,
       status: typeof d.status === "string" ? d.status : null,
-      shareId: typeof d.shareId === "string" ? d.shareId : null,
       createdDate: d.createdDate ? new Date(d.createdDate).toISOString() : null,
       updatedDate: d.updatedDate ? new Date(d.updatedDate).toISOString() : null,
       isGuideDoc: guideDocId ? String(d._id) === String(guideDocId) : false,
@@ -191,18 +203,17 @@ export async function GET(request: Request, { params }: { params: Promise<{ requ
       version: Number.isFinite(r.version) ? r.version : null,
       status: typeof r.status === "string" ? r.status : null,
       model: typeof r.model === "string" ? r.model : null,
-      outputMarkdown: typeof r.outputMarkdown === "string" ? r.outputMarkdown : null,
-      intel: (r as { intel?: unknown }).intel ?? null,
       agentKind: typeof (r as any).agentKind === "string" ? String((r as any).agentKind) : null,
-      agentOutput: (r as any).agentOutput ?? null,
-      agentRawOutputText: typeof (r as any).agentRawOutputText === "string" ? (r as any).agentRawOutputText : null,
-      agentSystemPrompt: typeof (r as any).agentSystemPrompt === "string" ? (r as any).agentSystemPrompt : null,
-      agentUserPrompt: typeof (r as any).agentUserPrompt === "string" ? (r as any).agentUserPrompt : null,
+      inputTextChars: Number.isFinite((r as { inputTextChars?: unknown }).inputTextChars)
+        ? ((r as { inputTextChars: number }).inputTextChars)
+        : null,
       createdDate: r.createdDate ? new Date(r.createdDate).toISOString() : null,
       updatedDate: (r as unknown as { updatedDate?: Date | string | null }).updatedDate
         ? new Date((r as unknown as { updatedDate: Date | string }).updatedDate).toISOString()
         : null,
-      raw: pickPlainObject(r),
+      // The select above already leaves the prompts and the analysis behind; this is the second
+      // lock, so widening that select later cannot quietly put them back on the wire.
+      raw: redactReviewRow(pickPlainObject(r) ?? {}),
     })),
   });
 }

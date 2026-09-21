@@ -1,12 +1,15 @@
 /**
  * Admin API route: `GET /api/admin/cron-health`
  *
- * Returns latest cron health snapshots (written by cron endpoints).
+ * Returns latest cron health snapshots (written by cron endpoints), plus the notification queue's
+ * depth: a heartbeat only says what the last tick did, and for `notification-emails` the question
+ * the board is opened with is what is still owed (docs/prds/lnkdrp-notification-queue.md, M4).
  */
 import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
+import { readNotificationQueueSummary } from "@/lib/admin/notificationQueueAdmin";
 
 export const runtime = "nodejs";
 /**
@@ -58,7 +61,11 @@ export async function GET(request: Request) {
     })
     .lean();
 
-  return NextResponse.json({ ok: true, items });
+  // Two indexed counts, and null rather than a throw when the collection is unreachable: the
+  // board's job is to show every job's state, and the queue must not take the other rows down.
+  const notificationQueue = await readNotificationQueueSummary();
+
+  return NextResponse.json({ ok: true, items, notificationQueue });
 }
 
 

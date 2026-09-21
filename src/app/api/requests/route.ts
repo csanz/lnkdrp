@@ -12,6 +12,7 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 
@@ -102,7 +103,21 @@ export async function GET(request: Request) {
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
 
     // IMPORTANT: skip backfill/migration work for `sidebar=1` callers (the left sidebar polls frequently).
-    if (!sidebar) {
+    //
+    // Two things had to be true for this to be safe, and neither was.
+    //
+    // 1. **The tenancy clause was being deleted before the query ran.** The filter spread a `$or`
+    //    for the workspace and then declared a second `$or` literal for `isRequest`; in a JS object
+    //    literal the later key replaces the earlier one, so in the legacy branch the workspace bound
+    //    simply was not there and this `updateMany` swept every tenant's projects. The read filter
+    //    directly below already had the right shape — `requestOnly` inside `$and` — which is why
+    //    only the write drifted. It now uses `$and` too, so no key can replace another.
+    // 2. **An unauthenticated caller reached it.** `resolveActor` mints a temp user when nothing
+    //    authenticates, and a temp actor's `orgId` is its own fresh personal org, so
+    //    `allowLegacyByUserId` was unconditionally true for a stranger — the one branch where the
+    //    clobbered filter had no workspace bound at all. A migration write is workspace maintenance;
+    //    it belongs to someone who signed in.
+    if (!sidebar && actor.kind === "user") {
       // Backfill: ensure `isRequest=true` is persisted for any repo that already has a token.
       // This is idempotent and makes the discriminator reliable for downstream UIs/queries.
       await ProjectModel.updateMany(
@@ -116,7 +131,7 @@ export async function GET(request: Request) {
               }
             : { orgId }),
           requestUploadToken: { $exists: true, $nin: [null, ""] },
-          $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }],
+          $and: [{ $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }] }],
         },
         { $set: { isRequest: true } },
       );
@@ -134,6 +149,9 @@ export async function GET(request: Request) {
             ],
           }
         : { orgId }),
+      // Same rule as the sidebar and `/api/projects`: a request repo an admin retired is not listed,
+      // because every route that opens one now refuses it.
+      isDeleted: { $ne: true },
       $and: [
         requestOnly,
         ...(q
@@ -262,6 +280,14 @@ export async function POST(request: Request) {
     // Viewers can read a workspace but must not create requests in it.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    // This one mints two public capability links — `requestUploadToken` lets anyone with the URL
+    // drop files into the operator's storage, `requestViewToken` lets anyone read what landed — so
+    // the account the queue exists to hold at the door was handing out the door key.
+    const queued = await forbidWaitlisted(actor, "create a request folder");
+    if (queued) return queued;
 
     const body = (await request.json().catch(() => ({}))) as Partial<{
       name: string;
@@ -307,6 +333,13 @@ export async function POST(request: Request) {
           orgId,
           userId,
           shareId: newProjectShareId(),
+          // Off, explicitly. The slug stays because the row needs a unique one, but a request repo
+          // is an inbox and `/p/:shareId` must never list what outsiders dropped into it. This raw
+          // insert bypasses the schema default, so an absent field is what shipped — and every
+          // reader treats absent as *on* (`shareEnabled !== false`), which published the repo. The
+          // `/p` tree refuses request repos outright now (`src/app/p/[shareId]/page.tsx`); this is
+          // the same answer written into the data, for anything that reads the row and not the rule.
+          shareEnabled: false,
           name,
           slug,
           description,

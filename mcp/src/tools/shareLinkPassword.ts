@@ -17,6 +17,14 @@
  * Both are admin-or-owner on the key's own workspace, one step above the `member` that editing a
  * link takes: reading a secret out is not the same permission as setting one.
  *
+ * Since the security pass in `fccecc3`, reading one out is not something an API key may do at all
+ * (`forbidApiKey`, "reveal a share password"), and every MCP connection is an API key. So the read
+ * tool now answers `forbidden` in practice and its description says so first, rather than promising
+ * a plaintext it cannot deliver and failing after the agent has told its human it can. Verify is
+ * untouched and is the tool that actually answers the question people ask. The read tool is kept
+ * rather than removed because "an API key cannot do this, sign in" is a better answer to "what is
+ * the password?" than no tool and a guess.
+ *
  * Verify deliberately does not go through the recipient's unlock route. That route sets a share
  * auth cookie, records a view, and spends the recipient's budget of 10 attempts per IP per share
  * per 5 minutes — so an agent testing a password would put fake traffic on the link and could lock
@@ -52,12 +60,15 @@ export function registerGetShareLinkPasswordTool(server: McpServer, ctx: ToolCon
     {
       title: "Show a link's password",
       description:
-        "Return the password set on one share link, in plain text, so you can tell the human what it is at any time - not " +
-        "only in the turn where you set it. Use this when they ask what a link's password is. When you only need to " +
-        "confirm a password they already gave you, prefer lnkdrp_verify_share_password, which answers without handing the " +
-        "secret back. Returns { passwordEnabled, password }: password is null when the link has none, and also when the " +
-        "link is old enough that only its hash survives, which passwordEnabled tells apart. Owner or admin of the key's " +
-        "own workspace. Every read is written to the workspace activity feed, so the owner can see that it happened. " +
+        "Return the password set on one share link, in plain text. IMPORTANT: this refuses when called with an API key, " +
+        "which is how every MCP connection authenticates - so in practice it will answer forbidden and tell the human to " +
+        "sign in to the app. Reading a secret back out is deliberately not something a bearer key can do. Reach for " +
+        "lnkdrp_verify_share_password instead: it confirms whether a password a human already gave you opens the link, " +
+        "it works over MCP, and it is the answer to almost every question this tool looks like it answers. Use this one " +
+        "only to tell a human what is blocking them. When it does run (a signed-in caller), it returns " +
+        "{ passwordEnabled, password }: password is null when the link has none, and also when the link is old enough " +
+        "that only its hash survives, which passwordEnabled tells apart. Owner or admin, and every read is written to " +
+        "the workspace activity feed. " +
         SAFETY_TAIL,
       inputSchema: getShareLinkPasswordInputShape,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -79,8 +90,8 @@ export function registerVerifySharePasswordTool(server: McpServer, ctx: ToolCont
         "Test whether a password opens a share link, without revealing what the real one is. Use it to confirm the " +
         "password a human gave you actually works, after setting it or before passing it on. Returns { passwordEnabled, " +
         "matches, linkStatus, opensLink }; matches is false whenever the link has no password at all. matches only compares " +
-        "the password: a disabled or expired link opens for nobody, so check opensLink (matches and linkStatus active) " +
-        "before telling the human the link works. This is safe to call: it does not open the " +
+        "the password, so check opensLink before telling the human the link works: it is true when the link is active and " +
+        "either the password matches or the link needs none (an open link opens for anyone). This is safe to call: it does not open the " +
         "link, does not record a view, and does not spend the recipient's unlock attempts - a recipient gets only 10 " +
         "tries per 5 minutes, so checking through the public link could lock out the person it was made for. This tool " +
         "has its own separate limit of 20 checks per link per 5 minutes. Owner or admin of the key's own workspace. " +
@@ -100,7 +111,10 @@ export function registerVerifySharePasswordTool(server: McpServer, ctx: ToolCont
         passwordEnabled: res.passwordEnabled,
         matches: res.matches,
         linkStatus,
-        opensLink: res.matches && linkStatus === "active",
+        // "does this link open for the person holding this password", which for a link with no
+        // password at all is yes: it opens for anyone. Tied to matches alone, this read false for a
+        // perfectly live open link, and the description tells agents to act on it.
+        opensLink: linkStatus === "active" && (res.passwordEnabled ? res.matches : true),
       };
     }),
   );

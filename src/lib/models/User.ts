@@ -103,6 +103,22 @@ const userSchema = new Schema(
     spendLimitCents: { type: Number, default: 0, min: 0 },
     spendUsedCentsThisPeriod: { type: Number, default: 0, min: 0 },
 
+    /**
+     * Early-access queue.
+     *
+     * `approved` is the default on purpose: every account that existed before the queue did, and
+     * every account created while `WAITLIST_ENABLED` is off, is simply let in. Only a brand-new
+     * sign-up made while the queue is on starts as `waitlisted`, so turning the flag on never locks
+     * out the people already using the product.
+     *
+     * `waitlistedAt` is what orders the queue (and what a person's "#41 in line" is counted from),
+     * so it is set once at sign-up and never touched again.
+     */
+    accessStatus: { type: String, enum: ["approved", "waitlisted"], default: "approved", index: true },
+    waitlistedAt: { type: Date, default: null, index: true },
+    approvedAt: { type: Date, default: null },
+    approvedByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+
     onboardingCompleted: { type: Boolean, default: false },
     metadata: { type: Schema.Types.Mixed, default: {} },
   },

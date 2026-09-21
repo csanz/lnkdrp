@@ -12,7 +12,7 @@ export type DataTableProps = {
 
 export default function DataTable({ containerClassName, scrollClassName, tableClassName, children }: DataTableProps) {
   return (
-    <div className={cn("overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]", containerClassName)}>
+    <div className={cn("overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)]", containerClassName)}>
       <div className={cn("overflow-x-auto", scrollClassName)}>
         <table className={cn("min-w-full text-left text-sm", tableClassName)}>{children}</table>
       </div>

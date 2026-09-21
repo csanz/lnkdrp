@@ -1,8 +1,14 @@
 /**
  * Admin API route: `GET|DELETE /api/admin/data/docs/:docId`
  *
- * - GET: returns full doc details (lean) + related uploads (summary)
+ * - GET: returns the doc row and its uploads, with content and capability tokens stripped
  * - DELETE: soft-deletes a doc (sets isDeleted + deletedDate)
+ *
+ * The GET reads the whole row on purpose — a projection here would be a second copy of the privacy
+ * rule, drifting from the one in `src/lib/admin/docPrivacy.ts` — and `redactDocRow` is what decides
+ * what leaves. It has to run on the doc row in particular: the row carries `replaceUploadToken`
+ * (an unrevocable code that replaces the PDF every live share link serves), the share password's
+ * salt, hash and reversible copy, and `shareId`, which is simply the document.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";

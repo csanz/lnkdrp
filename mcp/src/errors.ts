@@ -60,9 +60,9 @@ function planLimitAlternatives(limit: string): string[] {
   switch (limit) {
     case "documents":
       return [
-        "add another share link to a document this workspace already has (lnkdrp_create_share_link — links are unlimited on every plan, one per investor or counterparty)",
-        "replace the file on an existing document with lnkdrp_replace_pdf - recipients see the new version on the links they already have, and this is never blocked by plan_limit",
-        "find one to archive with lnkdrp_list_docs, then archive it with lnkdrp_archive_doc — it frees a slot and keeps its analytics",
+        "add another share link to a document this workspace already has (lnkdrp_create_share_link: links are unlimited on every plan, one per investor or counterparty)",
+        "replace the file on an existing document with lnkdrp_replace_pdf: recipients see the new version on the links they already have, and this is never blocked by plan_limit",
+        "find one to archive with lnkdrp_list_docs, then archive it with lnkdrp_archive_doc (it frees a slot and keeps its analytics)",
       ];
     case "projects":
       return [
@@ -72,12 +72,12 @@ function planLimitAlternatives(limit: string): string[] {
       ];
     case "project_links":
       return [
-        "send the project's existing default link instead (lnkdrp_list_project_links shows it) — it works on every plan, it just cannot be labelled per audience",
-        "send each document on its own labelled link with lnkdrp_create_share_link — document links are never capped, so one recipient can still get their own set",
-        "give the second audience its own project (lnkdrp_create_project, then lnkdrp_add_docs_to_project — a document can be in several): each project's default link is a separate URL with separate analytics, within the Free project cap",
+        "send the project's existing default link instead (lnkdrp_list_project_links shows it), which works on every plan but cannot be labelled per audience",
+        "send each document on its own labelled link with lnkdrp_create_share_link, since document links are never capped and one recipient can still get their own set",
+        "give the second audience its own project (lnkdrp_create_project, then lnkdrp_add_docs_to_project, since a document can be in several): each project's default link is a separate URL with separate analytics, within the Free project cap",
       ];
     case "collaborators":
-      return ["share a link with them instead of adding them to the workspace — recipients never need an account"];
+      return ["share a link with them instead of adding them to the workspace. Recipients never need an account"];
     case "version_history":
       return [
         "replace the file anyway: the new version is recorded and every existing link serves it",
@@ -86,7 +86,7 @@ function planLimitAlternatives(limit: string): string[] {
     case "analytics_history":
       return [
         "read the basic figures, which every plan gets: views, downloads, pages viewed, total time and a unique viewer count",
-        "narrow to one link with lnkdrp_get_share_stats and a shareId — per-link totals are not Pro-gated",
+        "narrow to one link with lnkdrp_get_share_stats and a shareId. Per-link totals are not Pro-gated",
       ];
     default:
       return [];
@@ -109,6 +109,13 @@ function str(value: unknown): string {
 
 const FETCH_BLOCKED_RE = /failed to fetch url|url is not allowed|timed out fetching|only http\(s\) urls|empty pdf|missing url/i;
 const TOO_LARGE_RE = /too large/i;
+/**
+ * Text that means "our side broke", not "your arguments were wrong": Mongoose schema and cast
+ * failures, and the driver's own duplicate-key and connection errors. These reach the 400 branch
+ * from routes that catch everything and answer 400.
+ */
+const INTERNAL_FAULT_RE =
+  /validation failed:|Cast to \w+ failed|is not a valid enum value|MongoServerError|MongooseError|E11000|ECONNREFUSED|Topology is closed/i;
 const RATE_LIMITED_RE = /over its limit of \d+ requests/i;
 
 /** A finite number or null. */
@@ -201,6 +208,20 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
           { status },
         );
       }
+      /**
+       * Name the thing the caller actually asked about.
+       *
+       * "No such document" was returned for a bad *projectId* too — on lnkdrp_tag and lnkdrp_untag,
+       * where no docId had been supplied at all — so an agent went looking for a document id it
+       * never sent. The request path says which noun this is about.
+       */
+      if (/\/api\/projects\//.test(where)) {
+        return new ToolError(
+          "not_found",
+          "No such project in this workspace. lnkdrp_list_projects lists the projects you can use, with their ids and slugs.",
+          { status },
+        );
+      }
       return new ToolError("not_found", "No such document in this workspace.", { status });
     case 400: {
       // Older routes (the project routes among them) catch the API-key limiter's error and answer 400.
@@ -217,7 +238,19 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
         });
       }
       if (FETCH_BLOCKED_RE.test(errorText)) {
-        return new ToolError("fetch_blocked", `lnkdrp could not fetch the source URL: ${errorText}`, { status, details: { error: errorText } });
+        /**
+         * The upstream text says what went wrong and never what to do instead — "URL is not
+         * allowed" on its own leaves an agent with a failed call and no next move, so it retries
+         * the same URL. The remedies are short and they are always the same three, so they are
+         * appended rather than left for the agent to infer.
+         */
+        return new ToolError(
+          "fetch_blocked",
+          `lnkdrp could not fetch the source URL: ${errorText}. The URL must be a direct https link that returns the ` +
+            "PDF bytes with no sign-in. A Google Docs/Slides/Sheets or OneDrive page is a viewer, not a file. Use that " +
+            "service's export or download link, or send the bytes yourself with fileBase64.",
+          { status, details: { error: errorText } },
+        );
       }
       if (TOO_LARGE_RE.test(errorText)) {
         return new ToolError("too_large", errorText, { status });
@@ -229,6 +262,27 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
             "plain text and keyPoints 2-7 items of at most 160 characters each, written from the document, with no URLs or " +
             "markup (they are stripped before the length check). Pass both or neither; omit both to let lnkdrp summarize (costs credits).",
           { status, details: { code: bodyCode } },
+        );
+      }
+      /**
+       * Not everything answered 400 is the caller's fault.
+       *
+       * A schema or driver failure surfaces here as the database's own sentence — "ShareLink
+       * validation failed: createdVia: `default` is not a valid enum value for path `createdVia`"
+       * — and calling that `validation` tells an agent its *arguments* were wrong. There are no
+       * arguments it could send to fix a server-side enum, so it rewrites the call and tries again,
+       * and again. `upstream` is the honest code: something on our side broke, retrying the same
+       * thing is reasonable, changing the arguments is not.
+       *
+       * The raw text stays in `details` for whoever debugs it, and out of the message, which an
+       * agent may repeat to a human.
+       */
+      if (INTERNAL_FAULT_RE.test(errorText)) {
+        return new ToolError(
+          "upstream",
+          "lnkdrp could not complete that request because of a problem on its side, not with your arguments. " +
+            "Retrying the same call shortly is reasonable; changing the arguments will not help.",
+          { status: 500, details: { error: errorText, ...(bodyCode ? { code: bodyCode } : {}) } },
         );
       }
       return new ToolError("validation", message || `lnkdrp rejected the request (${where}).`, {
@@ -262,12 +316,24 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
       return outOfCreditsError(status, body, bodyCode, siteUrl);
     }
     case 413:
-      return new ToolError("too_large", message || "The file is too large.", { status });
+      // Naming sourceUrl as the way out was wrong: the ceiling is the document's, not the
+      // transport's, so the same file refused as bytes is refused as a URL.
+      return new ToolError(
+        "too_large",
+        `${message || "The file is too large."} That ceiling is on the document, so sending the same file a different ` +
+          "way will not get past it. Shrink the PDF instead (fewer pages, or downsampled images) and try again.",
+        { status },
+      );
     case 415:
-      return new ToolError("unsupported_content_type", message || "Only PDF files are supported.", {
-        status,
-        details: bodyCode ? { code: bodyCode } : undefined,
-      });
+      return new ToolError(
+        "unsupported_content_type",
+        `${message || "Only PDF files are supported."} lnkdrp shares PDFs only: convert the file first, and check the ` +
+          "URL returns the PDF itself rather than a page that displays one.",
+        {
+          status,
+          details: bodyCode ? { code: bodyCode } : undefined,
+        },
+      );
     case 429:
       return new ToolError("rate_limited", message || "Too many requests; slow down and retry.", { status });
     default:

@@ -4,6 +4,9 @@
  * Returns per-page timing aggregates for a given viewer on a specific doc version.
  * Auth required; any org member with access to the doc can call this.
  *
+ * It answers with timings only. The viewer's name and email belong to the recipients list
+ * (`../recipients`), which is built from this org's memberships — see the note by the aggregate.
+ *
  * Deep analytics: per-viewer, per-page time is Pro-only. Free workspaces get `402 plan_limit`
  * (`analytics_history`).
  */
@@ -14,7 +17,6 @@ import { resolveActor, applyTempUserHeaders } from "@/lib/gating/actor";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { DocModel } from "@/lib/models/Doc";
 import { DocPageTimingModel } from "@/lib/models/DocPageTiming";
-import { UserModel } from "@/lib/models/User";
 
 export const runtime = "nodejs";
 
@@ -74,8 +76,24 @@ export async function GET(
     const gate = await checkLimit(actor.orgId, "analytics_history");
     if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
 
+    /**
+     * `:userId` is a lookup key for this document's timing rows, never a key into `users`.
+     *
+     * This route used to answer with the name and email behind the id, read straight from
+     * `UserModel.findById(userId)` with no org, membership or "did this person ever open this
+     * document" constraint. The ownership check above only proves the *document* is the caller's,
+     * so any signed-in owner of any document could ask their own doc about a stranger's id and be
+     * told who it belonged to — and Mongo ObjectIds are a timestamp plus a per-process counter, so
+     * one known id walks to its neighbours and the whole `users` collection comes out a name at a
+     * time, across every tenant.
+     *
+     * The identity was never this route's to serve: the drill-down is opened from the recipients
+     * list, which is built from *this org's* memberships (`../recipients/route.ts`), and the modal
+     * renders the name it already has from that row. So the answer is to stop looking the user up
+     * rather than to fence the lookup — there is no fence left to get wrong. The aggregate below
+     * is bounded by `orgId`, which makes an unrelated id an empty `pages: []` and nothing else.
+     */
     const viewerUserId = new Types.ObjectId(userId);
-    const viewer = await UserModel.findById(viewerUserId).select({ _id: 1, name: 1, email: 1 }).lean();
 
     const agg = (await DocPageTimingModel.aggregate([
       { $match: { orgId, docId: docObjectId, version, viewerUserId } },
@@ -104,13 +122,6 @@ export async function GET(
         ok: true,
         docId,
         version,
-        viewer: viewer
-          ? {
-              userId: String(viewer._id),
-              name: typeof (viewer as any).name === "string" ? (viewer as any).name : null,
-              email: typeof (viewer as any).email === "string" ? (viewer as any).email : null,
-            }
-          : null,
         viewedPage1,
         totalDurationMs,
         pages,

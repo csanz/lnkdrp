@@ -358,7 +358,7 @@ function WorkspacePanel({
         <WorkspaceIcon
           avatarUrl={workspace.avatarUrl}
           fallback={initial}
-          className="h-11 w-11 rounded-xl ring-1 ring-white/15"
+          className="h-11 w-11 ring-1 ring-white/15"
           fallbackClassName="bg-white/10 text-base text-white"
         />
         <div className="min-w-0 flex-1">

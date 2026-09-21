@@ -5,17 +5,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, DocumentTextIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
 import { useSession } from "next-auth/react";
 import UploadButton from "@/components/UploadButton";
 import DocSharePanel from "@/components/DocSharePanel";
 import QuickStats from "@/components/metrics/QuickStats";
 import TempUserGateModal from "@/components/modals/TempUserGateModal";
+import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import DocHeaderActions from "@/components/doc/DocHeaderActions";
+import TagsRow from "@/components/tags/TagsRow";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import DocProjectsModal, { type DocProjectListItem } from "@/components/modals/DocProjectsModal";
 import { useAuthEnabled, useNavigationLockWhile } from "@/app/providers";
 import { fetchJson } from "@/lib/http/fetchJson";
-import { apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
+import { apiCreateUpload, PlanLimitClientError, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
 import { buildPublicReplaceUrl, buildPublicShareUrl } from "@/lib/urls";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { formatBytes, formatPageCount } from "@/lib/format/bytes";
@@ -34,6 +37,11 @@ import {
   upsertStarredDocTitle,
 } from "@/lib/starredDocs";
 import { ACTIVE_ORG_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocsChanged, setSidebarCacheSnapshot } from "@/lib/sidebarCache";
+import { forgetEntityTitle, rememberEntityTitle, useEntityTitle } from "@/lib/client/entityTitles";
+// The same pulse the sub-page headers draw: one shape for one document's name, so the bar does not
+// change size or baseline when you walk from the document into its Links or Metrics page.
+import { HeaderNameSkeleton } from "@/components/HeaderIdentity";
+import { noteEntityName } from "@/lib/client/entityIdentity";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
@@ -194,7 +202,6 @@ function buildCachedPdfIframeUrl(params: {
 export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const router = useRouter();
   const authEnabled = useAuthEnabled();
-  const isDev = process.env.NODE_ENV !== "production";
   const [doc, setDoc] = useState<DocDTO>(initialDoc);
   const docRef = useRef<DocDTO>(initialDoc);
   const [currentUpload, setCurrentUpload] = useState<UploadDTO | null>(null);
@@ -257,13 +264,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [copyDone, setCopyDone] = useState(false);
   const [replaceIsCopying, setReplaceIsCopying] = useState(false);
   const [replaceCopyDone, setReplaceCopyDone] = useState(false);
-  const [debugJsonOpen, setDebugJsonOpen] = useState(false);
-  const [debugJsonLoading, setDebugJsonLoading] = useState(false);
-  const [debugJsonError, setDebugJsonError] = useState<string | null>(null);
-  const [debugJsonText, setDebugJsonText] = useState<string>("");
-  const [debugJsonPayload, setDebugJsonPayload] = useState<Record<string, unknown> | null>(null);
-  const [debugJsonCopying, setDebugJsonCopying] = useState(false);
-  const [debugJsonCopyDone, setDebugJsonCopyDone] = useState(false);
   const [preparingTick, setPreparingTick] = useState(0);
   const [hasHydratedFromServer, setHasHydratedFromServer] = useState(false);
   const [hydrateError, setHydrateError] = useState<string | null>(null);
@@ -696,7 +696,18 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       }
     }
 
-    const nextTitle = displayDocName || "Document";
+    // `displayDocName` now carries the remembered name before hydration, so starring a document
+    // the instant the page opens records what it is actually called rather than the placeholder
+    // the header used to be showing at that moment.
+    //
+    // With no name at all there is nothing safe to write: `toggleStarredDoc` substitutes the
+    // literal "Document" for an empty title and POSTs it to `/api/starred`, which makes that
+    // placeholder the document's name in the sidebar on every device — and `recallEntityTitle`
+    // reads the starred list, so it would come back as the remembered name and paint "Document"
+    // as the title on every later navigation. The buttons are disabled for that window instead
+    // (`DocIdentityRow` guards its own star the same way).
+    const nextTitle = displayDocName.trim();
+    if (!nextTitle) return;
     const res = toggleStarredDoc({ id: doc.id, title: nextTitle });
     setStarred(res.starred);
   }
@@ -769,6 +780,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
         if (!res.ok) {
           if (res.status === 404) {
+            // Gone: drop the remembered name with it, or `/doc/:id/links` (which does not
+            // redirect) keeps painting a deleted document's title from localStorage.
+            forgetEntityTitle("doc", docRef.current.id);
             if (!cancelled) router.replace("/dashboard");
             return false;
           } else {
@@ -964,15 +978,27 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           } catch {
             // ignore (best-effort)
           }
+          /**
+           * The replacement landed — and whether it changed anything is part of what landed.
+           *
+           * The processor already compares the new text with the previous version's to decide
+           * whether a fresh AI summary is worth paying for; it now records that on the upload, so
+           * the banner can say it. Re-uploading the same file is a real and quiet mistake: it makes
+           * a version, bumps the number, notifies recipients, and looks exactly like success.
+           */
+          const unchanged = Boolean(upload && typeof upload === "object" && (upload as any).unchangedFromPrevious);
           const vLabel =
             typeof actualVersion === "number" && Number.isFinite(actualVersion)
               ? `Updated to v${actualVersion}.`
               : "Update complete.";
+          const summary = unchanged
+            ? `${vLabel} This file reads the same as the previous version. If you meant to upload a different one, replace it again.`
+            : vLabel;
           setReplaceNotice({
             kind: "success",
             toVersion: actualVersion,
             // Keep this banner short; the user can click into history for details.
-            summary: vLabel,
+            summary,
             createdAtMs: Date.now(),
           });
           setHighlightVersionLink(true);
@@ -1174,73 +1200,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
   // We intentionally do not show summary/tags on the owner panel when AI Snapshot is present.
 
-  async function loadDebugJson() {
-    if (!isDev) return;
-    const docId = docRef.current.id;
-    setDebugJsonLoading(true);
-    setDebugJsonError(null);
-    setDebugJsonCopyDone(false);
-    try {
-      const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?t=${Date.now()}`, {
-        cache: "no-store",
-      });
-      const json = (await res.json().catch(() => null)) as any;
-      if (!res.ok) {
-        const msg =
-          json && typeof json === "object" && typeof json.error === "string"
-            ? json.error
-            : `Request failed (${res.status})`;
-        throw new Error(msg);
-      }
 
-      const payload = {
-        fetchedAt: new Date().toISOString(),
-        docId,
-        // What the server believes right now (most useful for debugging preview updates).
-        apiDocs: json,
-        // What the client currently has rendered (can be stale).
-        localDocState: docRef.current,
-        localCurrentUploadState: currentUpload,
-      };
-      setDebugJsonPayload(payload as unknown as Record<string, unknown>);
-      setDebugJsonText(JSON.stringify(payload, null, 2));
-    } catch (e) {
-      setDebugJsonText("");
-      setDebugJsonPayload(null);
-      setDebugJsonError(e instanceof Error ? e.message : "Failed to load debug JSON.");
-    } finally {
-      setDebugJsonLoading(false);
-    }
-  }
 
-  async function openDebugJson() {
-    if (!isDev) return;
-    setDebugJsonOpen(true);
-    await loadDebugJson();
-  }
 
-  async function copyDebugJson() {
-    if (!debugJsonText) return;
-    setDebugJsonCopying(true);
-    setDebugJsonCopyDone(false);
-    try {
-      await navigator.clipboard.writeText(debugJsonText);
-      setDebugJsonCopyDone(true);
-      window.setTimeout(() => setDebugJsonCopyDone(false), 1200);
-    } catch {
-      // ignore (best-effort)
-    } finally {
-      setDebugJsonCopying(false);
-    }
-  }
-
-  async function copyObjectJson(obj: unknown) {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
-    } catch {
-      // ignore
-    }
-  }
 
   useEffect(() => {
     // Defensive boundary enforcement: the doc page must never render Phase-1 CTAs.
@@ -1278,16 +1240,37 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     return { label: "Preparing…", tone: "neutral" as const };
   }, [doc.status, hasHydratedFromServer]);
 
+  /**
+   * The name this browser last knew this document by — almost always the row you just clicked.
+   *
+   * `/doc/:id` is client-first and hydrates from `/api/docs/:id` after mount. That window used to
+   * be a hole in the header: the title was suppressed entirely (a skeleton), so walking between
+   * documents made the name vanish and come back every time. Now it only vanishes for a document
+   * this browser has genuinely never seen.
+   */
+  const rememberedDocName = useEntityTitle("doc", doc.id);
+
   const displayDocName = useMemo(
     () => {
-      // `/doc/:id` is client-first and initially hydrates from `/api/docs/:id`.
-      // During that brief window, don't show a placeholder word in the title area.
-      if (!hasHydratedFromServer) return "";
       const t = (doc.title ?? "").toString().trim();
-      return t || "Document";
+      if (t) return t;
+      // Before the server answers, the remembered name stands in. Never the word "Document":
+      // a placeholder shaped like a name is exactly the flash this removes.
+      if (!hasHydratedFromServer) return rememberedDocName || "";
+      // Hydrated, and the document genuinely has no title of its own. "Untitled document" is what
+      // `HeaderIdentity`, `/api/docs`, `/api/sidebar` and every list surface call it; saying
+      // "Document" only here made the title rename itself on the walk into Links or Metrics.
+      return rememberedDocName || "Untitled document";
     },
-    [doc.title, hasHydratedFromServer],
+    [doc.title, hasHydratedFromServer, rememberedDocName],
   );
+
+  // The server is the authority: correct the memory as soon as it answers, and after a rename.
+  useEffect(() => {
+    if (!hasHydratedFromServer) return;
+    const t = (doc.title ?? "").toString().trim();
+    if (t) rememberEntityTitle("doc", doc.id, t);
+  }, [doc.id, doc.title, hasHydratedFromServer]);
 
   const displayVersion = useMemo(() => {
     const v = doc.currentUploadVersion;
@@ -1357,6 +1340,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           ? res.doc.title
           : next;
       setDoc((d) => ({ ...d, title: patchedTitle }));
+      // The shared identity cache outlives this page; without this the next sub-page would paint
+      // the old name from it before its own read lands.
+      noteEntityName("doc", doc.id, patchedTitle);
       setTitleDraft(patchedTitle);
       setEditingTitle(false);
       // Best-effort: keep the left sidebar's cached "recent docs" title in sync immediately.
@@ -1908,8 +1894,30 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         newUploadId = created.id;
         createdVersion = created.version;
       } catch (e) {
+        /**
+         * The replacement never started. What this branch must NOT do is what it used to: call
+         * `router.refresh()`.
+         *
+         * A refresh re-rendered the whole server tree — indistinguishable from the page reloading
+         * — and then returned, so the file the reader had just chosen was silently dropped. Every
+         * ordinary failure lands here (a non-PDF, the document limit, a rate limit, an expired
+         * session, any 4xx from `/api/uploads`), which made "pick a file, watch the page blink,
+         * nothing happens" the normal experience of a failed replace, with no message anywhere.
+         *
+         * The upload page has always done the right thing (`(app)/upload/pageClient.tsx`): say what
+         * went wrong, in place. This now matches it.
+         */
+        const limitErr = e instanceof PlanLimitClientError ? e.planLimit : null;
         const message = e instanceof Error ? e.message : "";
         if (message === "TEMP_USER_LIMIT") setTempGateOpen(true);
+        if (limitErr) {
+          openUpgrade(upsellKeyForLimit(limitErr.limit), {
+            used: limitErr.used,
+            max: limitErr.max,
+            graceHint: planLimitGraceHint(limitErr),
+          });
+          refreshPlan();
+        }
         replacePendingRef.current = false;
         setReplaceStarting(false);
         // Best effort: restore server-backed view.
@@ -1918,7 +1926,16 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           return null;
         });
         setLocalPreviewUploadId(null);
-        router.refresh();
+        // The upgrade modal is the message when a plan limit is what stopped it; anything else has
+        // to say so here, or the click looks like it did nothing at all.
+        if (!limitErr) {
+          setReplaceNotice({
+            kind: "error",
+            toVersion: null,
+            summary: message || "Could not start the replacement. Your existing document was kept.",
+            createdAtMs: Date.now(),
+          });
+        }
         return;
       }
       setReplaceStarting(false);
@@ -1967,8 +1984,17 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           setLocalPreviewUploadId(null);
         },
       });
-    } catch {
-      // ignore
+    } catch (e) {
+      // Nothing below the inner try is expected to throw, but a swallowed error here left the
+      // document sitting in its "replacing" animation for ever with no way to tell why.
+      replacePendingRef.current = false;
+      setReplaceStarting(false);
+      setReplaceNotice({
+        kind: "error",
+        toVersion: null,
+        summary: (e instanceof Error && e.message) || "Could not start the replacement. Your existing document was kept.",
+        createdAtMs: Date.now(),
+      });
     }
   }
 
@@ -1996,7 +2022,13 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           </div>
         ) : null}
         {/* Top bar */}
-        <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-6 md:px-6 md:py-5">
+        {/* The band every other header in the app uses — the same gutter and the same
+            pt-6/pb-5 — so the document's own page and its Links and Metrics pages are the
+            same height and nothing in the row moves as you walk between them
+            (`src/components/AppPageHeader.tsx`, `src/components/SubPageHeader.tsx`). */}
+        <div
+          className={`flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] ${APP_PAGE_GUTTER} pb-5 pt-6 md:flex-row md:items-center md:justify-between md:gap-6`}
+        >
             <div className="flex w-full min-w-0 items-center gap-3 md:w-auto">
               {isReceivedViaRequest ? (
                 <div
@@ -2017,7 +2049,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
               <div className="flex min-w-0 items-center gap-2">
                 <div className="min-w-0 flex-1">
                   {!isReceivedViaRequest && editingTitle ? (
-                    <div className="min-w-0">
+                    <div className="min-h-8 min-w-0">
                       <div className="flex min-w-0 items-center gap-2">
                         <button
                           type="button"
@@ -2030,8 +2062,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             "hover:bg-[var(--panel-hover)]",
                             navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
                           ].join(" ")}
-                          disabled={navLockActive && !isReceivedViaRequest}
-                          aria-disabled={navLockActive && !isReceivedViaRequest}
+                          disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
+                          aria-disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
                           aria-label={starred ? "Unstar document" : "Star document"}
                           title={
                             navLockActive && !isReceivedViaRequest
@@ -2069,7 +2101,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           }}
                           aria-label="Rename document"
                           className={[
-                            "min-w-0 flex-1 rounded-md border bg-[var(--panel)] px-2 py-1 text-sm font-semibold text-[var(--fg)]",
+                            // The project page's rename field is the title's own size; this one was
+                            // `text-sm`, so clicking the name shrank it before you typed.
+                            "min-w-0 flex-1 rounded-md border bg-[var(--panel)] px-2 py-0.5 text-lg font-semibold tracking-tight text-[var(--fg)]",
                             "border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-black/10",
                             titleSaveBusy ? "opacity-70" : "",
                           ].join(" ")}
@@ -2080,7 +2114,14 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       ) : null}
                     </div>
                   ) : isReceivedViaRequest ? (
-                    <div className="flex min-w-0 items-center gap-2.5 text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg">
+                    <div className="flex min-h-8 min-w-0 items-center gap-2.5 text-lg font-semibold tracking-tight text-[var(--fg)]">
+                      {/* The document's glyph, in the slot every other page puts one: Search, Upload and
+                          Activity draw theirs through `AppPageHeader`, a project draws a folder, and a
+                          document drew nothing — so the one page named after a single file was the one
+                          page whose name had no mark beside it. Same 20px, same muted colour, same
+                          2.5 gap, so the name starts on the same pixel here, on the sub-pages
+                          (`DocIdentityRow`) and on a project. */}
+                      <DocumentTextIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                       <button
                         type="button"
                         onClick={() => void handleToggleStar()}
@@ -2090,8 +2131,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           "hover:bg-[var(--panel-hover)]",
                           navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
                         ].join(" ")}
-                        disabled={navLockActive && !isReceivedViaRequest}
-                        aria-disabled={navLockActive && !isReceivedViaRequest}
+                        disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
+                        aria-disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
                         aria-label={starred ? "Unstar document" : "Star document"}
                         title={
                           navLockActive && !isReceivedViaRequest
@@ -2103,13 +2144,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       >
                         <StarIcon filled={starred} />
                       </button>
-                      {!hasHydratedFromServer ? (
-                        <span
-                          className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
-                          aria-hidden="true"
-                        />
-                      ) : (
+                      {displayDocName ? (
                         <span className="min-w-0 truncate">{displayDocName}</span>
+                      ) : (
+                        <HeaderNameSkeleton kind="doc" />
                       )}
                       {displayVersion != null ? (
                         navLockActive ? (
@@ -2135,8 +2173,46 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       ) : null}
                     </div>
                   ) : (
-                    <div className="flex min-w-0 items-start gap-2.5">
+                    <div className="flex min-h-8 min-w-0 items-center gap-2.5">
                       <span className="flex h-6 shrink-0 items-center md:h-7">
+                        {/* The document's glyph, in the slot every other page puts one: Search, Upload and
+                            Activity draw theirs through `AppPageHeader`, a project draws a folder, and a
+                            document drew nothing — so the one page named after a single file was the one
+                            page whose name had no mark beside it. Same 20px, same muted colour, same
+                            2.5 gap, so the name starts on the same pixel here, on the sub-pages
+                            (`DocIdentityRow`) and on a project. */}
+                        <DocumentTextIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                      </span>
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+                        {/* An `<h1>`, like `AppPageHeader` and `SubPageHeader` give every other page:
+                            the document page was the only one named after a single file with no
+                            heading in the outline. `contents` keeps the flex layout unchanged. */}
+                        <h1 className="contents">
+                        <button
+                          type="button"
+                          disabled={navLockActive}
+                          aria-disabled={navLockActive}
+                          aria-label={displayDocName || "Loading document name"}
+                          title={navLockActive ? "Disabled while uploading" : "Rename document"}
+                          onClick={() => {
+                            if (navLockActive) return;
+                            setTitleDraft(displayDocName);
+                            setTitleSaveError(null);
+                            setEditingTitle(true);
+                          }}
+                          className={[
+                            "block min-w-0 truncate text-left text-lg font-semibold tracking-tight text-[var(--fg)]",
+                            navLockActive ? "cursor-not-allowed opacity-70" : "hover:underline",
+                          ].join(" ")}
+                        >
+                          {displayDocName || (
+                            <HeaderNameSkeleton kind="doc" />
+                          )}
+                        </button>
+                        </h1>
+                        {/* After the name, not before it: the name is what the page is, and two
+                            controls in front of it pushed the one thing you read into third
+                            place. */}
                         <button
                           type="button"
                           onClick={() => void handleToggleStar()}
@@ -2146,8 +2222,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             "hover:bg-[var(--panel-hover)]",
                             navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
                           ].join(" ")}
-                          disabled={navLockActive && !isReceivedViaRequest}
-                          aria-disabled={navLockActive && !isReceivedViaRequest}
+                          disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
+                          aria-disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
                           aria-label={starred ? "Unstar document" : "Star document"}
                           title={
                             navLockActive && !isReceivedViaRequest
@@ -2159,34 +2235,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         >
                           <StarIcon filled={starred} />
                         </button>
-                      </span>
-                      <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
-                        <button
-                          type="button"
-                          disabled={navLockActive}
-                          aria-disabled={navLockActive}
-                          aria-label={hasHydratedFromServer ? displayDocName : "Loading document name"}
-                          title={navLockActive ? "Disabled while uploading" : "Rename document"}
-                          onClick={() => {
-                            if (navLockActive) return;
-                            setTitleDraft(displayDocName);
-                            setTitleSaveError(null);
-                            setEditingTitle(true);
-                          }}
-                          className={[
-                            "block min-w-0 truncate text-left text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg",
-                            navLockActive ? "cursor-not-allowed opacity-70" : "hover:underline",
-                          ].join(" ")}
-                        >
-                          {!hasHydratedFromServer ? (
-                            <span
-                              className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            displayDocName
-                          )}
-                        </button>
+
                         {displayVersion != null ? (
                           navLockActive ? (
                             <span
@@ -2208,6 +2257,12 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               <span>History</span>
                             </Link>
                           )
+                        ) : null}
+
+                        {/* Tags sit with the version and the projects: the row that says what
+                            this document is. */}
+                        {hasHydratedFromServer ? (
+                          <TagsRow targetKind="doc" targetId={doc.id} variant="header" />
                         ) : null}
 
                         {projectsInline.length ? (
@@ -2261,7 +2316,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     </div>
                   )}
                   {doc.lastUpdate?.uploadedAt || fileFactsLabel ? (
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-[30px] text-[12px] text-[var(--muted)]">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-[30px] text-[12px] leading-5 text-[var(--muted)]">
                       {doc.lastUpdate?.uploadedAt ? (
                         <span>
                           {(() => {
@@ -2423,50 +2478,27 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 />
               ) : null}
 
+              {/* Links, Metrics and the "…" menu, from the component the two sub-pages render too,
+                  so the three of them never move. A document has had a links page since multi-links
+                  shipped and no way to reach it from the document itself: the panel on the right
+                  shows the *default* link, so "where are the other four" had no answer here. A
+                  document that is still preparing has nothing to manage yet, hence `ready`. */}
               {hasHydratedFromServer && !isReceivedViaRequest ? (
-                <button
-                  type="button"
-                  onClick={() => router.push(`/doc/${encodeURIComponent(doc.id)}/metrics`)}
-                  disabled={!hasHydratedFromServer || doc.status !== "ready"}
-                  aria-disabled={!hasHydratedFromServer || doc.status !== "ready"}
-                  aria-label="Open metrics"
-                  title={!hasHydratedFromServer || doc.status !== "ready" ? "Available when ready" : "Metrics"}
-                  className={[
-                    "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
-                    "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-                    (!hasHydratedFromServer || doc.status !== "ready") ? "cursor-not-allowed opacity-60" : "",
-                  ].join(" ")}
-                >
-                  <ChartBarIcon className="h-4 w-4" aria-hidden="true" />
-                </button>
-              ) : null}
-
-              {isDev && hasHydratedFromServer ? (
-                <button
-                  type="button"
-                  onClick={() => void openDebugJson()}
-                  aria-label="Open debug JSON"
-                  title="Debug JSON"
-                  className={[
-                    "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
-                    "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-                  ].join(" ")}
-                >
-                  <LightBulbIcon className="h-4 w-4" aria-hidden="true" />
-                </button>
-              ) : null}
-
-              {hasHydratedFromServer && !isReceivedViaRequest ? (
-                <DocActionsMenu
+                <DocHeaderActions
                   docId={doc.id}
-                  currentProjectId={doc.projectId ?? null}
-                  currentProjectIds={Array.isArray(doc.projectIds) ? doc.projectIds : null}
-                  disabled={
-                    !hasHydratedFromServer || doc.status === "preparing" || doc.status === "draft"
+                  current="doc"
+                  ready={hasHydratedFromServer && doc.status === "ready"}
+                  menu={
+                    <DocActionsMenu
+                      docId={doc.id}
+                      currentProjectId={doc.projectId ?? null}
+                      currentProjectIds={Array.isArray(doc.projectIds) ? doc.projectIds : null}
+                      disabled={!hasHydratedFromServer || doc.status === "preparing" || doc.status === "draft"}
+                      onDocPatched={(patch) => setDoc((d) => ({ ...d, ...patch }))}
+                      onDeleted={() => router.push("/")}
+                      onOpenQualityReview={() => setQualityReviewOpen(true)}
+                    />
                   }
-                  onDocPatched={(patch) => setDoc((d) => ({ ...d, ...patch }))}
-                  onDeleted={() => router.push("/")}
-                  onOpenQualityReview={() => setQualityReviewOpen(true)}
                 />
               ) : null}
             </div>
@@ -2474,7 +2506,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
           {/* Content */}
           <div className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-          <div className="px-4 py-6 md:px-6 lg:h-full">
+          <div className={`py-6 lg:h-full ${APP_PAGE_GUTTER}`}>
             <div
               className={[
                 "grid min-h-0 gap-5 lg:h-full",
@@ -2601,10 +2633,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             We’re preparing this received document.
                           </div>
                           <div className="mt-1 text-sm text-[var(--muted)]">
-                            Please wait —{" "}
+                            Please wait.{" "}
                             {showRequestIntel
                               ? "Intel will appear once processing is complete."
-                              : "a summary will appear once processing is complete."}
+                              : "A summary will appear once processing is complete."}
                           </div>
                           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
                             <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--primary-bg)]" />
@@ -2764,22 +2796,26 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               ? String((out as any).relevancy)
                               : null;
 
+                          // Each tone carries both branches. The 200-level foregrounds below are
+                          // dark-ground values — on the white --panel card they measured 1.25-1.45:1,
+                          // so the pill labels were unreadable in light. Same shape as the status
+                          // pill above, which got its light branch long ago.
                           const pillBase =
                             "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold";
                           const stagePill =
                             stageMatch === true
-                              ? `${pillBase} border-emerald-300/40 bg-emerald-500/15 text-emerald-200`
+                              ? `${pillBase} border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-300/40 dark:bg-emerald-500/15 dark:text-emerald-200`
                               : stageMatch === false
-                                ? `${pillBase} border-red-300/40 bg-red-500/15 text-red-200`
+                                ? `${pillBase} border-red-200 bg-red-50 text-red-800 dark:border-red-300/40 dark:bg-red-500/15 dark:text-red-200`
                                 : `${pillBase} border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)]`;
                           const relKey = (relevancy ?? "").toLowerCase();
                           const relPill =
                             relKey === "high"
-                              ? `${pillBase} border-emerald-300/40 bg-emerald-500/15 text-emerald-200`
+                              ? `${pillBase} border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-300/40 dark:bg-emerald-500/15 dark:text-emerald-200`
                               : relKey === "medium"
-                                ? `${pillBase} border-amber-300/40 bg-amber-500/15 text-amber-200`
+                                ? `${pillBase} border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-200`
                                 : relKey === "low"
-                                  ? `${pillBase} border-red-300/40 bg-red-500/15 text-red-200`
+                                  ? `${pillBase} border-red-200 bg-red-50 text-red-800 dark:border-red-300/40 dark:bg-red-500/15 dark:text-red-200`
                                   : `${pillBase} border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)]`;
 
                           const show = stageMatch !== null || Boolean(relevancy);
@@ -3055,7 +3091,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {intel.strengths.slice(0, 10).map((s, idx) => (
                                 <li key={`s:${idx}`}>
                                   <span className="font-medium">{s.title}</span>
-                                  {s.detail ? <span className="text-[var(--muted)]"> — {s.detail}</span> : null}
+                                  {s.detail ? <span className="text-[var(--muted)]"> · {s.detail}</span> : null}
                                 </li>
                               ))}
                             </ul>
@@ -3069,7 +3105,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {intel.weaknessesAndRisks.slice(0, 10).map((w, idx) => (
                                 <li key={`w:${idx}`}>
                                   <span className="font-medium">{w.title}</span>
-                                  {w.detail ? <span className="text-[var(--muted)]"> — {w.detail}</span> : null}
+                                  {w.detail ? <span className="text-[var(--muted)]"> · {w.detail}</span> : null}
                                 </li>
                               ))}
                             </ul>
@@ -3083,7 +3119,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {intel.recommendations.slice(0, 10).map((r, idx) => (
                                 <li key={`r:${idx}`}>
                                   <span className="font-medium">{r.title}</span>
-                                  {r.detail ? <span className="text-[var(--muted)]"> — {r.detail}</span> : null}
+                                  {r.detail ? <span className="text-[var(--muted)]"> · {r.detail}</span> : null}
                                 </li>
                               ))}
                             </ul>
@@ -3100,7 +3136,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {intel.actionItems.slice(0, 10).map((a, idx) => (
                                 <li key={`a:${idx}`}>
                                   <span className="font-medium">{a.title}</span>
-                                  {a.detail ? <span className="text-[var(--muted)]"> — {a.detail}</span> : null}
+                                  {a.detail ? <span className="text-[var(--muted)]"> · {a.detail}</span> : null}
                                 </li>
                               ))}
                             </ul>
@@ -3245,105 +3281,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         </div>
       </div>
 
-      <Modal
-        open={debugJsonOpen}
-        onClose={() => {
-          if (debugJsonLoading) return;
-          setDebugJsonOpen(false);
-          setDebugJsonError(null);
-        }}
-        ariaLabel="Debug JSON"
-        panelClassName="w-[min(980px,calc(100vw-32px))]"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-base font-semibold text-[var(--fg)]">Debug JSON</div>
-            <div className="mt-1 text-sm text-[var(--muted)]">
-              Fresh server response from <code className="font-mono">/api/docs/{doc.id}</code>. Check{" "}
-              <code className="font-mono">doc.previewImageUrl</code>.
-            </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void loadDebugJson()}
-              disabled={debugJsonLoading}
-              className="inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-            >
-              {debugJsonLoading ? "Refreshing…" : "Refresh"}
-            </button>
-            <CopyButton
-              copyDone={debugJsonCopyDone}
-              isCopying={debugJsonCopying}
-              disabled={!debugJsonText}
-              onCopy={() => void copyDebugJson()}
-              label="Copy"
-              copiedLabel="Copied"
-              className={[
-                "inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors",
-                "border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] hover:bg-[var(--panel-hover)]",
-                !debugJsonText ? "cursor-not-allowed opacity-60" : "",
-              ].join(" ")}
-            />
-          </div>
-        </div>
-
-        <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-          {debugJsonError ? (
-            <div className="text-sm text-red-700">{debugJsonError}</div>
-          ) : debugJsonLoading && !debugJsonText ? (
-            <div className="text-sm text-[var(--muted)]">Loading…</div>
-          ) : debugJsonPayload ? (
-            <div className="grid gap-3">
-              {(() => {
-                const apiDocs = (debugJsonPayload as any).apiDocs ?? null;
-                const apiDoc = apiDocs && typeof apiDocs === "object" ? (apiDocs as any).doc ?? null : null;
-                const apiUpload = apiDocs && typeof apiDocs === "object" ? (apiDocs as any).upload ?? null : null;
-                const localDocState = (debugJsonPayload as any).localDocState ?? null;
-                const localCurrentUploadState = (debugJsonPayload as any).localCurrentUploadState ?? null;
-                const blocks: Array<{ title: string; value: unknown; defaultOpen?: boolean }> = [
-                  { title: "API: doc", value: apiDoc, defaultOpen: true },
-                  { title: "API: upload (current)", value: apiUpload, defaultOpen: true },
-                  { title: "Client: localDocState", value: localDocState },
-                  { title: "Client: localCurrentUploadState", value: localCurrentUploadState },
-                  { title: "All (combined payload)", value: debugJsonPayload },
-                ];
-
-                return blocks.map((b) => (
-                  <details
-                    key={b.title}
-                    open={Boolean(b.defaultOpen)}
-                    className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3"
-                  >
-                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-                      <div className="text-[12px] font-semibold text-[var(--fg)]">{b.title}</div>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                        disabled={b.value == null}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void copyObjectJson(b.value);
-                        }}
-                        title="Copy JSON"
-                      >
-                        Copy
-                      </button>
-                    </summary>
-                    <pre className="mt-3 max-h-[46vh] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                      {b.value == null ? "null" : JSON.stringify(b.value, null, 2)}
-                    </pre>
-                  </details>
-                ));
-              })()}
-            </div>
-          ) : (
-            <div className="text-sm text-[var(--muted)]">No data.</div>
-          )}
-        </div>
-      </Modal>
 
       <Modal open={showStarAuthModal} onClose={() => setShowStarAuthModal(false)} ariaLabel="Sign up to star docs">
         <div className="text-base font-semibold text-[var(--fg)]">Sign up to star docs</div>

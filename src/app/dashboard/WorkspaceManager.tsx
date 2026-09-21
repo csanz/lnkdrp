@@ -478,7 +478,7 @@ export default function WorkspaceManager() {
             </div>
             <div className="h-px bg-[var(--border)]" />
 
-            {orgsError ? <div className="px-3 py-3 text-[12px] text-red-500 sm:px-4">{orgsError}</div> : null}
+            {orgsError ? <div className="px-3 py-3 text-[12px] text-red-600 dark:text-red-500 sm:px-4">{orgsError}</div> : null}
             {orgsBusy ? (
               <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">Loading…</div>
             ) : stableOrgs.length ? (
@@ -494,7 +494,7 @@ export default function WorkspaceManager() {
                           <WorkspaceIcon
                             avatarUrl={activeRow.avatarUrl}
                             fallback={initials((activeRow.name ?? "").trim() || "Workspace")}
-                            className="h-9 w-9 rounded-lg"
+                            className="h-9 w-9"
                             fallbackClassName="bg-[var(--panel-2)] text-[11px] text-[var(--fg)]"
                           />
                           <div className="min-w-0">
@@ -546,7 +546,7 @@ export default function WorkspaceManager() {
                             <WorkspaceIcon
                               avatarUrl={o.avatarUrl}
                               fallback={initials(avatarLabel)}
-                              className="h-8 w-8 rounded-lg"
+                              className="h-8 w-8"
                               fallbackClassName="bg-[var(--panel-2)] text-[11px] text-[var(--fg)]"
                             />
                             <div className="min-w-0">
@@ -635,7 +635,7 @@ export default function WorkspaceManager() {
                 {savingName ? "Saving…" : "Save"}
                             </button>
                         </div>
-            {manageRenameError ? <div className="mt-2 text-[12px] text-red-500">{manageRenameError}</div> : null}
+            {manageRenameError ? <div className="mt-2 text-[12px] text-red-600 dark:text-red-500">{manageRenameError}</div> : null}
                       </div>
 
           <div>
@@ -649,7 +649,7 @@ export default function WorkspaceManager() {
               <WorkspaceIcon
                 avatarUrl={baselineOrgAvatarUrl || null}
                 fallback={initials(manageOrgName.trim() || "Workspace")}
-                className="h-[88px] w-[88px] rounded-2xl"
+                className="h-[88px] w-[88px]"
                 fallbackClassName="bg-[var(--panel-2)] text-[20px] text-[var(--fg)]"
               />
               <label
@@ -694,7 +694,7 @@ export default function WorkspaceManager() {
                 <span className="mt-1 text-[11px] text-[var(--muted-2)]">Square, at least 120×120. PNG or WebP (JPG works without transparency), up to 2MB. Empty transparent edges are trimmed.</span>
               </label>
             </div>
-            {manageAvatarError ? <div className="mt-2 text-[12px] text-red-500">{manageAvatarError}</div> : null}
+            {manageAvatarError ? <div className="mt-2 text-[12px] text-red-600 dark:text-red-500">{manageAvatarError}</div> : null}
 
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               {baselineOrgAvatarUrl ? (
@@ -753,12 +753,12 @@ export default function WorkspaceManager() {
             ) : countsBusy ? (
               <div className="mt-1 text-[12px] text-[var(--muted-2)]">Loading workspace counts…</div>
             ) : countsError ? (
-              <div className="mt-2 text-[12px] text-red-500">{countsError}</div>
+              <div className="mt-2 text-[12px] text-red-600 dark:text-red-500">{countsError}</div>
             ) : (
               <div className="mt-1 text-[12px] text-[var(--muted-2)]">Be careful—these actions are hard to undo.</div>
             )}
 
-            {leaveError ? <div className="mt-2 text-[12px] text-red-500">{leaveError}</div> : null}
+            {leaveError ? <div className="mt-2 text-[12px] text-red-600 dark:text-red-500">{leaveError}</div> : null}
 
             <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-[12px] text-[var(--muted-2)]">Leave workspace (non-owners only)</div>
@@ -778,7 +778,12 @@ export default function WorkspaceManager() {
                 <button
                   type="button"
                   className="rounded-lg bg-red-600 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-60"
-                  disabled={orgActionBusy || !manageOrgId}
+                  disabled={orgActionBusy || !manageOrgId || manageOrgRow?.role !== "owner"}
+                  title={
+                    manageOrgRow && manageOrgRow.role !== "owner"
+                      ? "Only the workspace owner can delete it."
+                      : "Delete workspace"
+                  }
                   onClick={() => {
                     setShowDeleteConfirm(true);
                     void loadManageCounts();
@@ -790,16 +795,19 @@ export default function WorkspaceManager() {
                 <div className="space-y-2">
                   <div className="text-[12px] font-semibold text-[var(--fg)]">Confirm deletion</div>
                   <div className="text-[12px] text-[var(--muted-2)]">
-                    Type <span className="font-semibold">delete {manageOrgName}</span> to permanently delete this workspace and its content.
+                    {/* `baselineOrgName`, not the live input: the server compares the typed phrase
+                        against the name it has stored, so an unsaved edit in the Name field above
+                        would ask for a phrase that can never match. */}
+                    Type <span className="font-semibold">delete {baselineOrgName}</span> to permanently delete this workspace and its content.
                   </div>
                   <input
                     className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)]"
                     value={deleteConfirmText}
                     onChange={(e) => setDeleteConfirmText(e.target.value)}
-                    placeholder={`delete ${manageOrgName}`}
+                    placeholder={`delete ${baselineOrgName}`}
                     disabled={orgActionBusy}
                   />
-                  {deleteError ? <div className="text-[12px] text-red-500">{deleteError}</div> : null}
+                  {deleteError ? <div className="text-[12px] text-red-600 dark:text-red-500">{deleteError}</div> : null}
                   <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
@@ -846,7 +854,7 @@ export default function WorkspaceManager() {
             placeholder="Acme"
             disabled={orgActionBusy}
           />
-          {createOrgError ? <div className="mt-2 text-[12px] text-red-500">{createOrgError}</div> : null}
+          {createOrgError ? <div className="mt-2 text-[12px] text-red-600 dark:text-red-500">{createOrgError}</div> : null}
           <div className="mt-4 flex items-center justify-end gap-2">
             <button
               type="button"

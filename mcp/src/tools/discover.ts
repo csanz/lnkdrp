@@ -16,7 +16,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { ToolContext } from "../context";
-import { handleTool } from "../errors";
+import { handleTool, ToolError } from "../errors";
 import { UNTRUSTED_LIMITS, untrustedOrNull } from "../untrusted";
 import { docIdSchema, SAFETY_TAIL } from "./shared";
 import type { ActivityType } from "../../../src/lib/activity/log";
@@ -65,6 +65,16 @@ const ACTIVITY_TYPES = [
   "agent.key_verified",
   "account.deletion_requested",
   "account.purged",
+  "member.invited",
+  "member.joined",
+  "member.removed",
+  "member.left",
+  "project.landed",
+  "share.unlocked",
+  "viewer.introduced",
+  // Filing, so an agent can ask what has been tagged lately — including by itself.
+  "tag.applied",
+  "tag.removed",
 ] as const;
 
 // Compile-time guard: an event type the app logs but this list lacks cannot be filtered on, which
@@ -80,11 +90,14 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
       title: "List documents",
       description:
         "Find documents in the workspace. Search by title or by the slug of any of a document's share links (query), or " +
-        "look up specific documents by id (ids). Returns each document's id, default shareId, title, processing status, " +
+        "look up specific documents by id (ids). Returns each document's docId, default shareId, title, processing status, " +
         "current version, one-line AI summary and dates. Page-based: pass page to get the next set; total tells you how many " +
         "match. Use a result's id with lnkdrp_get_share, lnkdrp_list_share_links or lnkdrp_get_share_stats. Archived documents " +
         "are listed only with archived: true (then only archived ones - bring one back with lnkdrp_archive_doc archived: false); " +
-        "deleted documents never are. With ids, any that did not resolve come back in notFound. " +
+        "deleted documents never are. With ids, any that did not resolve come back in notFound - which includes archived documents unless you also pass archived: true, so an id there means 'not live' rather than 'never existed'. " +
+        "Pass tag to list only the documents carrying that tag - the name as a human writes it, matched loosely, so " +
+        "'Fundraising' and 'fundraising' reach the same tag (lnkdrp_list_tags shows what the workspace uses). Every row " +
+        "carries its own tags, so you can see how something is filed without a second call. " +
         SAFETY_TAIL,
       inputSchema: {
         query: z.string().trim().max(200).optional().describe("Match against document titles and share-link slugs, case-insensitively. Omit to list everything."),
@@ -92,21 +105,157 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
         page: z.number().int().min(1).default(1).describe("1-based page number."),
         limit: z.number().int().min(1).max(50).default(25).describe("Documents per page (1-50)."),
         archived: z.boolean().default(false).describe("true lists archived documents (the Archive view) instead of live ones."),
+        tag: z
+          .string()
+          .trim()
+          .min(1)
+          .max(60)
+          .optional()
+          .describe(
+            'Only documents carrying this tag, by name ("Fundraising"). Case, accents and punctuation are folded, so ' +
+              "any spelling of the name finds it. Combines with query and archived; ignored when ids is given.",
+          ),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const page = await ctx.api.listDocsPage({ q: args.query, ids: args.ids, page: args.page, limit: args.limit, archived: args.archived });
+      /**
+       * `tag:` is resolved to a set of ids and then handed to the ordinary listing.
+       *
+       * The tag endpoint answers "what carries this", and `GET /api/docs` answers "tell me about
+       * these", so the filter is the intersection rather than a second listing with its own rules.
+       * An unknown tag is an empty result, not an error: "nothing is filed under that" is an
+       * answer, and a workspace that has not used a tag yet has not done anything wrong.
+       */
+      let ids = args.ids;
+      /**
+       * `tagMatched` separates the two zeroes.
+       *
+       * "No such tag" and "that tag is on nothing" both come back as an empty list, and an agent
+       * acting on them does different things: the first is a typo or a tag it should create, the
+       * second is a correct answer about an empty shelf. It is reported whenever a tag filter ran —
+       * true, false, or on a full page — rather than only on the empty one, because a field that
+       * appears only sometimes is a field nobody can rely on.
+       */
+      let tagMatched: boolean | null = null;
+      /** Set when a tag filter ran, so the paging below is done here rather than by the route. */
+      let tagged: { total: number; pageIds: string[] } | null = null;
+
+      if (!ids && args.tag) {
+        /**
+         * A failed lookup is not an empty tag.
+         *
+         * Swallowing the error reported "nothing is filed under that" for an upstream blip, which
+         * is a confident wrong answer to a question the agent will act on. Only a genuine
+         * not-found means the tag does not exist; anything else is the caller's to see.
+         */
+        let carried: Awaited<ReturnType<typeof ctx.api.itemsForTag>> | null = null;
+        try {
+          carried = await ctx.api.itemsForTag(args.tag);
+        } catch (err) {
+          if (!(err instanceof ToolError && err.code === "not_found")) throw err;
+        }
+        tagMatched = Boolean(carried);
+
+        /**
+         * Paged here, not by the route.
+         *
+         * `GET /api/docs` treats `ids` as an override: it ignores `q`, `page` and `limit` and
+         * reports the id count as the total. Handing it the tag's whole document set therefore
+         * dropped a narrowing `query` on the floor, made `page` inert, and — with a `slice(0, 50)`
+         * on top — silently truncated any tag carrying more than fifty documents while reporting
+         * the truncated figure as the total and `hasMore: false`. An agent could neither see the
+         * missing documents nor page to them.
+         *
+         * So the intersection is computed here: the tag's ids, narrowed by `query` when there is
+         * one, then sliced for the requested page. The route is asked only for the page's rows.
+         */
+        let docIds = carried?.docIds ?? [];
+        /**
+         * `archived` narrows the ids too, not only the rows.
+         *
+         * The tag endpoint answers "what carries this" across live *and* archived documents, so a
+         * count taken straight from it described a different set from the one the route then
+         * returned: a tag whose only document was archived reported `total: 1` beside an empty
+         * `docs`, which reads as data the caller cannot see, and `hasMore` inherited the same lie
+         * and sent an agent to fetch a page that does not exist. Only the `query` branch narrowed,
+         * which is why adding a query appeared to "fix" the count.
+         *
+         * One listing, asked with the same `archived` the caller gave, decides which ids survive.
+         */
+        if (docIds.length) {
+          /**
+           * Two narrowings, two calls, because they cannot share one.
+           *
+           * `GET /api/docs` treats `ids` as an override and ignores `q` alongside it — the very
+           * behaviour this whole branch exists to work around. Asking for both in one call
+           * therefore silently drops the query, which is how `{tag, query}` went back to returning
+           * the whole tag the first time this narrowing was added. So `archived` is applied by an
+           * ids lookup and `query` by a search, and an id has to survive both.
+           */
+          const [byArchived, byQuery] = await Promise.all([
+            ctx.api.listDocsPage({ ids: docIds.slice(0, 50), archived: args.archived }),
+            args.query
+              ? ctx.api.listDocsPage({ q: args.query, limit: 50, archived: args.archived })
+              : Promise.resolve(null),
+          ]);
+          const live = new Set(byArchived.docs.map((d) => d.id));
+          const matched = byQuery ? new Set(byQuery.docs.map((d) => d.id)) : null;
+          docIds = docIds.filter((id) => live.has(id) && (!matched || matched.has(id)));
+        }
+        const start = (args.page - 1) * args.limit;
+        tagged = { total: docIds.length, pageIds: docIds.slice(start, start + args.limit) };
+        if (!tagged.pageIds.length) {
+          return {
+            tag: args.tag,
+            tagMatched,
+            total: tagged.total,
+            page: args.page,
+            limit: args.limit,
+            hasMore: false,
+            docs: [],
+          };
+        }
+        ids = tagged.pageIds;
+      }
+
+      const page = await ctx.api.listDocsPage({
+        // `query` has already been applied above when a tag was given; passing it again would hit
+        // the route's ids branch, which ignores it anyway, and reads as though it were doing work.
+        q: tagged ? undefined : args.query,
+        ids,
+        page: args.page,
+        limit: args.limit,
+        archived: args.archived,
+      });
+
+      // One read for every row's tags rather than one per row; an empty map is fine, tags are
+      // optional and a workspace that files nothing gets empty arrays.
+      const tagsByDoc = await ctx.api
+        .tagsForTargets({ targetKind: "doc", ids: page.docs.map((d) => d.id) })
+        .catch(() => new Map<string, Awaited<ReturnType<typeof ctx.api.listTags>>[number]>() as never);
       // Ids that did not resolve (unknown, deleted, archived, or not a document id at all) used to
       // vanish without a trace, so an agent could not tell "not found" from "not returned".
-      const found = new Set(page.docs.map((d) => d.id));
-      const notFound = args.ids ? [...new Set(args.ids)].filter((id) => !found.has(id)) : [];
+      //
+      // Compared case-insensitively: the id regex accepts either case and the API echoes ids back
+      // lowercased, so a caller who passed an uppercase id saw its document in `docs` AND its own
+      // id in `notFound` — the same document reported found and missing in one response.
+      const found = new Set(page.docs.map((d) => d.id.toLowerCase()));
+      const notFound = args.ids ? [...new Set(args.ids)].filter((id) => !found.has(id.toLowerCase())) : [];
       return {
-        total: page.total,
-        page: page.page,
-        limit: page.limit,
-        hasMore: page.docs.length > 0 && page.page * page.limit < page.total,
-        ...(notFound.length ? { notFound } : {}),
+        ...(tagMatched === null ? {} : { tag: args.tag, tagMatched }),
+        // Under a tag filter the route is answering about one page of ids, so its own total, page
+        // and limit describe that slice rather than the query. The real figures are the ones
+        // computed above.
+        total: tagged ? tagged.total : page.total,
+        page: tagged ? args.page : page.page,
+        limit: tagged ? args.limit : page.limit,
+        hasMore: tagged
+          ? args.page * args.limit < tagged.total
+          : page.docs.length > 0 && page.page * page.limit < page.total,
+        // Always present when ids were asked for, empty or not: a key that disappears when there is
+        // nothing to report makes "everything resolved" indistinguishable from an older server.
+        ...(args.ids ? { notFound } : {}),
         docs: page.docs.map((d) => ({
           docId: d.id,
           shareId: d.shareId,
@@ -119,6 +268,8 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
           previewImageUrl: d.previewImageUrl,
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
+          // How this document is filed. Workspace-authored, never shown to recipients.
+          tags: (tagsByDoc.get(d.id) ?? []).map((t) => ({ name: t.name, slug: t.slug, color: t.color })),
         })),
       };
     }),

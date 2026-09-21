@@ -68,15 +68,31 @@ export function registerSetShareAccessTool(server: McpServer, ctx: ToolContext):
         if (wantsPassword) await ctx.api.setSharePassword(args.docId, args.password ?? null);
         const doc = await ctx.api.getDoc(args.docId);
         const view = await withDefaultLinkState(ctx.api, doc, shareView(ctx.api, doc));
-        // Switching sharing on leaves links disabled on their own switched off, including the
-        // default link, so the response can say shareEnabled false right after asking for true.
-        const warnings =
-          args.shareEnabled === true && !view.shareEnabled
+        /**
+         * Two different outcomes wore one sentence.
+         *
+         * The switch only restores links it disabled itself, so asking for sharing can leave
+         * individually revoked links off — and the old warning said "Sharing is on, but the default
+         * link stays disabled" in both the case where that is true and the case where *every* link
+         * was revoked and nothing opened at all. The second reading is the dangerous one: an agent
+         * told sharing is on reports to its human that the document is live when it opens for
+         * nobody.
+         */
+        const askedOn = args.shareEnabled === true;
+        const warnings = !askedOn
+          ? []
+          : !view.anyLinkActive
             ? [
-                "Sharing is on, but the default link stays disabled because it was turned off on its own. " +
-                  "Turn it on with lnkdrp_update_share_link if the human wants that link to open again.",
+                "Sharing was switched on, but no link opened: every link on this document had been revoked on its own, " +
+                  "and the switch never restores those. Nobody can reach it until you enable a specific link with " +
+                  "lnkdrp_update_share_link.",
               ]
-            : [];
+            : !view.defaultLinkActive
+              ? [
+                  "Sharing is on and other links are live, but the default link stays disabled because it was turned " +
+                    "off on its own. Turn it on with lnkdrp_update_share_link if the human wants that link to open again.",
+                ]
+              : [];
         return { ...view, warnings };
       }, { fingerprint: fingerprintArgs(args) });
       return value;

@@ -14,8 +14,22 @@ import { debugError, debugLog } from "@/lib/debug";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { recordActivity } from "@/lib/activity/log";
 import { checkRecipientUploadCap, RECIPIENT_UPLOAD_LIMIT_CODE } from "@/lib/uploads/recipientCaps";
+import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 
 export const runtime = "nodejs";
+
+/**
+ * Burst brake for the public side of a replace link — the same one the request-upload route has.
+ *
+ * This route is the other half of that pair: a capability code in a URL, no sign-in, and on the
+ * strength of it we allocate a version, create an Upload and hand back a secret. It had the daily
+ * cap but no per-minute brake, so the cap of twenty-odd could be spent in one round trip and the
+ * two sibling routes disagreed about how hard a stranger may push. The numbers are copied from
+ * src/app/api/requests/[token]/uploads/route.ts and the bucket key shape is shared
+ * (`recipient-upload:ip:<ip>`), so a flood cannot simply move from one link type to the other.
+ */
+const START_UPLOAD_PER_IP_LIMIT = 10;
+const START_UPLOAD_WINDOW_MS = 60_000;
 
 /**
  * New Upload Secret (uses toString, randomBytes).
@@ -46,6 +60,19 @@ export async function POST(request: Request, ctx: { params: Promise<{ code: stri
     }
 
     debugLog(1, "[api/doc/update/:code/uploads] POST", { code: "[redacted]" });
+
+    // Before any lookup or write: the daily cap below is atomic, but it is still a cap of
+    // twenty-odd and nothing stopped one client from spending it in a single round trip.
+    const ip = clientIpFromRequest(request);
+    const burst = await rateLimit({
+      key: `recipient-upload:ip:${ip}`,
+      limit: START_UPLOAD_PER_IP_LIMIT,
+      windowMs: START_UPLOAD_WINDOW_MS,
+    });
+    if (!burst.ok) {
+      return rateLimitedResponse(burst, "Too many uploads from this connection. Please try again in a minute.");
+    }
+
     await connectMongo();
 
     const doc = await DocModel.findOne({

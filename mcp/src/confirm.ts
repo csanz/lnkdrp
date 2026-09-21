@@ -37,6 +37,47 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { ToolError } from "./errors";
+import { isLocalApiUrl } from "./tools/sharePdf";
+
+/**
+ * Skip the prompt while developing against a throwaway database.
+ *
+ * Confirming every delete is right in production and miserable in a test loop, where an agent may
+ * create and destroy fifty objects in a run and a human sits answering prompts about rows that
+ * existed for four seconds.
+ *
+ * Two conditions, both required, and the second is the one that matters:
+ *
+ * 1. `LNKDRP_SKIP_CONFIRMATIONS` is explicitly set. Nothing is skipped by default, ever.
+ * 2. `LNKDRP_API_URL` points at localhost — the *data* is a dev database.
+ *
+ * The second condition is not the same as "the server process is local", and conflating them is
+ * how this feature would cause the accident it is supposed to avoid. A local MCP pointed at
+ * https://lnkdrp.com is a normal, supported setup (it is how `filePath` uploads work), and in it a
+ * delete destroys a real document belonging to a real workspace. The process being on your laptop
+ * says nothing about whose data is at the other end; the API URL does.
+ *
+ * A flag set against a non-local API is ignored rather than honoured, and says so at startup — a
+ * silently disregarded safety switch is worse than one that never existed, because the operator
+ * believes something about the system that is not true.
+ */
+function skipConfirmations(env: NodeJS.ProcessEnv = process.env): boolean {
+  const flag = (env.LNKDRP_SKIP_CONFIRMATIONS || "").trim().toLowerCase();
+  if (!(flag === "1" || flag === "true" || flag === "yes")) return false;
+  const apiUrl = (env.LNKDRP_API_URL || "").trim();
+  // No API URL configured means the default, which is localhost outside production (config.ts).
+  return apiUrl ? isLocalApiUrl(apiUrl) : env.NODE_ENV !== "production";
+}
+
+/**
+ * Whether the flag was asked for but refused, so the server can say so once at startup rather than
+ * leaving the operator to infer it from prompts they did not expect.
+ */
+export function confirmationsSkipRequestedButUnsafe(env: NodeJS.ProcessEnv = process.env): boolean {
+  const flag = (env.LNKDRP_SKIP_CONFIRMATIONS || "").trim().toLowerCase();
+  const asked = flag === "1" || flag === "true" || flag === "yes";
+  return asked && !skipConfirmations(env);
+}
 
 /** What a destructive tool is about to do, in terms a person can weigh. */
 /**
@@ -90,6 +131,10 @@ export async function requireHumanConfirmation(
   preview: DestructivePreview,
   args: { confirm?: boolean | undefined },
 ): Promise<{ via: "elicitation" | "confirm_flag"; elicitationFailed?: true }> {
+  // Dev escape hatch, gated on the data being a dev database rather than on where this process
+  // runs. See `skipConfirmations`.
+  if (skipConfirmations()) return { via: "confirm_flag" };
+
   const workspace = workspaceLabels.get(server)?.() ?? null;
   const previewDetails = {
     requiresConfirmation: true,
@@ -113,7 +158,7 @@ export async function requireHumanConfirmation(
           properties: {
             confirmed: {
               type: "boolean",
-              title: preview.reversible ? "Yes, do it" : "Yes, delete it — I understand this cannot be undone",
+              title: preview.reversible ? "Yes, do it" : "Yes, delete it. I understand this cannot be undone",
               description: "Untick or cancel to keep everything as it is.",
             },
           },
@@ -138,11 +183,19 @@ export async function requireHumanConfirmation(
     // person pressing Escape, so it stays final like a decline. What differs is the guidance: the
     // agent needs to know a retry cannot get through and where the human can act instead.
     if (result.action === "cancel") {
+      // `cancel` is "dismissed without an answer", which the protocol keeps separate from `decline`.
+      // Clients that cannot render the form return it instantly and nobody ever saw the question —
+      // measured 2026-09-18, when an interactive Claude Code session timed out on the first call and
+      // got `cancel` on the retry, leaving deletes unreachable from every client we have. So it is
+      // treated exactly like a prompt that failed to deliver: the agent's `confirm: true`, its
+      // assertion that the human said yes in conversation, goes through. An explicit `decline`
+      // below still cannot be overridden.
+      if (args.confirm === true) return { via: "confirm_flag", elicitationFailed: true };
       throw new ToolError(
         "validation",
-        "The confirmation prompt was dismissed without an answer (headless clients dismiss it automatically). " +
-          "Nothing was changed, and calling again with confirm: true will not override it. " +
-          "Ask the user to do this in the lnkdrp app, or from a client that can show them the prompt.",
+        "The confirmation prompt was dismissed without an answer (a client that cannot show it dismisses it " +
+          "automatically). Nothing was changed. Show the user the preview in details, get an explicit yes in " +
+          "conversation, then call again with confirm: true.",
         { status: 400, details: { ...previewDetails, userAction: result.action } },
       );
     }
@@ -160,8 +213,14 @@ export async function requireHumanConfirmation(
     "validation",
     `${preview.headline}${workspace ? ` in the workspace ${workspace}` : ""}. This needs the user's explicit go-ahead. Show them the facts in details.preview, ` +
       `ask, and only if they say yes call this tool again with confirm: true. ` +
+      // Keyed on what the preview actually says, not on severity alone: `severityFromTraffic`
+      // also returns "high" for more than one live link, so a document nobody has opened was being
+      // described as having "real recipient traffic" directly above facts reading "Never opened by
+      // a recipient". A confirmation prompt that contradicts its own evidence teaches the reader to
+      // skip the prose.
       (preview.severity === "high"
-        ? "This target has real recipient traffic — do not confirm on your own judgement."
+        ? "Several people may lose access at once: recipients have opened this, or more than one live link stops " +
+          "resolving. Do not confirm on your own judgement."
         : "Nothing has opened this yet, so the stakes are low, but the ask is still required."),
     { status: 400, details: previewDetails },
   );

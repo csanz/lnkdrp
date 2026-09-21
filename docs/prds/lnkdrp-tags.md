@@ -1,6 +1,6 @@
 # PRD — Tags
 
-**Status:** Draft 2026-09-17 (metis `prd_5sIwl5b01z`)
+**Status:** Approved 2026-09-18, building (metis `prd_5sIwl5b01z`)
 **Owner:** chrissanz
 **Last updated:** 2026-09-17
 **Project:** lnkdrp
@@ -64,14 +64,28 @@ the case here.
 7. **Where tags appear:** a chip row under the title on the document page and the project page
    (click to filter), a `tag:` filter and facet in Search, a tag page listing the documents and
    projects that carry it, and a tag filter on Metrics.
-8. **Metrics by tag is the payoff.** The workspace Metrics page gains an optional tag filter, so
+   **In the sidebar, a tag is a coloured dot, not a pill** (decided 2026-09-18 from
+   `/style-guide/tags`, which put both at the sidebar's real width): a pill reads instantly but
+   costs name width, and it stops fitting exactly when tags become useful — two tags turned
+   "Quarterly updates" into "Q…". Up to three dots sit before the document count, names in the
+   tooltip, and a **Tags section** below Projects lists each tag with its count, which is what
+   makes a colour legible. Full pills everywhere with room: document and project pages, search
+   results, modals.
+   **Colour is auto-assigned from a small palette and can be changed per tag** — effortless by
+   default, and durable ("green is fundraising") for anyone who cares to set it.
+8. **A tag's page is search, scoped.** `/tag/:slug` shows the rollup for the range (Views, Opens,
+   Reading time, Downloads across everything carrying it) above the projects and documents that
+   carry it — built on Search's query and row components, not a parallel listing, so the page and
+   `search?tag=` can never disagree. Documents in no project appear there too, which is half the
+   point of tags.
+9. **Metrics by tag is the payoff.** The workspace Metrics page gains an optional tag filter, so
    "fundraising: 340 views, 6 documents, 22 minutes read this month" is one click — a rollup across
    projects that no project could give. Uses the locked definitions; the tag filter resolves to a
    document id set and reuses the existing aggregation.
-9. **Plan gating: tags are free; tag-scoped metrics are Pro.** Organising should never be
+10. **Plan gating: tags are free; tag-scoped metrics are Pro.** Organising should never be
    paywalled. Analytics depth is already where the Free/Pro line sits, so tag filtering on Metrics
    follows `analytics_history`.
-10. **Agents get the full surface:** `lnkdrp_list_tags`, `lnkdrp_tag` and `lnkdrp_untag`
+11. **Agents get the full surface:** `lnkdrp_list_tags`, `lnkdrp_tag` and `lnkdrp_untag`
     (documents and projects), plus a `tags` field on the existing list/get tools and a `tag` filter
     on `lnkdrp_list_docs`. An agent that files every incoming document is how tags stay accurate.
 
@@ -132,12 +146,13 @@ the case here.
 
 ## Open questions
 
-- Does a tag on a project **imply** the tag on its documents (inherited), or are the two
-  independent? Draft: independent, because a project holds documents that are not all about the
-  same theme, and inheritance makes "untag this one document" impossible to express.
+- **Locked 2026-09-18: independent.** A tag on a project does not propagate to its documents; a
+  project holds documents that are not all about the same theme, and inheritance makes "untag this
+  one document" impossible to express. A tag page therefore lists the tagged project *and* the
+  documents that carry the tag themselves.
 - Should the AI suggest tags from the workspace's existing vocabulary rather than free text, once
   there is a vocabulary to suggest from?
-- Colour: fixed palette chosen automatically, or user-picked?
+- **Locked 2026-09-18:** auto-assigned from a fixed palette, changeable per tag.
 
 ## Future
 

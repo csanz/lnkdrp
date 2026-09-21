@@ -152,7 +152,7 @@ export default function UsageTable({
   }, [days, showSpend, refreshNonce, page]);
 
   return (
-    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6", className)}>
+    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6", className)}>
       <div className="flex items-center justify-between gap-3">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span className="text-[13px] font-semibold text-[var(--fg)]">Usage</span>

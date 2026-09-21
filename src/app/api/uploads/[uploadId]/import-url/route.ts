@@ -250,11 +250,43 @@ async function importUrl(
 
     await connectMongo();
 
-    // Authorization: upload must belong to the actor.
+    /**
+     * Authorization: the upload must belong to the actor **and** sit in the workspace the actor is
+     * acting in.
+     *
+     * This matched `{ _id, userId }` and called that "the upload must belong to the actor" — the
+     * same mistake `GET /api/uploads` made one directory up, except this one ends in a *write*.
+     * The other gate, `forbidUnlessOrgRole` above, asks whether the caller may write in the
+     * workspace they are *currently* in; it never looks at the upload's. So the two together only
+     * ever asked two questions about two different workspaces, and never the one that mattered.
+     *
+     * An `lnk_` key is attributed to the member who minted it but scoped to *its own* workspace
+     * (`apiKeyActor.ts`), so a key minted in workspace B, by someone who had also uploaded into
+     * workspace A — or who has since been removed from A — passed both gates and then installed
+     * attacker-chosen bytes as a version of A's document. The route already knew: it resolves the
+     * document's real org further down for the activity row, and happily logged the write into a
+     * workspace the actor was not in.
+     *
+     * `orgId` is stamped on the upload row at creation from its document, so the bound is on the
+     * row itself and no later lookup can reintroduce the gap. `allowLegacyByUserId` is the same
+     * concession `src/lib/docs/docMatch.ts` makes: rows that predate workspaces carry no `orgId`
+     * and belong to a person, so they resolve only while that person is sitting in their own
+     * personal workspace. It goes in `$and` rather than as a top-level `$or` for the reason
+     * `/api/uploads` spells out — a later clause assigning `$or` would replace the tenancy one
+     * outright, which is how document search lost its scoping once already.
+     */
+    const orgId = new Types.ObjectId(actor.orgId);
+    const actorUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const tenancy = allowLegacyByUserId
+      ? { $or: [{ orgId }, { orgId: { $exists: false } }, { orgId: null }] }
+      : { orgId };
+
     const upload = await UploadModel.findOne({
       _id: new Types.ObjectId(uploadId),
-      userId: new Types.ObjectId(actor.userId),
+      userId: actorUserId,
       isDeleted: { $ne: true },
+      $and: [tenancy],
     });
     if (!upload) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -300,10 +332,17 @@ async function importUrl(
     // If the share is password-protected, our `/s/:shareId/pdf` proxy will 401 without a share auth cookie.
     // For *owner-owned* shares, allow import by resolving the underlying blobUrl directly from DB.
     if (internal && first.res.status === 401) {
+      // Same workspace bound as the upload lookup above, for the same reason. The `shareId` here
+      // comes out of the caller's own request body, so `{ shareId, userId }` alone was a second way
+      // in: a key scoped to workspace B could name a password-protected share in workspace A and,
+      // because "owner" was decided by `userId` alone, have the server hand over that document's
+      // private blob bytes and write them into a document the caller does control. A share the
+      // caller can only reach from another workspace now falls through to the ordinary 401.
       const owned = await DocModel.findOne({
         shareId: internal.shareId,
-        userId: new Types.ObjectId(actor.userId),
+        userId: actorUserId,
         isDeleted: { $ne: true },
+        $and: [tenancy],
       })
         .select({ blobUrl: 1 })
         .lean();

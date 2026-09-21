@@ -11,12 +11,14 @@ import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
 import { debugEnabled, debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg, type Actor } from "@/lib/gating/actor";
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse, type LimitCheck, type PlanLimitBlocked } from "@/lib/billing/planLimits";
-import { ensureDefaultLink, setAllLinksEnabled, updateShareLink } from "@/lib/share/links";
+import { ensureDefaultLink, setAllLinksEnabled, syncDocShareState, updateShareLink } from "@/lib/share/links";
+import { buildDocMatch } from "@/lib/docs/docMatch";
+import { removeAllTagsFromTarget } from "@/lib/tags/service";
 
 /**
  * How long an upload may sit in `uploading` with nothing written before a read treats it as dead.
@@ -64,6 +66,19 @@ async function applyShareFieldsToLinks(input: {
   if (typeof body.shareEnabled === "boolean") {
     const res = await setAllLinksEnabled({ orgId, docId: doc._id, enabled: body.shareEnabled });
     if (res.limit && !res.limit.ok) return res.limit;
+    /**
+     * Re-derive, because the switch can change nothing.
+     *
+     * Turning sharing *on* only restores links the switch itself disabled. When every link was
+     * revoked individually there is nothing to restore, `changed` is 0 — and `Doc.shareEnabled`
+     * was still written true, leaving a document that claimed to be shared with no live link on
+     * it. `get_share` then answered `shareEnabled: false` beside `anyLinkActive: true`, two
+     * statements that cannot both hold, from one read.
+     *
+     * `syncDocShareState` derives the flag from the links rather than from the intent, which is
+     * the only version that cannot drift.
+     */
+    await syncDocShareState(doc._id);
   }
   if (typeof body.shareAllowPdfDownload === "boolean" || typeof body.shareAllowRevisionHistory === "boolean") {
     const defaultLink = await ensureDefaultLink({
@@ -101,25 +116,6 @@ function isObjectId(id: string) {
  *
  * Exists to reduce duplication across GET/PATCH/DELETE handlers.
  */
-function buildDocMatch(
-  docObjectId: Types.ObjectId,
-  orgId: Types.ObjectId,
-  legacyUserId: Types.ObjectId,
-  allowLegacyByUserId: boolean,
-) {
-  // A soft-deleted document is gone: GET used to keep serving it and PATCH kept editing it, and a
-  // second DELETE logged a second doc.deleted row.
-  const notDeleted = { isDeleted: { $ne: true } };
-  return allowLegacyByUserId
-    ? {
-        ...notDeleted,
-        $or: [
-          { _id: docObjectId, orgId },
-          { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-        ],
-      }
-    : { _id: docObjectId, orgId, ...notDeleted };
-}
 
 /**
  * Generate a secret token for a public "replace upload" link for a doc.
@@ -128,6 +124,51 @@ function buildDocMatch(
  */
 function newReplaceUploadToken() {
   return newSecretToken(24);
+}
+
+/**
+ * Fields on a Doc whose value *is* access, for the `?debug=1` snapshot below.
+ *
+ * Same rule as `src/lib/admin/docPrivacy.ts` keeps for the admin routes, kept by name here so the
+ * raw-row escape hatch cannot serve what the shaped response withholds.
+ */
+const DOC_SECRET_FIELDS = [
+  "replaceUploadToken",
+  "sharePasswordSalt",
+  "sharePasswordHash",
+  "sharePasswordEnc",
+  "sharePasswordEncIv",
+  "sharePasswordEncTag",
+] as const;
+
+/** A copy of `row` with every capability field removed. The input is untouched. */
+function withoutDocSecrets(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row };
+  for (const f of DOC_SECRET_FIELDS) delete out[f];
+  return out;
+}
+
+/**
+ * Whether this caller may be handed `Doc.replaceUploadToken`.
+ *
+ * The token is a bearer capability, not a piece of metadata: `POST /api/replace/:token/uploads`
+ * authorises on the token alone, with no session, and the `uploadSecret` it returns installs a new
+ * PDF as the current version of a document recipients are already reading. Nothing in the codebase
+ * rotates or revokes the token, so whoever reads it once can overwrite that document for ever.
+ * Reading it is therefore the document-edit right, permanently, and has to be gated as such:
+ *
+ * - `viewer` never sees it. PATCH on this same document refuses a viewer (`minRole: "member"`),
+ *   and a viewer who could read the token would simply replace the file through the public route
+ *   instead, which is the member gate bypassed rather than enforced.
+ * - An API key never sees it, whatever scopes it holds. A key is revocable and this token is not,
+ *   so a `read`-scope key that fetched one document would leave behind a write capability that
+ *   outlives revoking the key — the self-perpetuating compromise `src/lib/gating/forbidApiKey.ts`
+ *   exists to prevent. An agent that should replace a PDF does it through the scoped upload API.
+ */
+async function mayHoldReplaceCapability(actor: Actor): Promise<boolean> {
+  if (actor.kind === "user" && actor.viaApiKey) return false;
+  const check = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "member" });
+  return check.ok;
 }
 
 /**
@@ -277,7 +318,12 @@ export async function GET(
     const isReceivedViaRequest = Boolean(receivedViaRequestProjectIdRaw);
     const replaceUploadTokenRaw = (docLean as unknown as { replaceUploadToken?: unknown }).replaceUploadToken;
     const hasReplaceUploadToken = typeof replaceUploadTokenRaw === "string" && replaceUploadTokenRaw.trim().length > 0;
-    if (isReceivedViaRequest && !hasReplaceUploadToken) {
+    // Only asked for documents that carry the capability at all, so the ordinary read stays one
+    // query. A caller who may not hold the token does not mint one either: a viewer's read must
+    // not create a permanent write capability over a document they cannot edit.
+    const mayReplace =
+      isReceivedViaRequest || hasReplaceUploadToken ? await mayHoldReplaceCapability(actor) : false;
+    if (isReceivedViaRequest && mayReplace && !hasReplaceUploadToken) {
       // Very low collision probability, but handle duplicate-key errors defensively.
       for (let i = 0; i < 2; i++) {
         const candidate = newReplaceUploadToken();
@@ -308,7 +354,12 @@ export async function GET(
 
     const currentUploadId = (docLean as any).currentUploadId ?? (docLean as any).uploadId ?? null;
 
-    const uploadPromise = currentUploadId ? UploadModel.findById(currentUploadId).lean() : Promise.resolve(null);
+    // Scoped to this document, not just to the id: a pointer written before that field was locked
+    // down (or by any future bug that moves it) must not be able to pull in a foreign workspace's
+    // upload. An upload that does not belong to this document reads as absent.
+    const uploadPromise = currentUploadId
+      ? UploadModel.findOne({ _id: currentUploadId, docId: docObjectId }).lean()
+      : Promise.resolve(null);
 
     const upload = lite ? null : await uploadPromise;
     // In `lite=1` mode we avoid fetching heavy text fields, but we still need:
@@ -657,7 +708,9 @@ export async function GET(
           const raw = (docLean as unknown as { receivedViaRequestProjectId?: unknown }).receivedViaRequestProjectId;
           return raw ? String(raw) : null;
         })(),
+        // Null for a viewer and for any API key: see `mayHoldReplaceCapability`.
         replaceUploadToken: (function () {
+          if (!mayReplace) return null;
           const raw = (docLean as unknown as { replaceUploadToken?: unknown }).replaceUploadToken;
           return typeof raw === "string" && raw.trim() ? raw.trim() : null;
         })(),
@@ -743,7 +796,11 @@ export async function GET(
 
       response.debug = {
         enabled: true,
-        doc: docLean,
+        // The debug snapshot is the raw row, so it is a second way out of this handler and it
+        // would hand back the capability token and the share-password material that the fields
+        // above withhold — to a viewer, on any deployment where `?debug=1` is honoured. Diagnosing
+        // a stuck document needs the status and the pointers, never the secrets.
+        doc: withoutDocSecrets(docLean as Record<string, unknown>),
         currentUpload: upload,
         ...(wantsDebugUploads
           ? {
@@ -832,9 +889,24 @@ export async function PATCH(
 
     if (typeof body.title === "string") setFields.title = body.title;
     if (typeof body.status === "string") setFields.status = body.status;
-    if (typeof body.blobUrl === "string" || body.blobUrl === null) setFields.blobUrl = body.blobUrl;
-    if (typeof body.previewImageUrl === "string" || body.previewImageUrl === null)
-      setFields.previewImageUrl = body.previewImageUrl;
+    /**
+     * `blobUrl` and `previewImageUrl` are NOT patchable, deliberately.
+     *
+     * They used to be, unvalidated, and that was remotely exploitable. The public PDF proxies
+     * (`/s/:shareId/pdf`, `/p/:shareId/:docId/pdf`, the download and request-view routes) fetch
+     * whatever `blobUrl` holds and stream the response back, copying the upstream `content-type`
+     * verbatim with `content-disposition: inline`. The app's only CSP header is
+     * `frame-ancestors 'self'` — there is no `script-src` — so pointing `blobUrl` at a host that
+     * answers `text/html` made the product serve attacker HTML and JavaScript from its own origin,
+     * through its core flow: send someone a share link. The same field also gave the server an
+     * arbitrary outbound GET from inside the deployment network, with the body returned to an
+     * unauthenticated caller.
+     *
+     * Nothing legitimate ever set them here: they are written by the upload processor directly on
+     * the model, and the upload route already validates its own copy against the blob store
+     * (`isBlobUrlForUpload`). Refusing the field is stronger than validating it — there is no
+     * validator left to get wrong, and no second sink to remember.
+     */
     if (typeof body.extractedText === "string" || body.extractedText === null)
       setFields.extractedText = body.extractedText;
     if (typeof body.receiverRelevanceChecklist === "boolean") {
@@ -1034,15 +1106,21 @@ export async function PATCH(
       }
     }
 
-    if (typeof body.currentUploadId === "string" || body.currentUploadId === null) {
-      const nextUploadId =
-        typeof body.currentUploadId === "string" && body.currentUploadId
-          ? new Types.ObjectId(body.currentUploadId)
-          : null;
-      setFields.currentUploadId = nextUploadId;
-      // keep backward compat field in sync
-      setFields.uploadId = nextUploadId;
-    }
+    /**
+     * `currentUploadId` is NOT patchable either, for the same class of reason.
+     *
+     * It was accepted from the body, cast to an ObjectId and written with no ownership check —
+     * while the sibling id in this very handler (`joiningProjectIds`, above) does the correct
+     * `countDocuments` with an `orgId` clause. `GET` then read that pointer back with a bare
+     * `UploadModel.findById` and serialised the row: `blobUrl`, `rawExtractedText`, `aiOutput`,
+     * and the uploader's name and address. So any signed-in user could point their own throwaway
+     * document at another workspace's upload and read the whole thing — defeating share passwords
+     * and `allowDownload: false`, which never touch that path. The read-time repair block would
+     * then copy the stolen artifacts onto the attacker's document, making them re-shareable.
+     *
+     * The pointer is the upload pipeline's to move (`/api/uploads/:id/process` sets it after the
+     * bytes land), never a client's.
+     */
 
     const updateDoc: Record<string, unknown> = {};
     if (Object.keys(setFields).length) updateDoc.$set = setFields;
@@ -1293,6 +1371,10 @@ export async function DELETE(
       .select({ _id: 1, title: 1 })
       .lean();
     if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // A deleted document keeps no tags: the rows would otherwise sit in the join collection
+    // pointing at something nothing can open (src/lib/tags/service.ts).
+    void removeAllTagsFromTarget({ orgId: actor.orgId, targetKind: "doc", targetId: docObjectId }).catch(() => {});
 
     void recordActivity({
       orgId: actor.orgId,

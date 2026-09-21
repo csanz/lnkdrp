@@ -220,11 +220,11 @@ export function registerListProjectLinksTool(server: McpServer, ctx: ToolContext
       description:
         "Every share link of a project, the default link first: label, audience, shareUrl (/p/<shareId>), status " +
         "(active|disabled|expired), whether a password is set, expiry, whether downloads are allowed, and that link's own " +
-        "view and download counts. viewCount is the number of recipients who opened something through the link — the same " +
-        "quantity it carries on a document link — not landings on the project page and not documents opened. publicPageEnabled says whether the project's page resolves at all: while it is false every link " +
+        "view and download counts. viewCount is the number of recipients who opened something through the link, the same " +
+        "quantity it carries on a document link. It is not landings on the project page and not documents opened. publicPageEnabled says whether the project's page resolves at all: while it is false every link " +
         "reads disabled, and lnkdrp_update_project { publicPageEnabled: true } turns them back on. Pass query to search this " +
         "project's links by label/audience instead of listing all of them. Use a link's id with " +
-        "lnkdrp_update_project_link / lnkdrp_delete_project_link. Archived (deleted) links are not listed. " +
+        "lnkdrp_update_project_link / lnkdrp_delete_project_link. Archived (deleted) links are not listed. An empty links list does NOT mean the project is private: a new project's default link has no row until the first write, so check publicPageEnabled, and read note when it is present. " +
         SAFETY_TAIL,
       inputSchema: listProjectLinksInputShape,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -232,11 +232,29 @@ export function registerListProjectLinksTool(server: McpServer, ctx: ToolContext
     handleTool(async (args) => {
       const { project } = await loadProject(ctx.api, args);
       const links = await ctx.api.listProjectLinks(project.id, args.query);
+      /**
+       * A live public page with no link row to show for it.
+       *
+       * A project's default link is materialised lazily — listing is a read and deliberately does
+       * not write one (src/lib/share/projectLinks.ts) — so a brand-new project answers `links: []`
+       * while `/p/:shareId` is already serving. An agent asked "is this shared with anyone?" then
+       * says no, and an agent asked to revoke it finds nothing to revoke, both about a project
+       * anyone holding the URL can read right now. Say so instead, and say where the handle is.
+       */
+      const unmaterialisedDefault = !args.query && project.shareEnabled && links.length === 0;
       return {
         project: projectRef(project),
         // `null` only when the route did not say; the project docs route always does.
         publicPageEnabled: project.shareEnabled,
         links: links.map((l) => withUrl(ctx.api, l)),
+        ...(unmaterialisedDefault
+          ? {
+              note:
+                "This project's public page is live and reachable at its publicUrl, but its default link has no row yet " +
+                "(it is created on the first write). There is nothing here to revoke by linkId: turn the page off with " +
+                "lnkdrp_update_project { publicPageEnabled: false }, which closes it for everyone.",
+            }
+          : {}),
       };
     }),
   );
@@ -250,6 +268,9 @@ export function registerUpdateProjectLinkTool(server: McpServer, ctx: ToolContex
       title: "Update project link",
       description:
         "Change one project link: label, audience, enabled, allowDownload, password (string to set, null to remove), " +
+        "Enabling a link can republish the project's public page: if the page was switched off, turning one link back " +
+        "on restores every link that switch had disabled (links revoked on their own stay revoked), and the response " +
+        "then carries a warnings array naming them. " +
         "expiresAt (ISO date or null). At least one setting is required. Disabling a link revokes that recipient's access to " +
         "the whole project at once - the documents themselves, their own links and every other recipient's project link are " +
         "untouched - which is how a project link is revoked without deleting it and losing nothing of its analytics. " +
@@ -271,11 +292,15 @@ export function registerUpdateProjectLinkTool(server: McpServer, ctx: ToolContex
         throw new ToolError("validation", "Pass at least one of label, audience, enabled, allowDownload, password, expiresAt.");
       }
       const { project } = await loadProject(ctx.api, args);
-      const link = await ctx.api.updateProjectLink(project.id, args.linkId, patch);
+      const { link, warnings } = await ctx.api.updateProjectLink(project.id, args.linkId, patch);
       return {
         project: projectRef(project),
         link: withUrl(ctx.api, link),
         shareUrl: ctx.api.projectPublicUrl(link.shareId),
+        // Turning a link on can republish the room and bring back the links its page switch had
+        // taken down — a change to who can reach the data room, reported to the caller that caused
+        // it rather than left to be discovered by listing.
+        ...(warnings.length ? { warnings } : {}),
       };
     }),
   );

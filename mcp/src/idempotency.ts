@@ -52,7 +52,27 @@ export class IdempotencyStore {
    * Run `fn` once per key: a replay returns the cached value with `replayed: true`. Concurrent
    * calls with the same key share one execution.
    */
-  async run<T>(key: string, fn: () => Promise<T>, opts: { fingerprint?: string } = {}): Promise<{ value: T; replayed: boolean }> {
+  async run<T>(
+    key: string,
+    fn: () => Promise<T>,
+    opts: {
+      fingerprint?: string;
+      /**
+       * Does the thing this key created still exist?
+       *
+       * Without it a replay outlives its subject: create a document, delete it, retry the key, and
+       * the tool answers with the original success — same docId, `status: "ready"`, no warning —
+       * describing something that is gone. The agent hands a dead share link to a human. The cache
+       * cannot know that on its own, because only the caller knows what the stored value points at
+       * and how to look it up, so the caller says.
+       *
+       * Treated as "still there" when it throws: a lookup that failed for its own reasons is not
+       * evidence of a deletion, and re-running a create on a bad network call is the one outcome
+       * worse than a stale replay.
+       */
+      stillExists?: (value: T) => Promise<boolean>;
+    } = {},
+  ): Promise<{ value: T; replayed: boolean }> {
     const now = Date.now();
     const existing = this.entries.get(key);
     if (existing && existing.expiresAt > now) {
@@ -66,7 +86,17 @@ export class IdempotencyStore {
           { status: 409, details: { code: "idempotency_key_reused" } },
         );
       }
-      return { value: (await existing.promise) as T, replayed: true };
+      const cached = (await existing.promise) as T;
+      if (opts.stillExists) {
+        const alive = await opts.stillExists(cached).catch(() => true);
+        if (!alive) {
+          // Gone. Forget the key and fall through to a real run, which is what the caller asked
+          // for: "give me this thing", not "tell me what I once made".
+          this.entries.delete(key);
+          return this.run(key, fn, opts);
+        }
+      }
+      return { value: cached, replayed: true };
     }
     if (existing) this.entries.delete(key);
 

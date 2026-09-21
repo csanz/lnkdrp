@@ -45,7 +45,12 @@ function humanKey(key: string): string {
     .toLowerCase();
 }
 
-export type CronStat = { label: string; value: string; zero: boolean };
+/**
+ * One labelled figure beside a job. `tone` is for the rare figure that is a state rather than a
+ * number — a dead-letter count does not clear by itself — and is left off everywhere else, so a
+ * row of counters stays a row of counters (`cronStatsFigures` never sets it).
+ */
+export type CronStat = { label: string; value: string; zero: boolean; tone?: AdminTone };
 
 /**
  * The counters worth showing beside a job, as labelled figures.

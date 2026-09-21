@@ -120,7 +120,13 @@ export default function UploadButton({
  */
 
     const onDrop = (e: DragEvent) => {
+      // `preventDefault` first and unconditionally: without it the browser navigates away to the
+      // dropped file, which on a document page throws the reader out of the app entirely.
       e.preventDefault();
+      // The same guard the click path has (`openPicker`). Dropping onto a button that is visibly
+      // disabled — a document still preparing, say — used to start a replacement anyway, which then
+      // failed server-side and looked like the page had simply blinked.
+      if (disabled) return;
       const file = e.dataTransfer?.files?.[0] ?? null;
       if (file) handleFile(file);
     };
@@ -136,7 +142,7 @@ export default function UploadButton({
       window.removeEventListener("dragleave", onDragLeave);
       window.removeEventListener("drop", onDrop);
     };
-  }, [handleFile]);
+  }, [handleFile, disabled]);
 
   // `accept` is intentionally unused beyond the prop type: documents are PDF-only.
   void accept;

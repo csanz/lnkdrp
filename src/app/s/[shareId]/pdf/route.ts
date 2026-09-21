@@ -8,9 +8,27 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { clientIpFromRequest, rateLimit } from "@/lib/http/rateLimit";
 import crypto from "node:crypto";
+import net from "node:net";
+import { blobFetchUrl, fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 
 export const runtime = "nodejs";
+
+/**
+ * How much analytics one caller may write through this proxy.
+ *
+ * A real reader on a real link opens a handful of documents a minute; these are generous enough that
+ * nobody legitimate ever meets them, and low enough that the flood this bounds (see the comment at
+ * the tracking block) is not worth an attacker's time.
+ */
+const DOWNLOAD_TRACK_PER_LINK_LIMIT = 30;
+/** Wider bucket, so a caller cannot simply walk across every link they hold to dodge the first. */
+const DOWNLOAD_TRACK_PER_IP_LIMIT = 120;
+const DOWNLOAD_TRACK_WINDOW_MS = 60_000;
+
+
+
 /**
  * Utc Day Key (uses slice, toISOString).
  */
@@ -28,10 +46,19 @@ function pickFirstForwardedIp(v: string): string {
   return v.split(",")[0]?.trim() ?? "";
 }
 /**
- * Normalize Ip (uses trim, startsWith, includes).
+ * Trim a forwarding-header value down to a bare IP literal, or reject it.
+ *
+ * Every candidate header below is client-influenced text: `cf-connecting-ip` and `true-client-ip`
+ * are set by a caller reaching this origin directly, and even `x-forwarded-for` is appended to, not
+ * replaced. This used to return whatever was left after stripping a port — so the 128 characters of
+ * anything a stranger put in `cf-connecting-ip` were written verbatim into `ShareView.viewerIp`,
+ * the field the owner reads in the admin share-view tables. The stats ingest next door
+ * (`/api/share/[shareId]/stats`) and `clientIpFromRequest` both already ended on `net.isIP`; this
+ * copy of the helper was the one that did not. It now rejects anything that is not an IP literal,
+ * and the loop falls through to the next header, exactly as it does for an absent one — so a
+ * spoofed header can still *choose* which address is attributed, which it always could, but can no
+ * longer put arbitrary text in front of the owner.
  */
-
-
 function normalizeIp(raw: string): string | null {
   const s = raw.trim();
   if (!s) return null;
@@ -40,21 +67,25 @@ function normalizeIp(raw: string): string | null {
   // Handle bracketed IPv6 like "[::1]:1234"
   if (s.startsWith("[") && s.includes("]")) {
     const inside = s.slice(1, s.indexOf("]")).trim();
-    return inside || null;
+    return inside && net.isIP(inside) ? inside : null;
   }
 
   // Strip port for "1.2.3.4:5678"
+  let ip = s;
   if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(s)) {
-    return s.slice(0, s.lastIndexOf(":"));
+    ip = s.slice(0, s.lastIndexOf(":"));
   }
 
-  return s;
+  return net.isIP(ip) ? ip : null;
 }
 /**
- * Get client ip.
+ * Best-effort viewer address for analytics attribution only.
+ *
+ * Deliberately not the rate-limiter's idea of the caller: the limiter uses `clientIpFromRequest`,
+ * which reads only the hops a proxy sets, because a caller who can name their own bucket has no
+ * limit at all (see the comment at the tracking block). This one takes the first hop of whichever
+ * header is present, all of them now validated by `normalizeIp`.
  */
-
-
 function getClientIp(request: Request): string | null {
   const h = request.headers;
   const candidates = [
@@ -117,11 +148,57 @@ function safePdfFilename(input: string | null | undefined): string {
 }
 
 /**
+ * True when a `Range` header asks for something other than the beginning of the file.
+ *
+ * One read arrives here as several GETs: a reader that fetches a PDF in pieces repeats the same
+ * `botId` on each chunk, and every one of them used to be counted as its own download. Only the
+ * request that starts at byte 0 is treated as the read; its continuations are served without
+ * touching a counter. Anything unparseable is treated as the start, so a header shape we did not
+ * anticipate loses bytes to nobody — it just counts, exactly as before.
+ */
+function rangeStartsAfterFirstByte(raw: string | null): boolean {
+  if (!raw) return false;
+  const m = /^bytes\s*=\s*(\d*)\s*-/i.exec(raw.trim());
+  if (!m) return false;
+  // `bytes=-500` is a suffix range: it names the tail of the file, never its start.
+  if (m[1] === "") return true;
+  return Number(m[1]) > 0;
+}
+
+/**
+ * True when this request is a client *taking* the file, rather than the share viewer reading it.
+ *
+ * `Sec-Fetch-Site` and `Sec-Fetch-Dest` are stamped by the browser and cannot be set from page
+ * script, so they are the one signal available in this handler that separates "pdf.js is fetching
+ * the document it is rendering" from "someone pasted the PDF URL into the address bar". The
+ * viewer's own loads are always `same-origin`, landing on `empty` (pdf.js fetch/XHR) or `iframe`
+ * (the native-PDF fallback frame). A bare navigation reports `none`, another site's embed reports
+ * `cross-site`, and a top-level open — including "open in new tab" from the share page — reports
+ * `dest: document`.
+ *
+ * A request carrying no Fetch Metadata at all is served, deliberately. Browsers that predate the
+ * headers omit them, and so does the product's own server-side importer, which fetches
+ * `/s/:shareId/pdf` to pull a deck in (`/api/uploads/:uploadId/import-url`); refusing those would
+ * break real reads in order to inconvenience a client that can simply choose to send whichever
+ * header it likes. So this raises the bar on the everyday grab — address bar, bookmark, open in a
+ * new tab, a foreign page's `<embed>` — and does not pretend to stop a determined recipient, who
+ * has the bytes in their browser either way. Actually closing that means never handing a
+ * no-download viewer the original file (the per-page images in `Upload.slideNodes` exist for it),
+ * which is a change to what the recipient sees, not to this route.
+ */
+function isRawFileRequest(request: Request): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (!site) return false;
+  if (site !== "same-origin") return true;
+  return request.headers.get("sec-fetch-dest") === "document";
+}
+
+/**
  * Same-origin PDF proxy for `/s/:shareId`.
  *
  * - Supports Range requests (PDF.js uses them).
  * - If password-protected, requires the share auth cookie.
- * - If `?download=1`, enforces `doc.shareAllowPdfDownload` and sets attachment headers.
+ * - Enforces the link's `allowDownload`, and sets attachment headers for `?download=1`.
  */
 /** Activity feed: "downloaded" event for the owner's workspace (best-effort, never blocks the download). */
 async function recordDownloadActivity(
@@ -193,6 +270,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   if (typeof blobUrl !== "string" || !blobUrl) {
     return NextResponse.json({ error: "PDF not available" }, { status: 404 });
   }
+  // A stored pointer we are not willing to dereference is the same answer as no pointer at all —
+  // see `blobFetchUrl`. Decided here, next to the empty check and ahead of everything else, so a
+  // refused row never reaches the analytics writes below: a download that cannot be served must not
+  // be counted as one, and a `fetch` of a host that does not resolve would otherwise throw out of
+  // this handler as a 500 instead of the document's own 404.
+  const pdfUrl = blobFetchUrl(blobUrl);
+  if (!pdfUrl) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
 
   const sharePasswordHash = link.passwordHash;
   const sharePasswordSalt = link.passwordSalt;
@@ -211,8 +295,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     }
   }
 
-  // Download permission is per link: the same document may be downloadable on one link and not on another.
-  if (wantsDownload && !link.allowDownload) {
+  // Download permission is per link: the same document may be downloadable on one link and not on
+  // another. The gate read `wantsDownload && !link.allowDownload`, which made a query parameter the
+  // lock — drop `?download=1` and the identical bytes came back with `content-disposition: inline`,
+  // so a recipient the sender had explicitly marked no-download took the whole original PDF by
+  // editing the address bar. `?download=1` only ever chose the disposition header; it was never a
+  // fact about the request, and a client picks it.
+  //
+  // What the flag can honestly mean in this handler is "this file is for reading here, not for
+  // taking away", so the gate now asks what the request *is* (see `isRawFileRequest`) instead of
+  // what it says it is. The viewer's own fetches are untouched.
+  if (!link.allowDownload && (wantsDownload || isRawFileRequest(request))) {
     return new Response("Download disabled", { status: 403 });
   }
 
@@ -226,10 +319,42 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     ? await isOwnerSideViewer(doc as { orgId?: unknown; userId?: unknown }, downloadSession?.userId ?? null)
     : false;
 
+  // Everything below this line is a write, and until now the only thing standing between a stranger
+  // holding the link and the owner's analytics was the stranger's patience. This route is public,
+  // unauthenticated and side-effecting: each `?download=1&botId=<anything>` upserts a `ShareView`
+  // row, moves the link's counters and appends to the owner's activity feed, with the identity of
+  // the "reader" taken straight from the query string — and `Range: bytes=0-0` made each invented
+  // reader cost about a byte of egress. The stats ingest already bounded exactly this shape
+  // (`sharestats:ip:<ip>`, see `/api/share/[shareId]/stats`); this route simply never got the same
+  // bound.
+  //
+  // A blocked caller still receives their PDF. Refusing the bytes would turn a noisy-neighbour limit
+  // into a broken download for whoever shares an office NAT with them; the only thing withheld is
+  // the counter move.
+  //
+  // The key uses `clientIpFromRequest` rather than this file's `getClientIp`: the latter also honours
+  // `cf-connecting-ip` / `true-client-ip`, which a direct caller sets freely and could therefore use
+  // to mint a fresh bucket per request. `getClientIp` stays for analytics attribution only.
+  const rangeHeader = request.headers.get("range");
+  const trackingBotId = typeof botId === "string" && botId.trim() ? botId.trim() : null;
+  let trackDownload = wantsDownload && Boolean(trackingBotId) && !rangeStartsAfterFirstByte(rangeHeader);
+  if (trackDownload) {
+    const limiterIp = clientIpFromRequest(request);
+    const [perLink, perIp] = await Promise.all([
+      rateLimit({
+        key: `sharepdf:${shareId}:${limiterIp}`,
+        limit: DOWNLOAD_TRACK_PER_LINK_LIMIT,
+        windowMs: DOWNLOAD_TRACK_WINDOW_MS,
+      }),
+      rateLimit({ key: `sharepdf:ip:${limiterIp}`, limit: DOWNLOAD_TRACK_PER_IP_LIMIT, windowMs: DOWNLOAD_TRACK_WINDOW_MS }),
+    ]);
+    trackDownload = perLink.ok && perIp.ok;
+  }
+
   // Best-effort download tracking (only when an explicit download is requested).
-  if (wantsDownload && typeof botId === "string" && botId.trim()) {
+  if (trackDownload && trackingBotId) {
     try {
-      const botIdHash = crypto.createHash("sha256").update(botId.trim()).digest("hex");
+      const botIdHash = crypto.createHash("sha256").update(trackingBotId).digest("hex");
       const docId = (doc as { _id: unknown })._id;
       const docOrgId = (doc as { orgId?: unknown }).orgId;
       const day = utcDayKey(new Date());
@@ -271,7 +396,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       // Ignore tracking failures (never block download).
       // If a duplicate key race occurs, retry once without upsert.
       try {
-        const botIdHash = crypto.createHash("sha256").update(botId.trim()).digest("hex");
+        const botIdHash = crypto.createHash("sha256").update(trackingBotId).digest("hex");
         const day = utcDayKey(new Date());
         await ShareViewModel.updateOne(
           { shareId, botIdHash },
@@ -307,14 +432,25 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     }
   }
 
-  const range = request.headers.get("range");
-  const upstream = await fetch(blobUrl, {
-    headers: range ? { range } : undefined,
-    cache: "no-store",
+  // Range passes through untouched: pdf.js depends on it, and the limiter above only decided whether
+  // this chunk counted, never whether it is served.
+  // `fetchStoredBlob`, not a bare `fetch`: the early `blobFetchUrl` check above only ever saw the
+  // first URL, and `fetch` follows redirects by default, so an allowlisted pointer that answered
+  // 302 to somewhere off the store was still dereferenced. The helper re-applies the allowlist to
+  // every hop.
+  const upstream = await fetchStoredBlob(pdfUrl.toString(), {
+    headers: rangeHeader ? { range: rangeHeader } : undefined,
   });
+  if (!upstream) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
 
   const headers = new Headers();
-  pickHeader(upstream.headers, headers, "content-type", { fallback: "application/pdf" });
+  // Pinned, not copied. These routes serve one thing — the stored PDF — so echoing the upstream
+  // `content-type` bought nothing and cost everything: with `content-disposition: inline` and no
+  // `script-src` in the app's CSP, an upstream that answered `text/html` made this origin serve
+  // attacker markup and script. The write path that made that reachable is closed
+  // (`blobUrl` is no longer patchable), and this is the second lock: even a blob the store itself
+  // mislabels can only ever be delivered as a PDF.
+  headers.set("content-type", "application/pdf");
   pickHeader(upstream.headers, headers, "content-length");
   pickHeader(upstream.headers, headers, "content-range");
   pickHeader(upstream.headers, headers, "accept-ranges");

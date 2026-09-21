@@ -66,7 +66,10 @@ export async function GET(request: Request) {
       { $unwind: { path: "$viewerUser", preserveNullAndEmptyArrays: true } },
       {
         $project: {
-          shareId: 1,
+          // The link slug is not projected: `/s/:shareId` renders the customer's document, so a
+          // slug beside the view it produced would let staff open the thing they are auditing
+          // views of — and the visit would land in the owner's analytics as an anonymous
+          // recipient. The doc id below is what identifies the row.
           pagesSeen: 1,
           downloads: 1,
           downloadsByDay: 1,
@@ -77,7 +80,6 @@ export async function GET(request: Request) {
           docId: {
             _id: "$doc._id",
             title: "$doc.title",
-            shareId: "$doc.shareId",
           },
           viewerUserId: {
             _id: "$viewerUser._id",

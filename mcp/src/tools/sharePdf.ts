@@ -33,7 +33,7 @@ import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { looksLikePdf, optimizePdf, type OptimizeReport } from "../optimize";
 import { waitForDocStatus } from "../realtime";
 import { readAiOutcome } from "./aiWarnings";
-import { SAFETY_TAIL } from "./shared";
+import { existsUnlessNotFound, SAFETY_TAIL } from "./shared";
 
 const PROCESS_NOT_READY_RETRIES = 5;
 const PROCESS_NOT_READY_DELAY_MS = 1000;
@@ -63,7 +63,14 @@ export function isLocalApiUrl(apiUrl: string): boolean {
   }
   if (host === "localhost" || host.endsWith(".localhost")) return true;
   if (host === "::1" || host === "0.0.0.0") return true;
-  return /^127\./.test(host);
+  // A literal address in 127.0.0.0/8, and nothing that merely starts with those characters. The
+  // previous `/^127\./` matched the hostname `127.0.0.1.evil.com`, which is an ordinary DNS name
+  // someone else controls — it resolves wherever they point it, and we would have called it
+  // loopback. Four octets, each 0-255, anchored at both ends.
+  const octets = host.split(".");
+  if (octets.length !== 4) return false;
+  if (!octets.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255)) return false;
+  return octets[0] === "127";
 }
 
 /**
@@ -189,12 +196,47 @@ export type InlineUpload = {
  */
 export async function prepareInlineUpload(source: InlinePdfSource, opts: { optimize: boolean }): Promise<InlineUpload> {
   let bytes: Buffer;
+  /**
+   * The encoded form we actually checked, which is not always the one the caller sent.
+   *
+   * Stripping a `data:` prefix for validation and then re-sending the original was worse than
+   * refusing it: Node's base64 decoder silently drops `:`, `;` and `,`, so the prefix's remaining
+   * letters decode as payload, shift the whole stream, and the API answers 415 about a file that
+   * was perfectly good. Validating one string and uploading another is the bug; there is only one
+   * string now.
+   */
+  let encoded = source.kind === "bytes" ? source.base64 : "";
   if (source.kind === "file") {
     bytes = await readLocalPdf(source.filePath);
   } else {
-    bytes = Buffer.from(source.base64, "base64");
+    /**
+     * Three different mistakes used to share one message.
+     *
+     * "did not decode to a PDF" is true of a JPEG, of a string that is not base64 at all, and of a
+     * correct PDF still wearing its `data:` prefix — but only the first is what the sentence
+     * describes, so the other two sent the caller looking at the wrong thing. The data-URI case is
+     * not even an error: it is what every browser API hands you, so it is stripped rather than
+     * refused.
+     */
+    const withoutDataUri = source.base64.replace(/^data:[^;,]*;base64,/i, "");
+    if (!/^[A-Za-z0-9+/\r\n=_-]*$/.test(withoutDataUri)) {
+      throw new ToolError(
+        "validation",
+        "fileBase64 is not base64: it contains characters outside the base64 alphabet. Re-encode the file, or pass " +
+          "sourceUrl (an https link to the PDF) instead.",
+      );
+    }
+    encoded = withoutDataUri;
+    bytes = Buffer.from(withoutDataUri, "base64");
+    if (!bytes.length) {
+      throw new ToolError("validation", "fileBase64 decoded to nothing. Check the string was not truncated in transit.");
+    }
     if (!looksLikePdf(bytes)) {
-      throw new ToolError("unsupported_content_type", 'fileBase64 did not decode to a PDF (the bytes do not start with "%PDF-").');
+      throw new ToolError(
+        "unsupported_content_type",
+        'fileBase64 decoded, but the bytes are not a PDF (they do not start with "%PDF-"). lnkdrp shares PDFs only. ' +
+          "Convert the file first.",
+      );
     }
   }
 
@@ -202,8 +244,9 @@ export async function prepareInlineUpload(source: InlinePdfSource, opts: { optim
   if (outcome.bytes.byteLength > UPLOAD_MAX_BYTES) {
     throw new ToolError("too_large", `The PDF is larger than ${UPLOAD_MAX_LABEL}. Use sourceUrl for a file this size.`);
   }
-  // Nothing changed and the caller already handed us the encoded form: send exactly that.
-  const base64 = outcome.optimized === null && source.kind === "bytes" ? source.base64 : outcome.bytes.toString("base64");
+  // Nothing changed and we already hold the encoded form we validated: send exactly that. `encoded`
+  // rather than `source.base64`, so a stripped `data:` prefix stays stripped.
+  const base64 = outcome.optimized === null && source.kind === "bytes" ? encoded : outcome.bytes.toString("base64");
   return { base64, fileName: source.fileName, optimized: outcome.optimized, optimizeNote: outcome.note };
 }
 
@@ -365,7 +408,24 @@ export function validateSourceUrl(raw: string, apiUrl: string): string {
   if (unsupported) throw new ToolError("validation", unsupported);
   if (url.protocol === "https:") return url.toString();
   if (url.protocol === "http:" && url.origin === new URL(apiUrl).origin) return url.toString();
-  throw new ToolError("validation", "sourceUrl must use https (http is only accepted for the lnkdrp app itself).");
+  // Each scheme fails for its own reason, and only `http:` is the near-miss the old single message
+  // described. `file:` in particular has a real answer — it is what `filePath` is for — and being
+  // told to "use https" sends the caller to fix the wrong thing.
+  if (url.protocol === "http:") {
+    throw new ToolError("validation", "sourceUrl must use https (http is only accepted for the lnkdrp app itself).");
+  }
+  if (url.protocol === "file:") {
+    throw new ToolError(
+      "validation",
+      "sourceUrl cannot be a file:// URL. Pass the absolute path as filePath instead, which the server reads from disk " +
+        "when it runs on your machine, or send the bytes as fileBase64.",
+    );
+  }
+  throw new ToolError(
+    "validation",
+    `sourceUrl must be an https URL; this one uses "${url.protocol}". Give a direct https link to the PDF, or pass the ` +
+      "file as filePath or fileBase64.",
+  );
 }
 
 /** File name to record on the upload; import-url replaces it with the real one. */
@@ -403,9 +463,11 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         "processing (preview, text, summary) and returns { docId, shareId, shareUrl, status, uploadId, warnings, creditsRemaining }. " +
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. Optional: allowDownload, password. " +
         "Each upload's AI summary costs 1 credit, or nothing when you pass summary and keyPoints (write them from the document). " +
+        "status 'failed' means the file itself could not be processed: failureReason says why, the link is live but has no " +
+        "usable file, and the fix is lnkdrp_replace_pdf with a working PDF (or deleting the document). " +
         "A skipped AI step (for example out of credits) does not fail the call: the link is still valid and warnings says what was skipped. " +
         "Free workspaces have a cap on shared documents. At the cap this call fails with code plan_limit and creates " +
-        "nothing — the error names what you can still do without upgrading, such as adding another link to a document " +
+        "nothing. The error names what you can still do without upgrading, such as adding another link to a document " +
         "that already exists. Below the cap, planWarning appears when the workspace is close to it. " +
         SAFETY_TAIL,
       inputSchema: sharePdfInputShape,
@@ -501,7 +563,7 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
           const outcome =
             args.waitForReady && !timedOut
               ? await readAiOutcome(api, uploadId, { credits: true })
-              : { warnings: [] as string[], creditsRemaining: null };
+              : { warnings: [] as string[], creditsRemaining: null, failureReason: null as string | null };
 
           return {
             ...ids,
@@ -513,6 +575,9 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
             ...(created.planWarning ? { planWarning: created.planWarning } : {}),
             ...(timedOut ? { timedOut: true as const } : {}),
             ...optimizeFields,
+            // A failed version says why here, not only inside warnings: an agent that reads status
+            // "failed" needs the reason in the same breath to tell the human what to do next.
+            ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
             warnings: outcome.warnings,
             ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };
@@ -523,11 +588,23 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
 
       const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "share_pdf", args.idempotencyKey), run, {
         fingerprint: fingerprintArgs(args),
+        // A document the human deleted between the two calls is not a document to hand back.
+        stillExists: (cached) => existsUnlessNotFound(() => api.getDoc(cached.docId)),
       });
       if (!replayed) return value;
       // A replay returns the same document; refresh the status so a retry after a timeout is useful.
+      // `replayed: true` is on the result for the same reason lnkdrp_create_project carries it: the
+      // description promises a retry returns the same document rather than a second one, and that
+      // promise is only actionable if the caller can tell which of the two just happened.
       const fresh = await api.getDoc(value.docId).catch(() => null);
-      return fresh ? { ...value, status: fresh.status, ...(fresh.status === "ready" || fresh.status === "failed" ? { timedOut: undefined } : {}) } : value;
+      return fresh
+        ? {
+            ...value,
+            status: fresh.status,
+            ...(fresh.status === "ready" || fresh.status === "failed" ? { timedOut: undefined } : {}),
+            replayed: true,
+          }
+        : { ...value, replayed: true };
     }),
   );
 }

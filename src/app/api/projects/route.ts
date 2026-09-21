@@ -14,6 +14,8 @@ import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
+import { liveProjectFilter } from "@/lib/projects/scope";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 const MAX_PROJECT_NAME_LENGTH = 80;
 
@@ -127,6 +129,10 @@ export async function GET(request: Request) {
 
     // Projects endpoint returns ONLY non-request projects.
     // Requests are listed via `/api/requests` to enforce strict separation.
+    // The workspace's live, non-request projects (src/lib/projects/scope.ts) — the same filter the
+    // plan cap counts, so the list can never disagree with "used: N" — plus the legacy personal
+    // scope, which only ever widens what a personal workspace sees.
+    const { orgId: _scopedOrgId, ...liveProject } = liveProjectFilter(orgId);
     const filter: Record<string, unknown> = {
       ...(allowLegacyByUserId
         ? {
@@ -136,12 +142,7 @@ export async function GET(request: Request) {
             ],
           }
         : { orgId }),
-      // Keep soft-deleted projects out of lists. This also keeps list/count queries snappy in large workspaces.
-      isDeleted: { $ne: true },
-      $and: [
-        { $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }] },
-        { $or: [{ requestUploadToken: { $exists: false } }, { requestUploadToken: null }, { requestUploadToken: "" }] },
-      ],
+      ...liveProject,
     };
     if (q) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
@@ -280,6 +281,11 @@ export async function POST(request: Request) {
     // Viewers can read a workspace but must not create projects in it.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    const queued = await forbidWaitlisted(actor, "create a project");
+    if (queued) return queued;
     const body = (await request.json().catch(() => ({}))) as Partial<{
       name: string;
       description: string;

@@ -103,11 +103,28 @@ async function importBytes(request: Request, ctx: { params: Promise<{ uploadId: 
 
     await connectMongo();
 
-    // Authorization: upload must belong to the actor — same rule as import-url.
+    /**
+     * Authorization: the upload must belong to the actor **and** sit in the workspace the actor is
+     * acting in — same rule as import-url, where the long version of this note lives.
+     *
+     * The short version: this matched `{ _id, userId }` only, and `forbidUnlessOrgRole` above
+     * checks the caller's role in their *current* workspace rather than the upload's, so an `lnk_`
+     * key minted in one workspace could attach bytes to an upload belonging to another — with the
+     * file carried inline in the request body, no public URL required. `orgId` is stamped on the
+     * upload row at creation, and `allowLegacyByUserId` is `docMatch.ts`'s concession for rows that
+     * predate workspaces.
+     */
+    const orgId = new Types.ObjectId(actor.orgId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const tenancy = allowLegacyByUserId
+      ? { $or: [{ orgId }, { orgId: { $exists: false } }, { orgId: null }] }
+      : { orgId };
+
     const upload = await UploadModel.findOne({
       _id: new Types.ObjectId(uploadId),
       userId: new Types.ObjectId(actor.userId),
       isDeleted: { $ne: true },
+      $and: [tenancy],
     });
     if (!upload) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);

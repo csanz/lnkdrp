@@ -106,7 +106,13 @@ export default function RangeControl({
             onClick={() => activate(key)}
             className={cn(
               "inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-[12px] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50",
-              active ? "bg-[var(--panel-hover)] text-[var(--fg)]" : "text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+              // Selected used to paint the same token `hover:` uses, so pointing at 30d while 7d was
+              // selected drew two identical pills and the control stopped saying which range the
+              // charts were showing. A solid inversion is a cue hover cannot borrow — the pattern
+              // the activity filter chips already use. Dark keeps its old fill — light-only pass.
+              active
+                ? "bg-[var(--fg)] text-[var(--bg)] dark:bg-[var(--panel-hover)] dark:text-[var(--fg)]"
+                : "text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
             )}
           >
             {days}d

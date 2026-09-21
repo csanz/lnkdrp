@@ -28,7 +28,7 @@ import {
   TimeCell,
   useAdminAccess,
 } from "@/components/admin";
-import { ADMIN_DASH, truncateId } from "@/lib/admin/ui";
+import { ADMIN_DASH } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -38,10 +38,10 @@ type RequestRow = {
   name: string | null;
   slug: string | null;
   description: string | null;
-  shareId: string | null;
   docCount: number | null;
   isRequest: boolean;
-  requestUploadToken: string | null;
+  /** Which capability tokens exist on the row — never their values. See src/lib/admin/docPrivacy.ts. */
+  secrets?: { hasShareLink?: boolean | null; hasRequestUploadToken?: boolean | null } | null;
   requestReviewEnabled: boolean;
   updatedDate: string | null;
   createdDate: string | null;
@@ -162,7 +162,7 @@ export default function AdminDataRequestsPage() {
               <AdminTh>Slug</AdminTh>
               <AdminTh align="right">Docs</AdminTh>
               <AdminTh>Review</AdminTh>
-              <AdminTh>Upload link</AdminTh>
+              <AdminTh>Accepting</AdminTh>
               <AdminTh align="right">Updated</AdminTh>
               <AdminTh>User</AdminTh>
               <AdminTh>Request ID</AdminTh>
@@ -207,20 +207,11 @@ export default function AdminDataRequestsPage() {
                 <AdminTd>
                   <BoolState value={r.requestReviewEnabled} trueLabel="On" />
                 </AdminTd>
+                {/* Whether the repo has a live upload token, not a link to it. This cell used to
+                    be `/request/<token>`, opening the customer's own upload page — an unauthenticated
+                    write capability into their workspace, rendered as a convenience. */}
                 <AdminTd>
-                  {r.requestUploadToken ? (
-                    <a
-                      className="rounded font-mono text-[12px] text-[var(--muted-2)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
-                      href={`/request/${encodeURIComponent(r.requestUploadToken)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={`Open /request/${r.requestUploadToken}`}
-                    >
-                      /request/{truncateId(r.requestUploadToken)}
-                    </a>
-                  ) : (
-                    <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
-                  )}
+                  <BoolState value={Boolean(r.secrets?.hasRequestUploadToken)} trueLabel="Yes" />
                 </AdminTd>
                 <AdminTd align="right" numeric>
                   <TimeCell value={r.updatedDate ?? r.createdDate} />

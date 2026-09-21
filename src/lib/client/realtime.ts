@@ -15,6 +15,13 @@ import { ACTIVE_ORG_CHANGED_EVENT } from "@/lib/sidebarCache";
  * stays idle; everything keeps working on polling.
  */
 export type RealtimeFrame =
+  /**
+   * Sent by the server the moment a socket is accepted — including every reconnection.
+   *
+   * Subscribe to it to close the gap. The change streams carry no resume token across a
+   * disconnect, so everything that happened while the socket was down is simply missing; a page
+   * that refetches on `hello` catches up, and one that does not stays wrong until it is reloaded.
+   */
   | { type: "hello"; orgId: string }
   | { type: "agent"; orgId: string; at: string }
   | { type: "activity"; orgId: string; event: { id: string; type: string | null; createdDate: string | null } }
@@ -28,6 +35,32 @@ export type RealtimeFrame =
       upload: { id: string; docId: string | null; percent: number; stage: string | null; status: string | null };
     }
   | { type: "project"; orgId: string; project: { id: string; name: string | null } }
+  // A recipient's volunteered name or email changed (they re-answered "introduce yourself"). The
+  // metrics pages refetch on it so a corrected name does not wait for a reload.
+  | {
+      type: "viewer";
+      orgId: string;
+      viewer: { docId: string | null; shareId: string | null; name: string | null };
+    }
+  /**
+   * Someone is reading, right now — the visit clock, the page clock or the pages they have reached
+   * just moved. Throttled server-side to at most one frame per reader per few seconds, so a fast
+   * page-turner does not become a refetch storm.
+   *
+   * `viewerKey` is the PERSON (the bare digest), never the `<digest>.<docId>` composite a project
+   * link stores, so a page can compare it with the key in its own address.
+   */
+  | {
+      type: "reading";
+      orgId: string;
+      reading: {
+        docId: string | null;
+        shareId: string | null;
+        viewerKey: string | null;
+        viewerUserId: string | null;
+        at: string;
+      };
+    }
   | { type: "ping" };
 
 type Handler = (frame: RealtimeFrame) => void;
@@ -81,6 +114,14 @@ async function connect(): Promise<void> {
   let ticket: string | null = null;
   try {
     const res = await fetchWithTempUser("/api/realtime/ticket", { cache: "no-store" });
+    // Signed out, or no longer a member of this workspace. Retrying cannot fix either, and doing
+    // it every few seconds for the life of the tab is how a logged-out page quietly hammers an
+    // endpoint. `unavailable` is the state the visibility handler re-probes from.
+    if (res.status === 401 || res.status === 403) {
+      connecting = false;
+      setState("unavailable");
+      return;
+    }
     if (!res.ok) throw new Error(`ticket ${res.status}`);
     const json = (await res.json()) as { url?: string; ticket?: string | null };
     url = typeof json.url === "string" ? json.url : "";
@@ -91,8 +132,21 @@ async function connect(): Promise<void> {
     return;
   }
   connecting = false;
-  // Superseded while fetching the ticket (unsubscribed, or workspace switched): do not open.
-  if (myGen !== generation || !wanted) return;
+  /**
+   * Superseded while the ticket was in flight — a workspace switch, or a remount.
+   *
+   * Opening this socket would be wrong: the ticket names the old workspace. But simply returning
+   * left the channel with no socket and no timer, permanently: `disconnect()` bumps the generation
+   * and the switch handler's own `connect()` had already bailed on `if (connecting) return`, so
+   * this branch was the last thing running. The tab then stayed dead until it was hidden and shown
+   * again. Re-entering is the whole fix — by now `connecting` is false, so the new call proceeds
+   * and fetches a ticket for the workspace that is actually current.
+   */
+  if (myGen !== generation) {
+    if (wanted) void connect();
+    return;
+  }
+  if (!wanted) return;
   if (!url || !ticket) {
     // Realtime not configured for this deployment (or not signed in): stay on polling, quietly.
     setState("unavailable");
@@ -100,11 +154,32 @@ async function connect(): Promise<void> {
   }
   const ws = new WebSocket(`${url.replace(/\/+$/, "")}/?t=${encodeURIComponent(ticket)}`);
   socket = ws;
+  /**
+   * Nothing heard for this long means the connection is gone, whatever the socket says.
+   *
+   * The server pings every 25s, so silence past twice that is not a quiet workspace — it is a path
+   * that died without a FIN (a Wi-Fi to cellular handoff, a VPN drop, a NAT binding expiring). The
+   * browser will hold such a socket `OPEN` indefinitely, and `realtimeState()` would keep saying
+   * "open", which is worse than saying nothing: every fallback poll in the app is gated on exactly
+   * that check, so the page goes still AND stops polling. Closing it by hand puts the normal
+   * reconnect path back in charge.
+   */
+  const DEAD_AFTER_MS = 70_000;
+  let lastFrameAt = Date.now();
+  const watchdog = window.setInterval(() => {
+    if (socket !== ws) return;
+    if (Date.now() - lastFrameAt < DEAD_AFTER_MS) return;
+    ws.close();
+  }, 15_000);
   ws.onopen = () => {
     attempts = 0;
+    lastFrameAt = Date.now();
     setState("open");
   };
   ws.onmessage = (ev) => {
+    // A socket that has been replaced must not speak for the channel.
+    if (socket !== ws) return;
+    lastFrameAt = Date.now();
     let frame: RealtimeFrame | null = null;
     try {
       frame = JSON.parse(String(ev.data)) as RealtimeFrame;
@@ -119,7 +194,10 @@ async function connect(): Promise<void> {
     dispatch(frame);
   };
   ws.onclose = () => {
-    if (socket === ws) socket = null;
+    window.clearInterval(watchdog);
+    // An old socket closing after a switch says nothing about the current one.
+    if (socket !== ws) return;
+    socket = null;
     setState("closed");
     scheduleReconnect();
   };

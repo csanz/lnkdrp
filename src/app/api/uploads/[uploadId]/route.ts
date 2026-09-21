@@ -67,7 +67,17 @@ export async function GET(
           docId: upload.docId ? String(upload.docId) : null,
           status: upload.status ?? null,
           version: typeof (upload as any).version === "number" ? (upload as any).version : null,
+          // "A new version landed and it reads exactly like the last one" — the replacing UI says
+          // so rather than reporting an ordinary success for a file that changed nothing.
+          unchangedFromPrevious: Boolean((upload as { unchangedFromPrevious?: unknown }).unchangedFromPrevious),
           ai: (upload as { ai?: unknown }).ai ?? null,
+          // Why a failed upload failed. Without it a caller (the MCP's share_pdf, the upload UI)
+          // could only say "failed" and leave the person guessing whether to retry.
+          error: (function () {
+            const e = (upload as { error?: unknown }).error;
+            const msg = e && typeof e === "object" ? (e as { message?: unknown }).message : null;
+            return typeof msg === "string" && msg.trim() ? msg.trim().slice(0, 300) : null;
+          })(),
         },
         doc: {
           id: upload.docId ? String(upload.docId) : null,
@@ -77,10 +87,25 @@ export async function GET(
     }
 
     const actor = await resolveActor(request);
+    /**
+     * The same workspace bound the listing beside this one carries.
+     *
+     * It was owner-scoped alone (`userId`), which is the gap that was closed on `GET /api/uploads`
+     * and left standing here — the detail endpoint one directory over, reachable by anyone holding
+     * an upload id. An `lnk_` key is attributed to the member who minted it but scoped to its own
+     * workspace, and a removed member's session falls back to their personal one; both still read
+     * rows from workspaces whose access had been taken away. `allowLegacyByUserId` is the same
+     * concession `docMatch` makes for rows that predate workspaces.
+     */
+    const uploadOrgId = new Types.ObjectId(actor.orgId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const upload = await UploadModel.findOne({
       _id: new Types.ObjectId(uploadId),
       userId: new Types.ObjectId(actor.userId),
       isDeleted: { $ne: true },
+      ...(allowLegacyByUserId
+        ? { $or: [{ orgId: uploadOrgId }, { orgId: { $exists: false } }, { orgId: null }] }
+        : { orgId: uploadOrgId }),
     }).lean();
     if (!upload) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -101,7 +126,17 @@ export async function GET(
           docId: upload.docId ? String(upload.docId) : null,
           status: upload.status ?? null,
           version: typeof (upload as any).version === "number" ? (upload as any).version : null,
+          // "A new version landed and it reads exactly like the last one" — the replacing UI says
+          // so rather than reporting an ordinary success for a file that changed nothing.
+          unchangedFromPrevious: Boolean((upload as { unchangedFromPrevious?: unknown }).unchangedFromPrevious),
           ai: (upload as { ai?: unknown }).ai ?? null,
+          // Why a failed upload failed. Without it a caller (the MCP's share_pdf, the upload UI)
+          // could only say "failed" and leave the person guessing whether to retry.
+          error: (function () {
+            const e = (upload as { error?: unknown }).error;
+            const msg = e && typeof e === "object" ? (e as { message?: unknown }).message : null;
+            return typeof msg === "string" && msg.trim() ? msg.trim().slice(0, 300) : null;
+          })(),
         },
         doc: {
           id: upload.docId ? String(upload.docId) : null,
@@ -124,6 +159,21 @@ export async function GET(
 const CLIENT_SETTABLE_STATUSES = new Set(["uploaded", "failed"]);
 
 /**
+ * Who is PATCHing: the owner of the upload (an authenticated actor) or someone holding nothing but
+ * the upload secret a request/replace link handed to an anonymous recipient.
+ */
+type PatchCaller = "owner" | "uploadSecret";
+
+/**
+ * Ceiling on stored extracted text, in characters.
+ *
+ * The field was unbounded, so one PATCH could push an arbitrarily large string into the row and
+ * from there into every model call that reads it. 1MB is the same order as the byte cap the
+ * processor already applies to text it sends onward.
+ */
+const MAX_RAW_EXTRACTED_TEXT_CHARS = 1_000_000;
+
+/**
  * Build the sanitized `$set` update from a client PATCH body.
  *
  * Blob URLs/pathnames are only accepted when they point at our Blob store *and* live under
@@ -143,6 +193,7 @@ function buildPatchUpdate(
     metadata: { pages?: number; size?: number; checksum?: string };
   }>,
   scope: { docId: string; uploadId: string },
+  caller: PatchCaller,
 ): { update: Record<string, unknown> } | { error: string } {
   const update: Record<string, unknown> = {};
   if (typeof body.status === "string") {
@@ -171,10 +222,33 @@ function buildPatchUpdate(
     // keep compat field in sync
     update.firstPagePngUrl = body.previewImageUrl;
   }
+  /**
+   * `rawExtractedText` is the document's text, and the processor treats a value already on the row
+   * as authoritative: it skips `pdfParse` entirely when one is present, copies it onto the Doc, and
+   * feeds it to the summariser and the review agent on the owner's spend. So accepting it here from
+   * a caller holding only an upload secret — which `POST /api/requests/:token/uploads` hands to
+   * anyone who can invent an `x-lnkdrp-botid` — let a stranger write what the owner would read as
+   * the contents of their own PDF, with the real file never opened. Only the owner branch may set
+   * it; the secret branch never needs to, because extraction happens server-side from the bytes.
+   *
+   * Dropped rather than refused with a 400: recipients send this field in the same body that
+   * carries `status: "uploaded"`, so rejecting would strand a mid-flight upload over a field the
+   * flow does not depend on. A stale cached client keeps working and simply has its text ignored.
+   */
   if (typeof body.rawExtractedText === "string" || body.rawExtractedText === null) {
-    update.rawExtractedText = body.rawExtractedText;
-    // keep compat field in sync
-    update.pdfText = body.rawExtractedText;
+    if (caller === "owner") {
+      const text =
+        typeof body.rawExtractedText === "string"
+          ? body.rawExtractedText.slice(0, MAX_RAW_EXTRACTED_TEXT_CHARS)
+          : null;
+      update.rawExtractedText = text;
+      // keep compat field in sync
+      update.pdfText = text;
+    } else {
+      debugLog(1, "[api/uploads/:uploadId] PATCH ignored rawExtractedText (secret)", {
+        uploadId: scope.uploadId,
+      });
+    }
   }
   if (body.error !== undefined) update.error = body.error;
   if (body.metadata && typeof body.metadata === "object") update.metadata = body.metadata;
@@ -301,7 +375,7 @@ export async function PATCH(
         return NextResponse.json({ error: "UPLOAD_SECRET_MISMATCH" }, { status: 403 });
       }
 
-      const built = buildPatchUpdate(body, { docId: exists.docId ? String(exists.docId) : "", uploadId });
+      const built = buildPatchUpdate(body, { docId: exists.docId ? String(exists.docId) : "", uploadId }, "uploadSecret");
       if ("error" in built) return NextResponse.json({ error: built.error }, { status: 400 });
       const update = built.update;
       if (update.status === "uploaded" && !isPdfUploadRecord(exists, update)) {
@@ -352,7 +426,7 @@ export async function PATCH(
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
 
-    const built = buildPatchUpdate(body, { docId: owned.docId ? String(owned.docId) : "", uploadId });
+    const built = buildPatchUpdate(body, { docId: owned.docId ? String(owned.docId) : "", uploadId }, "owner");
     if ("error" in built) {
       return applyTempUserHeaders(NextResponse.json({ error: built.error }, { status: 400 }), actor);
     }

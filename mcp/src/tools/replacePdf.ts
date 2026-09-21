@@ -23,7 +23,7 @@ import { z } from "zod";
 
 import type { PlanWarning } from "../api";
 import type { ToolContext } from "../context";
-import { handleTool, isToolError } from "../errors";
+import { handleTool, isToolError, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { waitForDocStatus } from "../realtime";
 import { UPLOAD_BASE64_SCHEMA_MAX_CHARS, UPLOAD_MAX_LABEL } from "../../../src/lib/limits/uploads";
@@ -150,8 +150,8 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         "version, uploadId, optimized, warnings, creditsRemaining }. " +
         "The document's status flips to preparing the moment this call starts, before the new file is even fetched - " +
         "recipients opening a link in that window see 'preparing', same as during the first upload. If import or " +
-        "processing then fails, the document is left in that state rather than rolled back to the old file; call " +
-        "lnkdrp_get_share to check, or run lnkdrp_replace_pdf again with a working sourceUrl or fileBase64 to finish the update. " +
+        "processing then fails, the document goes back to its previous version and to ready - it is not left stuck in " +
+        "preparing, and there is nothing to clean up; fix the source and call again when you have one that works. " +
         "Nothing is ever deleted - the previous version's file and analytics are not affected by a failed attempt. " +
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. " +
         "Each replacement's AI summary costs credits, or nothing when you pass summary and keyPoints (write them " +
@@ -166,6 +166,12 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
     handleTool(async (args, extra) => {
       const { api } = ctx;
       const source = resolvePdfSource(args, ctx.config.apiUrl);
+      // The same pairing lnkdrp_share_pdf enforces, and it was missing here: half the pair is not a
+      // cheaper summary, it is a summary the pipeline cannot use. Checked before the fetch, so a
+      // caller that got it wrong finds out from the argument rather than from a file error later.
+      if ((args.summary === undefined) !== (args.keyPoints === undefined)) {
+        throw new ToolError("validation", "Pass summary and keyPoints together (both or neither).");
+      }
       const orgId = ctx.whoami().orgId;
       const progressToken = extra._meta?.progressToken;
 
@@ -255,7 +261,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
           const outcome =
             args.waitForReady && !timedOut
               ? await readAiOutcome(api, uploadId, { credits: true })
-              : { warnings: [] as string[], creditsRemaining: null };
+              : { warnings: [] as string[], creditsRemaining: null, failureReason: null as string | null };
 
           return {
             ...ids,
@@ -265,6 +271,9 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
             title: title ?? before.title,
             ...(timedOut ? { timedOut: true as const } : {}),
             ...optimizeFields,
+            // A failed version says why here, not only inside warnings: an agent that reads status
+            // "failed" needs the reason in the same breath to tell the human what to do next.
+            ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
             warnings: outcome.warnings,
             ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };

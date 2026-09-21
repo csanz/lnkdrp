@@ -76,7 +76,8 @@ The realtime server reads only `MONGODB_URI`, `REALTIME_PORT` and its ticket sec
 need the web app, so it goes up first and the first web build already carries its URL.
 
 - [ ] Realtime: `fly launch`, egress IP **only if Atlas uses an allowlist** (add it before the first
-      deploy), secrets, `fly deploy --ha=false`, `/healthz` on the `fly.dev` host, cert, DNS-only
+      deploy), secrets, `fly deploy --ha=false`, `/healthz` on the `fly.dev` host with all seven
+      `streams` true, cert, DNS-only
       CNAME, `fly certs check`, `/healthz` on `realtime.lnkdrp.com` (6.2).
 
 **D. Web app on Vercel (5)**
@@ -101,9 +102,9 @@ and do not link to or announce the site until the Announce step in G.
       `lnkdrp.com` public, as the summary reruns need. Do not disable protection (5 step 5).
 - [ ] Deploy (5 step 6): Redeploy with the build cache off, so every `NEXT_PUBLIC_*` value from
       the table is in the bundle.
-- [ ] **Cron jobs.** Nothing to configure by hand: `vercel.json` registers all nine on deploy, and
+- [ ] **Cron jobs.** Nothing to configure by hand: `vercel.json` registers all ten on deploy, and
       Vercel sends `CRON_SECRET` from the env as the bearer. Confirm Vercel → Settings → Cron Jobs
-      lists exactly these nine (5.1 has flags and leases):
+      lists exactly these ten (5.1 has flags and leases):
 
       | Job | UTC schedule | What it does |
       |---|---|---|
@@ -116,9 +117,10 @@ and do not link to or announce the site until the Announce step in G.
       | `stripe-credits-reconcile` | every 6 h :15 | syncs Stripe periods onto subscriptions, backstops cycle grants |
       | `analytics-reconcile` | daily 03:50 | repairs link counter drift; reports page-time overruns as `error` |
       | `credits-purchase-expiry` | daily 04:05 | takes back unspent credit-pack credits 12 months after purchase |
+      | `account-purge` | daily 04:30 | deletes the data of accounts 30 days after they asked — **this deletes blobs** |
 
-      Vercel **Pro is mandatory** — seven of the nine run more than once a day and Hobby rejects
-      the file. Not on Vercel Cron? Schedule the same nine with the crontab in 5.1 from one
+      Vercel **Pro is mandatory** — seven of the ten run more than once a day and Hobby rejects
+      the file. Not on Vercel Cron? Schedule the same ten with the crontab in 5.1 from one
       always-on host; never two schedulers. The realtime and MCP services have no scheduled work.
 - [ ] Preview environment scoped on its own: sandbox Stripe, its own database and Blob store,
       different secrets (5.3).
@@ -128,6 +130,10 @@ and do not link to or announce the site until the Announce step in G.
 - [ ] MCP: `fly launch`, `REALTIME_SECRET`, `fly deploy --ha=false`, **exactly one machine**,
       `/healthz` on the `fly.dev` host, the startup log shows the realtime URL, cert, DNS-only
       CNAME, `fly certs check`, `/healthz` on `mcp.lnkdrp.com` (7).
+- [ ] `LNKDRP_ALLOW_LOCAL_FILES` stays **unset** on `lnkdrp-mcp`, in `[env]` and in `fly secrets`.
+      With it set, an agent's `filePath` becomes a read of the container's filesystem (7).
+- [ ] Decide whether the image carries Ghostscript (`ghostscript` + `pdfjs-dist` in
+      `mcp/Dockerfile`). Without it, inline uploads are sent unshrunk and say so; nothing breaks (7).
 - [ ] Remember the services do not auto-deploy: `fly deploy` again whenever a file listed in 9
       changes.
 
@@ -158,6 +164,14 @@ and do not link to or announce the site until the Announce step in G.
 - [ ] Uptime monitor with a named alert recipient on `/api/health` and both `/healthz`; Vercel Log
       Drain with alerts; Stripe webhook failure emails to a watched inbox (11, Health and Logs).
 - [ ] Read 12 and decide each open item, or accept it in writing.
+- [ ] **Decide who gets in.** Unset, `WAITLIST_ENABLED` lets every new account straight into the
+      product (5 step 3). On, new accounts sign in and wait on the queue page until an admin
+      approves them at `/a/waitlist`, which sends `waitlist_approved`. It is read per request, so
+      it can be turned on or off at any point with no redeploy — but decide before announcing,
+      because the first people through the door see whichever answer is live, and put your own
+      addresses in `WAITLIST_ALLOW_EMAILS` either way so you are never queued behind your own
+      launch. If it is on, watch `/a/waitlist` from the announcement: nobody in the queue can do
+      anything until someone approves them.
 - [ ] **Announce / open to users.**
 
 **H. Watch (11) — first week**
@@ -172,7 +186,7 @@ and do not link to or announce the site until the Announce step in G.
 ```
                      ┌──────────────────────────────────────────────┐
   browser / agent ─▶ │  lnkdrp.com  · Next.js on Vercel             │ ─▶ MongoDB Atlas (replica set)
-                     │  web app + REST API + 9 cron routes          │ ─▶ Vercel Blob (PDF storage), Resend (email)
+                     │  web app + REST API + 10 cron routes         │ ─▶ Vercel Blob (PDF storage), Resend (email)
                      └───────────────┬──────────────────────────────┘ ─▶ OpenAI (summary, AI compare)
                                      │ REST with the caller's lnk_ key  ─▶ Stripe (Pro + on-demand credits)
                                      │                                  ─▶ Google OAuth (sign-in)
@@ -191,6 +205,12 @@ and do not link to or announce the site until the Announce step in G.
 
 The web app and the realtime server share one Mongo cluster; all three share one secret family.
 Nothing else is stateful.
+
+Two families of URL are public and unauthenticated: `/s/:shareId`, one document, and `/p/:shareId`,
+a project link — several documents behind one link, each opened at `/p/:shareId/:docId`, with its
+own analytics and its own password, expiry and download settings. Agents create both (`lnkdrp_*`
+project and project-link tools, 7). Each streams its PDF through a function, at `/s/:shareId/pdf`
+and `/p/:shareId/:docId/pdf`, so both belong in the firewall rules in 12.
 
 ## 2. Prerequisites
 
@@ -228,7 +248,7 @@ openssl rand -hex 32      # CRON_MONITOR_SECRET (read-only; for the uptime monit
 copying, and drop the quotes before putting a line in a `fly secrets import` file.
 
 `NEXTAUTH_SECRET` lives only on Vercel. Never set it on the realtime or MCP hosts, even though both
-accept it in place of `REALTIME_SECRET` (and `mcp/README.md` still says so): whoever holds it can
+accept it in place of `REALTIME_SECRET`: whoever holds it can
 forge a session for any user, admins included, and sign the internal processing token.
 `REALTIME_SECRET` must be set on Vercel too and must differ from `NEXTAUTH_SECRET`; if it is unset
 there, the app signs tickets with `NEXTAUTH_SECRET` and the services would need that value.
@@ -270,7 +290,11 @@ rotation; changing it (or adding it later) makes the off links in already-delive
    **AWS us-east-1 (N. Virginia)** and a database user with read/write on `lnkdrp` for the web app
    and the migration machine. Create a second user, `lnkdrp-realtime`, with the built-in `read`
    role on `lnkdrp` only (it includes `changeStream` and `find`, all realtime does); its URI goes to
-   the realtime server in 6.2 and 6.3, so a leaked Fly secret cannot write production data. The two
+   the realtime server in 6.2 and 6.3, so a leaked Fly secret cannot write production data. Use the
+   built-in role, not a hand-rolled one scoped to named collections: the server watches seven —
+   `activityevents`, `apikeys`, `docs`, `projects`, `uploads`, `shareviews` and `projectlinkviews` —
+   and it grows with the product. A custom role that misses one takes `/healthz` to 503 and exits
+   the machine in a restart loop (11, Health), which reads as an outage, not a permission. The two
    URIs rotate separately (11, Secrets rotation). Vercel functions run in `iad1` and both Fly apps in
    `iad`; a cluster anywhere else adds latency to every request. `vercel.json` does not pin
    `regions` yet (12), so the function region rests on Settings → Functions → Function Region:
@@ -325,7 +349,9 @@ rotation; changing it (or adding it later) makes the off links in already-delive
    traffic; on an existing database a duplicate `eventId`, Checkout session, ledger key, balance or
    subscription row stops it with E11000, which is the point: fix the rows, then re-run.
    `20260916_0002` adds two non-unique `shareviews` indexes, `docId_1_lastViewedAt_-1` and
-   `shareId_1_lastViewedAt_-1`, that back the metrics activity window; it cannot fail on data. The
+   `shareId_1_lastViewedAt_-1`, that back the activity window on the metrics pages (`/metrics` for
+   the workspace, `/doc/:id/metrics` and `/project/:slug/metrics` for one of each); it cannot fail
+   on data. The
    same release adds nullable `sharevisits` fields (`pageCount`, `timingVersion`,
    `pageEvents[].reason`, `pageEvents[].toPage`); older rows keep null and read as legacy, so there
    is no backfill. Applied ones are recorded in the `migrations` collection and
@@ -451,6 +477,25 @@ preview PNG under `docs/`, PNG/JPEG/WebP under `org-avatars/`. The browser tells
 upload is done; the app registers no Blob completion callback, so `VERCEL_BLOB_CALLBACK_URL` is
 not used.
 
+A PDF reaches the app three ways, with two different ceilings.
+`src/lib/limits/uploads.ts` is the single source for both; nothing else defines one:
+
+| Path | Ceiling | Where the bytes travel |
+|---|---|---|
+| Browser direct-to-Blob (`/api/blob/upload` token, the Upload button) | `BROWSER_DIRECT_UPLOAD_MAX_BYTES`, **250 MB** | browser → Blob; never through a function body |
+| URL import (`POST /api/uploads/:id/import-url`, the MCP's `sourceUrl`) | `UPLOAD_MAX_BYTES`, **50 MB** | the function fetches the URL and streams it to Blob |
+| Inline base64 (`POST /api/uploads/:id/import-bytes`, the MCP's `fileBase64` and `filePath`) | `UPLOAD_MAX_BYTES`, **50 MB** | the bytes are a JSON request body on a serverless function |
+
+**The inline path cannot carry 50 MB on Vercel.** Vercel Functions cap a request body at about
+4.5 MB whatever its content type, and base64 costs ~4/3 of the decoded size before the JSON
+envelope is counted, so anything past roughly 3 MB decoded fails with the platform's own 413 —
+usually before the request reaches the route, so no app error message and no `errorevents` row
+explains it. That is the platform's limit, not a setting: nothing in `vercel.json` or the env
+raises it. It is why the MCP shrinks a PDF before sending (7, Ghostscript). The other two paths do
+carry their stated limits in production. Read "max 50MB" in error copy and MCP tool descriptions as
+optimistic for the inline path, and prefer `sourceUrl` or the Upload button for anything larger
+than a few megabytes (12).
+
 ### 4.5 OpenAI
 
 `OPENAI_API_KEY`. All tiers currently use `gpt-4o-mini`; the tier changes depth, not model.
@@ -519,6 +564,12 @@ it before deploying, not after:
    full body, and download-request emails carry live Approve, Deny and claim URLs that work without
    sign-in, so in production those tokens would land in Vercel logs and any Log Drain. Without
    `RESEND_API_KEY`, sending throws.
+4. Look at every template once, as the admin, at `/a/emails` — it renders each one from the
+   catalog and flags any without a preview, which is the only way to notice a template that was
+   added without one. Two are recent and have never been sent from production: `member_removed`
+   (to the person removed from a workspace) and `waitlist_approved` (the welcome, sent by the
+   approve button in `/a/waitlist`). Both quote workspace and product names, so read them with the
+   live `NOTIFICATION_EMAIL_FROM` in place rather than assuming the copy is fine.
 
 ## 5. Web app on Vercel
 
@@ -566,6 +617,8 @@ it before deploying, not after:
 | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | optional; leave unset. They apply only when both are set; one alone is ignored and both redirects come from `NEXT_PUBLIC_APP_URL` |
 | `NEXT_PUBLIC_FEATURE_REQUESTS` | leave unset at launch. `1` turns Requests on; it is build-time, so it needs a fresh build, the two Requests backfills in 5.2 first, and the same value on MCP (`fly secrets set NEXT_PUBLIC_FEATURE_REQUESTS=1 -a lnkdrp-mcp`, or `[env]` in `deploy/fly/mcp.fly.toml` plus `fly deploy`) |
 | `NEXT_PUBLIC_FEATURE_CREDITS` | optional; credits UI is on by default, `0` hides it — including every "Add more credits" button, so the only way to `/credits` is typing the URL |
+| `WAITLIST_ENABLED` | optional; unset means every new account is approved on sign-up. `1`/`true`/`on`/`yes` queues **new** accounts instead: they sign in, land on the queue page and can do nothing else until an admin approves them (`/a/waitlist`, which sends the `waitlist_approved` email). Read at request time, so turning it on or off takes effect on the next request with no redeploy. Existing accounts are never queued, and neither are admins |
+| `WAITLIST_ALLOW_EMAILS`, `WAITLIST_ALLOW_DOMAINS` | optional; comma- or space-separated. Addresses and domains that skip the queue while it is on — your own team, an investor, a design partner. Domains are bare (`lnkdrp.com`, not `@lnkdrp.com`), matching is case-insensitive, and both are ignored when `WAITLIST_ENABLED` is unset |
 | other `ERROR_LOGGING_*` | optional; see `docs/ERROR_LOGGING.md` |
 
 `NEXT_PUBLIC_*` values are inlined at build time into the browser bundle and the server routes
@@ -593,9 +646,9 @@ it through a tunnel that rewrites the host header (for example `ngrok --host-hea
 and never serve staging from `next dev`. `ADMIN_LOCALHOST_BYPASS=0` turns it off in development
 when you need the real gate.
 
-4. Crons come from `vercel.json`; see 5.1. **Vercel Pro is required** because seven of the nine
+4. Crons come from `vercel.json`; see 5.1. **Vercel Pro is required** because seven of the ten
    jobs run more than once a day (`notification-emails` every 5 minutes). PDF processing, URL
-   import, uploads, compare reruns and all nine cron routes declare `maxDuration = 300`.
+   import, uploads, compare reruns and all ten cron routes declare `maxDuration = 300`.
    Processing continues in `after()` inside that same 300 s budget, so a deck that cannot be
    processed in 5 minutes fails on any plan unless `maxDuration` is raised (Pro with Fluid compute
    allows up to 800 s). Do not raise `maxDuration` on a cron route without raising that route's
@@ -637,6 +690,7 @@ one `cron:<job>` npm script, and `tests/lib/cronMap.test.ts` fails when they dri
 | `plan-limits` | `40 * * * *` | yes | yes (default 500, max 5000) | yes |
 | `analytics-reconcile` | `50 3 * * *` | yes | ignored; no bound (it scans all history) | no |
 | `credits-purchase-expiry` | `5 4 * * *` | ignored | yes | no |
+| `account-purge` | `30 4 * * *` | yes | yes (default 25) | no |
 
 Never pass `--dry-run` to a job marked "ignored" expecting a preview: the runner still adds
 `?dryRun=1`, the route ignores it and does the real work, including Stripe meter events and credit
@@ -645,8 +699,16 @@ grants.
 - **Production:** Vercel Cron calls `GET /api/cron/<job>` with `Authorization: Bearer $CRON_SECRET`
   on the schedule. Every route records a `CronHealth` row and accepts `POST` as well. The four
   jobs marked "Lease" hold a Mongo lease (6 minutes) and answer `{ skipped: "locked" }` while
-  another run holds it. The other five have no lease but are idempotent, so a double run repeats
-  work without double-granting or double-sending.
+  another run holds it. The other six have no lease but are idempotent, so a double run repeats
+  work without double-granting or double-sending (an account already purged no longer matches
+  `account-purge`'s query).
+- **`account-purge` is the one job that destroys data.** It removes the blobs and then the rows of
+  accounts whose 30-day deletion grace period has run out; nothing undoes it short of an Atlas
+  restore, and the blobs are not in that restore (11, Backups). Run it by hand only with
+  `?dryRun=1`, which reports what it would remove and writes nothing, not even a `CronHealth` row.
+  `?userId=<id>` purges one already-due account, for a support case. Watch its `lastResult`
+  (`due`, `purged`, `blobsDeleted`, `blobErrors`): a non-zero `blobErrors` means rows went and
+  files stayed, which nothing retries.
 - **By hand, any environment:** from a checkout, with `CRON_SECRET` exported (3),
   `npx tsx scripts/cron/cron.<job>.ts --target=https://lnkdrp.com` (add `--dry-run` only where
   the table says yes, `--limit=N` to shrink a run only where the table says yes; the other jobs
@@ -675,13 +737,15 @@ grants.
   40 * * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/plan-limits
   50 3 * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/analytics-reconcile
   5 4 * * *    curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/credits-purchase-expiry
+  30 4 * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/account-purge
   ```
-  `scripts/cron/README.md` leaves `analytics-reconcile` and `credits-purchase-expiry` out of its
+  `scripts/cron/README.md` leaves `analytics-reconcile`, `credits-purchase-expiry` and
+  `account-purge` out of its
   crontab, says every route takes a lease (four do; see the table above) and calls a double
   scheduler harmless, and its lines need `.env.local`; use this list. Keep the schedules identical to `vercel.json` and run one scheduler
   only: a second one is skipped by the leased jobs and only repeats work in the others.
-- Job details and manual-trigger examples: `docs/CRON.md` (it predates `analytics-reconcile` and
-  `credits-purchase-expiry`; this section wins where they differ). `docs/deploy/Deploy_1.md` says only two jobs take a lease; four do.
+- Job details and manual-trigger examples: `docs/CRON.md` (it predates `analytics-reconcile`,
+  `credits-purchase-expiry` and `account-purge`; this section wins where they differ). `docs/deploy/Deploy_1.md` says only two jobs take a lease; four do.
 
 ### 5.2 One-time data jobs
 
@@ -706,7 +770,7 @@ production env file:
 | 6 | `npx tsx --env-file=prod.env scripts/docchange-from-upload-repair.ts`, then `--apply` | Old version-change rows pointed "from" at the new upload |
 | 7 | `npx tsx --env-file=prod.env scripts/credit-balances-reconcile.ts`, then `--apply` | Team workspaces seeded with Free starter credits; Free workspaces missing the 15-a-day cap. Add `--reset-compare-tier` only if no Free user has chosen a compare tier on purpose: it moves every Free row stored as "standard" back to the plan default (a replacement cost 6 instead of 3) |
 | 8 | `npx tsx --env-file=prod.env scripts/ai-ask-repair.ts`, then `--apply` | Stored summaries with an operating cost taken as the funding ask, and invented "Funding ask"/milestone metrics |
-| 9 | `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` | Must print "All share-analytics invariants hold" (see 9.1) |
+| 9 | `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` | Read-only. Must print "All share-analytics invariants hold" (see 9.1) |
 
 `scripts/request-docs-projectids-backfill.mjs` and `scripts/doc-received-via-request-backfill.mjs`
 repair Requests data. Requests are hidden at launch; run them (same form, dry run then `--apply`)
@@ -778,8 +842,17 @@ const want = {
   orginvites: ["tokenHash_1"],
   billingconfigs: ["key_1"],
   projectviews: ["projectId_1_viewerUserId_1_sessionIdHash_1"],
+  projectlinkviews: ["shareId_1_botIdHash_1"],
   starredDocs: ["orgId_1_userId_1_docId_1"],
   reviews: ["docId_1_version_1"],
+  // Tags. Both indexes are unique and both carry a guarantee the UI depends on: one tag per name
+  // per workspace, and tagging the same thing twice being the same fact rather than two rows.
+  tags: ["orgId_1_slug_1"],
+  tagassignments: ["tagId_1_targetKind_1_targetId_1"],
+  // Notification dedupe: without it the same view can be emailed twice.
+  notificationqueues: ["dedupeKey_1"],
+  // One verified address per person per workspace.
+  sharevieweremails: ["orgId_1_email_1"],
 };
 for (const [c, names] of Object.entries(want)) {
   let have;
@@ -816,7 +889,8 @@ listed above.
 
 ### 5.5 Admins
 
-Admin tools are `/a` (cron health, credits, data, AI runs) and `/api/admin/*`. An admin is a
+Admin tools are `/a` (cron health, deployments, credits, data, AI runs, emails, share views,
+account deletions) and `/api/admin/*`. An admin is a
 `users` row with `role: "admin"`. Nothing in the app grants it.
 
 1. Sign in once with the admin's Google account.
@@ -844,6 +918,41 @@ Admin tools are `/a` (cron health, credits, data, AI runs) and `/api/admin/*`. A
 
 To remove an admin, set `role` back to `"user"`. The API stops accepting them on the next call.
 Keep the list short.
+
+### 5.6 Vercel API token, for the Deployments page
+
+`/a/deployments` shows the last deployments with their state, target, commit and build duration.
+That is the one thing the admin area cannot learn from its own database, because only Vercel knows
+it.
+
+**Entirely optional.** With no token the page says "not configured" and names these variables, and
+nothing else in the admin area changes. Do not treat a missing token as a broken deploy.
+
+1. vercel.com, your avatar, **Account Settings**, then **Tokens**.
+2. **Create Token**. Name it for the job, e.g. `lnkdrp-admin-readonly`. **Scope it to the team that
+   owns the project**, not your whole account, and set an expiry you are willing to rotate on.
+3. `VERCEL_PROJECT_ID`: Project Settings, General, "Project ID" (`prj_…`). Or read
+   `.vercel/project.json` after `vercel link`.
+4. `VERCEL_TEAM_ID`: Team Settings, General (`team_…`). **Required when the project belongs to a
+   team**, omitted for a personal account. Leaving it out on a team project is the usual cause of a
+   403, and the page says so when it gets one.
+5. Set all three in Vercel project env vars, production scope. They are read server side only.
+
+```
+VERCEL_API_TOKEN=...
+VERCEL_PROJECT_ID=prj_...
+VERCEL_TEAM_ID=team_...        # team projects only
+```
+
+**Know what you are handing over.** Vercel tokens are not granular: there is no read-only token
+type. The token carries the access of whatever you scope it to, and it is read-only here only
+because `src/lib/vercel/client.ts` issues nothing but GETs. Scope it to one team, give it an expiry,
+and treat it like any other production secret — it never reaches the browser, is never logged, and
+every string the client takes from a Vercel response is scrubbed of it before it reaches an admin
+payload (a commit message containing the token would otherwise have been echoed back, which a test
+caught).
+
+Rotating it is safe at any time: the page degrades to "not configured" until the new value deploys.
 
 ## 6. Realtime server
 
@@ -888,7 +997,7 @@ fly secrets list -a lnkdrp-realtime                 # exactly MONGODB_URI and RE
 fly deploy --ha=false --config deploy/fly/realtime.fly.toml --dockerfile realtime/Dockerfile \
   --image-label "$(git rev-parse --short=7 HEAD)"
 fly scale show -a lnkdrp-realtime                   # expect one machine
-curl https://lnkdrp-realtime.fly.dev/healthz        # 200, "ok":true, all three "streams" true; proves the service before DNS
+curl https://lnkdrp-realtime.fly.dev/healthz        # 200, "ok":true, "mongo":"connected", "draining":false, all seven "streams" true
 fly certs add realtime.lnkdrp.com -a lnkdrp-realtime
 # CNAME realtime → lnkdrp-realtime.fly.dev, DNS-only (not proxied); CAA, if any, must allow letsencrypt.org
 fly certs check realtime.lnkdrp.com -a lnkdrp-realtime  # repeat until the certificate is issued
@@ -897,6 +1006,12 @@ curl https://realtime.lnkdrp.com/healthz
 
 The comments at the top of `deploy/fly/*.fly.toml` point here and hold no commands; this block and
 the one in 7 are the only copies.
+
+`/healthz` answers 503, not 200, while the machine is draining on SIGTERM and whenever the Mongo
+connection is down, so the named fields say which of the three facts is false. A missing ticket
+secret is refused at boot with `REALTIME_SECRET (or NEXTAUTH_SECRET) is required` — the process
+used to start, report healthy, and die on the first browser that connected, so a crash loop whose
+first log line is a stack trace from a request is the old symptom, not the current one.
 
 - Fly outbound IPs change unless allocated as above, and without an allocation `fly ips list`
   shows only inbound addresses. With a strict allowlist, add the egress IP to Atlas before the
@@ -962,7 +1077,24 @@ Details, frame formats and scaling notes: `docs/REALTIME.md`.
 
 Same host class as the realtime server; on Fly, from the repository root (6.2). It never talks to
 Atlas, so it needs no egress IP for the Atlas allowlist. It does need one for the Vercel Firewall
-rule in 12; allocate it in 0 G, before that rule:
+rule in 12; allocate it in 0 G, before that rule.
+
+**`mcp/Dockerfile` copies `src/lib/limits/uploads.ts` (12) — done, keep it that way.** The server
+imports it (`mcp/src/main.ts`, `tools/sharePdf.ts`, `tools/replacePdf.ts`) for the upload ceilings
+in 4.4. The `COPY` is at `mcp/Dockerfile:41`; before it was added the build succeeded — nothing
+type-checks the image — and the container then died on start with
+`Cannot find module '../../src/lib/limits/uploads'`, which on Fly is a machine restarting in a
+loop and `/healthz` never answering. `tests/lib/imageImportClosure` now fails the local gate when
+either image's `COPY` list stops covering what its entrypoint imports, so this is caught before a
+deploy rather than by one — but the test can only check the list, so add the line next to the
+other three `COPY`s, or the block below cannot finish:
+
+**Redeploy the MCP whenever its tool list changes.** The server registers its tools at start, and
+a client caches the list it was given, so a tool added since the running image was built does not
+exist to any agent — with no error to see, because the tool is simply absent. The tag tools
+(`lnkdrp_list_tags`, `lnkdrp_tag`, `lnkdrp_untag`) are the most recent additions; after the deploy,
+confirm they are there by listing tools from a client rather than with `curl`, which sees a
+per-client cache (`docs/MCP.md`).
 
 ```
 fly launch --no-deploy --copy-config --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile --name lnkdrp-mcp
@@ -989,6 +1121,59 @@ ticket for any workspace and listen to its live events, including new share ids.
 `lnkdrp_share_pdf` and `replace_pdf` (they return on the ready frame instead of polling every 2 s);
 treat the MCP host as holding a cross-tenant secret, or leave `REALTIME_SECRET` unset there if
 polling is acceptable.
+
+**Everything else the server reads.** `deploy/fly/mcp.fly.toml` `[env]` already sets `NODE_ENV`,
+`MCP_PORT` (8787), `LNKDRP_API_URL` (`https://lnkdrp.com`), `MCP_PUBLIC_URL`
+(`https://mcp.lnkdrp.com`) and `NEXT_PUBLIC_REALTIME_URL` (`wss://realtime.lnkdrp.com`); `[env]`
+applies only on deploy (9). The rest are optional and unset by default:
+
+| Variable | On `mcp.lnkdrp.com` |
+|---|---|
+| `LNKDRP_ALLOW_LOCAL_FILES` | **leave unset.** See below — setting it hands agents the container's filesystem |
+| `LNKDRP_GHOSTSCRIPT` | unset unless `gs` is not on `PATH`; it names the binary to run |
+| `LNKDRP_PDF_OPTIMIZE_DPI` | unset (220); clamped to 72–600 |
+| `NEXT_PUBLIC_FEATURE_REQUESTS` | unset at launch, and the same value as Vercel if you turn it on |
+| `LNKDRP_API_KEY` | never; it is for `--stdio` mode, where one key serves the whole process |
+
+**`filePath` reads files off the MCP server's own disk, so it is gated.** `lnkdrp_share_pdf` and
+`lnkdrp_replace_pdf` accept `filePath` as well as `sourceUrl` and `fileBase64`, and the server
+opens that path itself — an agent's "path on my machine" only means anything when the server *is*
+that machine. `isLocalFileAccessAllowed` (`mcp/src/tools/sharePdf.ts`) permits it when
+`LNKDRP_ALLOW_LOCAL_FILES` is `1`/`true`/`yes`, or when `LNKDRP_API_URL`'s host is `localhost`,
+`*.localhost`, `127.0.0.0/8`, `0.0.0.0` or `::1`. On the hosted server neither holds, so `filePath`
+is refused with a `validation` error that tells the caller to use `sourceUrl` — which is the
+correct behaviour.
+**Never set `LNKDRP_ALLOW_LOCAL_FILES` on `lnkdrp-mcp`**, in `[env]` or with `fly secrets`: it
+turns an agent-supplied absolute path into a read of the container's filesystem, and the tool then
+uploads what it read, as a document, to that agent's own workspace. The only checks left are that
+the path is absolute, the file is under `UPLOAD_MAX_BYTES` and its first bytes are `%PDF-`; nothing
+validates the path itself. So the exposure is every PDF the container can reach — today an image
+with no customer data in it, tomorrow whatever a volume or a debugging mount adds. The same applies
+to any shared staging MCP. The flag is for a server the caller runs themselves, which is the local
+`npm run mcp` case.
+
+**PDF optimization needs Ghostscript, and the image does not have it.** Before an inline upload the
+server shells out to `gs` (`mcp/src/optimize.ts`): `-dPDFSETTINGS=/prepress` with images
+downsampled to `LNKDRP_PDF_OPTIMIZE_DPI` (default 220), a 120 s timeout, page count verified
+against the original, and the result kept only if it is a valid PDF with the same page count and at
+least 5% smaller. Files under 1 MB are not touched. It is a **soft dependency**: with no `gs` on
+`PATH` (and none at `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, or wherever
+`LNKDRP_GHOSTSCRIPT` points), the upload still happens and the tool result says
+"Ghostscript (gs) is not installed on the MCP server, so the file was sent as-is." Every other
+failure — timeout, changed page count, no saving — is soft the same way.
+
+`mcp/Dockerfile` runs no `apk add`, so the Fly image has no `gs` and every inline upload carries
+that note. Shipping without it is a supported choice: `sourceUrl` never needed optimization, and
+the inline path cannot carry a large file on Vercel anyway (4.4). It only matters if the inline
+path is how your agents share, because optimization is what brings a 6 MB deck under Vercel's
+4.5 MB body cap. To turn it on, add `ghostscript` to a `RUN apk add --no-cache` line in
+`mcp/Dockerfile` and `fly deploy`; it is a large package with its own fonts, so check the built
+image size and the `shared-cpu-1x` 512 MB machine's headroom before assuming no `[[vm]]` change is
+needed. Add `pdfjs-dist` to the same generated
+`package.json` in that Dockerfile while you are there: optimization verifies the page count on both
+files before it accepts a smaller one, and without `pdfjs-dist` that check cannot run, so
+Ghostscript would do the work on every upload and the result would always be thrown away with
+"The original was sent unchanged: the page count could not be verified on both files."
 
 Or with Docker anywhere (add `--platform linux/amd64` as in 6.3):
 
@@ -1043,10 +1228,13 @@ Run in this order; each step depends on the previous.
    plus basic compare 2).
 6. Open `/connect`, create a key, run the Verify curl. The pill reads "Key verified".
 7. `curl https://realtime.lnkdrp.com/healthz` shows `"ok":true`, `streams` with `activity`,
-   `apikeys` and `docs` all true, and `sockets` of at least 1 while your tab is open.
+   `apikeys`, `docs`, `projects`, `uploads`, `shareviews` and `projectlinkviews` all true, and
+   `sockets` of at least 1 while your tab is open.
    Then, with DevTools → Network → WS open on `/activity`, open the share link again: an `activity`
    frame arrives within a second. A row that appears only after several seconds is polling, and
-   realtime is not working.
+   realtime is not working. Upload another PDF with `/activity` open and watch the progress bar
+   move on `upload` frames; `/api/uploads/in-progress` is the snapshot those frames update, and
+   with no socket it is polled instead, so a working bar alone does not prove the socket.
 8. `curl -s https://mcp.lnkdrp.com/healthz` → `ok: true`, `apiUrl: "https://lnkdrp.com"`, and
    `fly scale show -a lnkdrp-mcp` → exactly one machine. Add the MCP to Claude Code with that key,
    open a session; the sidebar Agents entry flips to
@@ -1098,21 +1286,24 @@ Run in this order; each step depends on the previous.
 12. Recreate `prod.env`, run `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts`
     against production (read-only), and delete the file again.
 13. Revoke the test key from `/connect`; the sidebar returns to Not connected.
-14. Vercel → Settings → Cron Jobs lists 9 jobs. Prove the scheduler, not your step 9 hand runs.
+14. Vercel → Settings → Cron Jobs lists 10 jobs. Prove the scheduler, not your step 9 hand runs.
     An hour after the deploy, in Vercel → Settings → Cron Jobs → View Logs, each of the five jobs
     that run hourly or faster (below) has an invocation at its scheduled minute; check the other
-    four the same way the next morning. Then read every job against its schedule:
+    five the same way the next morning. Then read every job against its schedule:
     `curl -s -H "Authorization: Bearer $CRON_SECRET" 'https://lnkdrp.com/api/monitor/crons?strict=0' | jq '.jobs[] | {jobKey,state,lastRunAt}'`.
     The five jobs that run hourly or faster (`notification-emails`, `credits-cycle-reconcile`,
     `usage-agg-reconcile`, `stripe-credits-report`, `plan-limits`) must be `ok`, and `plan-limits`
     must show a `lastRunAt` at about :40, later than your step 9 run. `doc-metrics` and
     `stripe-credits-reconcile` may be `never-run` until their next 6-hour slot, and
-    `credits-purchase-expiry` until 04:05; `analytics-reconcile` reads `ok` only because of the step
+    `credits-purchase-expiry` until 04:05 and `account-purge` until 04:30; `analytics-reconcile`
+    reads `ok` only because of the step
     9 run. `/a/cron-health` (admin, 5.5) lists only jobs that have run and has no late state, so use
-    it for `lastResult`. The next morning all nine are `ok`: `analytics-reconcile` with a
+    it for `lastResult`. The next morning all ten are `ok`: `analytics-reconcile` with a
     `lastRunAt` after 03:50 UTC today and `lastParams.dryRun` false in `GET /api/admin/cron-health`
     (admin session; the page does not show `lastParams`), `credits-purchase-expiry` after 04:05,
-    each of those four with a View Logs invocation — and
+    `account-purge` after 04:30 (on a fresh database it reports `due: 0`; `/a/deletions` shows who
+    is waiting and when each purge is owed),
+    each of those five with a View Logs invocation — and
     `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CRON_MONITOR_SECRET" https://lnkdrp.com/api/monitor/crons`
     answers 200 (this also proves the monitor secret works before the uptime monitor gets it). Re-run the index check in 5.4; `cronhealths` must exist with no `MISSING`. Point
     the uptime monitor at the cron monitor then, not before (11, Crons).
@@ -1149,7 +1340,8 @@ Run in this order; each step depends on the previous.
   `sharelinks` text index; copy its `ensureIndex` helper, which leaves an identical index alone.
 - The realtime and MCP services do not auto-deploy. Run `fly deploy` (6.2 / 7) when a commit
   touches `realtime/`, `mcp/`, `src/lib/realtime/ticket.ts`, `src/lib/credits/schedule.ts`,
-  `src/lib/credits/types.ts`, `tsconfig.json`, `deploy/fly/realtime.fly.toml` or
+  `src/lib/credits/types.ts`, `src/lib/limits/uploads.ts`, `tsconfig.json`,
+  `deploy/fly/realtime.fly.toml` or
   `deploy/fly/mcp.fly.toml` (their `[env]` applies only on deploy), or the resolved versions of
   `mongoose`, `ws`, `@modelcontextprotocol/sdk`, `express`, `zod` or `tsx` in `package-lock.json`.
   The Dockerfiles pin those direct dependencies to exact versions that must equal what the root
@@ -1161,8 +1353,10 @@ Run in this order; each step depends on the previous.
   Build only from the release commit: `fly deploy` builds from the local working tree, so first run
   `git fetch && test -z "$(git status --porcelain)" && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"`,
   and label the image with `--image-label "$(git rev-parse --short=7 HEAD)"` (6.2, 7) so rollback
-  can find it. The MCP image copies the credit schedule, so a price change without an MCP deploy
-  leaves `lnkdrp_whoami` quoting old costs. The services are backwards compatible with the web app
+  can find it. The MCP image copies the credit schedule and the upload ceilings, so a price change
+  without an MCP deploy leaves `lnkdrp_whoami` quoting old costs, and a change to
+  `src/lib/limits/uploads.ts` leaves the tool descriptions and the Express body limit on the old
+  number while the API enforces the new one. The services are backwards compatible with the web app
   across ordinary releases; deploy the web app first when both change. A services deploy restarts
   the single machine: every browser socket reconnects within a few seconds and every MCP session
   is dropped (clients get `404 Session not found` and must reconnect). Deploy MCP outside busy
@@ -1172,7 +1366,7 @@ Run in this order; each step depends on the previous.
      (`git rev-parse --short=7 HEAD`).
   2. `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CRON_MONITOR_SECRET" https://lnkdrp.com/api/monitor/crons` → 200.
   3. The index check (5.4) if `src/lib/models/` changed.
-  4. After a `fly deploy`: both `/healthz` ok (realtime with all three `streams` true), `fly scale show` one machine, and
+  4. After a `fly deploy`: both `/healthz` ok (realtime with all seven `streams` true), `fly scale show` one machine, and
      `fly releases --image -a <app>` shows the new label.
   5. Open a share link and confirm a view arrives on `/activity` within a second.
 - Never point the analytics dev tools at production: `tests/share/traffic.ts` and
@@ -1190,8 +1384,29 @@ Run in this order; each step depends on the previous.
 
 Run `npx tsx --env-file=.env.<target> scripts/verify-share-analytics.ts` against the target
 database before and after any release that touches the share analytics. `npm run verify:analytics`
-always reads `.env.local`, so use it only for the local database. The check is read-only, safe
-against production, and exits non-zero, so it also works as a CI step.
+always reads `.env.local`, so use it only for the local database. The check is read-only, safe against
+production, and exits non-zero, so it also works as a CI step.
+
+Expect `All share-analytics invariants hold` on a healthy database. It says that now; it could not
+before 2026-09-21, and the reason is worth knowing because the failure mode was the dangerous kind
+— loud where it should have been quiet, and silent where it should have been loud.
+
+`ShareLinkModel.distinct("docId")` returns the `null` that every project link carries, and the
+per-document check ran once on it. `find({ docId: null })` is every data-room link in the database;
+the row aggregate beside it matched rows whose `docId` is null, of which there are none. So each
+project link *with* traffic was reported as completely drifted (`viewCount is 10 but 0 recipient
+rows exist`) and each one without passed by comparing zero to zero — meaning no project link's
+counters were ever actually checked. The document rollups failed the same way for a different
+reason: `freshViewerCount` and `freshVisitTimeMs` matched on `docId` alone, while the route they
+claim to recompute applies `docOnlyShareIdMatch`, so a document in a data room was accused of
+disagreeing with itself over the readers it is right to exclude.
+
+Both are fixed. Project links are now verified against `projectLinkStatsByShareId` — the same
+function the project read paths and `analytics-reconcile` already share, so "what a project link's
+viewCount is" has one definition — and the two tools agree: the run that found `viewCount is 12 but
+13 recipient rows exist` was followed by a reconcile reporting `stored: 12, actual: 13` and
+repairing it. The recomputations apply document scope. Verified by injecting drift into one link of
+each kind and confirming both were caught.
 
 It asserts four properties, each of which failed silently in production shape at least once:
 
@@ -1207,8 +1422,23 @@ force it with `npx tsx scripts/cron/cron.analytics-reconcile.ts --target=https:/
 `CRON_SECRET` exported, 3).
 A **page-time overrun is not repairable and is never repaired automatically**: it means the ingest
 double counted, and overwriting the rows would hide the bug instead of fixing it. The job reports
-those in `CronHealth.lastResult` and marks itself `error` so the run is visible, which is the
-signal to look at `src/lib/analytics/shareTiming.ts` and the flush logic in `PdfJsViewer`.
+those in `CronHealth.lastResult` and marks itself `error` so the run is visible.
+
+Three files, in the order to read them. `src/lib/share/readingClock.ts` is the flush logic — a
+pure state machine with its own unit tests, including a fuzz test whose invariant is exactly the
+property above: reported page time never exceeds reported visit time.
+`src/lib/analytics/shareTiming.ts` turns one post into the two increments and holds the rule that
+timing *bounds* (`enteredAtMs` / `leftAtMs`) mean the reader **left** the page, which is what
+promotes a post to a `pageEvents` segment and a revisit tick. `PdfJsViewer` only feeds the clock
+browser events and posts what it flushes; there are no timing rules left in it.
+
+The clock reports the page it is **still on** every 30-second heartbeat, not only on a page turn —
+a document with one page has nowhere to turn to and recorded nothing at all until the tab closed.
+A heartbeat's post therefore carries `pageDurationMs` with **no** bounds, and the clock keeps a
+`pageReportedMs` ledger so the exit flush sends only what has not been sent yet. That ledger is
+the thing to suspect first if this property ever fails again: reset it in one place and not
+another and the page's whole dwell is sent twice. A heartbeat that starts arriving *with* bounds
+is the other tell — every one of those writes a page exit that never happened.
 
 The job rescans every settled row every night, so one overrun keeps `analytics-reconcile` at
 `error`, and `/api/monitor/crons` at 503, every night until the rows are handled. Until then the
@@ -1289,8 +1519,9 @@ monitor is in 12.
 ## 11. Operating notes
 
 - **Health:** `/api/health` (web), `/healthz` (both services), and `/api/monitor/crons` (below).
-  Point an uptime monitor at all four. Realtime `/healthz` reports each change stream
-  (`streams: { activity, apikeys, docs }`). A `<name> stream error` log line alone is not an
+  Point an uptime monitor at all four. Realtime `/healthz` reports each of its seven change streams
+  (`streams: { activity, apikeys, docs, projects, uploads, shareviews, projectlinkviews }`), and is
+  503 while any one of them is false. A `<name> stream error` log line alone is not an
   outage: the driver resumes transient errors itself. When a stream is still closed 30 s after an
   error or close, the server logs `<name> stream closed for good`, `/healthz` answers 503 with
   that stream `false`, and 5 s later the process exits so Fly restarts the machine with fresh
@@ -1381,16 +1612,20 @@ monitor is in 12.
   `npx tsx --env-file=.env.restored scripts/verify-share-analytics.ts`, point `MONGODB_URI` at it
   on the web app and the realtime server and redeploy both, replay Stripe events and reconcile the
   meter before crons go back on. Do one
-  test restore before launch. Vercel Blob has no backup: the app never deletes blobs, but a store
-  removed by hand is gone.
+  test restore before launch. Vercel Blob has no backup and is not in the Atlas restore. Ordinary
+  use never deletes a blob — old versions and deleted documents keep theirs — but `account-purge`
+  (5.1) does, permanently, 30 days after someone asks to delete their account. A database restore
+  to a point before that purge brings the rows back pointing at files that no longer exist, and a
+  store removed by hand is gone.
 - **Costs and quotas:** before launch, set a monthly budget and email alert on the OpenAI project
   that owns `OPENAI_API_KEY`, a Vercel Spend Management amount, and billing alerts on Atlas (backup
   storage adds to the cluster cost) and the Fly organization. In Atlas → Alerts also add
   "Connections above 80% of the tier limit" (M10 allows 1,500) and "Replication oplog window below
   1 h". Put Resend on a plan above the free
   tier (100 emails a day); over quota, sends fail. View emails are on by default for every
-  workspace member (4.6), so size the plan by member count, not by signups. Blob storage only grows: the app never deletes a
-  blob, including old versions and deleted documents.
+  workspace member (4.6), so size the plan by member count, not by signups. Blob storage grows with
+  every upload and is never reclaimed by ordinary use — old versions and deleted documents keep
+  their blobs. The only path that removes one is `account-purge` (5.1).
 - **Scaling:** the web app scales with Vercel, but each function instance can hold up to 10
   connections per replica-set member (`maxPoolSize` 10, released only after 30 s idle; the code
   does not use `attachDatabasePool`), and Fluid compute adds instances with traffic. Watch Atlas →
@@ -1398,7 +1633,7 @@ monitor is in 12.
   `hard_limit` 2000, and each connected agent can hold one (7 step 3). MCP must stay at one machine (sessions are in
   memory) unless you add sticky routing on `Mcp-Session-Id`. Realtime can run more than one
   machine: each runs its own change streams and serves its own sockets, and each extra machine
-  adds three change streams on Atlas.
+  adds seven change streams on Atlas.
 - **Secrets rotation:** `REALTIME_SECRET` must change on all three pieces in one go; tickets are
   60 seconds, so a brief mismatch only costs reconnects. Afterwards, while an agent shares a PDF,
   `fly logs -a lnkdrp-mcp` must not show `realtime: socket error, polling continues`; nothing else
@@ -1456,6 +1691,29 @@ monitor is in 12.
 - Stripe live catalog and webhook do not exist yet; only the sandbox is configured.
 - Neither service is deployed yet. Fly.io is the chosen host (section 6.1), configs are in
   `deploy/fly/`; DNS for `mcp.lnkdrp.com` and `realtime.lnkdrp.com` still has to be created.
+- **Resolved: the `COPY` lists are checked by a test.** `mcp/Dockerfile` had to be taught to copy
+  `src/lib/limits/uploads.ts`, and the hazard behind it — nothing checking that a `COPY` list
+  covers what the entrypoint imports, with the build succeeding either way — recurred exactly as
+  predicted: the realtime server gained an import of `share/projectPublic`, which could not simply
+  be copied because it drags mongoose models behind it. `tests/lib/imageImportClosure` now walks
+  the import graph from both entrypoints and fails when anything it reaches is missing from that
+  image's `COPY` list, or when either image would pull in a database model. `import type` is
+  ignored, since it is erased before the code runs. Run it with the other suites in the 0 A gate.
+- **The 50 MB inline upload limit is not reachable on Vercel.** `src/lib/limits/uploads.ts` sets
+  `UPLOAD_MAX_BYTES` to 50 MB for both `import-url` and `import-bytes`, and every message and MCP
+  tool description quotes it, but Vercel Functions cap a request body at about 4.5 MB, so the
+  inline path (`import-bytes`, and the MCP's `fileBase64` and `filePath`) fails past roughly 3 MB
+  decoded with a platform 413 that carries none of our copy (4.4). Nothing in the app detects the
+  host's cap, so the numbers it quotes stay wrong for that one path. Decide one of: quote the real
+  inline ceiling when the deployment is Vercel, move the inline path to the browser's
+  direct-to-Blob route, or accept it and rely on agents preferring `sourceUrl` (the tool
+  descriptions already push them there, and the MCP shrinks what it can). Until then, expect
+  support questions whose only visible symptom is a 413 with no lnkdrp error body.
+- **Decision pending: Ghostscript is not in the MCP image.** PDF optimization is a soft dependency
+  and skips cleanly with a note (7), so the current image is a working, supported configuration —
+  but it is also the reason a mid-sized deck sent inline cannot be brought under Vercel's body cap.
+  Decide before launch whether `mcp/Dockerfile` installs `ghostscript` and `pdfjs-dist`, or whether
+  inline uploads stay small-files-only.
 - Resend sending domain (4.6) and the Google consent screen publishing status (4.3) are not done.
 - Check the sandbox Stripe Pro product description against 4.2 (older text said summaries never use credits).
 - **If you ever add a real Content-Security-Policy**, know what it breaks first. The app sends only
@@ -1468,12 +1726,28 @@ monitor is in 12.
   address counts as a separate IP). Decide on an abuse budget or tighter rate limits before relying
   on view counts for billing or reports. The same endpoint accepts any `viewerEmail`/`viewerName`
   without verification, so a view can be attributed to someone who never opened the link (it shows
-  in the activity feed and viewer analytics). Treat volunteered identities as unverified, in the UI
-  copy and before building anything (alerts, CRM sync, billing) on them.
-- **Link passwords can be guessed:** 10 tries per 5 minutes per IP per link, no per-link cap, no
-  minimum length (by decision), and every IPv6 address counts as a separate IP. Until the code caps
-  attempts per link and buckets IPv6 by /64 (`src/app/api/share/[shareId]/unlock/route.ts`,
-  `src/lib/http/rateLimit.ts`), add a tight Firewall rule on `POST /api/share/*/unlock`.
+  in the activity feed and viewer analytics). Nothing about that has changed; treat volunteered
+  identities as unverified before building anything (alerts, CRM sync, billing) on them.
+  **Partly answered in the UI, and only partly.** A device-keyed row that carries a name can only
+  have got it by someone typing it in, so the reader page marks it: `IntroducedBadge`
+  ("Introduced themselves", tooltip "Typed in by them, not verified") renders in
+  `src/components/metrics/ViewerProfile.tsx` and nowhere else. Recent-visitor lists, the workspace
+  card and the activity feed still print such a name exactly as they print a signed-in reader's,
+  with no way to tell the claim from the fact. Either mark it in those three places too, or decide
+  the reader page is the only surface where the distinction has to be visible — but decide, rather
+  than leaving one marked surface to imply the others were checked.
+- **Link passwords: the per-link cap landed; IPv6 is still the hole.** Three buckets now apply in
+  `src/app/api/share/[shareId]/unlock/route.ts`: 10 tries per IP per link / 5 min, **100 tries per
+  link across every source address / 15 min**, and 60 tries per IP across all links / 5 min. The
+  middle one is the bound an attacker cannot buy their way out of with more proxies, and it is
+  what stands in for a password length rule (`SHARE_PASSWORD_MIN = 1`, a settled product
+  decision). Note the trade it makes: exhausting it locks that link for everyone until the window
+  ends, so a sustained attack on one link is a denial of service against its real audience — the
+  ceiling is set an order of magnitude above the busiest real send for that reason.
+  Still open: `normalizeIp` in `src/lib/http/rateLimit.ts` keys on the whole address, so every
+  IPv6 address in a /64 — one customer allocation — is a separate bucket and gets its own 10
+  tries. Until it buckets IPv6 by /64, a Firewall rule on `POST /api/share/*/unlock` is what
+  covers that.
 - **Still to do in infrastructure:** the app now caps temp-workspace creation and API-key traffic
   itself (11, Rate limits), but every refused request has still woken a function and read Mongo.
   Add a Vercel Firewall rate-limit rule on `/api/*` per IP so abuse is refused before it costs
@@ -1485,8 +1759,9 @@ monitor is in 12.
   server itself has no limit on failed `initialize` attempts, and invalid keys are rejected before
   the per-key limiter charges anything, so junk-key floods to `mcp.lnkdrp.com` reach the web app
   unthrottled; until the code limits them, watch `fly logs -a lnkdrp-mcp` for bursts of
-  `initialize refused`. Also cover `/s/*/pdf`, which the `/api/*` rule misses: it is public, has no
-  in-app rate limit, streams the whole blob (PDFs up to 250 MB) through a function with
+  `initialize refused`. Also cover `/s/*/pdf` and `/p/*/*/pdf`, which the `/api/*` rule misses:
+  both are public, have no
+  in-app rate limit, stream the whole blob (PDFs up to 250 MB) through a function with
   `cache-control: private`, so no edge cache absorbs repeats, and with `?download=1` each hit also
   writes counters and activity. Nothing collects temp workspaces once created:
   watch the count of `users` with `isTemp: true` and write a reaper if it grows.

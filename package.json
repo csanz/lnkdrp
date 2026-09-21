@@ -40,6 +40,7 @@
     "tests:lib:vitest": "vitest run --config tests/lib/vitest.config.ts",
     "tests:routes": "node scripts/tests-routes.mjs",
     "tests:benchmark": "tsx scripts/tests-benchmark.ts",
+    "audit:blob-urls": "tsx --env-file=.env.local scripts/audit-stored-blob-urls.ts",
     "verify:analytics": "tsx --env-file=.env.local scripts/verify-share-analytics.ts",
     "sharelinks:analytics-backfill": "tsx --env-file=.env.local scripts/sharelinks-analytics-backfill.ts",
     "cron:analytics-reconcile": "tsx --env-file=.env.local scripts/cron/cron.analytics-reconcile.ts",

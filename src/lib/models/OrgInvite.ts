@@ -36,11 +36,28 @@ const orgInviteSchema = new Schema(
   },
 );
 
-// Performance: listing invites in Teams tab:
-// OrgInvite.find({ orgId, isRevoked: { $ne: true } }).sort({ createdDate: -1 }).limit(25)
+// Performance: listing invites in the Teams tab, and counting them for its filter tabs:
+// OrgInvite.find({ orgId, isRevoked: false }).sort({ createdDate: -1 }).skip(...).limit(...)
+//
+// This filter used to read `{ isRevoked: { $ne: true } }`. MongoDB does not accept $ne in a partial
+// filter (only equality, $exists:true, the range operators, $type, $and/$or/$in), so createIndex
+// rejected it and *this index has never existed on any database* — the listing has always been an
+// orgId scan with an in-memory sort, and the comment above it described an index nobody had.
+// Equality is legal, and `isRevoked` has carried `default: false` since this model was first
+// written, so every document has the field and `{ isRevoked: false }` selects exactly the same rows
+// that `$ne: true` did.
+//
+// The queries in /api/org-invites were changed to `isRevoked: false` to match: the planner only uses
+// a partial index when the query predicate provably implies the filter, and `$ne: true` does not
+// (it would also match a document with no `isRevoked` field at all). Queries elsewhere that still
+// say `$ne: true` are simply not served by this index.
+//
+// Migration note: since the broken index never built, there is nothing to drop on an existing
+// database — but nothing will create the corrected one either until autoIndex runs again, so a
+// deployment with autoIndex disabled needs a manual createIndex/reindex to actually get it.
 orgInviteSchema.index(
   { orgId: 1, createdDate: -1 },
-  { partialFilterExpression: { isRevoked: { $ne: true } } },
+  { partialFilterExpression: { isRevoked: false } },
 );
 
 export type OrgInvite = InferSchemaType<typeof orgInviteSchema>;

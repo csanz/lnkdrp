@@ -40,10 +40,23 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
 
-  const [reviewTier, setReviewTier] = useState<TierAll>("standard");
-  const [historyTier, setHistoryTier] = useState<TierAll>("standard");
+  // Null until the GET succeeds. These used to start at "standard", which is a real, billable choice
+  // (5 credits) and not the actual default for anyone: compare falls back to Basic on Free, and any
+  // workspace that had picked Basic saw "Standard" selected anyway. Combined with a `dirty` that was
+  // hard-coded to true, a member hitting the 403 or an admin hitting a transient GET failure could
+  // click Save under the error message and overwrite the real stored tiers with that invented one.
+  // Null renders every radio unchecked and disabled, so nothing is claimed about the workspace until
+  // the server has actually told us.
+  const [reviewTier, setReviewTier] = useState<TierAll | null>(null);
+  const [historyTier, setHistoryTier] = useState<TierAll | null>(null);
+  // What the last successful load returned. Also the "not loaded" flag, and what Save compares
+  // against so an untouched card cannot re-write values it merely displayed.
+  const [loaded, setLoaded] = useState<{ review: TierAll; history: TierAll } | null>(null);
 
-  const dirty = useMemo(() => true, [reviewTier, historyTier]);
+  const dirty = useMemo(
+    () => loaded !== null && (reviewTier !== loaded.review || historyTier !== loaded.history),
+    [loaded, reviewTier, historyTier],
+  );
 
   async function load() {
     setBusy(true);
@@ -53,9 +66,13 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
       const json = (await res.json().catch(() => null)) as ApiResponse | null;
       if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
       if (!json || (json as any).ok !== true) throw new Error("Invalid response");
-      setReviewTier(normalizeTier((json as any).review));
-      setHistoryTier(normalizeTier((json as any).history));
+      const review = normalizeTier((json as any).review);
+      const history = normalizeTier((json as any).history);
+      setReviewTier(review);
+      setHistoryTier(history);
+      setLoaded({ review, history });
     } catch (e) {
+      // Leave the tiers null: the card shows the error with nothing selected rather than a guess.
       setError(e instanceof Error ? e.message : "Failed to load defaults");
     } finally {
       setBusy(false);
@@ -67,6 +84,9 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
   }, []);
 
   async function save() {
+    // Belt and braces: the button is disabled in these states, but a save with nothing loaded would
+    // be exactly the overwrite this card used to do, so refuse it here too.
+    if (!dirty || !reviewTier || !historyTier) return;
     setSaveBusy(true);
     setSaveError(null);
     setSaved(null);
@@ -79,6 +99,8 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
       const json = (await res.json().catch(() => null)) as ApiResponse | null;
       if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
       if (!json || (json as any).ok !== true) throw new Error("Invalid response");
+      // The saved values are now the server's values, so the card goes clean and Save re-disables.
+      setLoaded({ review: reviewTier, history: historyTier });
       setSaved("Saved.");
       // Best-effort refresh so other UI that reads snapshot/usage stays up-to-date.
       dispatchCreditsSnapshotRefresh();
@@ -90,7 +112,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
   }
 
   return (
-    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6", className)}>
+    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6", className)}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">AI quality defaults</div>
@@ -153,7 +175,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
                 name="reviewTier"
                 checked={reviewTier === "basic"}
                 onChange={() => setReviewTier("basic")}
-                disabled={busy || saveBusy}
+                disabled={busy || saveBusy || !loaded}
               />
               <span className="font-semibold text-[var(--fg)]">Basic</span>
               <span className="text-[var(--muted-2)]">(2 credits)</span>
@@ -164,7 +186,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
                 name="reviewTier"
                 checked={reviewTier === "standard"}
                 onChange={() => setReviewTier("standard")}
-                disabled={busy || saveBusy}
+                disabled={busy || saveBusy || !loaded}
               />
               <span className="font-semibold text-[var(--fg)]">Standard</span>
               <span className="text-[var(--muted-2)]">(5 credits)</span>
@@ -175,7 +197,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
                 name="reviewTier"
                 checked={reviewTier === "advanced"}
                 onChange={() => setReviewTier("advanced")}
-                disabled={busy || saveBusy}
+                disabled={busy || saveBusy || !loaded}
               />
               <span className="font-semibold text-[var(--fg)]">Advanced</span>
               <span className="text-[var(--muted-2)]">(12 credits)</span>
@@ -200,7 +222,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
                 name="historyTier"
                 checked={historyTier === "basic"}
                 onChange={() => setHistoryTier("basic")}
-                disabled={busy || saveBusy}
+                disabled={busy || saveBusy || !loaded}
               />
               <span className="font-semibold text-[var(--fg)]">Basic</span>
               <span className="text-[var(--muted-2)]">(2 credits)</span>
@@ -211,7 +233,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
                 name="historyTier"
                 checked={historyTier === "standard"}
                 onChange={() => setHistoryTier("standard")}
-                disabled={busy || saveBusy}
+                disabled={busy || saveBusy || !loaded}
               />
               <span className="font-semibold text-[var(--fg)]">Standard</span>
               <span className="text-[var(--muted-2)]">(5 credits)</span>
@@ -222,7 +244,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
                 name="historyTier"
                 checked={historyTier === "advanced"}
                 onChange={() => setHistoryTier("advanced")}
-                disabled={busy || saveBusy}
+                disabled={busy || saveBusy || !loaded}
               />
               <span className="font-semibold text-[var(--fg)]">Advanced</span>
               <span className="text-[var(--muted-2)]">(12 credits)</span>

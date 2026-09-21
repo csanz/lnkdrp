@@ -30,6 +30,8 @@ function because(ai: UploadAi, step: "summary" | "compare"): string {
 export function warningsFromAi(ai: UploadAi | null): string[] {
   if (!ai) return [];
   const out: string[] = [];
+  // "unchanged": the upload was the same file, so the previous version's summary was kept. Nothing
+  // was skipped for a reason the human needs to hear.
   if (ai.summary === "skipped") out.push(`AI summary skipped: ${because(ai, "summary")}`);
   if (ai.summary === "failed") out.push(`AI summary failed: ${because(ai, "summary")} The share link still works.`);
   if (ai.compare === "skipped") out.push(`AI compare skipped: ${because(ai, "compare")}`);
@@ -45,11 +47,20 @@ export async function readAiOutcome(
   api: ApiClient,
   uploadId: string | null,
   opts: { credits?: boolean } = {},
-): Promise<{ warnings: string[]; creditsRemaining: number | null; ai: UploadAi | null }> {
+): Promise<{ warnings: string[]; creditsRemaining: number | null; ai: UploadAi | null; failureReason: string | null }> {
   const [upload, credits] = await Promise.all([
     uploadId ? api.getUpload(uploadId).catch(() => null) : Promise.resolve(null),
     opts.credits ? api.creditsSnapshot().catch(() => null) : Promise.resolve(null),
   ]);
   const ai = upload?.ai ?? null;
-  return { warnings: warningsFromAi(ai), creditsRemaining: credits?.creditsRemaining ?? null, ai };
+  // A processing failure is not an AI warning: the file itself is unusable, and an agent that only
+  // sees status "failed" with an empty warnings array cannot tell the human anything actionable.
+  const failureReason = upload?.status === "failed" ? (upload.error ?? "processing failed; the file could not be read") : null;
+  const warnings = warningsFromAi(ai);
+  if (failureReason) {
+    warnings.unshift(
+      `This version failed to process: ${failureReason}. Its link is live but has no usable file - upload a working PDF with lnkdrp_replace_pdf, or delete the document.`,
+    );
+  }
+  return { warnings, creditsRemaining: credits?.creditsRemaining ?? null, ai, failureReason };
 }

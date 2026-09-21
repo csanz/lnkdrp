@@ -15,8 +15,17 @@ import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { OrgModel } from "@/lib/models/Org";
 import { resolveActor } from "@/lib/gating/actor";
 import { sendOrgInviteEmail } from "@/lib/email/sendOrgInviteEmail";
+import { recordActivity } from "@/lib/activity/log";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
+import { rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 
 export const runtime = "nodejs";
+
+/** Invite emails per workspace per hour. Generous for onboarding a team, useless as a mailer. */
+const INVITE_EMAIL_ORG_LIMIT = 20;
+/** The same recipient, from anywhere, per hour. */
+const INVITE_EMAIL_RECIPIENT_LIMIT = 3;
+const INVITE_EMAIL_WINDOW_MS = 60 * 60 * 1000;
 
 const ENC_IV_BYTES = 12;
 
@@ -63,6 +72,9 @@ function isValidEmail(email: string): boolean {
 
 export async function POST(request: Request) {
   const actor = await resolveActor(request);
+  // Identity-grade: a key may not invite someone to a workspace — see forbidApiKey.
+  const keyRefusal = forbidApiKey(actor, "invite someone to a workspace");
+  if (keyRefusal) return keyRefusal;
   if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   const body = (await request.json().catch(() => ({}))) as Partial<{
@@ -84,6 +96,29 @@ export async function POST(request: Request) {
   if (!isValidEmail(email)) {
     return NextResponse.json({ error: "Invalid email" }, { status: 400 });
   }
+
+  /**
+   * This route sends mail from our verified domain to any address the caller names, with the
+   * workspace's own name in the subject line. Unlimited, that is a spam cannon pointed at our
+   * sending reputation: one compromised or careless member could mail thousands of strangers, and
+   * every bounce lands on the domain every share-link notification also goes out from.
+   *
+   * Two keys, the shape `/api/share/:shareId/download-requests` already uses: one per workspace so
+   * a single workspace cannot burn the domain, and one per recipient so the same person cannot be
+   * mailed repeatedly from different workspaces.
+   */
+  const rlOrg = await rateLimit({
+    key: `orginvite:org:${orgIdRaw}`,
+    limit: INVITE_EMAIL_ORG_LIMIT,
+    windowMs: INVITE_EMAIL_WINDOW_MS,
+  });
+  if (!rlOrg.ok) return rateLimitedResponse(rlOrg);
+  const rlEmail = await rateLimit({
+    key: `orginvite:to:${crypto.createHash("sha256").update(email).digest("hex")}`,
+    limit: INVITE_EMAIL_RECIPIENT_LIMIT,
+    windowMs: INVITE_EMAIL_WINDOW_MS,
+  });
+  if (!rlEmail.ok) return rateLimitedResponse(rlEmail);
 
   await connectMongo();
 
@@ -146,6 +181,17 @@ export async function POST(request: Request) {
     inviteUrl,
     role,
     invitedByEmail: null,
+  });
+
+  // Logged after the send, not before: an invite the mail provider refused is not an invitation,
+  // and a feed that says otherwise sends the sender looking for a reply that was never asked for.
+  void recordActivity({
+    orgId: orgIdRaw,
+    userId: actor.userId,
+    actorKind: "user",
+    type: "member.invited",
+    meta: { role, inviteId, via: "email", email, expiresAt: expiresAt.toISOString() },
+    request,
   });
 
   return NextResponse.json({

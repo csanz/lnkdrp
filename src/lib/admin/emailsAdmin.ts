@@ -10,10 +10,13 @@
  *    list of those twelve somewhere. There is not.
  * 2. Flatten `CronHealth.lastResult` for `notification-emails` and `plan-limits` into rows a table
  *    can render, narrowing every field off `Mixed` instead of casting.
+ * 3. Narrow the notification queue's depth and its dead letters (M4 of
+ *    docs/prds/lnkdrp-notification-queue.md) for the two surfaces that show them.
  *
  * Deliberately dependency-free (no mongoose, no models, no template imports) so it is safe to
  * import from a client component and cheap to test.
  */
+import type { CronStat } from "./cronHealth";
 
 // ---------------------------------------------------------------------------------------------
 // Catalog: what trace does each email leave?
@@ -28,11 +31,14 @@
  */
 export type EmailTrace = "per_send" | "run_totals" | "none";
 
+/** Who an email is addressed to. Mirrors the catalog's own union, structurally. */
+export type EmailAudience = "owner" | "member" | "requester" | "invitee" | "reader";
+
 /** One catalog row as the page renders it: the raw catalog entry plus what we know about it. */
 export type EmailCatalogRow = {
   id: string;
   what: string;
-  to: "owner" | "member" | "requester" | "invitee";
+  to: EmailAudience;
   builtBy: string;
   trace: EmailTrace;
   /** Where the trace lives, or why there is none. Rendered verbatim. */
@@ -49,7 +55,7 @@ export type EmailCatalogRow = {
 export type EmailCatalogEntry = {
   id: string;
   what: string;
-  to: "owner" | "member" | "requester" | "invitee";
+  to: EmailAudience;
   builtBy: string;
 };
 
@@ -86,6 +92,38 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
   "download_request.approved": {
     trace: "per_send",
     traceNote: PER_SEND_NOTE,
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
+  member_removed: {
+    trace: "none",
+    traceNote:
+      "Not recorded: the revoke route sends it best-effort and never waits for it. The member.removed activity row records the removal, not the delivery.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
+  waitlist_approved: {
+    trace: "none",
+    traceNote:
+      "Not recorded: the approve route sends it best-effort. User.approvedAt records that we let them in, not that the mail arrived.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
+  viewer_verify: {
+    trace: "none",
+    traceNote:
+      "Not recorded: sent best-effort when a reader introduces themselves, and deliberately gates nothing — the document is already open either way. The introduction itself is what we store; the delivery is not.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
+  viewer_introduced: {
+    trace: "none",
+    traceNote:
+      "Not recorded: sent best-effort, and only when the anonymous view email already went out. The share_views mail that it corrects is counted in that job's run totals, this one is not.",
     previewable: true,
     previewNote: null,
     flagGated: null,
@@ -396,4 +434,134 @@ export function sendStateLabel(state: SendState): string {
   if (state === "sent") return "Sent";
   if (state === "failed") return "Failed";
   return "Not attempted";
+}
+
+// ---------------------------------------------------------------------------------------------
+// Notification queue depth and dead letters
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * What the notification queue holds *now* — a different question from the run summary above.
+ *
+ * The run counters say what the last tick did; these say what is still owed, what went out
+ * recently and what gave up. Neither question had an answer under the cursor model, which is most
+ * of why the queue exists (docs/prds/lnkdrp-notification-queue.md, M4).
+ *
+ * `sent24h` is a window, not a lifetime total, because `sent` rows carry a 30-day TTL: a lifetime
+ * count would fall as rows expire and read as mail going missing.
+ */
+export type NotificationQueueSummary = {
+  /** Rows owed but not yet sent, whether or not they are due. */
+  pending: number;
+  /** Pending rows whose `nextAttemptAt` has passed — what the next tick will actually try. */
+  due: number;
+  /** Claimed by a runner right now. A number that stays up means a run died mid-send. */
+  sending: number;
+  /** Rows marked sent in the last 24 hours. */
+  sent24h: number;
+  /** Rows that will never be sent: the member's preference was off, or the thing is gone. */
+  skipped: number;
+  /** Rows that used up every attempt. Never retried automatically — they need a person. */
+  dead: number;
+  /** `occurredAt` of the oldest pending row: how far behind delivery is, in event time. */
+  oldestPendingAt: string | null;
+};
+
+/**
+ * One dead letter, as the page lists it.
+ *
+ * Queue fields only. The row's `event` — the document, the share link, the reader's name and
+ * address — stays on the server: an admin needs to know *that* an email gave up and on which
+ * error, not what it would have said (see `src/lib/admin/docPrivacy.ts`). The dedupe key names the
+ * kind, the recipient and the source row, which is enough to find it in Mongo.
+ */
+export type DeadNotificationRow = {
+  id: string;
+  /** `<kind>:<userId>:<source row id>` — the queue's own identity for this email. */
+  dedupeKey: string;
+  kind: string;
+  attempts: number;
+  lastError: string | null;
+  /** When the underlying thing happened. */
+  occurredAt: string | null;
+  /** When the row gave up — the last attempt, not the event. */
+  failedAt: string | null;
+};
+
+/** A count off the wire: a non-negative integer, or 0 for anything a count cannot be. */
+function count(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0;
+}
+
+/** The count keys that make a payload a queue summary rather than some other object. */
+const QUEUE_COUNT_KEYS = ["pending", "due", "sending", "sent24h", "skipped", "dead"] as const;
+
+/**
+ * Narrow the queue block off an admin response.
+ *
+ * Returns null when the payload carries none of the counts — an older deploy, or a route that
+ * failed to read the collection — so the surface says "no counts" instead of drawing a row of
+ * zeros that reads as an empty queue. A payload that has some of them gets the rest as 0: a count
+ * the aggregate did not report is a status with no rows in it.
+ */
+export function summarizeNotificationQueue(raw: unknown): NotificationQueueSummary | null {
+  if (!isPlainObject(raw)) return null;
+  if (!QUEUE_COUNT_KEYS.some((k) => typeof raw[k] === "number")) return null;
+  return {
+    pending: count(raw.pending),
+    due: count(raw.due),
+    sending: count(raw.sending),
+    sent24h: count(raw.sent24h),
+    skipped: count(raw.skipped),
+    dead: count(raw.dead),
+    oldestPendingAt: str(raw.oldestPendingAt),
+  };
+}
+
+/** Narrow the dead-letter list off an admin response, dropping anything that is not a row. */
+export function toDeadNotificationRows(raw: unknown): DeadNotificationRow[] {
+  if (!Array.isArray(raw)) return [];
+  const rows: DeadNotificationRow[] = [];
+  for (const entry of raw) {
+    if (!isPlainObject(entry)) continue;
+    const id = str(entry.id);
+    const dedupeKey = str(entry.dedupeKey);
+    // Without an id there is nothing to key the row on, and without a dedupe key there is nothing
+    // to identify the email by — either one missing means this is not a queue row.
+    if (!id || !dedupeKey) continue;
+    rows.push({
+      id,
+      dedupeKey,
+      kind: str(entry.kind) ?? "unknown",
+      attempts: count(entry.attempts),
+      lastError: str(entry.lastError),
+      occurredAt: str(entry.occurredAt),
+      failedAt: str(entry.failedAt),
+    });
+  }
+  return rows;
+}
+
+/**
+ * Queue depth as figures for the cron board's row, in the `CronStat` shape that column renders.
+ *
+ * Non-zero counts sort first — the same rule `cronStatsFigures` uses, and the reason the board is
+ * readable at a glance: the board shows the first few, and the interesting number is the one that
+ * is not zero. `dead` is the only toned figure, because it is the only one that will not clear by
+ * itself.
+ */
+export function queueDepthFigures(summary: NotificationQueueSummary | null): CronStat[] {
+  if (!summary) return [];
+  const figures: CronStat[] = [
+    { label: "pending", value: String(summary.pending), zero: summary.pending === 0 },
+    { label: "due", value: String(summary.due), zero: summary.due === 0 },
+    {
+      label: "dead",
+      value: String(summary.dead),
+      zero: summary.dead === 0,
+      tone: summary.dead > 0 ? "danger" : undefined,
+    },
+    { label: "sent 24h", value: String(summary.sent24h), zero: summary.sent24h === 0 },
+  ];
+  return [...figures.filter((f) => !f.zero), ...figures.filter((f) => f.zero)];
 }

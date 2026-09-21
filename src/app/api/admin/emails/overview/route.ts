@@ -4,6 +4,10 @@
  * The catalog of every email the product can send, joined with what trace a send leaves behind,
  * plus the latest `CronHealth` snapshot for the two jobs that send mail and the schedule each runs
  * on. There is no send log to return: outside download requests, nothing per-message is stored.
+ *
+ * It also returns the notification queue's depth and its dead letters
+ * (docs/prds/lnkdrp-notification-queue.md, M4). Those are the one place the page can say what is
+ * *owed* rather than what the last tick happened to do.
  */
 import { NextResponse } from "next/server";
 
@@ -18,6 +22,7 @@ import {
   summarizeNotificationRun,
   summarizePlanLimitsRun,
 } from "@/lib/admin/emailsAdmin";
+import { readDeadNotifications, readNotificationQueueSummary } from "@/lib/admin/notificationQueueAdmin";
 
 export const runtime = "nodejs";
 
@@ -98,6 +103,10 @@ export async function GET(request: Request) {
   const notificationDoc = byKey.get(NOTIFICATION_JOB);
   const planLimitsDoc = byKey.get(PLAN_LIMITS_JOB);
 
+  // The depth and the dead letters are independent reads; neither throws, so a queue that cannot
+  // be read costs the page its queue section and nothing else.
+  const [queueSummary, deadLetters] = await Promise.all([readNotificationQueueSummary(), readDeadNotifications()]);
+
   return NextResponse.json({
     ok: true,
     catalog: buildEmailCatalogRows(EMAIL_CATALOG),
@@ -106,6 +115,10 @@ export async function GET(request: Request) {
       // null when the job has never written a usable result — the page says so rather than
       // rendering a table of zeros that looks like "nothing was sent".
       run: summarizeNotificationRun(notificationDoc?.lastResult ?? null),
+      // What is owed right now, as opposed to what the last tick did. Null when the collection
+      // could not be read — the page says so rather than showing an empty queue.
+      queue: queueSummary,
+      dead: deadLetters,
     },
     planLimits: {
       snapshot: toSnapshotRow(PLAN_LIMITS_JOB, planLimitsDoc),

@@ -252,7 +252,7 @@ function UploadProgressRow({ item, leaving = false }: { item: InFlightUpload; le
         <div
           className={[
             "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg ring-1 ring-[var(--border)]",
-            failed ? "bg-[var(--panel-hover)] text-red-400" : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
+            failed ? "bg-[var(--panel-hover)] text-[var(--danger-fg)]" : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
           ].join(" ")}
         >
           <Icon className="h-4 w-4" aria-hidden="true" />
@@ -270,7 +270,9 @@ function UploadProgressRow({ item, leaving = false }: { item: InFlightUpload; le
             <span
               className={[
                 "ml-auto shrink-0 text-[12px] font-semibold tabular-nums",
-                failed ? "text-red-400" : "text-[var(--fg)]",
+                // red-400 was picked on the dark panel: 2.52:1 on a light one, on the one word that says
+                // an upload broke. `--danger-fg` keeps the dark value and gives light its own.
+                failed ? "text-[var(--danger-fg)]" : "text-[var(--fg)]",
               ].join(" ")}
             >
               {failed ? "Failed" : `${percent}%`}
@@ -289,7 +291,7 @@ function UploadProgressRow({ item, leaving = false }: { item: InFlightUpload; le
             <div
               className={[
                 "h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
-                failed ? "bg-red-500/70" : done ? "bg-[var(--chart-views)]" : "bg-[var(--fg)]",
+                failed ? "bg-[var(--danger-bar)]" : done ? "bg-[var(--chart-views)]" : "bg-[var(--fg)]",
               ].join(" ")}
               style={{ width: `${failed ? Math.max(percent, 4) : percent}%` }}
             />
@@ -363,6 +365,7 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
   // document it is on — lead to the same page, and left no way to reach the link itself.
   const isLinkRow = item.type.startsWith("share_link.");
   const href = (isLinkRow ? linkMetricsHref : null) ?? hrefFor(item);
+  const readerHref = item.readerHref ?? null;
   const docHref = item.doc?.id && !docGone ? `/doc/${encodeURIComponent(item.doc.id)}` : null;
 
   const linkClass = "font-semibold text-[var(--fg)] hover:underline underline-offset-4";
@@ -419,7 +422,25 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
       <ActorAvatar item={item} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] leading-5 text-[var(--muted)]">
-          <span className="font-medium text-[var(--fg)]">{s.subject}</span>
+          {/* The person, where there is a page about them: a viewer row names someone who opened
+              something, and what they did is a page away.
+
+              Underlined at rest, not only on hover. It shipped styled exactly like the plain text
+              beside it, which made a working link invisible — reported as "you still don't show the
+              link" while it was already there. A dotted rule is the quiet version of the object
+              links further along the sentence: enough to say this name goes somewhere, not enough
+              to compete with the document title. */}
+          {readerHref ? (
+            <Link
+              href={readerHref}
+              title="See what they read"
+              className="font-medium text-[var(--fg)] underline decoration-dotted decoration-[var(--muted-2)] underline-offset-4 transition-colors hover:decoration-solid hover:decoration-[var(--fg)]"
+            >
+              {s.subject}
+            </Link>
+          ) : (
+            <span className="font-medium text-[var(--fg)]">{s.subject}</span>
+          )}
           <span>{s.verb}</span>
           {objectNode}
           {suffixNode}
@@ -689,8 +710,25 @@ export default function ActivityPageClient() {
       fetchPage(null)
         .then((page) => {
           setItems((prev) => {
-            const changed = page.items.length !== prev.length || page.items.some((it, i) => it.id !== prev[i]?.id);
+            /**
+             * Identity, not just arrival.
+             *
+             * This compared ids alone, and a rename is a *read-time join* onto rows that already
+             * exist — same ids, same count, same order. So the refetch triggered by a `viewer`
+             * frame fetched the corrected names and then threw them away, and the feed went on
+             * saying "Someone" until it was reloaded by hand: exactly what subscribing to that
+             * frame was meant to fix.
+             */
+            const identity = (it: (typeof page.items)[number]) =>
+              `${it.id}:${it.actor?.name ?? ""}:${it.actor?.email ?? ""}:${String((it.meta as Record<string, unknown> | undefined)?.viewerName ?? "")}`;
+            const changed =
+              page.items.length !== prev.length || page.items.some((it, i) => identity(it) !== (prev[i] ? identity(prev[i]) : ""));
             if (!changed) return prev;
+            // Same rows, new names: swap them in wholesale rather than running the arrivals
+            // animation, which exists for rows that are genuinely new.
+            const sameIds =
+              page.items.length === prev.length && page.items.every((it, i) => it.id === prev[i]?.id);
+            if (sameIds) return page.items;
             if (!prev.length) return page.items;
             const known = new Set([...prev.map((it) => it.id), ...arrivalQueueRef.current.map((it) => it.id)]);
             // Newest first on the wire; enqueue oldest first so each insert lands above the last.
@@ -715,6 +753,10 @@ export default function ActivityPageClient() {
     // Push: a new activity row in this workspace arrives as an "activity" frame; refetch page one
     // right away. The 10s timer is only a fallback: it skips its fetch while the socket is open.
     const unsubscribe = subscribeRealtime("activity", () => tick());
+    // A recipient's name is joined onto their past rows at read time, so a rename changes what the
+    // feed *says* without adding a row — no "activity" frame, nothing to react to, and the page sat
+    // there showing "Someone" until it was reloaded by hand.
+    const unsubscribeViewer = subscribeRealtime("viewer", () => tick());
     const timer = window.setInterval(() => {
       if (realtimeState() === "open") return;
       tick();
@@ -722,6 +764,7 @@ export default function ActivityPageClient() {
     window.addEventListener("focus", tick);
     return () => {
       unsubscribe();
+      unsubscribeViewer();
       window.clearInterval(timer);
       window.removeEventListener("focus", tick);
     };

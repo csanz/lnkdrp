@@ -26,7 +26,7 @@ import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { UNTRUSTED_LIMITS, untrustedOrNull } from "../untrusted";
-import { DISMISSED_PROMPT_NOTE, docIdSchema, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
+import { DISMISSED_PROMPT_NOTE, docIdSchema, existsUnlessNotFound, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
 
 /** Mirrors `MAX_PROJECT_NAME_LENGTH` in `src/app/api/projects/[projectSlug]/route.ts`. */
 const MAX_PROJECT_NAME = 80;
@@ -222,6 +222,9 @@ export function registerCreateProjectTool(server: McpServer, ctx: ToolContext): 
       };
       const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "create_project", args.idempotencyKey), run, {
         fingerprint: fingerprintArgs(args),
+        // A project deleted between the two calls is not a project to hand back — replaying it
+        // returned publicPageEnabled: true and a /p/ URL that resolves to nothing.
+        stillExists: (cached) => existsUnlessNotFound(() => ctx.api.getProjectDocs(cached.project.id, { limit: 1 })),
       });
       // A new project's public page is on (the model default); the create route just does not echo it.
       const created: ApiProject = { ...value.project, shareEnabled: value.project.shareEnabled ?? true };
@@ -293,13 +296,24 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
     },
     handleTool(async (args) => {
       const res = await loadProject(ctx.api, args, { q: args.query, page: args.page, limit: args.limit, archived: args.archived });
+      // The project's own tags, and each listed document's, in two reads rather than one per row.
+      // Best-effort: tags are how a workspace files things, not part of what a project *is*.
+      const [projectTags, docTags] = await Promise.all([
+        ctx.api.tagsForTarget({ targetKind: "project", targetId: res.project.id }).catch(() => []),
+        ctx.api.tagsForTargets({ targetKind: "doc", ids: res.docs.map((d) => d.id) }).catch(() => new Map()),
+      ]);
+      const asTagRows = (list: { name: string; slug: string; color: string }[]) =>
+        list.map((t) => ({ name: t.name, slug: t.slug, color: t.color }));
       return {
         // Without a query the route's total is the project's cached document count.
-        project: projectView(
-          ctx.api,
-          // docCount is the live count; the route's total is only that without a query or the archive view.
-          await withListedMeta(ctx.api, args.query || args.archived ? { ...res.project, docCount: null } : { ...res.project, docCount: res.total }),
-        ),
+        project: {
+          ...projectView(
+            ctx.api,
+            // docCount is the live count; the route's total is only that without a query or the archive view.
+            await withListedMeta(ctx.api, args.query || args.archived ? { ...res.project, docCount: null } : { ...res.project, docCount: res.total }),
+          ),
+          tags: asTagRows(projectTags),
+        },
         total: res.total,
         page: res.page,
         limit: res.limit,
@@ -314,6 +328,7 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
           previewImageUrl: d.previewImageUrl,
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
+          tags: asTagRows(docTags.get(d.id) ?? []),
         })),
       };
     }),

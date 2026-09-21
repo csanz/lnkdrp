@@ -123,12 +123,15 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
   }, [shouldPoll]);
 
   return (
-    <main className="min-h-[100svh] bg-white text-zinc-900">
+    // Pinned to raw zinc, this page punched a full-height white sheet (with a black-on-dark CTA)
+    // into the themed app shell in dark, and ignored the light ramp in light. It is an owner-facing
+    // route inside (app), not one of the deliberately always-dark recipient surfaces.
+    <main className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className="mx-auto w-full max-w-3xl px-6 py-8">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="text-lg font-semibold tracking-tight">AI review</div>
-            <div className="mt-1 text-sm text-zinc-600">
+            <div className="mt-1 text-sm text-[var(--muted)]">
               AI-generated, stored per upload version.
             </div>
           </div>
@@ -136,13 +139,13 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
           <div className="flex shrink-0 items-center gap-2">
             <Link
               href={`/doc/${docId}`}
-              className="inline-flex items-center justify-center rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50"
+              className="inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
             >
               Back to doc
             </Link>
             <div className="flex items-center gap-2">
               <select
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-800"
+                className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)]"
                 value={quality}
                 onChange={(e) => setQuality(e.target.value as any)}
                 aria-label="AI review quality"
@@ -189,7 +192,7 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
                     }
                   })();
                 }}
-                className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-3 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={loading || runBusy}
                 title="Run a new review for the current version"
               >
@@ -199,7 +202,7 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
             <button
               type="button"
               onClick={() => void refresh()}
-              className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-3 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:cursor-not-allowed disabled:opacity-60"
               disabled={loading}
             >
               Refresh
@@ -207,28 +210,28 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
           </div>
         </div>
 
-        <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-5">
+        <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
           {error ? (
-            <div className="text-sm text-red-700">{error}</div>
+            <div className="text-sm text-[var(--danger-fg)]">{error}</div>
           ) : loading && !review ? (
-            <div className="text-sm text-zinc-600">Loading…</div>
+            <div className="text-sm text-[var(--muted)]">Loading…</div>
           ) : !review ? (
-            <div className="text-sm text-zinc-600">No review found for this doc yet.</div>
+            <div className="text-sm text-[var(--muted)]">No review found for this doc yet.</div>
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-zinc-900">
+                <div className="text-sm font-semibold text-[var(--fg)]">
                   Version {review.version ?? "-"}
                 </div>
-                <div className="text-xs font-medium text-zinc-500">
-                  Status: <span className="text-zinc-700">{review.status ?? "-"}</span>
+                <div className="text-xs font-medium text-[var(--muted-2)]">
+                  Status: <span className="text-[var(--muted)]">{review.status ?? "-"}</span>
                 </div>
               </div>
 
               {review.outputMarkdown ? (
                 <Markdown className="mt-4 text-sm">{review.outputMarkdown}</Markdown>
               ) : (
-                <div className="mt-4 text-sm text-zinc-600">No review output yet.</div>
+                <div className="mt-4 text-sm text-[var(--muted)]">No review output yet.</div>
               )}
             </>
           )}

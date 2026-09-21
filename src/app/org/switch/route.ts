@@ -18,6 +18,7 @@ import { resolveActor } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { LOADING_OVERLAY_TITLE_TO_DOTS_GAP_PX } from "@/lib/loadingOverlay";
 import { LOADING_OVERLAY_SHOW_TEXT_DEFAULT } from "@/lib/loadingOverlay";
+import { activeOrgChanged } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 
@@ -30,9 +31,45 @@ function safeReturnTo(raw: string | null): string {
   const s = (raw ?? "").trim();
   if (!s) return "/";
   if (!s.startsWith("/")) return "/";
-  // Prevent protocol-relative redirects.
-  if (s.startsWith("//")) return "/";
-  return s;
+  /**
+   * Same-origin only, decided by the URL parser rather than by prefix tests.
+   *
+   * The prefix tests missed `/\evil.example`: a backslash in that position is normalised to a
+   * slash by browsers, so the value reads as protocol-relative and the workspace switcher would
+   * bounce the signed-in user straight off the origin — a credible phishing hop, since it happens
+   * right after an auth action they initiated.
+   */
+  try {
+    const parsed = new URL(s, "https://lnkdrp.invalid");
+    if (parsed.origin !== "https://lnkdrp.invalid") return "/";
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return path.startsWith("/") ? path : "/";
+  } catch {
+    return "/";
+  }
+}
+
+/**
+ * Serialises a value for embedding inside an inline `<script>`.
+ *
+ * `JSON.stringify` alone is NOT safe here, and that was a live XSS on this route. It escapes
+ * quotes and backslashes but leaves `<` and `/` untouched, so a `returnTo` of
+ * `/</script><script>alert(1)</script>` survived `safeReturnTo` (which only rejects values that do
+ * not start with a single `/`), and the literal `</script>` inside the JSON string closed the
+ * element for the HTML parser. Everything after it was parsed as markup, on this origin, in the
+ * victim's authenticated session — reachable by sending a colleague a link.
+ *
+ * Escaping `<` and `>` as unicode escapes keeps the value byte-identical once JavaScript parses it
+ * while making it impossible to terminate the element. `&` is escaped for the same reason in HTML
+ * contexts, and U+2028/U+2029 because they are literal line terminators in JavaScript source.
+ */
+export function jsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
 /**
@@ -47,6 +84,38 @@ function escapeHtmlAttr(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/**
+ * True when this workspace switch is one the app itself started.
+ *
+ * `GET /org/switch` is side-effecting: it writes `metadata.activeOrgId` onto the user record and
+ * sets a year-long active-org cookie. A side-effecting GET with no CSRF token, reached with a
+ * `SameSite=Lax` session cookie that rides along on top-level navigations, is exactly the shape a
+ * link exploits — send a colleague `/org/switch?orgId=<a team they are genuinely in>` and their
+ * active workspace flips under them without them ever choosing to switch. Membership is validated,
+ * so it succeeds silently, and because the active org is persisted on the user record it outlives
+ * the tab and follows them to their other devices. The next document they upload lands in that
+ * other workspace.
+ *
+ * `Sec-Fetch-Site` is stamped by the browser and cannot be set from page script, so it is the one
+ * signal in this handler that separates the app's own navigation from a link somebody sent. Every
+ * caller in this product navigates (or `fetch`es) from a page already on this origin —
+ * `SwitchingOverlay`, both `WorkspaceManager`s, `AccountMenu`, the upload page, the join page — so
+ * a genuine switch always reports `same-origin`, or `same-site` if the app is ever served from a
+ * sibling subdomain. `cross-site` is a foreign page. `none` is an address bar, a bookmark, or a
+ * link opened out of a native mail or chat client, which is the finding's delivery route and is
+ * never something this product generates.
+ *
+ * A request carrying no Fetch Metadata at all is honoured, deliberately. Browsers that predate the
+ * headers omit them, and refusing those would break the workspace switcher outright for real people
+ * in order to inconvenience a client that can simply choose to send whichever header it likes. This
+ * raises the bar on the everyday "click this link" version; it is not a CSRF token.
+ */
+function isAppInitiatedSwitch(request: Request): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (!site) return true;
+  return site === "same-origin" || site === "same-site";
 }
 
 /**
@@ -70,6 +139,13 @@ export async function GET(request: Request) {
   const orgId = url.searchParams.get("orgId")?.trim() ?? "";
   const returnTo = safeReturnTo(url.searchParams.get("returnTo"));
   const wantsJson = url.searchParams.get("json") === "1";
+
+  // A switch nobody in the app asked for is not a switch. Degrade rather than refuse: send them to
+  // the app in the workspace they are already in — the same answer every other rejected input here
+  // gets — instead of showing an error for a link they were probably just curious about.
+  if (!isAppInitiatedSwitch(request)) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
 
   const actor = await resolveActor(request);
   if (actor.kind !== "user") {
@@ -96,6 +172,10 @@ export async function GET(request: Request) {
     { _id: new Types.ObjectId(actor.userId) },
     { $set: { "metadata.activeOrgId": orgId, lastLoginAt: new Date() } },
   );
+  // The resolvers cache this value for a minute, so the switch has to say it moved. In this
+  // browser the cookie set alongside it wins anyway; on the person's *other* device the metadata
+  // is the only signal, and without this the switch would look like it had not taken.
+  activeOrgChanged(actor.userId);
 
   // If the requested return target is a doc route, only allow it when the doc belongs to the target org.
   let redirectTo = returnTo;
@@ -130,8 +210,8 @@ export async function GET(request: Request) {
   // Use a 200 HTML response (instead of a redirect status) to ensure the browser persists
   // the Set-Cookie header reliably across clients.
   const hrefAttr = escapeHtmlAttr(redirectTo);
-  const jsHref = JSON.stringify(redirectTo);
-  const jsOrgId = JSON.stringify(orgId);
+  const jsHref = jsonForScript(redirectTo);
+  const jsOrgId = jsonForScript(orgId);
   const showTitle = LOADING_OVERLAY_SHOW_TEXT_DEFAULT;
   const res = new NextResponse(
     `<!doctype html>
@@ -166,21 +246,47 @@ export async function GET(request: Request) {
         } catch {}
       })();
     </script>
+    <script>
+      // This overlay is a standalone document, so next-themes is not here to stamp the theme for it.
+      // It used to theme off prefers-color-scheme alone, which meant a user on a dark OS who had
+      // explicitly chosen Light got a near-black full-viewport flash mid-navigation and then landed
+      // back on a light app — the exact bug the @custom-variant at the top of globals.css exists to
+      // prevent. Read the same stored choice next-themes writes and stamp it ourselves.
+      (function () {
+        try {
+          var t = window.localStorage && localStorage.getItem("theme");
+          if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+        } catch {}
+      })();
+    </script>
     <style>
+      /* Light is the bare :root default and dark is the override, mirroring globals.css — and the
+         five values below are the app's real tokens, so the overlay matches the screens it sits
+         between instead of approximating them. */
       :root {
+        color-scheme: light;
+        --bg: #f9f9fa;
+        --panel: #ffffff;
+        --border: #d6d6dc;
+        --fg: #1c1c20;
+        --muted-2: #5b5b64;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
         --bg: #0b0b0c;
         --panel: #111113;
         --border: #2a2a31;
         --fg: #e7e7ea;
         --muted-2: #8b8b96;
       }
-      @media (prefers-color-scheme: light) {
-        :root {
-          --bg: #fafafa;
-          --panel: #ffffff;
-          --border: rgba(0, 0, 0, 0.10);
-          --fg: rgba(0, 0, 0, 0.90);
-          --muted-2: rgba(0, 0, 0, 0.62);
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+          color-scheme: dark;
+          --bg: #0b0b0c;
+          --panel: #111113;
+          --border: #2a2a31;
+          --fg: #e7e7ea;
+          --muted-2: #8b8b96;
         }
       }
       body {

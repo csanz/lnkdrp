@@ -10,11 +10,14 @@
  */
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { formatSizeChangeLine } from "@/lib/format/bytes";
+import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import SubPageHeader from "@/components/SubPageHeader";
+import EntityCrumbLabel from "@/components/HeaderIdentity";
+import DocIdentityRow from "@/components/doc/DocIdentityRow";
+import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import Modal from "@/components/modals/Modal";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
@@ -157,6 +160,8 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [viewerStatsLoading, setViewerStatsLoading] = useState(false);
   const [viewerStatsError, setViewerStatsError] = useState<string | null>(null);
   const [rerunTierById, setRerunTierById] = useState<Record<string, "basic" | "standard" | "advanced">>({});
+  /** The revision id most recently copied, so the chip can confirm it rather than flash nothing. */
+  const [copiedRevisionId, setCopiedRevisionId] = useState<string | null>(null);
   const [defaultHistoryTier, setDefaultHistoryTier] = useState<"basic" | "standard" | "advanced">("standard");
   const [rerunBusyById, setRerunBusyById] = useState<Record<string, boolean>>({});
   const [rerunErrorById, setRerunErrorById] = useState<Record<string, string>>({});
@@ -522,30 +527,24 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
-        <Link
-          href={`/doc/${encodeURIComponent(docId)}`}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-          aria-label="Back to document"
-          title="Back to document"
-        >
-          <ArrowLeftIcon className="h-5 w-5" />
-        </Link>
-
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-[var(--fg)]">{docTitle || "Document"}</div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-            <Link href={`/doc/${encodeURIComponent(docId)}`} className="hover:underline underline-offset-4">
-              Document
-            </Link>
-            <span aria-hidden="true">›</span>
-            <span className="font-medium text-[var(--fg)]">History</span>
-          </div>
-        </div>
-      </div>
+      {/* The document's own header band, like its Links and Metrics pages: same height, same
+          gutter, same controls in the same place. */}
+      <SubPageHeader
+        kind="doc"
+        hideTile
+        title={<DocIdentityRow docId={docId} fallbackTitle={docTitle} />}
+        crumbs={[
+          {
+            label: <EntityCrumbLabel kind="doc" id={docId} noun="Document" name={docTitle} />,
+            href: `/doc/${encodeURIComponent(docId)}`,
+          },
+          { label: "History" },
+        ]}
+        actions={<DocHeaderActions docId={docId} current="doc" />}
+      />
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-        <div className="w-full px-6 py-6">
+        <div className={`w-full py-6 ${APP_PAGE_GUTTER}`}>
           {(
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_440px]">
             {/* Left: history list */}
@@ -684,7 +683,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                   <span className="text-[var(--muted)]">Not compared yet. Expand to run AI compare on this version.</span>
                                 )}
                               </div>
-                              {(uploaderLabel || timeLabel || it.fileLabel) ? (
+                              {(uploaderLabel || timeLabel || it.fileLabel || it.id) ? (
                                 <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--muted)]">
                                   {uploaderLabel ? (
                                     <span>
@@ -701,6 +700,31 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                     <span className="tabular-nums" title="File size (and the change from the previous version)">
                                       {it.fileLabel}
                                     </span>
+                                  ) : null}
+                                  {/*
+                                    The revision's own id. "v5" is the document's count of versions,
+                                    which repeats across every document in the workspace, so it is
+                                    not something you can look a row up by — when a summary reads
+                                    wrong this is the only handle that names the row that produced
+                                    it. Shown as the last six characters because that is enough to
+                                    match one against a log line; the click copies the whole id.
+                                  */}
+                                  {it.id ? (
+                                    <button
+                                      type="button"
+                                      className="font-mono text-[10px] tracking-tight text-[var(--muted-2)] underline decoration-dotted underline-offset-2 hover:text-[var(--fg)]"
+                                      title={`Revision ${it.id}. Click to copy`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void navigator.clipboard?.writeText(it.id);
+                                        setCopiedRevisionId(it.id);
+                                        window.setTimeout(() => {
+                                          setCopiedRevisionId((cur) => (cur === it.id ? null : cur));
+                                        }, 1200);
+                                      }}
+                                    >
+                                      {copiedRevisionId === it.id ? "copied" : `#${it.id.slice(-6)}`}
+                                    </button>
                                   ) : null}
                                 </div>
                               ) : null}
@@ -729,7 +753,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                     <li key={idx}>
                                       <span className="font-medium text-[var(--fg)]">{(c?.title ?? "").toString()}</span>
                                       {c?.detail ? (
-                                        <span className="text-[var(--muted)]"> — {String(c.detail)}</span>
+                                        <span className="text-[var(--muted)]"> · {String(c.detail)}</span>
                                       ) : null}
                                     </li>
                                   ))}
@@ -1078,7 +1102,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
           <div className="space-y-3">
             <div className="text-base font-semibold text-[var(--fg)]">Viewer stats</div>
             <div className="text-sm font-semibold text-[var(--fg)]">
-              {viewerStatsOpen.name ?? viewerStatsOpen.email ?? "Viewer"} — v{viewerStatsOpen.version}
+              {viewerStatsOpen.name ?? viewerStatsOpen.email ?? "Viewer"} · v{viewerStatsOpen.version}
             </div>
 
             {viewerStatsLoading ? (

@@ -34,7 +34,6 @@ const TeamsManager = dynamic(() => import("./TeamsManager"));
 const UsageTable = dynamic(() => import("./UsageTable"));
 const CreditsSummaryCard = dynamic(() => import("./CreditsSummaryCard"));
 const SpendLimitModule = dynamic(() => import("./SpendLimitModule"));
-const OnDemandUsageCard = dynamic(() => import("./OnDemandUsageCard"));
 const AiQualityDefaultsCard = dynamic(() => import("./AiQualityDefaultsCard"));
 const BillingInvoicesTab = dynamic(() => import("./BillingInvoicesTab"));
 const DailyUsageChart = dynamic(() => import("./DailyUsageChart"));
@@ -178,6 +177,13 @@ function DashboardPageInner() {
     projects: { active: number; requests: number };
     uploads: { created30d: number };
     sharing: { viewsTotal: number; pagesViewedTotal: number; views30d: number; pagesViewed30d: number };
+    /**
+     * The window the server actually served. Free is clamped to `FREE_ANALYTICS_DAYS` like every
+     * other analytics surface, so the `*30d` keys below are named for the contract, not for the
+     * number of days they cover — label everything from here and never from the literal "30".
+     * Absent on a payload cached by an older build, hence optional.
+     */
+    range?: { days: number; start: string; end: string; clampedByPlan: boolean };
     series30d: Array<{
       day: string; // YYYY-MM-DD (UTC)
       docsCreated: number;
@@ -187,6 +193,10 @@ function DashboardPageInner() {
     }>;
   };
   const [stats, setStats] = useState<DashboardStats | null>(() => (dashboardStatsCache?.data as DashboardStats | null) ?? null);
+  /** "Last 30 days" / "Last 7 days" — whatever the plan actually bought. */
+  const statsRangeDays = stats?.range?.days ?? 30;
+  const statsRangeLabel = `Last ${statsRangeDays} days`;
+  const statsClampedByPlan = Boolean(stats?.range?.clampedByPlan);
   const [statsBusy, setStatsBusy] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [usageDays, setUsageDays] = useState<1 | 7 | 30>(30);
@@ -289,7 +299,7 @@ function DashboardPageInner() {
     };
   }, [tab]);
 
-  // NOTE: `/api/billing/spend` is fetched by the Limits tab components (`SpendLimitModule` / `OnDemandUsageCard`).
+  // NOTE: `/api/billing/spend` is fetched by the Limits tab's `SpendLimitModule`.
 
   function navigateToTab(nextTab: DashTab) {
     setTab(nextTab);
@@ -400,12 +410,13 @@ function DashboardPageInner() {
           <Section title="Overview" description="A quick snapshot of your workspace.">
             <div className="grid grid-cols-1 gap-3">
               <SubscriptionCard />
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <div className="text-[13px] font-semibold text-[var(--fg)]">All docs activity</div>
                     <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-                      Last 30 days (UTC). Uploads, docs created, unique share views, and downloads.
+                      {statsRangeLabel} (UTC). Uploads, docs created, unique share views, and downloads.
+                      {statsClampedByPlan ? " Free workspaces see the most recent days; Pro sees the full window." : ""}
                     </div>
                   </div>
                 </div>
@@ -421,10 +432,10 @@ function DashboardPageInner() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
-                    <div className="text-[13px] font-semibold text-[var(--fg)]">Last 30 days</div>
+                    <div className="text-[13px] font-semibold text-[var(--fg)]">{statsRangeLabel}</div>
                     <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
                       Upload activity and sharing performance.
                     </div>
@@ -442,19 +453,19 @@ function DashboardPageInner() {
                   <StatCard
                     label="Pages viewed"
                     value={stats ? stats.sharing.pagesViewed30d : null}
-                    hint="Pages viewed on docs created in the last 30 days"
+                    hint={`Pages viewed on docs created in the last ${statsRangeDays} days`}
                   />
                   <StatCard
                     label="New docs"
                     value={stats ? stats.docs.created30d : null}
                     hint="Docs created"
                   />
-                  <StatCard label="Share views" value={stats ? stats.sharing.views30d : null} hint="Views on docs created in the last 30 days" />
+                  <StatCard label="Share views" value={stats ? stats.sharing.views30d : null} hint={`Views on docs created in the last ${statsRangeDays} days`} />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
                   <div className="text-[13px] font-semibold text-[var(--fg)]">Library</div>
                   <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Your active content in this workspace.</div>
                   <div className="mt-5 grid grid-cols-2 gap-3">
@@ -495,7 +506,7 @@ function DashboardPageInner() {
         {tab === "account" ? (
           <Section title="Account" description="Account-level settings and actions.">
             <div className="grid grid-cols-1 gap-3">
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
                 <div className="text-[13px] font-semibold text-[var(--fg)]">Email preferences</div>
                 <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Applies to the currently selected workspace.</div>
                 <div className="mt-4">
@@ -503,7 +514,7 @@ function DashboardPageInner() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="text-[13px] font-semibold text-[var(--fg)]">Delete account</div>
@@ -548,7 +559,7 @@ function DashboardPageInner() {
               <SubscriptionCard />
               <DailyUsageChart days={usageDays} />
               <CreditsSummaryCard />
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="px-1 text-[12px] font-semibold text-[var(--muted-2)]">
@@ -588,20 +599,23 @@ function DashboardPageInner() {
             title="Limits"
             description="On-demand controls and credit caps."
           >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <OnDemandUsageCard />
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="text-[13px] font-semibold text-[var(--fg)]">On-demand limit</div>
-                  <HelpTooltip
-                    label="What is the on-demand limit?"
-                    body="The most on-demand usage can add to one invoice. It resets each billing cycle. Turning it off stops new usage; what was already used is still billed."
-                  />
-                </div>
-                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Turn on-demand on or off, and cap it.</div>
-                <div className="mt-4">
-                  <SpendLimitModule />
-                </div>
+            {/* One on-demand panel, not two. This was a two-column grid: OnDemandUsageCard on the
+                left and this card on the right, and both drew the same used/limit credits, the
+                same dollar line, the same progress bar and their own help tooltip — so the tab's
+                first screen stated one fact twice. SpendLimitModule carries those numbers *and*
+                the on/off + limit controls, so it is the one that stays; the read-only usage card
+                was the duplicate and is gone. */}
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-[13px] font-semibold text-[var(--fg)]">On-demand limit</div>
+                <HelpTooltip
+                  label="What is the on-demand limit?"
+                  body="The most on-demand usage can add to one invoice. It resets each billing cycle. Turning it off stops new usage; what was already used is still billed."
+                />
+              </div>
+              <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Turn on-demand on or off, and cap it.</div>
+              <div className="mt-4">
+                <SpendLimitModule />
               </div>
             </div>
 

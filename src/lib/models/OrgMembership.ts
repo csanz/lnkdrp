@@ -40,14 +40,23 @@ const orgMembershipSchema = new Schema(
      * Notification preferences (workspace-scoped).
      *
      * Used for share-view notification emails: someone opened a document in this workspace
-     * (daily digest vs immediate vs off). `off` suppresses both immediate and digest view
-     * emails. Readers treat a missing value (pre-existing rows) as "daily".
+     * (daily digest vs immediate vs off). `off` suppresses both immediate and digest view emails.
+     *
+     * New memberships default to `immediate`, and so does a missing value
+     * (`normalizeViewEmailMode`). Knowing that somebody is reading your deck is worth something
+     * while they are still reading it; a digest that arrives tomorrow is a report. The noise this
+     * used to guard against is handled better elsewhere — a *return* visit only ever goes in the
+     * digest, and one tick naming thirty readers sends one email, not thirty.
+     *
+     * Rows written before this change hold the string "daily" explicitly, whether or not their
+     * owner ever chose it, and are left alone: quietly making somebody's inbox louder is not a
+     * default change, it is a surprise. New accounts are asked outright on `/welcome`.
      */
     viewEmailMode: {
       type: String,
       trim: true,
       enum: ["off", "daily", "immediate"],
-      default: "daily",
+      default: "immediate",
       index: true,
     },
     // Optional: future expansion for per-user digest scheduling.
@@ -67,7 +76,7 @@ orgMembershipSchema.index({ orgId: 1, userId: 1 }, { unique: true });
 
 export type OrgMembership = InferSchemaType<typeof orgMembershipSchema>;
 
-/** Values of `OrgMembership.viewEmailMode`. A missing value on a stored row means "daily". */
+/** Values of `OrgMembership.viewEmailMode`. A missing value on a stored row means "immediate". */
 export type ViewEmailMode = "off" | "daily" | "immediate";
 
 const ExistingOrgMembershipModel = mongoose.models.OrgMembership as Model<OrgMembership> | undefined;
@@ -85,7 +94,9 @@ if (ExistingOrgMembershipModel && !ExistingOrgMembershipModel.schema.path("viewE
       type: String,
       trim: true,
       enum: ["off", "daily", "immediate"],
-      default: "daily",
+      // Must match the schema above, or a dev server that hot-reloaded would hand new memberships
+      // a different default from the one a fresh process gives them.
+      default: "immediate",
       index: true,
     },
   } as any);

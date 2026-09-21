@@ -20,14 +20,24 @@ export default async function RequestViewPage(props: { params: Promise<{ token: 
   if (!viewToken) notFound();
 
   await connectMongo();
-  const project = await ProjectModel.findOne({ requestViewToken: viewToken })
+  // Deleting the request repo retires its view link too; without this the token kept resolving to
+  // a repo that no longer exists for its owner.
+  const project = await ProjectModel.findOne({
+    requestViewToken: viewToken,
+    isDeleted: { $ne: true },
+  })
     .select({ _id: 1, name: 1, description: 1, isRequest: 1 })
     .lean();
   if (!project) notFound();
 
+  // Archived documents are withdrawn, not just hidden from the owner's own lists. The PDF route
+  // (`/api/request-view/:token/docs/:docId/pdf`) applies exactly this pair of clauses, so a row
+  // listed here is a row that route will serve and nothing else. Leaving `isArchived` out here
+  // would have gone on advertising a document whose bytes are — correctly — refused.
   const docs = await DocModel.find({
     receivedViaRequestProjectId: project._id,
     isDeleted: { $ne: true },
+    isArchived: { $ne: true },
   })
     .sort({ updatedDate: -1 })
     .select({ _id: 1, title: 1, fileName: 1, status: 1, createdDate: 1, updatedDate: 1 })

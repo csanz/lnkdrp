@@ -72,12 +72,32 @@ Each `ShareVisit` contains:
 - Route: `POST /api/share/:shareId/stats`
 - File: `src/app/api/share/[shareId]/stats/route.ts`
 
-The share viewer (`src/components/PdfJsViewer.tsx`) posts best-effort events:
+The share viewer (`src/components/PdfJsViewer.tsx`) posts best-effort events. What it sends is
+decided by `src/lib/share/readingClock.ts`, a pure state machine with its own tests; the viewer
+only feeds it browser events and posts what it flushes.
 
 - `pageNumber` only (records “page seen”)
-- `durationMs` (+ optionally `pageNumber`) (increments time totals)
+- `durationMs` — the **visit clock**, how long the tab was open on this document. Feeds
+  `timeSpentMs`.
+- `pageDurationMs` (+ `pageNumber`) — the **page clock**, time on that one page. Feeds
+  `pageTimeMsByPage`.
 - `visitId` (per-tab visit id, sessionStorage) attaches the event to a `ShareVisit`
-- `enteredAtMs` + `leftAtMs` (best-effort timing bounds) enables recording page sequence events for a visit
+- `enteredAtMs` + `leftAtMs` — timing bounds, and **the exit signal**: their presence is what says
+  the reader has *left* that page, which is what promotes the post to a `pageEvents` segment, a
+  `pageVisitCountByPage` revisit tick, and a `toPage` the live metrics pages read.
+
+Two rules that are easy to break and were each broken once:
+
+- **The two clocks are separate counters over the same seconds.** Time on page 4 is also time in
+  the visit, so one number can never feed both — `visitTimeIncrement` reads only `durationMs` and
+  `pageTimeIncrement` only `pageDurationMs` (`src/lib/analytics/shareTiming.ts`). Their sum is a
+  ceiling, not a total: reported page time must never exceed reported visit time, which is the
+  property `scripts/verify-share-analytics.ts` and the clock's fuzz test both assert.
+- **A heartbeat sends page time with no bounds.** The 30-second heartbeat reports the page the
+  reader is *still on*, because a document with one page never turns a page and so recorded
+  nothing until the tab closed. It carries `pageDurationMs` and omits `enteredAtMs`/`leftAtMs`, so
+  the server moves the clock and writes no phantom exit. The clock keeps a `pageReportedMs` ledger
+  so the eventual exit flush sends only what is left.
 
 Server behavior:
 
@@ -273,6 +293,45 @@ and never counted, `lastViewedAt` is written only by an ingest, and per-page tim
 project link produced two `ShareView` rows, two `ShareVisit` rows with a shared visit id, one
 `ProjectLinkView` with both documents, and **nothing at all under either document's own link**.
 
+### …and where the document page says so
+
+Excluding the data room's reading from the document's figures is right, and on its own it made the
+document metrics page *lie by omission*: an owner could watch "Michael J read USAVX Deck" arrive in
+the activity feed and then find nobody on that document's metrics page, because he had read it
+through the project link `4XX8hbn291OC` and not through the document's own.
+
+So the rows are reported, in their own place, never folded into a total:
+
+- `GET /api/docs/:docId/shareviews` answers `projectLinkTraffic` (absent when there is none):
+  `{ views, viewers, links[], viewerRows[] }`, built from the same `docOnlyShareIdMatch`
+  slugs the totals *exclude*, and matched with `RECIPIENT_ONLY_MATCH` and the window like every
+  other figure on the route.
+- Identity follows the page's gate exactly: on `analyticsTier === "basic"` the aggregation never
+  projects a name, so a Free workspace gets the counts and the "via *project*" grouping and no
+  identities at all.
+- The page renders a **THROUGH PROJECT LINKS** card with a `projectLinkMetricsHref` link per
+  project link, so the activity feed, the workspace's Top Links and this card all land on the same
+  screen — plus one line under the Views tile ("+N views came through project links, counted with
+  the project") so the big number is never read as the whole story.
+
+`totals`, `byLink` and `Doc.numberOfViews` are untouched: the three surfaces still agree, which is
+the whole point of the rule above.
+
+### A recipient who changes the name they gave
+
+"Introduce yourself" is answered once per browser and remembered there, so the interesting case is
+the *second* answer — a typo fixed, a surname added. The row for the link they were on takes the new
+value from the ingest's own `$set`; `propagateViewerIdentity`
+(`src/lib/share/viewerIdentity.ts`) writes it through to the rest of that person's rows, under four
+rules: one workspace (the document owner's), this viewer only (the bare digest **or** any
+`<digest>.<docId>` project key), never over an identity that came from an account, and only where
+the stored value differs.
+
+That last rule is load-bearing. The realtime server watches `shareviews` for updates touching
+`viewerName` / `viewerEmailSnapshot` and broadcasts a `viewer` frame to the owner's room; the metrics
+pages subscribe and refetch (debounced — one rename is a burst of rows), so a corrected name fixes
+itself on an open page. A no-op write would put a frame on the wire for nothing.
+
 ## Owner metrics API (project metrics page)
 
 The same page, the same component, a different scope.
@@ -412,6 +471,44 @@ rows. `src/lib/analytics/project/viewerKey.ts` holds those expressions; the docu
 `LINK_VIEWER_KEY_EXPR` stays as it is and must not learn about the composite. Before the dedup, a
 data room with two documents reported a single recipient who opened both as two viewers and two
 opens.
+
+### Drilling into one reader's reading of one document
+
+`GET /api/projects/:projectSlug/shareviews/viewer-doc?docId=&userId=|botIdHash=&days=&shareId=`
+
+The room's viewer drawer can say "Steve opened 1 document in 5m 53s" and no more, because the
+viewer aggregate merges a reader's per-document rows and drops the page fields — page 3 of the term
+sheet and page 3 of the deck are not the same axis, so "pages viewed" is not a fact about a project.
+But a project link writes **one row per (viewer, document)**, so the per-page story still exists on
+the individual row; this route goes back for the one that was merged, and the drawer renders it with
+the same `PageTimeChart` a document link uses.
+
+A drill-down, not a second source of truth: same collection, same window, same owner-preview
+exclusion and the same Pro gate as the drawer it opens from (402 on Basic). An anonymous reader is
+addressed by the bare digest and the composite key is rebuilt here (`projectViewerKey`), since the
+document is known. Several rows can come back when a reader reached the same document through two of
+the project's links; they are summed, as the drawer behind them already summed them. An empty
+window answers 200 with zeroes rather than 404 — the reader and the document both exist, the
+reading is simply outside the range on screen.
+
+### Visitors who arrived and opened nothing
+
+The room's viewer list is built from `ShareView` — from *reading*. A data room's distinguishing
+case is the visitor who opens the front door, reads the file list and leaves: they write a
+`ProjectLinkView` row and no `ShareView` row at all, so they were counted in
+`totals.landedWithoutOpening` and named nowhere. Someone who introduces themselves and then cannot
+find themselves in the room they just gave their name to reads as a broken feature.
+
+`/api/projects/:slug/shareviews` therefore appends arrival-only visitors to `viewers` /
+`anonymousViewers`, flagged `openedNothing: true`, with `docsOpened: 0`, no `docs`, and `sessions`
+taken from the arrival row's `visits` (they have no `ShareVisit` rows to count). Bounded at 200,
+newest arrival first.
+
+**Only those who volunteered an identity.** An anonymous arrival that opened nothing is a number,
+and `landedWithoutOpening` is already that number; forty nameless rows would bury the ones a sender
+can act on. It follows the same Pro gate as every other viewer identity (`includeViewers`), and the
+same owner-preview exclusion as every other figure. The UI says "Opened nothing yet" rather than
+"0 documents", which reads like a missing value.
 
 ## Best-effort caveats / interpretation notes
 

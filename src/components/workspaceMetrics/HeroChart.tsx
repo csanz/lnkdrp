@@ -71,7 +71,7 @@ export default function HeroChart({
   const last = series[series.length - 1]?.day ?? "";
 
   return (
-    <section aria-label={meta.chartTitle} className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+    <section aria-label={meta.chartTitle} className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 className="text-[13px] font-semibold text-[var(--fg)]">{meta.chartTitle}</h2>
         {first && last ? (

@@ -10,6 +10,10 @@
  * anything, so the title and first page would reach every member of that channel — the leak the
  * password exists to prevent. Callers decide that a link is locked or refused and simply pass no
  * `title`/`description`/`previewUrl`; this helper never resolves a link itself.
+ *
+ * Because every share page's metadata comes through here, this is also the one place that can put
+ * `noindex` on all of them at once; see the `robots` field below, and `src/app/robots.ts` for the
+ * other half of that fix.
  */
 import type { Metadata } from "next";
 import { headers } from "next/headers";
@@ -19,8 +23,8 @@ import { getMetadataBaseUrl } from "@/lib/urls";
 /**
  * Build the page's `Metadata` from strings the caller has already decided are safe to publish.
  *
- * `previewUrl` may be absolute (`https://…`) or root-relative (`/…`); anything else falls back to
- * the site's default OG image, as does an absent one.
+ * `previewUrl` must be **root-relative** (`/s/<shareId>/og.png`). Anything else — an absolute URL
+ * above all — falls back to the site's default OG image, as does an absent one.
  */
 export async function buildShareMetadata(input: {
   title: string;
@@ -48,9 +52,20 @@ export async function buildShareMetadata(input: {
 
   const previewCandidate = typeof input.previewUrl === "string" && input.previewUrl ? input.previewUrl : null;
   const images: NonNullable<Metadata["openGraph"]>["images"] = (() => {
-    if (previewCandidate) {
-      if (/^https?:\/\//i.test(previewCandidate)) return [{ url: new URL(previewCandidate), alt: title }];
-      if (previewCandidate.startsWith("/")) return [{ url: new URL(previewCandidate, metadataBase), alt: title }];
+    // Root-relative only, on purpose. An absolute URL used to be published verbatim, and the one
+    // thing callers had to hand was the document's stored preview: a public blob URL whose path is
+    // `docs/<docId>/uploads/<uploadId>/preview.png`. That went straight into `og:image`, so anyone
+    // forwarded a share link — or any bot that unfurled it into a channel — could read the
+    // document id and upload id out of the page source, and those ids are exactly what every
+    // `/api/docs/:docId` surface is addressed by. The blob is meant to reach recipients through
+    // `/s/<shareId>/og.png`, which re-serves the bytes from our own origin and re-runs the
+    // refusal/password checks on every fetch. Refusing absolute URLs here is what keeps that proxy
+    // from being bypassed the next time someone reaches for the stored URL as a convenience.
+    if (previewCandidate?.startsWith("/")) {
+      // `//evil.example/x` is protocol-relative, not a path: it resolves off-origin.
+      if (!previewCandidate.startsWith("//")) {
+        return [{ url: new URL(previewCandidate, metadataBase), alt: title }];
+      }
     }
     return [{ url: new URL("/images/og.png", metadataBase), width: 840, height: 491, alt: title }];
   })();
@@ -59,6 +74,24 @@ export async function buildShareMetadata(input: {
     title,
     description,
     metadataBase,
+    // Not in a search index — but still a good preview in a chat.
+    //
+    // These pages carried no robots directive at all, so the card built right above (the document's
+    // title, its AI summary, its cover image) was as indexable as the marketing site. A share URL
+    // reaches crawlers without anyone publishing it on purpose: webmail providers prefetch links,
+    // public channels unfurl and archive them, browser toolbars report visited URLs. Once indexed,
+    // a deck meant for one recipient is findable by anyone searching its title.
+    //
+    // Two controls, and each buys a different thing. `src/app/robots.ts` disallows `/s/` and `/p/`,
+    // which stops a well-behaved crawler from *fetching* the page at all — that also keeps bot hits
+    // out of the sender's view analytics — but it is advisory and a crawler may ignore it. This
+    // `noindex` is the control that actually holds: it is read by anything that fetched the page
+    // anyway, and it says do not index this and do not follow what is on it.
+    //
+    // `openGraph`/`twitter` stay exactly as they were, on purpose. `noindex` is not `nosnippet`:
+    // an unfurl is a deliberate forward by someone who already holds the link, and that preview is
+    // the product. The goal is "not in a search index", not "no preview".
+    robots: { index: false, follow: false },
     twitter: { card: "summary_large_image", title, description, images },
     openGraph: { type: "website", title, description, images },
   };

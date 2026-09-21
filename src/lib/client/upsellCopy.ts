@@ -61,7 +61,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
   },
   documents: {
     title: "You're at the Free document limit",
-    reason: "Free workspaces can share 3 documents. Each one can carry as many links as you need — Pro removes the cap on documents.",
+    reason: "Free workspaces can share 3 documents. Each one can carry as many links as you need. Pro removes the cap on documents.",
     bullets: [
       "Unlimited links per document, one per investor",
       "Unlimited shared documents and projects across the workspace",
@@ -102,7 +102,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
   project_links: {
     title: "A second link on a project is a Pro feature",
     reason:
-      "Free gives every project one public link. Pro lets you give each audience its own — with its own password, expiry and analytics — so revoking one fund does not revoke the other.",
+      "Free gives every project one public link. Pro gives each audience a link of its own, with its own password, expiry and analytics, so revoking one fund does not revoke the other.",
     bullets: [
       "A separate link per audience, each with its own password and expiry",
       "See who came, what they opened and how long they read, per link",

@@ -38,7 +38,21 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       return applyTempUserHeaders(NextResponse.json({ error: "Invalid linkId" }, { status: 400 }), actor);
     }
     const body = (await request.json().catch(() => ({}))) as { password?: unknown };
-    if (typeof body.password !== "string" || body.password === "") {
+    /**
+     * Normalise the candidate the way every other side of this password already does.
+     *
+     * What is stored is trimmed: `passwordFields` hashes `password.trim()` when the link is set up.
+     * What the recipient types is trimmed too — the unlock route runs the body through
+     * `asNonEmptyString` before `verifySharePassword`. This route compared the raw body, so a
+     * candidate carrying whitespace (and a pasted password usually does) came back `matches: false`
+     * for a string that opens the link. The owner, checking the password they had just sent, was
+     * told it was wrong and changed a link that worked.
+     *
+     * A whitespace-only body is nothing to check, so it takes the same 400 an empty one does —
+     * unlock answers it the same way ("Missing password").
+     */
+    const candidate = typeof body.password === "string" ? body.password.trim() : "";
+    if (!candidate) {
       return applyTempUserHeaders(NextResponse.json({ error: "password is required." }, { status: 400 }), actor);
     }
 
@@ -50,13 +64,31 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       );
     }
 
+    // `includeArchived: true` so a deleted link can be told apart from an id that never existed,
+    // and then refused below.
     const link = (await listShareLinks({ orgId, docId: docObjectId, includeArchived: true })).find((l) => String(l._id) === linkId);
     if (!link) {
       return applyTempUserHeaders(NextResponse.json({ error: "Link not found." }, { status: 404 }), actor);
     }
 
+    /**
+     * A deleted link has no password to confirm.
+     *
+     * This answered `matches: true` for a link that no longer resolves, which is the wrong answer
+     * to the only question the endpoint is asked: "will this password let my recipient in?" It will
+     * not — there is nothing for them to open. Worse alongside the reveal route, which handed back
+     * the plaintext of the same dead link until it was fixed: between them, a revoked link's secret
+     * stayed both readable and confirmable by anyone holding its id.
+     */
+    if (link.archivedAt) {
+      return applyTempUserHeaders(
+        NextResponse.json({ error: "That link was deleted, so its password no longer opens anything." }, { status: 404 }),
+        actor,
+      );
+    }
+
     const passwordEnabled = Boolean(link.passwordHash);
-    const matches = passwordEnabled && verifySharePassword({ password: body.password, salt: link.passwordSalt, hash: link.passwordHash });
+    const matches = passwordEnabled && verifySharePassword({ password: candidate, salt: link.passwordSalt, hash: link.passwordHash });
 
     return applyTempUserHeaders(
       NextResponse.json({ passwordEnabled, matches }, { headers: { "cache-control": "no-store" } }),

@@ -179,10 +179,23 @@ export async function resolveSafeOutboundAddresses(
     try {
       addresses = await dns.promises.lookup(hostname, { all: true, verbatim: true });
     } catch (e) {
-      throw new SafeFetchError("DNS_FAILED", `Could not resolve host (${e instanceof Error ? e.message : String(e)})`);
+      // The resolver's own text ("getaddrinfo ENOTFOUND …") names a Node API the caller did not
+      // call and offers nothing to do about it. Every other refusal in this family says what to try
+      // instead; this one now does too.
+      throw new SafeFetchError(
+        "DNS_FAILED",
+        "Could not resolve the host in that URL. Check the domain is right and publicly reachable, or send the file " +
+          "directly instead of by URL.",
+      );
     }
   }
-  if (!addresses.length) throw new SafeFetchError("DNS_FAILED", "Could not resolve host");
+  if (!addresses.length) {
+    throw new SafeFetchError(
+      "DNS_FAILED",
+      "Could not resolve the host in that URL. Check the domain is right and publicly reachable, or send the file " +
+        "directly instead of by URL.",
+    );
+  }
   for (const a of addresses) {
     if (isPrivateAddress(a.address)) {
       throw new SafeFetchError("PRIVATE_ADDRESS", "URL resolves to a non-public address");

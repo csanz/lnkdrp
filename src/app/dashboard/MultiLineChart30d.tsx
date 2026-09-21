@@ -25,11 +25,14 @@ export default function MultiLineChart30d({
     downloads: typeof s.shareDownloads === "number" && Number.isFinite(s.shareDownloads) ? Math.max(0, s.shareDownloads) : 0,
   }));
 
+  /* The four series used to be raw 500-level hues, picked on the dark panel: on a white one they
+     ran 2.3-4.0:1, and emerald-500 / green-500 were near-identical for two different series.
+     `--chart-work-*` is the app's categorical ramp and already has a validated value per theme. */
   const lines: Array<{ key: string; label: string; stroke: string }> = [
-    { key: "uploads", label: "Uploads", stroke: "rgb(59 130 246)" },
-    { key: "docs", label: "Docs created", stroke: "rgb(16 185 129)" },
-    { key: "views", label: "Unique share views", stroke: "rgb(168 85 247)" },
-    { key: "downloads", label: "Share downloads", stroke: "rgb(34 197 94)" },
+    { key: "uploads", label: "Uploads", stroke: "var(--chart-work-2)" },
+    { key: "docs", label: "Docs created", stroke: "var(--chart-views)" },
+    { key: "views", label: "Unique share views", stroke: "var(--chart-work-5)" },
+    { key: "downloads", label: "Share downloads", stroke: "var(--chart-downloads)" },
   ];
 
   const labels = data.map((d) => d.day);
@@ -71,7 +74,7 @@ export default function MultiLineChart30d({
       <div ref={wrapRef} className="h-56 w-full">
         {!size ? null : (
           <LineChart width={size.w} height={size.h} data={data} margin={{ top: 18, right: 30, bottom: 6, left: 30 }}>
-            <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
+            <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
             <XAxis
               dataKey="day"
               ticks={[left, mid, right].filter(Boolean)}
@@ -83,7 +86,7 @@ export default function MultiLineChart30d({
             />
             <YAxis hide domain={[0, "dataMax"]} />
             <Tooltip
-              cursor={{ stroke: "var(--border)", strokeOpacity: 0.25 }}
+              cursor={{ stroke: "var(--chart-cursor)" }}
               contentStyle={{
                 background: "var(--panel)",
                 border: "1px solid var(--border)",
@@ -98,13 +101,15 @@ export default function MultiLineChart30d({
                 String(name ?? ""),
               ]}
             />
-            {/* Four series over 30 days: label only each line's highest day, in the line's colour,
-                or the numbers from four lines pile into each other. */}
+            {/* Four series over 30 days: label only each line's highest day, or the numbers from
+                four lines pile into each other. The label takes `--muted` (ChartValueLabel's
+                default), not the line's colour: a 10px label in a series hue is text held to a
+                3:1 stroke standard, which is under AA wherever the ground is pale. */}
             {lines.map((l) => (
               <Line key={l.key} type="monotone" dataKey={l.key} stroke={l.stroke} strokeWidth={1.1} dot={false} isAnimationActive={false}>
                 <LabelList
                   dataKey={l.key}
-                  content={valueLabels({ values: data.map((d) => Number((d as Record<string, unknown>)[l.key]) || 0), mode: "max", fill: l.stroke })}
+                  content={valueLabels({ values: data.map((d) => Number((d as Record<string, unknown>)[l.key]) || 0), mode: "max" })}
                 />
               </Line>
             ))}

@@ -21,7 +21,19 @@ agent (Claude Code, Cursor, …)  ──MCP/HTTP──▶  mcp/ (this)  ──RE
 
 Health: `curl http://localhost:8787/healthz` → `{ ok, sessions, version, apiUrl }`.
 
-Point a client at `http://localhost:8787/mcp` with the header `Authorization: Bearer lnk_…`:
+## Connect a client
+
+The one thing this server cannot make for you is the key it acts with. Open **`/connect`** in the
+app (`http://localhost:3001/connect` in dev, `https://lnkdrp.com/connect` in production): any
+workspace member can open it, owners and admins create and revoke keys. It creates a key, shows the
+plaintext `lnk_…` **once**, and renders the install snippet for each client with that key and the
+right server URL already filled in — so the fastest path is to copy the snippet from there rather
+than the ones below. A key carries both `read` and `write` scopes unless it was narrowed when it
+was created; every tool that changes anything needs `write`. The public per-client guides are
+`/mcp` and `/mcp/<client>`; docs/MCP.md's "Connecting a client" section is the long form.
+
+Point a client at `http://localhost:8787/mcp` with the header `Authorization: Bearer lnk_…` (the
+key from `/connect`, in full — `lnk_…` below is a placeholder, not a value to paste):
 
 ```sh
 claude mcp add --transport http lnkdrp http://localhost:8787/mcp --header "Authorization: Bearer lnk_…"
@@ -31,6 +43,53 @@ claude mcp add --transport http lnkdrp http://localhost:8787/mcp --header "Autho
 { "mcpServers": { "lnkdrp": { "url": "http://localhost:8787/mcp", "headers": { "Authorization": "Bearer lnk_…" } } } }
 ```
 
+## Which clients can reach the hosted server
+
+Authentication here is a raw API key in an `Authorization: Bearer` header. The server answers 401
+with a `WWW-Authenticate` pointing at `/.well-known/oauth-protected-resource`, and that document
+advertises `authorization_servers: []` — there is no OAuth authorization server, because OAuth is
+not implemented yet. That one fact decides which clients can connect:
+
+- **Clients where a human pastes the key into config work** — Claude Code, Cursor, Codex, Gemini
+  CLI, Grok, Cowork, and anything else that lets you set a request header. These are what `/connect`
+  generates snippets for.
+- **Clients that expect to authenticate by OAuth do not.** A client that follows the MCP
+  authorization spec discovers the resource metadata, finds no authorization server in it, and has
+  nothing to send the user to. This is the constraint to check first when a hosted client "cannot
+  connect" — it is not a networking problem, and no amount of retrying fixes it.
+
+Supporting those clients means implementing OAuth 2.1 on this server (authorization server
+metadata, dynamic client registration, the code flow), issuing tokens that map to the same
+workspace an `lnk_…` key maps to today. That is a feature, not a configuration change.
+
+## Running locally against production
+
+The hosted server at `mcp.lnkdrp.com` cannot accept `filePath`, and that is deliberate rather than a
+gap: it reads the path from *its own* disk, so a path from your laptop either names nothing there or
+names a file belonging to that host (see `sharePdf.ts`). Uploading a local PDF through the hosted
+server means `sourceUrl` or `fileBase64`.
+
+When you want `filePath` — the practical way to share a 20MB deck sitting on your machine — run the
+server yourself against the production API. It is the same binary, the same key and the same
+workspace; only the process location changes.
+
+```sh
+# HTTP, alongside the hosted one
+LNKDRP_API_URL=https://lnkdrp.com LNKDRP_ALLOW_LOCAL_FILES=1 npm run mcp
+
+# or stdio, for a client that launches the server itself
+LNKDRP_API_URL=https://lnkdrp.com LNKDRP_ALLOW_LOCAL_FILES=1 LNKDRP_API_KEY=lnk_… npm run mcp -- --stdio
+```
+
+`LNKDRP_ALLOW_LOCAL_FILES=1` is required and is the whole point: without it the server refuses
+`filePath` whenever its API URL is not localhost, which is exactly the case here. Set it only on a
+server running on the caller's own machine — on a shared host it lets any connected agent read that
+host's filesystem.
+
+Two things follow from running a second server: it has its own in-memory session list and its own
+24h idempotency cache, so an `idempotencyKey` used against the hosted server is unknown to this one,
+and a retry that crosses between them creates a second document rather than replaying the first.
+
 ## Environment
 
 | Variable | Default | Purpose |
@@ -39,8 +98,17 @@ claude mcp add --transport http lnkdrp http://localhost:8787/mcp --header "Autho
 | `MCP_PORT` | `8787` | Listen port. |
 | `MCP_PUBLIC_URL` | `http://localhost:${MCP_PORT}` | Advertised URL (resource metadata, `WWW-Authenticate`). |
 | `NEXT_PUBLIC_REALTIME_URL` | unset | Realtime WebSocket URL. Only used by `lnkdrp_share_pdf` to return the moment processing finishes. |
-| `REALTIME_SECRET` or `NEXTAUTH_SECRET` | unset | Shared secret to sign realtime tickets (same value as the realtime server). |
+| `REALTIME_SECRET` | unset | Shared secret to sign realtime tickets — the same value as the realtime server, and **not** the app's `NEXTAUTH_SECRET`. The code still falls back to `NEXTAUTH_SECRET`; do not rely on that. Whoever holds `NEXTAUTH_SECRET` can forge app sessions, so it lives only on Vercel (DEPLOY.md). |
 | `LNKDRP_API_KEY` | unset | `--stdio` mode only: the key to act as. |
+| `LNKDRP_ALLOW_LOCAL_FILES` | unset | `1`/`true`/`yes` lets `share_pdf`/`replace_pdf` read a `filePath` from this server's disk even when `LNKDRP_API_URL` is remote. **Leave it unset on any shared server.** It is meant for a server running on the caller's own machine against a remote API; on a hosted one it turns an agent-supplied absolute path into a read of the container's filesystem. |
+| `LNKDRP_SKIP_CONFIRMATIONS` | unset | `1`/`true`/`yes` skips the human confirmation on destructive tools, **only when `LNKDRP_API_URL` is localhost**. For test loops against a dev database, where confirming fifty deletes of rows that lived four seconds is the whole cost. Ignored with a startup warning against any other API URL — a local server pointed at production deletes real documents, and where the process runs says nothing about whose data is at the other end. |
+| `LNKDRP_GHOSTSCRIPT` | unset | Explicit path to the `gs` binary. Without it the optimizer tries `gs`, then `/opt/homebrew/bin/gs`, `/usr/local/bin/gs`, `/usr/bin/gs` — a GUI-launched server often inherits a bare `PATH`. |
+| `LNKDRP_PDF_OPTIMIZE_DPI` | `220` | Image resolution the PDF optimizer downsamples to, clamped to 72–600. Tuned by hand (see `src/optimize.ts`); treat it as a setting, not a default to revisit. |
+| `NEXT_PUBLIC_FEATURE_REQUESTS` | unset | The same build-time flag the web app reads; `1` means request repos exist on this deployment. Surfaced read-only in `lnkdrp_whoami`'s `capabilities.notMcpAccessible` so an agent can tell "not on this deployment" from "no MCP tool covers it". |
+| `NODE_ENV` | unset | `production` switches the `LNKDRP_API_URL` default to `https://lnkdrp.com`. The Docker image sets it. |
+
+That is the whole list — `mcp/src/config.ts` is the source of truth, plus `LNKDRP_ALLOW_LOCAL_FILES`
+(`src/tools/sharePdf.ts`) and the two optimizer variables (`src/optimize.ts`).
 
 The HTTP mode has no key of its own; each request brings the caller's `lnk_…` key.
 
@@ -85,8 +153,10 @@ plus `creditsRemaining`, `creditsResetAt`, `onDemand` (from `GET /api/credits/sn
 unreadable; whoami never fails over them), `costTiers: ["basic","standard","advanced"]`, `costs: { summary: [1,2,5],
 compare: [2,5,12] }` and `mcpVersion`. `costs` are computed from `creditsForRun` (`src/lib/credits/schedule.ts`,
 imported by the MCP server and copied into the Docker image), so they always match what the app charges.
-`onDemand: true` alongside `plan: "free"` is a Free workspace that added a card for pay-as-you-go credits — the
-document/project limits are still Free's, but it will not just run dry once its one-time starter credits are gone.
+`onDemand` is Pro-only: it means AI runs continue past `creditsRemaining: 0`, billed per credit up to the
+workspace's spend limit. On Free it is always `false` — the snapshot cannot return anything else — so a Free
+workspace that reaches zero credits stops running AI until its cycle resets. It is also `false` when the snapshot
+could not be read at all, which is indistinguishable here; treat `false` as "not known to be on".
 Also carries `capabilities` (mt_1mVhlEPXGT): `{ links: {limited:false}, documents/projects: {limit,used,remaining}|null,
 collaborators: {limit,used}|null, analyticsDaysLimit, deepAnalytics, recipientsCanBrowseVersions, notMcpAccessible:
 [{feature,reason}] }` — one call to answer "what can I do here" instead of learning a gate by hitting it.
@@ -97,10 +167,18 @@ deployment.
 ### Discovery (`lnkdrp_list_docs`, `lnkdrp_get_activity`)
 How an agent finds documents it was not handed, and reads what happened in the workspace.
 
-- list_docs — In `{ query?, ids? (1–50), page? = 1, limit? = 25 }` → `GET /api/docs?q=&ids=&page=&limit=` →
-  `{ total, page, limit, hasMore, docs: [{ docId, shareId, shareUrl, title, oneLiner, status, version, previewImageUrl,
-  createdDate, updatedDate }] }`. `query` matches a title or any share-link slug; `ids` is a direct lookup. Page-based
-  because the route is. Archived/deleted documents excluded.
+- list_docs — In `{ query?, ids? (1–50), page? = 1, limit? = 25, archived? = false, tag? }` →
+  `GET /api/docs?q=&ids=&page=&limit=` → `{ total, page, limit, hasMore, notFound?, docs: [{ docId, shareId, shareUrl,
+  title, oneLiner, status, version, previewImageUrl, createdDate, updatedDate, tags }] }`. `query` matches a title or any
+  share-link slug; `ids` is a direct lookup and reports what it could not resolve in `notFound` (always present when
+  `ids` was given, empty or not). Page-based because the route is. `archived: true` swaps the list for the Archive;
+  deleted documents are never listed.
+  `tag` filters to the documents carrying that tag, by name — folded, so any spelling reaches it. It resolves through
+  `GET /api/tags/by-slug/:slug/items` and then lists those ids, so an unknown tag is an empty result rather than an
+  error: "nothing is filed under that" is an answer — and the response echoes `{ tag, tagMatched }` so the two zeroes
+  can be told apart, `tagMatched: false` meaning no such tag rather than an empty one. Every row carries its own
+  `tags` (name, slug, colour), batched
+  through `GET /api/tags/targets` rather than one call per row, so filing is visible without a second request.
 - get_activity — In `{ limit? = 40 (≤100), cursor?, types? (enum of every event), docId?, who?: "me"|"team"|"agents" }` →
   `GET /api/activity` → `{ nextCursor, items: [{ id, type, at, actor, agent|null, doc|null, project|null, meta }] }`.
   `who: "agents"` = rows with agent attribution, whoever owns the key. Names, titles and `meta`'s free-text keys are
@@ -121,7 +199,14 @@ and no local path; note a serverless deployment caps request bodies far below th
 upload can still fail with the platform's own 413 — `sourceUrl` and the browser's direct upload do not).
 On the `filePath`/`fileBase64` paths the PDF is shrunk first (Ghostscript `/prepress`, images to 220dpi, `LNKDRP_PDF_OPTIMIZE_DPI` to tune) unless it is
 under 1MB or `optimize: false`; the original is kept unless the result is a valid PDF, ≥5% smaller and has the same
-page count. Reported as `optimized: { from, to, ratio, tool }` or `optimized: null` + `optimizeNote`. `summary` and `keyPoints` go together (both or
+page count. **Ghostscript is a dependency of the machine, not of this package**, and it is never assumed: with no `gs`
+on the box — which is the case for the shipped Docker image, see Deployment — every inline upload is sent unshrunk
+with `optimizeNote: "Ghostscript (gs) is not installed on the MCP server, so the file was sent as-is."` The other ways
+optimization is skipped, all of them reported the same way and none of them an error: the file is under 1MB,
+`optimize: false`, Ghostscript failed or timed out (120s), it produced nothing or something that is not a PDF, the
+page count could not be read on both files (`pdfjs-dist`), the page count changed, or the result saved less than 5%.
+The page check is the load-bearing one — Ghostscript can report success while emitting a shorter document, and
+losing a page silently is worse than a large upload. Reported as `optimized: { from, to, ratio, tool }` or `optimized: null` + `optimizeNote`. `summary` and `keyPoints` go together (both or
 neither), plain text written from the document (URLs and markup are stripped). Each upload's AI summary costs 1 credit,
 or nothing when the agent passes them; the summary is then attributed to the agent. A 400 `invalid_summary` becomes a
 `validation` error that says what to fix.
@@ -159,8 +244,13 @@ update. Idempotent by key, same 24h in-memory store as `share_pdf`, its own name
 
 ### `lnkdrp_get_share`
 In `{ docId? | shareId? }` (exactly one). Out `{ docId, shareId, title*, status, shareEnabled, shareAllowPdfDownload,
-sharePasswordEnabled, shareAllowRevisionHistory, shareUrl, previewImageUrl, oneLiner*, summary*, isArchived }`
-(`*` untrusted or `null`). shareId lookups use `GET /api/docs?q=`, which does not list archived docs.
+sharePasswordEnabled, shareAllowRevisionHistory, shareUrl, previewImageUrl, oneLiner*, summary*, keyPoints*, version,
+pageCount, projectIds, anyLinkActive, tags, summaryStale?, link?, warnings }` (`*` untrusted or `null`).
+`tags` is how the workspace has filed the document — `[{ name, slug, color }]`, empty when nothing is on it, private
+to the workspace. Naming a non-default `shareId` re-scopes the answer to that link and adds `link`; the rest of the
+shape, `tags` included, is the same either way.
+An archived document is not reachable by `shareId` (`GET /api/docs?q=` does not list them) and says so, naming the
+document and its `docId`, rather than reporting that nothing matched.
 
 ### `lnkdrp_set_share_access`
 In `{ idempotencyKey, docId, shareEnabled?, allowDownload?, password?: string|null, allowRevisionHistory? }` (≥1 setting).
@@ -170,12 +260,27 @@ Out: the `lnkdrp_get_share` shape. Free-plan caps surface as `plan_limit` with t
 In `{ docId?, shareId?, days? 1–60 = 15, includeViewers? = false }` (at least one id). A `shareId` scopes every number to that
 one link (`perLink: true`, `GET /api/docs/:id/shareviews?shareId=`); a `docId` covers the document and all of its links. Pass
 both for a non-default link: a bare `shareId` goes through `GET /api/docs?q=`, which only matches a document's default link.
-Out `{ docId, shareId, perLink, days, analyticsDaysLimit, analyticsTier, viewerCount, totals: { views, downloads, pagesViewed,
-timeSpentMs, authenticatedViewers, anonymousViewers }, series: [{ date, views, downloads }], viewers? }`.
-`viewers` (untrusted `name`/`email`, `views`, `timeSpentMs`, `pagesViewed`, `pagesSeen`, `firstSeen`, `lastSeen`) is
-present only with `includeViewers` on a Pro workspace (`analyticsTier: "deep"`).
+Out `{ docId, shareId, perLink, days, analyticsDaysLimit, analyticsTier, viewerCount, totals: { views, ownerPreviews,
+opens, opensPartial, downloads, pagesViewed, timeSpentMs, authenticatedViewers, anonymousViewers },
+series: [{ date, views, opens, downloads }], viewers?, anonymousViewers?, projectLinkTraffic? }`.
+`views` counts recipients and `opens` counts tab sessions, so a reader who came back three times is one view and
+three opens. `ownerPreviews` is the owning side's own opens, kept out of `views` — `views: 0` with
+`ownerPreviews: 3` means only the owner has looked, not that nobody has. `opensPartial` marks traffic older than
+per-session tracking, so `opens` is a floor rather than a count.
+`viewers` and `anonymousViewers` (untrusted `name`/`email`, `views`, `timeSpentMs`, `pagesViewed`, `pagesSeen`,
+`pageTimeMsByPage`, `firstSeen`, `lastSeen`) are present only with `includeViewers` on a Pro workspace
+(`analyticsTier: "deep"`), and both are returned together: most people who open a share link never sign in, so the
+signed-in list alone is the small half of "who read this".
+`totals` and `series` cover the document's **own** links only. Reads that arrived through a *project's* link come back
+separately in `projectLinkTraffic` `{ views, viewers, links: [{ shareId, label*, projectId, projectName*, views,
+viewers, lastViewedAt }], viewerRows: [{ shareId, projectId, projectName*, views, pagesViewed, timeSpentMs,
+lastViewedAt, viewerName*, viewerEmail* }] }` (the two viewer fields deep-tier only). They are kept out of `totals`
+on purpose — a project link belongs to the room, not to this document, and folding it in once made it render as a
+deleted link — but on a document inside a data room they are routinely most of the traffic and most of the named
+readers (14 own-link views alongside 12 project-link views on one document, measured 2026-09-19). Answer "who read
+this?" from both, or answer it wrongly.
 
-### Share links (`lnkdrp_create_share_link`, `lnkdrp_list_share_links`, `lnkdrp_update_share_link`, `lnkdrp_delete_share_link`)
+### Share links (`lnkdrp_create_share_link`, `lnkdrp_list_share_links`, `lnkdrp_find_share_link`, `lnkdrp_verify_share_password`, `lnkdrp_get_share_link_password`, `lnkdrp_update_share_link`, `lnkdrp_delete_share_link`)
 A document owns many links, one per recipient (docs/prds/lnkdrp-multi-links.md); each has its own `/s/<shareId>`, label,
 audience, password, download/revision switches, expiry and counts. Link DTO: `{ id, docId, shareId, shareUrl, label, audience,
 isDefault, enabled, allowDownload, allowRevisionHistory, passwordEnabled, expiresAt, active, status, createdVia, createdAt,
@@ -188,15 +293,18 @@ lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the
 - list — In `{ docId, query? }` → `GET /api/docs/:id/links?q=` → `{ docId, links }`, default link first, or —
   with `query` — only the links matching by label/audience, ranked by relevance (mt_9ceLy7DqEr).
 - find — `lnkdrp_find_share_link`, the workspace-wide version of `query` above, for when the document isn't known
-- confirm a password — `lnkdrp_verify_share_password` `{docId, linkId, password}` -> `{passwordEnabled, matches}`. Never uses the
-  recipient's unlock route, so it sets no cookie, records no view, and cannot spend the recipient's 10-per-5-min budget.
-- read a password back — `lnkdrp_get_share_link_password` `{docId, linkId}` -> `{passwordEnabled, password}`, plain text, owner/admin,
-  and every read lands in the activity feed. Prefer verify when you only need to check one you already have.
-  yet. In `{ query (1–120), limit? = 20 }` → `GET /api/share-links?q=&limit=` → `{ query, links: [{ docId, docTitle,
+  yet. In `{ query (1–120), limit? = 20 (≤50) }` → `GET /api/share-links?q=&limit=` → `{ query, links: [{ docId, docTitle,
   docShareId, linkId, shareId, shareUrl, label, audience, isDefault }] }`, ranked by relevance, `[]` on no match.
   Backed by a MongoDB text index on `ShareLink.label`/`audience` (label weighted 5:1 over audience) — indexed and
   fast at any size, whole-word matches only ("a16z" matches, "nest" does not); a document's title and a link's
   random shareId are not searched here. Archived/deleted documents' links excluded.
+- confirm a password — `lnkdrp_verify_share_password` `{docId, linkId, password}` -> `{passwordEnabled, matches}`. Never uses the
+  recipient's unlock route, so it sets no cookie, records no view, and cannot spend the recipient's 10-per-5-min budget.
+- read a password back — `lnkdrp_get_share_link_password` `{docId, linkId}` -> `{passwordEnabled, password}`, plain text,
+  owner/admin, and every read lands in the activity feed. **Refused for API-key callers** since the security pass
+  (`forbidApiKey`, "reveal a share password"), and every MCP connection is an API key — so over MCP this answers
+  `forbidden` and tells the human to sign in to the app. Reading a secret back out is deliberately not something a
+  bearer credential may do. Verify is unaffected and is what answers the question people actually ask.
 - update — In `{ linkId, docId, label?, audience?, enabled?, allowDownload?, password?, expiresAt?, allowRevisionHistory? }`
   (≥1 setting) → `PATCH /api/docs/:id/links/:linkId` → `{ link, shareUrl, planWarning?, planNote? }`.
 - delete — In `{ linkId, docId, confirm? }` → confirms with the human first (below) → `DELETE /api/docs/:id/links/:linkId`
@@ -204,14 +312,17 @@ lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the
   (disable it instead).
 
 ### Documents (`lnkdrp_archive_doc`, `lnkdrp_delete_doc`)
-The two document-level operations the app has always had and the MCP lacked. Both confirm with the human first.
+The two document-level operations the app has always had and the MCP lacked.
 
 - archive — In `{ docId, archived: boolean, confirm? }` → `PATCH /api/docs/:id { isArchived }` → `{ ok, docId, isArchived,
-  linksAffected, planWarning? }`. Reversible: every link stops resolving, the document leaves the Free plan's shared-document
-  count, analytics are kept. `archived: false` brings it back and re-checks the cap. Gated despite being reversible because it
-  takes every link down at once; unarchiving needs no confirmation.
-- delete — In `{ docId, confirm? }` → `DELETE /api/docs/:id` → `{ ok: true, deleted: { docId, title, links } }`. Permanent from
-  the owner's side. Refuses while `status` is `preparing`.
+  linksAffected, planWarning? }` (`{ ok, docId, isArchived, unchanged: true }` when it already is). Reversible: every link
+  stops resolving, the document leaves the Free plan's shared-document count, analytics are kept. `archived: false` brings it
+  back and re-checks the cap. Confirms with the human only when a recipient has already opened or downloaded the document —
+  archiving takes every link down at once, but nothing anyone has seen goes away when nobody has seen it, and it is
+  reversible either way (2026-09-17). Unarchiving never confirms.
+- delete — In `{ docId, confirm? }` → confirms with the human first (below), every time →
+  `DELETE /api/docs/:id` → `{ ok: true, deleted: { docId, title, links } }`. Permanent from the owner's side. Refuses
+  while `status` is `preparing`.
 
 ### Projects (`src/tools/projects.ts`)
 A project groups documents; a document can be in several. Each project has a public page `/p/:shareId` (on by default)
@@ -236,14 +347,99 @@ belongs to the workspace, so membership changes always read the project first.
 - delete_project — In `{ projectId | projectSlug, confirm? }` → confirms with the human first → `DELETE /api/projects/:id` →
   `{ ok, deleted: { projectId, slug, documentsDetached } }`. Documents stay.
 
+### Project links (`src/tools/projectLinks.ts`)
+A document link sends one PDF to one recipient; a project link sends the whole room. Each one is a `/p/<shareId>`
+listing every document in the project, with its own label, audience, password, expiry and download setting, and
+everything the recipient opens behind it is attributed to that link — so "who came and what did they read" has an
+answer per audience without the sender hand-assembling a bundle of document links (docs/prds/lnkdrp-project-links.md,
+M5). Rule of thumb for an agent: several documents to the same audience is a project link; one document to several
+audiences is `lnkdrp_create_share_link`. Two things differ from document links, both visible in the contracts:
+creating a *second* project link is Pro (`lnkdrp_whoami` → `capabilities.projectLinks`), and there is no
+`allowRevisionHistory` — a project has no single document whose versions a recipient could browse, so the field does
+not exist rather than existing and doing nothing. Every tool takes exactly one of `projectId` / `projectSlug`, the
+same resolution as Projects above. Link DTO: `{ id, projectId, shareId, shareUrl, label, audience, isDefault, enabled,
+allowDownload, passwordEnabled, expiresAt, active, status, createdVia, createdAt, lastViewedAt, viewCount,
+downloadCount }` — no `allowRevisionHistory`, and `shareUrl` is `/p/<shareId>`, not `/s/`.
+
+- create_project_link — In `{ projectId | projectSlug, label (1–80), audience? (≤120) | null, allowDownload? = false,
+  password? (1–128) | null, expiresAt? ISO | null, enabled? = true }` → `POST /api/projects/:id/links` →
+  `{ project, link, shareUrl, warnings? }`. `plan_limit` on Free, and nothing is created — the project's existing
+  default link keeps working. `allowDownload` here governs every document opened through the link, whatever that
+  document's own link allows. Two `warnings` are worth passing on: another link on the project already carries this
+  label (allowed — a resend can be deliberate — but they are indistinguishable in every list afterwards), and the
+  project's public page was off and this link turned it back on, because the page is live whenever any link is.
+- list_project_links — In `{ projectId | projectSlug, query? (≤120) }` → `GET /api/projects/:id/links?q=&limit=100` →
+  `{ project, publicPageEnabled, links, note? }`, default link first, or ranked by label/audience relevance with
+  `query`. Archived links are not listed. `viewCount` is recipients who opened *something* through the link, not
+  landings on the project page. While `publicPageEnabled` is false every link reads disabled;
+  `lnkdrp_update_project { publicPageEnabled: true }` brings them back.
+  **An empty `links` list does not mean the project is private.** A project's default link is materialised lazily and
+  listing is deliberately a read that writes nothing, so a brand-new project answers `links: []` while its
+  `/p/:shareId` is already serving anyone holding the URL. When that is the case the tool says so in `note`, and says
+  where the handle actually is: there is nothing to revoke by `linkId`, and the way to close the page is
+  `lnkdrp_update_project { publicPageEnabled: false }` (fef3e14).
+- update_project_link — In `{ linkId, projectId | projectSlug, label?, audience?, enabled?, allowDownload?, password?,
+  expiresAt? }` (≥1 setting) → `PATCH /api/projects/:id/links/:linkId` → `{ project, link, shareUrl, warnings? }`.
+  `warnings` appears when enabling this link republished the project's page and so restored the links that the page
+  switch had taken down: the page is derived from "at least one active link", so turning one on turns the room on, and
+  the links it had disabled come back with it. Links revoked individually are not restored and are not mentioned.
+  Disabling
+  revokes that recipient's access to the whole project at once and keeps every number — the documents, their own
+  links and the other recipients' project links are untouched — which is how a project link is revoked without losing
+  its analytics. Editing is not a plan decision: a workspace that has dropped to Free can still edit, disable and
+  re-enable the links it has.
+- delete_project_link — In `{ linkId, projectId | projectSlug, confirm? }` → confirms with the human first (below) →
+  `DELETE /api/projects/:id/links/:linkId` → `{ project, ok: true, deleted: { linkId, shareId, label }, severity }`.
+  The bigger of the two deletes: the recipient loses the room, not a document, and sees "this link is no longer
+  available" — measured, not assumed; the page does not 404 and never names the project. Past analytics stay in the
+  project's totals. The default link refuses (`validation`) because `/p/<shareId>` is the URL every earlier recipient
+  already holds; disable it instead.
+
+### Tags (`src/tools/tags.ts`)
+The workspace's filing system, over documents and projects alike. Filing is what a human stops doing after week two
+and an agent never stops doing, so it has to be reachable from here: an agent that receives documents all day can
+tag them as they arrive, and the human later asks for everything to do with fundraising. A tag is private to the
+workspace — recipients never see one — so none of these confirms with the human, untagging included (tagging again
+undoes it). Tag DTO: `{ tagId, name, slug, color, taggedItems? }`.
+
+- list_tags — In `{}` → `GET /api/tags` → `{ tags, count }`, alphabetical, each with how many documents and projects
+  carry it. Worth reading before tagging, so an agent reuses the workspace's own words instead of adding "fund
+  raising" next to "Fundraising".
+- tag — In `{ docId | projectId, tags (1–10 names, ≤60 chars) }` → `POST /api/tags/assignments` per name →
+  `{ docId|projectId, tags, createdTags }`. Names, not ids: the API creates a tag the workspace does not have yet, so
+  filing something takes one call and no "list, then decide" round trip. Names are folded (case, accents,
+  punctuation), so `Fundraising`, `fundraising` and ` FUNDRAISING ` are one tag and typing it differently does not
+  make a duplicate. Safe to repeat. Attached one name at a time on purpose: a partial failure leaves the tags that
+  did land rather than losing all of them.
+- untag — In `{ docId | projectId, tags (1–10 names) }` → `GET /api/tags/assignments`, then `DELETE` per match →
+  `{ docId|projectId, removed, notTagged, tags }`. Matched on the name as displayed, folded the same way, or on the
+  slug. The tag itself stays in the workspace and on everything else carrying it; only this item loses it. A tag that
+  was not there comes back in `notTagged`, not as an error.
+
+### Starred (`src/tools/starred.ts`)
+A star belongs to a person, not the workspace: it is the shortlist at the top of the key creator's own sidebar.
+Starring is not sharing and changes nothing a recipient sees, so neither tool confirms. Starred DTO:
+`{ docId, title* (untrusted), starredAt }`.
+
+- star_docs — In `{ docIds (1–50), starred? = true }` → `POST /api/starred` per document →
+  `{ starred, changed, unchanged, notFound, starredDocs }`. The web button toggles; these tools always send the
+  wanted state, so a repeat is a no-op rather than an unstar. A document already in that state comes back in
+  `unchanged`; `notFound` collects ids that are unknown, deleted or archived, and never fails the call.
+- list_starred — In `{}` → `GET /api/starred` → `{ total, starredDocs }`, in sidebar order. Deleted and archived
+  documents are left out, and their stars come back if the document does.
+
 ### Destructive tools confirm with the human (`src/confirm.ts`)
-`destructiveHint: true` is metadata a client may display, not a gate. Before `delete_share_link`, `delete_doc`,
-`delete_project` or `archive_doc(archived: true)` changes anything, the server builds a preview — what goes, recipient views and last-viewed,
+`destructiveHint: true` is metadata a client may display, not a gate. Before `delete_share_link`,
+`delete_project_link`, `delete_doc` or `delete_project` changes anything — and before `archive_doc(archived: true)`
+does, on a document a recipient has already opened or downloaded — the server builds a preview — what goes, recipient views and last-viewed,
 links affected, whether it is reversible, a `low`/`high` severity — and gets a yes one of two ways:
 
 1. **Elicitation**, when the client declared `elicitation` at `initialize` (`server.server.getClientCapabilities()`; the
    server logs it per connection). The user sees the preview and one checkbox through the protocol; the agent cannot
-   answer it. Decline, cancel or unticked all mean no, and `confirm: true` does not override a human who answered.
+   answer it. An explicit decline, or an accept with the box unticked, is final: `confirm: true` does not override a
+   human who answered. A *cancel* is different — it is what a client that cannot render the prompt sends
+   automatically, so nobody was asked — and there `confirm: true` does get through, which is the only way a headless
+   client can ever delete anything.
    Declaring the capability is not the same as surfacing the prompt: Claude Code 2.1.261 declares
    `{"elicitation":{"form":{}}}` and, measured live, the request times out (`-32001`) without a prompt appearing. A
    request that fails to deliver (error or timeout) falls through to path 2 — `mcp/src/confirm.ts`, mt_N2E6syf6Lq.
@@ -277,24 +473,48 @@ it as a container anywhere (Fly, Railway, a VM, next to the realtime server):
 ```sh
 docker build -f mcp/Dockerfile -t lnkdrp-mcp .      # from the repo root
 docker run -p 8787:8787 -e LNKDRP_API_URL=https://lnkdrp.com -e MCP_PUBLIC_URL=https://mcp.lnkdrp.com \
-  -e NEXT_PUBLIC_REALTIME_URL=wss://… -e REALTIME_SECRET=… lnkdrp-mcp
+  -e NEXT_PUBLIC_REALTIME_URL=wss://realtime.lnkdrp.com -e REALTIME_SECRET=… lnkdrp-mcp
 ```
 
 Put TLS in front (`https://mcp.lnkdrp.com/mcp`), keep one instance (or sticky sessions), and give it
-the same `REALTIME_SECRET`/`NEXTAUTH_SECRET` as the app and the realtime server if you want the
-fast path for `share_pdf`. `/.well-known/oauth-protected-resource` is a placeholder until OAuth
+the same `REALTIME_SECRET` as the realtime server if you want the fast path for `share_pdf`.
+
+**Never set `NEXTAUTH_SECRET` on this host.** The code accepts it in place of `REALTIME_SECRET`, and
+that fallback is a convenience for local development only: `NEXTAUTH_SECRET` signs app sessions, so
+anything holding it can mint a session for any user. It belongs on Vercel and nowhere else, and the
+two values must differ (DEPLOY.md, "Secrets"). The deploy gate is
+`fly secrets list -a lnkdrp-mcp` showing exactly `REALTIME_SECRET`. `/.well-known/oauth-protected-resource` is a placeholder until OAuth
 replaces raw keys.
+
+**`LNKDRP_ALLOW_LOCAL_FILES` stays unset here.** On a hosted server it lets any agent turn an absolute path into a
+read of the container's filesystem, and `filePath` is meaningless to a caller whose machine is somewhere else
+anyway; `sourceUrl` and `fileBase64` are the paths that work remotely.
+
+**The image installs Ghostscript, so the hosted server shrinks what it sends.** `mcp/Dockerfile`
+adds `ghostscript` with `apk` and `pdfjs-dist` to the generated `package.json`, and both halves are
+needed: without `gs` the optimizer skips and uploads the original bytes, and without `pdfjs-dist` it
+cannot verify the page count, refuses to trust the smaller file, and uploads the original bytes
+anyway. Neither absence fails loudly — a deck simply arrives at full size — which is why the image
+was shipping without them and nothing said so.
+
+Ghostscript is a large package with its own fonts, so check the image size against the machine
+(DEPLOY.md, "PDF optimization needs Ghostscript"). `sourceUrl` uploads are fetched by the app rather
+than by this server and are not optimized here either way.
 
 ## Layout
 
 ```
 mcp/src/main.ts         Express app, session map, bearer gate, --stdio
 mcp/src/server.ts       McpServer factory: tools, resource, prompt
+mcp/src/config.ts       every environment variable and constant (the table above)
+mcp/src/context.ts      ToolContext: the per-session api client, whoami and idempotency store
 mcp/src/api.ts          typed REST client (timeout, error mapping, verified envelopes)
 mcp/src/errors.ts       ToolError, REST → code mapping, result envelopes
+mcp/src/confirm.ts      human confirmation: preview, elicitation, confirm: true fallback
 mcp/src/untrusted.ts    untrusted(value, source)
 mcp/src/idempotency.ts  bounded 24h replay cache
 mcp/src/realtime.ts     wait for ready: realtime hint + polling
+mcp/src/optimize.ts     Ghostscript shrink with the page-count safety check
 mcp/src/agent.ts        x-lnkdrp-agent header from clientInfo
-mcp/src/tools/*.ts      one file per tool
+mcp/src/tools/*.ts      one file per tool group
 ```

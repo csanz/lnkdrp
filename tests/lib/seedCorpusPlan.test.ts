@@ -175,7 +175,11 @@ describe("seed corpus plan (seed 42)", () => {
           }
           if ("pageDurationMs" in b) {
             expect(b.pageDurationMs as number).toBeGreaterThanOrEqual(1);
-            expect(b.enteredAtMs as number).toBeLessThan(b.leftAtMs as number);
+            // Bounds only on an exit. A heartbeat reports the page the reader is still on — that is
+            // what gives a one-page document any per-page time at all — and sending bounds with it
+            // would tell the server they had left (`isPageExit`).
+            if ("enteredAtMs" in b) expect(b.enteredAtMs as number).toBeLessThan(b.leftAtMs as number);
+            else expect("leftAtMs" in b).toBe(false);
             expect(b.pageNumber as number).toBeGreaterThanOrEqual(1);
             expect(b.pageNumber as number).toBeLessThanOrEqual(d.pageCount);
             pageMs += b.pageDurationMs as number;

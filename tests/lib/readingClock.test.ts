@@ -20,26 +20,58 @@ describe("ReadingClock", () => {
     const out = c.turn(S + 5000, 2);
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ reason: "turn", durationMs: 5000, toPage: 2 });
-    expect(out[0].page).toEqual({ pageNumber: 1, enteredAtMs: S, leftAtMs: S + 5000, pageDurationMs: 5000 });
+    expect(out[0].page).toEqual({ pageNumber: 1, enteredAtMs: S, leftAtMs: S + 5000, pageDurationMs: 5000, exit: true });
     expect(c.snapshot().page).toBe(2);
   });
 
-  test("(b) a flip under 1.5s sends nothing and restarts both clocks", () => {
+  test("(b) a flip under 1.5s sends nothing, and the visit clock keeps running through it", () => {
     const c = clock();
     expect(c.turn(S + 1000, 2)).toEqual([]);
     const out = c.turn(S + 4000, 3);
     expect(out).toHaveLength(1);
-    expect(out[0].durationMs).toBe(3000);
+    // Four seconds of visit, not three: the second spent on the page they flipped past is time
+    // they were here. A suppressed turn used to reset the visit clock and lose it, which cost a
+    // skimmer through fifty pages the better part of a minute.
+    expect(out[0].durationMs).toBe(4000);
+    // The page clock does restart, so page 2 is credited only with its own three seconds, and
+    // page 1's second is dropped — below the minimum is below the minimum.
     expect(out[0].page).toMatchObject({ pageNumber: 2, pageDurationMs: 3000 });
   });
 
-  test("(c) a heartbeat moves only the visit clock", () => {
+  test("(c) a heartbeat reports the page it is still on, and the turn sends only what is left", () => {
+    // The reason this changed: on a one-page document the page clock used to move only when the
+    // page did, so nothing was ever recorded until the tab closed. Now the heartbeat carries it —
+    // marked as not an exit — and the ledger keeps the turn from sending those seconds twice.
     const c = clock();
     const hb = c.heartbeat(S + 30_000);
-    expect(hb).toEqual([{ reason: "heartbeat", durationMs: 30_000, page: null }]);
+    expect(hb).toHaveLength(1);
+    expect(hb[0]).toMatchObject({ reason: "heartbeat", durationMs: 30_000 });
+    expect(hb[0].page).toEqual({
+      pageNumber: 1,
+      enteredAtMs: S,
+      leftAtMs: S + 30_000,
+      pageDurationMs: 30_000,
+      exit: false,
+    });
     const out = c.turn(S + 40_000, 2);
     expect(out[0].durationMs).toBe(10_000);
-    expect(out[0].page?.pageDurationMs).toBe(40_000);
+    // 40s on the page, 30s of it already reported by the heartbeat.
+    expect(out[0].page?.pageDurationMs).toBe(10_000);
+    expect(out[0].page?.exit).toBe(true);
+  });
+
+  test("(c2) a one-page document accrues page time without ever turning a page", () => {
+    const c = clock();
+    let reported = 0;
+    for (let t = 30_000; t <= 120_000; t += 30_000) {
+      c.input(S + t - 1);
+      for (const f of c.heartbeat(S + t)) reported += f.page?.pageDurationMs ?? 0;
+    }
+    // Two minutes of reading, two minutes credited to page 1 — before the tab is ever closed.
+    expect(reported).toBe(120_000);
+    // And the close adds only the tail, not the two minutes again.
+    const out = c.pagehide(S + 125_000);
+    expect(out[0].page?.pageDurationMs).toBe(5000);
   });
 
   test("(d) heartbeat anti-storm and minimum chunk guards", () => {
@@ -57,18 +89,20 @@ describe("ReadingClock", () => {
     const out = c.hidden(S + 5700);
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ reason: "hidden", durationMs: 700 });
-    expect(out[0].page).toEqual({ pageNumber: 2, enteredAtMs: S + 5000, leftAtMs: S + 5700, pageDurationMs: 700 });
+    expect(out[0].page).toEqual({ pageNumber: 2, enteredAtMs: S + 5000, leftAtMs: S + 5700, pageDurationMs: 700, exit: true });
     expect(c.pagehide(S + 5750)).toEqual([]);
     expect(c.unmount(S + 5800)).toEqual([]);
   });
 
-  test("(f) pagehide 300ms after a heartbeat sends the tail and the whole page segment", () => {
+  test("(f) pagehide 300ms after a heartbeat sends the tail of both clocks, not the whole page again", () => {
     const c = clock();
     c.heartbeat(S + 30_000);
     const out = c.pagehide(S + 30_300);
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ reason: "pagehide", durationMs: 300 });
-    expect(out[0].page).toEqual({ pageNumber: 1, enteredAtMs: S, leftAtMs: S + 30_300, pageDurationMs: 30_300 });
+    // The bounds still describe the whole stay — they are what the server reads as the exit — but
+    // the clock carries only the 300ms the heartbeat had not already sent.
+    expect(out[0].page).toEqual({ pageNumber: 1, enteredAtMs: S, leftAtMs: S + 30_300, pageDurationMs: 300, exit: true });
   });
 
   test("(g) idle ends the segment five minutes after the last input", () => {
@@ -77,7 +111,7 @@ describe("ReadingClock", () => {
     const out = c.tick(S + 305_000);
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ reason: "idle", durationMs: 300_000 });
-    expect(out[0].page).toEqual({ pageNumber: 1, enteredAtMs: S, leftAtMs: S + 300_000, pageDurationMs: 300_000 });
+    expect(out[0].page).toEqual({ pageNumber: 1, enteredAtMs: S, leftAtMs: S + 300_000, pageDurationMs: 300_000, exit: true });
     expect(c.heartbeat(S + 330_000)).toEqual([]);
     expect(c.snapshot().idle).toBe(true);
   });
@@ -105,11 +139,14 @@ describe("ReadingClock", () => {
       expect(c.heartbeat(S + t)).toHaveLength(1);
     }
     const at300 = c.heartbeat(S + 300_000);
-    expect(at300).toEqual([{ reason: "heartbeat", durationMs: 30_000, page: null }]);
+    expect(at300).toHaveLength(1);
+    expect(at300[0]).toMatchObject({ reason: "heartbeat", durationMs: 30_000 });
+    // The idle cut-off still fires, and now has nothing left to say: the heartbeats carried every
+    // one of those five minutes as they passed, and the ledger will not send them again. An empty
+    // flush list is the honest answer, and the clock is idle either way.
     const at330 = c.heartbeat(S + 330_000);
-    expect(at330).toHaveLength(1);
-    expect(at330[0]).toMatchObject({ reason: "idle", durationMs: null });
-    expect(at330[0].page).toEqual({ pageNumber: 1, enteredAtMs: S, leftAtMs: S + 300_000, pageDurationMs: 300_000 });
+    expect(at330).toEqual([]);
+    expect(c.snapshot().idle).toBe(true);
   });
 
   test("(k) fuzz: no empty or inverted intervals, page time never exceeds visit time", () => {
@@ -174,7 +211,7 @@ describe("payloads", () => {
   test("(l) timing payload key sets", () => {
     const ctx = { botId: "b1", visitId: "v1", numPages: 4 };
     const turn = buildTimingPayload(
-      { reason: "turn", durationMs: 5000.7, page: { pageNumber: 1, enteredAtMs: S, leftAtMs: S + 5000, pageDurationMs: 5000 }, toPage: 2 },
+      { reason: "turn", durationMs: 5000.7, page: { pageNumber: 1, enteredAtMs: S, leftAtMs: S + 5000, pageDurationMs: 5000, exit: true }, toPage: 2 },
       ctx,
     );
     expect(Object.keys(turn).sort()).toEqual(
@@ -185,8 +222,22 @@ describe("payloads", () => {
     const hb = buildTimingPayload({ reason: "heartbeat", durationMs: 30_000, page: null }, { ...ctx, numPages: null });
     expect(Object.keys(hb).sort()).toEqual(["botId", "durationMs", "reason", "tv", "visitId"]);
 
+    // A heartbeat that carries the page it is still on sends the clock and not the bounds: bounds
+    // are what the server reads as "they left" (`isPageExit`), and they have not.
+    const hbPage = buildTimingPayload(
+      {
+        reason: "heartbeat",
+        durationMs: 30_000,
+        page: { pageNumber: 1, enteredAtMs: S, leftAtMs: S + 30_000, pageDurationMs: 30_000, exit: false },
+      },
+      { ...ctx, numPages: null },
+    );
+    expect(Object.keys(hbPage).sort()).toEqual(
+      ["botId", "durationMs", "pageDurationMs", "pageNumber", "reason", "tv", "visitId"].sort(),
+    );
+
     const idle = buildTimingPayload(
-      { reason: "idle", durationMs: null, page: { pageNumber: 3, enteredAtMs: S, leftAtMs: S + 300_000, pageDurationMs: 300_000 } },
+      { reason: "idle", durationMs: null, page: { pageNumber: 3, enteredAtMs: S, leftAtMs: S + 300_000, pageDurationMs: 300_000, exit: true } },
       ctx,
     );
     expect(Object.keys(idle).sort()).toEqual(

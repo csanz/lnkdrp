@@ -4,14 +4,11 @@
  * Client UI for the `/project/[projectSlug]` page.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
-  ChartBarIcon,
   Cog6ToothIcon,
   FolderIcon,
-  LinkIcon,
   InboxArrowDownIcon,
   SparklesIcon,
   StarIcon as StarOutlineIcon,
@@ -22,6 +19,8 @@ import { fetchWithTempUser, tempUserHeaders } from "@/lib/gating/tempUserClient"
 import { usePlan } from "@/lib/client/usePlan";
 import { trackProjectClick, trackProjectView } from "@/lib/metrics/client";
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
+import TagsRow from "@/components/tags/TagsRow";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import ProjectSharePanel from "@/components/ProjectSharePanel";
 import { CopyButton } from "@/components/CopyButton";
@@ -31,6 +30,8 @@ import Modal from "@/components/modals/Modal";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import { notifyProjectsChanged, refreshSidebarCache } from "@/lib/sidebarCache";
+import { forgetEntityTitle, rememberEntityTitle, rememberEntityTitles, useEntityTitle } from "@/lib/client/entityTitles";
+import { noteEntityName } from "@/lib/client/entityIdentity";
 
 type DocListItem = {
   id: string;
@@ -285,6 +286,17 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         if (cancelled) return;
         if (res.status === 404) {
           setNotFound(true);
+          /**
+           * The project is gone, so nothing about it is true any more — including its name.
+           *
+           * Leaving `project` populated here meant a 404 arriving on a mount that had already
+           * loaded (a search, a tab switch, a page change, a docs-changed tick) kept the old DTO:
+           * the header went on showing the deleted project's name over a "Project not found."
+           * body, and the remembered-name effect saw a truthy `project.name` and wrote it back to
+           * localStorage — so every later header for this id painted a project that no longer
+           * exists.
+           */
+          setProject(null);
           // If the project was deleted out-of-band (e.g., DB reset), prune stale sidebar cache.
           notifyProjectsChanged();
           void refreshSidebarCache({ reason: "project-not-found", force: true });
@@ -307,6 +319,9 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         const nextProject = json.project ?? null;
         setNotFound(false);
         setProject(nextProject);
+        // Every row below shows a document's title; the document page you click into should open
+        // already wearing it instead of fetching it back before it can name itself.
+        rememberEntityTitles("doc", Array.isArray(json.docs) ? json.docs : []);
         setDocs((prev) => {
           const computed: Paged<DocListItem> = {
             items: Array.isArray(json.docs) ? json.docs : [],
@@ -390,11 +405,61 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
     };
   }, []);
 
-  // Never show the slug as the visible title; wait for the full project name.
-  const title = useMemo(() => project?.name ?? "", [project?.name]);
+  /**
+   * Never show the slug as the visible title — and never show the word "Project" either.
+   *
+   * Until the fetch lands we use what this browser last knew this project to be called, which is
+   * how the header paints the right name on the first frame of a navigation instead of a skeleton
+   * that resolves a moment later. The fetch still wins the instant it answers.
+   */
+  const remembered = useEntityTitle("project", projectSlug);
+  /**
+   * `notFound` deliberately drops the remembered name. A project that has been deleted or is no
+   * longer yours must not wear its old name above a "Project not found." body — that reads as a
+   * page that half-loaded, and it would leave the header's own `notFound` branch unreachable for
+   * anyone whose browser had opened the project before.
+   */
+  const title = useMemo(
+    () => project?.name?.trim() || (notFound ? "" : remembered) || "",
+    [project?.name, notFound, remembered],
+  );
+
+  // Correct the memory whenever the server tells us the name — including after a rename — and
+  // drop it the moment the server says the project is gone, so it cannot resurface on the next
+  // visit to that URL.
+  useEffect(() => {
+    const name = project?.name?.trim();
+    if (name) rememberEntityTitle("project", projectSlug, name);
+    else if (notFound) forgetEntityTitle("project", projectSlug);
+  }, [projectSlug, project?.name, notFound]);
   const subtitle = useMemo(() => project?.description || "", [project?.description]);
   const maxPage = useMemo(() => Math.max(1, Math.ceil(docs.total / docs.limit)), [docs.total, docs.limit]);
   const isRequestRepo = useMemo(() => Boolean(project?.isRequest), [project?.isRequest]);
+
+  /**
+   * Open the settings modal with the project's current values.
+   *
+   * Named rather than inline because the sub-pages reach it too: their gear links here with
+   * `?settings=1` (they have no modal of their own), and the effect below opens it on arrival.
+   */
+  const openSettings = useCallback(() => {
+    if (!project) return;
+    setSaveError(null);
+    setDraftName(project.name ?? "");
+    setDraftDescription(project.description ?? "");
+    setDraftAutoAddFiles(Boolean(project.autoAddFiles));
+    setShowSettings(true);
+  }, [project]);
+
+  // Arriving from a sub-page's gear. The parameter is stripped once used, so a refresh or a back
+  // press does not reopen a modal the reader already closed.
+  useEffect(() => {
+    if (!project) return;
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("settings") !== "1") return;
+    openSettings();
+    router.replace(`/project/${encodeURIComponent(projectSlug)}`, { scroll: false });
+  }, [project, openSettings, router, projectSlug]);
   const docsForList = useMemo(() => {
     if (!isRequestRepo) return docs.items;
     if (requestSort !== "score") return docs.items;
@@ -512,6 +577,9 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         setNameDraft(json.project.name ?? "");
       } else {
         setProject((p) => (p ? { ...p, name: next } : p));
+        // Same as the document rename: correct the session-long identity cache the sub-page
+        // headers read, or Links and Metrics show the old name until their own read lands.
+        noteEntityName("project", projectSlug, next);
         setDraftName(next);
         setNameDraft(next);
       }
@@ -864,66 +932,50 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
             : "Documents grouped together, shared with one link per audience.")
         }
         badge={
-          isRequestRepo ? (
-            <span className="shrink-0 rounded-full bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted)] ring-1 ring-[var(--border)]">
-              Request link
-            </span>
-          ) : null
+          <span className="flex min-w-0 items-center gap-2">
+            {isRequestRepo ? (
+              <span className="shrink-0 rounded-full bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted)] ring-1 ring-[var(--border)]">
+                Request link
+              </span>
+            ) : null}
+            {/* Beside the name, not in a card down the rail: a tag says what this project *is*, and
+                the badge slot is sized for the 32px title row, so the band keeps its height. */}
+            {project ? (
+              <TagsRow targetKind="project" targetId={projectSlug} canManage={canManageLinks} variant="header" />
+            ) : null}
+          </span>
         }
         actions={
           project ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-[var(--muted-2)]">
-                {view === "archived" ? `${docs.total} archived` : `${docs.total} ${docs.total === 1 ? "doc" : "docs"}`}
-              </span>
-              {/* The two sub-pages of a project, beside its document count — the way a document
-                  header carries its metrics button. Without them the only route to either was the
-                  side panel's link count, which is hidden on a project with a single link: a
-                  project's analytics were unreachable from the project ("metrics link from
-                  projects page is not existent"). Not shown on a request repository, which shares
-                  through an upload token rather than through project links. */}
-              {!isRequestRepo ? (
-                <>
-                  {/* The document header's metrics action, class for class
-                      (`src/app/(app)/doc/[docId]/pageClient.tsx`): a bordered 8×8 icon button, not
-                      a bare glyph. Side by side the unbordered version read as decoration beside
-                      "2 docs" while the document's read as a control, which is the whole reason a
-                      reader found one and not the other. */}
-                  <Link
-                    href={`/project/${encodeURIComponent(projectSlug)}/links`}
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                    aria-label="Open links"
-                    title="Links"
-                  >
-                    <LinkIcon className="h-4 w-4" aria-hidden="true" />
-                  </Link>
-                  <Link
-                    href={`/project/${encodeURIComponent(projectSlug)}/metrics`}
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                    aria-label="Open metrics"
-                    title="Metrics"
-                  >
-                    <ChartBarIcon className="h-4 w-4" aria-hidden="true" />
-                  </Link>
-                </>
-              ) : null}
-              <button
-                type="button"
-                className="shrink-0 rounded-lg p-1 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                aria-label="Project settings"
-                title="Project settings"
-                onClick={() => {
-                  if (!project) return;
-                  setSaveError(null);
-                  setDraftName(project.name ?? "");
-                  setDraftDescription(project.description ?? "");
-                  setDraftAutoAddFiles(Boolean(project.autoAddFiles));
-                  setShowSettings(true);
-                }}
-              >
-                <Cog6ToothIcon className="h-4 w-4" />
-              </button>
-            </div>
+            isRequestRepo ? (
+              // A request repository has no project links and no metrics of its own — it is filled
+              // through an upload token — so its header carries only the count and the gear.
+              <div className="flex items-center gap-2">
+                <span className="min-w-[44px] text-right text-xs text-[var(--muted-2)]">
+                  {view === "archived" ? `${docs.total} archived` : `${docs.total} ${docs.total === 1 ? "doc" : "docs"}`}
+                </span>
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-2)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                  aria-label="Project settings"
+                  title="Project settings"
+                  onClick={openSettings}
+                >
+                  <Cog6ToothIcon className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              /* The same cluster the Links and Metrics pages render, from the same component: the
+                 count, the two sub-page buttons and the gear, always in that order at that width,
+                 so walking between the three pages never slides an icon sideways. */
+              <ProjectHeaderActions
+                projectSlug={projectSlug}
+                current="project"
+                docCount={docs.total}
+                countLabel={view === "archived" ? `${docs.total} archived` : undefined}
+                onSettings={openSettings}
+              />
+            )
           ) : null
         }
       />
@@ -1088,8 +1140,11 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                                       type="button"
                                       className={[
                                         "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                                        // amber-300 on a 15% tint is a dark-ground value: 1.44:1 on
+                                        // the white --panel row, so the starred state — the whole
+                                        // point of the control — was a faint smudge in light.
                                         starred
-                                          ? "border-amber-300/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/20"
+                                          ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-300 dark:hover:bg-amber-500/20"
                                           : "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
                                       ].join(" ")}
                                       aria-label={starred ? "Unstar document" : "Star document"}
@@ -1107,7 +1162,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                                       )}
                                     </button>
                                   ) : starred ? (
-                                    <span className="shrink-0 text-amber-500" aria-label="Starred">
+                                    <span className="shrink-0 text-amber-600 dark:text-amber-500" aria-label="Starred">
                                       <SmallStarIcon filled />
                                     </span>
                                   ) : null}
@@ -1216,6 +1271,9 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                 ) : null}
               </section>
 
+              {/* One grid child, not two: the column holds the tags card and the link panel, and a
+                  third child would drop the panel onto a second row. */}
+              <div className="flex min-w-0 flex-col gap-5 lg:min-h-0 lg:overflow-auto">
               {project?.isRequest ? (
                 <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
                   <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
@@ -1369,6 +1427,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                   onShareEnabledChange={(next) => void setProjectShareEnabled(next)}
                 />
               )}
+              </div>
             </div>
           )}
         </div>

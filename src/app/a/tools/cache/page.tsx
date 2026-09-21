@@ -29,6 +29,7 @@ import {
 import { ADMIN_CODE_BLOCK, ADMIN_NOTE } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { clearOrgsCache } from "@/lib/orgsCache";
+import { clearEntityTitles } from "@/lib/client/entityTitles";
 import { clearSidebarCache } from "@/lib/sidebarCache";
 import {
   clearLocalStorageKeysByPrefix,
@@ -137,6 +138,11 @@ export default function AdminCacheToolsPage() {
                     clearSidebarCache({ all: true });
                     // Clear in-memory + persisted orgs cache (so workspace switcher updates immediately).
                     clearOrgsCache();
+                    // The remembered document/project names: the localStorage key goes with the
+                    // prefix sweep below, but the module's in-memory map has to be dropped too or
+                    // it serves the cleared names for the rest of this page's life and writes them
+                    // straight back on the next remember.
+                    clearEntityTitles();
 
                     const attempted = clearLocalStorageKeysByPrefix("lnkdrp");
                     // Update UI snapshot after the clear.
@@ -157,6 +163,11 @@ export default function AdminCacheToolsPage() {
                   try {
                     clearSidebarCache({ all: true });
                     clearOrgsCache();
+                    // The remembered document/project names: the localStorage key goes with the
+                    // prefix sweep below, but the module's in-memory map has to be dropped too or
+                    // it serves the cleared names for the rest of this page's life and writes them
+                    // straight back on the next remember.
+                    clearEntityTitles();
                     clearLocalStorageKeysByPrefix("lnkdrp");
                   } finally {
                     window.location.reload();

@@ -25,6 +25,7 @@ import {
 } from "@/lib/orgsCache";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
 import WorkspaceIcon from "@/components/WorkspaceIcon";
+import { forgetSignedIn } from "@/lib/client/sessionMemory";
 
 type MenuItem =
   | { type: "link"; label: string; href: string; icon?: React.ReactNode }
@@ -38,7 +39,7 @@ const initials = initialsFromNameOrEmail;
 function OrgAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) {
   const fallback = initials(name || "Org");
   return (
-    <WorkspaceIcon avatarUrl={avatarUrl} fallback={fallback} className="h-6 w-6 rounded-md" fallbackClassName="bg-[var(--panel-hover)] text-[11px] text-[var(--fg)]" />
+    <WorkspaceIcon avatarUrl={avatarUrl} fallback={fallback} className="h-6 w-6" fallbackClassName="bg-[var(--panel-hover)] text-[11px] text-[var(--fg)]" />
   );
 }
 
@@ -506,7 +507,12 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         type: "button",
         label: "Log out",
         icon: <ArrowRightOnRectangleIcon className="h-4 w-4" />,
-        onClick: () => void signOut({ callbackUrl: "/" }),
+        onClick: () => {
+          // A deliberate log out is not "you were signed out": clear the bit so a later visit to a
+          // gated URL gets the plain sign-in page (src/lib/client/sessionMemory.ts).
+          forgetSignedIn();
+          void signOut({ callbackUrl: "/" });
+        },
       },
     ];
   }, [session?.user, loginBusy]);

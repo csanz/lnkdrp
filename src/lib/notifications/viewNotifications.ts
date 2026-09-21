@@ -41,6 +41,10 @@
  *   preferred to a lost one. A transport outage fails the first send, so it repeats nothing.
  * - Identity is Pro-only (decision 4). A Free email never names the viewer or says how far they read,
  *   in the subject, the text or the html.
+ * - An immediate email names at most `IMMEDIATE_MAX_VIEWERS` readers and turns the rest into a
+ *   count, the same shape the digest has for documents. The per-reader lines are built from fields
+ *   an anonymous viewer supplied, so their number must not be the attacker's to choose — see the
+ *   constant for the whole chain.
  * - All user content (titles, labels, audience, viewer names) is escaped in HTML and stripped of
  *   line breaks in subjects.
  * - Every email carries RFC 8058 one-click unsubscribe headers pointing at the signed off URL, and a
@@ -56,6 +60,8 @@ import { NotificationEmailCursorModel } from "@/lib/models/NotificationEmailCurs
 import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { viewEmailsOffUrl } from "@/lib/notifications/viewEmailToken";
+import { splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
+import { viewerPageHref } from "@/lib/metrics/viewerRouteKey";
 import { debugError } from "@/lib/debug";
 
 // ---------------------------------------------------------------------------------------------
@@ -85,6 +91,11 @@ export const VIEW_EMAIL_FOOTER_REASON = "You get this because someone opened a l
 export const TURN_OFF_LABEL = "Turn off these emails";
 export const CHANGE_HOW_OFTEN_LABEL = "Change how often";
 export const PRIMARY_ACTION_LABEL = "See what they read";
+/** The action when the mail is about exactly one reader and we can address their page. */
+export const READER_ACTION_LABEL = "See what this reader read";
+/** Said of a name the reader typed in rather than one an account proved. */
+export const VOLUNTEERED_IDENTITY_NOTE =
+  "They told us who they are; the name and address are not verified.";
 
 /**
  * Loads end this long before now. `createdDate` is stamped by the app before the insert commits, so
@@ -116,6 +127,31 @@ export const VIEW_LOAD_MAX_ROWS = 20_000;
 /** A digest lists at most this many documents; the counts in the subject still cover them all. */
 export const DIGEST_MAX_DOCUMENTS = 50;
 
+/**
+ * An immediate email names at most this many readers; the rest become a count line.
+ *
+ * The digest has had `DIGEST_MAX_DOCUMENTS` since it shipped, but the immediate body had no
+ * equivalent and rendered one block per claimed row — and every one of those blocks is built from
+ * fields a stranger wrote. `POST /api/share/:shareId/stats` takes `viewerName` and `viewerEmail`
+ * from the anonymous request body and stamps them on the `ShareView` row, and a fresh `botId`
+ * mints a fresh row, so a burst of forged readers arrived here as a burst of attacker-authored
+ * lines in one message to every member of the workspace. How many was set by the sender's
+ * `limitEventsPerMember` (20 by default but up to 200), not by anything the owner controls.
+ *
+ * Capping the list bounds one forged burst to a fixed amount of stranger-written text per email.
+ * It deliberately truncates rather than dropping the email: a genuine mailshot that really is
+ * opened by thirty people in one tick still gets its notification, with the overflow as a count and
+ * the metrics page one click away. The headline count and the subject still cover everyone, so
+ * nothing the owner is told becomes wrong — only shorter.
+ *
+ * Matched to the sender's default `limitEventsPerMember` so ordinary ticks never truncate at all.
+ *
+ * This is a blast-radius bound on the mail, not the fix for the forgery itself: what stops the
+ * burst existing is a ceiling on *new viewer identities* per link, which lives on the write path in
+ * `src/app/api/share/[shareId]/stats/route.ts`.
+ */
+export const IMMEDIATE_MAX_VIEWERS = 20;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -145,6 +181,13 @@ export type ViewLinkInfo = {
   audience: string | null;
   isDefault: boolean;
   createdDate: Date | null;
+  /**
+   * Set when this is a data-room link. Decides which scope a reader's page lives in.
+   *
+   * Optional so the callers that build a link by hand — the admin email previews, the tests — do
+   * not all have to say "not a project"; absent and null mean the same thing here.
+   */
+  projectId?: string | null;
 };
 
 /** Identity fields as stored on the analytics row. Only ever rendered on Pro. */
@@ -206,9 +249,28 @@ export type WorkspacePlan = "free" | "pro";
 // Pure helpers: normalisation, escaping, formatting
 // ---------------------------------------------------------------------------------------------
 
-/** Readers treat anything missing or unknown as the default, `daily` (C1). */
+/**
+ * Anything missing or unknown means `immediate`.
+ *
+ * It was `daily` (PRD decision C1), and the digest is the wrong default for what this product is:
+ * knowing that someone is reading your deck is worth something while they are still reading it,
+ * and a summary that arrives tomorrow morning is a report. Nobody who wanted the alert was getting
+ * it unless they found the setting.
+ *
+ * The noisy case the digest was defending against is already handled somewhere better: a *return*
+ * only ever goes in the digest, so a reader flipping back to a document does not send anything,
+ * and one tick that finds thirty new readers sends one email naming `IMMEDIATE_MAX_VIEWERS` of
+ * them, not thirty emails. What "immediate" actually means is a few minutes — the cron runs every
+ * five, and loads stop `VIEW_EVENT_SETTLE_MS` short of now so a row is never read before it has
+ * committed.
+ *
+ * This only decides for a row with no value at all. Memberships written before the change hold
+ * "daily" explicitly — whether or not their owner ever picked it — and keep it; making somebody's
+ * inbox louder without asking is a surprise, not a default. New accounts are asked outright on
+ * `/welcome`, and everyone can change it in Settings.
+ */
 export function normalizeViewEmailMode(v: unknown): ViewEmailMode {
-  return v === "off" || v === "immediate" || v === "daily" ? v : "daily";
+  return v === "off" || v === "immediate" || v === "daily" ? v : "immediate";
 }
 
 /**
@@ -293,6 +355,25 @@ export function isAnonymousViewer(ev: ViewerIdentity): boolean {
 }
 
 /**
+ * Did this reader *tell* us who they are, rather than prove it?
+ *
+ * A name on a row with no account behind it was typed into the "introduce yourself" card, and
+ * `POST /api/share/:shareId/stats` accepts any `viewerName`/`viewerEmail` from anyone holding the
+ * link — no confirmation is required to record one (DEPLOY.md 12). On a metrics page that claim
+ * carries a chip saying so. An email is the surface where it matters most and where it was least
+ * visible: mail gets forwarded, screenshotted and acted on, and because identity is Pro-gated the
+ * name reads as something the owner paid to be told.
+ *
+ * So the email marks it too. It does not refuse to show the name — the name is the product, and
+ * most of the time it is exactly who they say — it just stops printing a claim in the typeface of
+ * a fact.
+ */
+export function isVolunteeredIdentity(ev: ViewerIdentity): boolean {
+  if (ev.viewerUserId) return false;
+  return Boolean(sanitizeInline(ev.viewerName, NAME_MAX) || sanitizeInline(ev.viewerEmail, NAME_MAX));
+}
+
+/**
  * The honesty line: the open came within ten minutes of the link being created by someone we
  * cannot identify. On Free the anonymity half is not evaluated — whether a viewer was identified is
  * itself identity, so the line depends on timing alone there.
@@ -308,6 +389,32 @@ export function needsFirstViewHonesty(ev: NewViewerEvent, link: ViewLinkInfo | n
 export function buildMetricsUrl(appUrl: string, docId: string, shareId?: string | null): string {
   const base = `${appUrl}/doc/${encodeURIComponent(docId)}/metrics`;
   return shareId ? `${base}?shareId=${encodeURIComponent(shareId)}` : base;
+}
+
+/**
+ * The page about *this reader*, when the mail is about exactly one of them.
+ *
+ * "Jaime Morales opened your deck" landing on the document's metrics page made the owner find the
+ * row again themselves, in a list of everyone. The reader page is the answer to the sentence the
+ * email just said.
+ *
+ * Two things it has to get right, and `null` rather than a wrong guess if it cannot:
+ *
+ *   - **Scope.** A read through a data-room link belongs to the project, so a document-scoped
+ *     address for such a reader is a link to a page that says "no reader by that id".
+ *   - **The key is a person.** On a project link the analytics key is `<digest>.<docId>`, one row
+ *     per reader *per document*; the page is addressed by the bare digest. Sending the composite
+ *     would 404 on the one link an owner is most likely to click.
+ */
+export function buildReaderUrl(
+  appUrl: string,
+  ev: Pick<ViewerIdentity, "viewerUserId"> & { docId: string; botIdHash: string },
+  link: ViewLinkInfo | null | undefined,
+): string | null {
+  const kind = ev.viewerUserId ? "authed" : "anon";
+  const key = ev.viewerUserId ?? splitProjectViewerKey(ev.botIdHash).botIdHash;
+  if (!key) return null;
+  return viewerPageHref({ appUrl, projectId: link?.projectId ?? null, docId: ev.docId, kind, key });
 }
 
 export function buildPreferencesUrl(appUrl: string): string {
@@ -756,24 +863,41 @@ export function composeImmediateEmail(params: {
   const title = sanitizeInline(doc.title, TITLE_MAX) || "Untitled document";
   const subject = immediateSubject(title, events, links);
   const shareIds = Array.from(new Set(events.map((e) => e.shareId)));
-  const actionUrl = buildMetricsUrl(ctx.appUrl, doc.docId, shareIds.length === 1 ? shareIds[0] : null);
+  /**
+   * One reader gets a link to that reader; several get the document, which is where a list lives.
+   * Falls back to the document page whenever the reader page cannot be addressed, so the mail
+   * always has somewhere to go.
+   */
+  const single = events.length === 1 ? events[0] : null;
+  const readerUrl = single ? buildReaderUrl(ctx.appUrl, single, links.get(single.shareId)) : null;
+  const actionUrl = readerUrl ?? buildMetricsUrl(ctx.appUrl, doc.docId, shareIds.length === 1 ? shareIds[0] : null);
+  const actionLabel = readerUrl ? READER_ACTION_LABEL : PRIMARY_ACTION_LABEL;
 
   const blocks: Block[] = [];
-  if (events.length === 1) {
-    const ev = events[0];
+  if (single) {
+    const ev = single;
     const link = links.get(ev.shareId);
     const label = realLinkLabel(link);
     const name = pro ? viewerDisplayName(ev) : null;
     const who = name ?? (label ? `Someone on the ${label} link` : "Someone");
     blocks.push({ kind: "heading", text: `${who} opened "${title}"` });
     blocks.push({ kind: "rows", rows: viewerRows(ev, link, doc, pro) });
+    // Only where a name was actually printed: on Free nothing was said about who they are, so
+    // there is no claim on the page to qualify.
+    if (name && isVolunteeredIdentity(ev)) blocks.push({ kind: "muted", text: VOLUNTEERED_IDENTITY_NOTE });
   } else {
     blocks.push({ kind: "heading", text: `${events.length} people opened "${title}"` });
     const when = eventTimeFormatter(events);
+    // Only the first `IMMEDIATE_MAX_VIEWERS` readers get a line of their own. `events` is oldest
+    // first here (the loaders and `groupByDocument` both sort that way), so the slice keeps the
+    // same end the digest's document slice does. The heading above and the subject still count
+    // every reader — the cap shortens the list, it does not hide anyone from the totals.
+    const listed = events.slice(0, IMMEDIATE_MAX_VIEWERS);
+    const overflow = events.length - listed.length;
     if (shareIds.length === 1) {
       // Every viewer came through the same link: say it once, then one line per viewer.
       blocks.push({ kind: "rows", rows: linkRows(links.get(shareIds[0])) });
-      for (const ev of events) {
+      for (const ev of listed) {
         const parts: string[] = [];
         const name = pro ? viewerDisplayName(ev) : null;
         if (name) parts.push(name);
@@ -782,7 +906,7 @@ export function composeImmediateEmail(params: {
         blocks.push({ kind: "subheading", text: parts.join(" · "), compact: true });
       }
     } else {
-      for (const ev of events) {
+      for (const ev of listed) {
         const link = links.get(ev.shareId);
         const name = pro ? viewerDisplayName(ev) : null;
         blocks.push({ kind: "subheading", text: [...(name ? [name] : []), linkDisplayName(link), when(ev.at)].join(" · ") });
@@ -793,12 +917,18 @@ export function composeImmediateEmail(params: {
         if (rows.length) blocks.push({ kind: "rows", rows });
       }
     }
+    if (overflow > 0) {
+      blocks.push({
+        kind: "muted",
+        text: `${overflow} more ${overflow === 1 ? "reader is" : "readers are"} included in the count above; see them all on the metrics page.`,
+      });
+    }
   }
 
   if (events.some((ev) => needsFirstViewHonesty(ev, links.get(ev.shareId), ctx.plan))) {
     blocks.push({ kind: "muted", text: FIRST_VIEW_HONESTY_LINE });
   }
-  blocks.push({ kind: "action", label: PRIMARY_ACTION_LABEL, url: actionUrl });
+  blocks.push({ kind: "action", label: actionLabel, url: actionUrl });
   if (!pro) blocks.push({ kind: "muted", text: PRO_IDENTITY_LINE });
 
   return composed(subject, immediatePreheader(doc, events, links, ctx.plan), blocks, ctx);
@@ -1002,6 +1132,47 @@ function createdDateRangeFilter(
   };
 }
 
+/** The fields a `NewViewerEvent` is built from, so both loaders read the same row shape. */
+const SHARE_VIEW_EVENT_FIELDS = {
+  _id: 1,
+  shareId: 1,
+  docId: 1,
+  shareLinkId: 1,
+  botIdHash: 1,
+  createdDate: 1,
+  pagesSeen: 1,
+  timeSpentMs: 1,
+  viewerUserId: 1,
+  viewerEmail: 1,
+  viewerName: 1,
+  viewerEmailSnapshot: 1,
+} as const;
+
+/** One `ShareView` row as an event, or null when it is missing something the email needs. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toNewViewerEvent(r: any): NewViewerEvent | null {
+  const id = idString(r?._id);
+  const docId = idString(r?.docId);
+  const shareId = str(r?.shareId);
+  const at = dateOf(r?.createdDate);
+  if (!id || !docId || !shareId || !at) return null;
+  return {
+    kind: "view",
+    id,
+    docId,
+    shareId,
+    shareLinkId: idString(r?.shareLinkId),
+    botIdHash: str(r?.botIdHash) ?? "",
+    at,
+    pagesSeen: distinctPages(r?.pagesSeen),
+    timeSpentMs: nonNegative(r?.timeSpentMs),
+    viewerUserId: idString(r?.viewerUserId),
+    viewerName: str(r?.viewerName),
+    viewerEmail: str(r?.viewerEmailSnapshot) ?? str(r?.viewerEmail),
+    viewerUserName: null,
+  };
+}
+
 /**
  * Recipient views created in (since, until], oldest first. Loaded in pages until the range is
  * covered; only the `maxRows` safety cap can cut it, at a timestamp boundary (`cutLoadAtBoundary`).
@@ -1014,20 +1185,7 @@ export async function loadNewViewerEvents(params: LoadRangeParams): Promise<Load
       ShareViewModel.find(createdDateRangeFilter(params, after))
         .sort({ createdDate: 1, _id: 1 })
         .limit(limit)
-        .select({
-          _id: 1,
-          shareId: 1,
-          docId: 1,
-          shareLinkId: 1,
-          botIdHash: 1,
-          createdDate: 1,
-          pagesSeen: 1,
-          timeSpentMs: 1,
-          viewerUserId: 1,
-          viewerEmail: 1,
-          viewerName: 1,
-          viewerEmailSnapshot: 1,
-        })
+        .select(SHARE_VIEW_EVENT_FIELDS)
         .lean(),
     pageSize,
     maxRows,
@@ -1035,28 +1193,43 @@ export async function loadNewViewerEvents(params: LoadRangeParams): Promise<Load
 
   const events: NewViewerEvent[] = [];
   for (const r of rows) {
-    const id = idString(r?._id);
-    const docId = idString(r?.docId);
-    const shareId = str(r?.shareId);
-    const at = dateOf(r?.createdDate);
-    if (!id || !docId || !shareId || !at) continue;
-    events.push({
-      kind: "view",
-      id,
-      docId,
-      shareId,
-      shareLinkId: idString(r?.shareLinkId),
-      botIdHash: str(r?.botIdHash) ?? "",
-      at,
-      pagesSeen: distinctPages(r?.pagesSeen),
-      timeSpentMs: nonNegative(r?.timeSpentMs),
-      viewerUserId: idString(r?.viewerUserId),
-      viewerName: str(r?.viewerName),
-      viewerEmail: str(r?.viewerEmailSnapshot) ?? str(r?.viewerEmail),
-      viewerUserName: null,
-    });
+    const event = toNewViewerEvent(r);
+    if (event) events.push(event);
   }
   return cutLoadAtBoundary(events, rawTimes, maxRows);
+}
+
+/**
+ * The same recipient views, addressed by id instead of by window.
+ *
+ * The notification queue names the `ShareView` row each email is owed for (M3 drains rows rather
+ * than scanning a time range), but that row is still what knows how far the reader got, so the
+ * email cannot be rendered from the queue entry alone. Owner previews are filtered here as well as
+ * at enqueue: a view flagged as a preview after the fact must not go out as "someone opened it".
+ *
+ * A row that no longer exists is simply absent from the result — what a notification about a
+ * deleted view means is the caller's decision, not the loader's.
+ */
+export async function loadNewViewerEventsByIds(
+  orgId: Types.ObjectId,
+  shareViewIds: readonly string[],
+): Promise<Map<string, NewViewerEvent>> {
+  const out = new Map<string, NewViewerEvent>();
+  const ids = Array.from(new Set(shareViewIds)).filter((id) => Types.ObjectId.isValid(id));
+  for (const part of chunk(ids, 500)) {
+    const rows = await ShareViewModel.find({
+      _id: { $in: part.map((id) => new Types.ObjectId(id)) },
+      orgId,
+      ...RECIPIENT_ONLY_MATCH,
+    })
+      .select(SHARE_VIEW_EVENT_FIELDS)
+      .lean();
+    for (const r of rows as any[]) {
+      const event = toNewViewerEvent(r);
+      if (event) out.set(event.id, event);
+    }
+  }
+  return out;
 }
 
 /**
@@ -1120,7 +1293,7 @@ export async function loadVisitEvents(params: LoadRangeParams): Promise<LoadedEv
   const loaded = cutLoadAtBoundary(events, rawTimes, maxRows);
   if (!loaded.batch.length) return loaded;
 
-  const pairKey = (shareId: string, botIdHash: string) => `${shareId} ${botIdHash}`;
+  const pairKey = (shareId: string, botIdHash: string) => `${shareId}\u0000${botIdHash}`;
   const pairs = new Map<string, { shareId: string; botIdHash: string }>();
   for (const e of loaded.batch) pairs.set(pairKey(e.shareId, e.botIdHash), { shareId: e.shareId, botIdHash: e.botIdHash });
 
@@ -1190,7 +1363,7 @@ export async function loadViewLinks(events: readonly ViewEvent[]): Promise<Map<s
   const rows = await ShareLinkModel.find({
     $or: [{ shareId: { $in: shareIds } }, ...(linkIds.length ? [{ _id: { $in: linkIds.map((id) => new Types.ObjectId(id)) } }] : [])],
   })
-    .select({ _id: 1, shareId: 1, label: 1, audience: 1, isDefault: 1, createdDate: 1 })
+    .select({ _id: 1, shareId: 1, label: 1, audience: 1, isDefault: 1, createdDate: 1, projectId: 1 })
     .lean();
   const byLinkId = new Map<string, ViewLinkInfo>();
   for (const r of rows as any[]) {
@@ -1202,6 +1375,7 @@ export async function loadViewLinks(events: readonly ViewEvent[]): Promise<Map<s
       audience: str(r?.audience),
       isDefault: r?.isDefault === true,
       createdDate: r?.createdDate ? new Date(r.createdDate) : null,
+      projectId: idString(r?.projectId),
     };
     out.set(shareId, info);
     const lid = idString(r?._id);
@@ -1290,7 +1464,13 @@ async function setCursors(orgId: Types.ObjectId, entries: ReadonlyArray<CursorAd
 }
 
 // ---------------------------------------------------------------------------------------------
-// Orchestration
+// Orchestration — DEPRECATED, no longer called by the send path
+//
+// `sendNotificationEmails` drains the notification queue instead of scanning behind these cursors
+// (docs/prds/lnkdrp-notification-queue.md, M3). Everything below — the totals, the cursor loads and
+// `runViewNotificationsForOrg` — is kept for one release for the same reason the cursor model is
+// (decision 7): work in flight against it must not break at import time. Nothing calls it; do not
+// wire it back up. The composition and loaders above are what the queue reader reuses.
 // ---------------------------------------------------------------------------------------------
 
 export type ViewNotificationTotals = {

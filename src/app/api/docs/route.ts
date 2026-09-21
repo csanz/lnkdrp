@@ -19,6 +19,7 @@ import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { ensureDefaultLink } from "@/lib/share/links";
 import { DOC_LINK_FILTER, ShareLinkModel } from "@/lib/models/ShareLink";
 import { createdViaFor } from "@/lib/share/createdVia";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -150,12 +151,37 @@ export async function GET(request: Request) {
       // `DOC_LINK_FILTER`: `sharelinks` also holds project links, whose `docId` is null. A project
       // slug matching the regex would burn one of the 50 slots on a row that can never join to a
       // document — document search must only ever see document links.
-      const linkHits = await ShareLinkModel.find({ shareId: rx, orgId, ...DOC_LINK_FILTER })
+      //
+      // `archivedAt: null` because DELETE on a link soft-archives it rather than removing the row.
+      // Without this a deleted slug still resolved its document, and every caller that starts from
+      // a slug then reported a *different*, live link's state under the dead one: `get_share`
+      // answered with the default link marked active, and `get_share_stats` returned a perLink
+      // success full of zeroes — indistinguishable from a link nobody has opened yet. An agent
+      // asked "how is the link I revoked doing?" was told "no traffic", confidently and wrongly.
+      const linkHits = await ShareLinkModel.find({ shareId: rx, orgId, archivedAt: null, ...DOC_LINK_FILTER })
         .select({ docId: 1 })
         .limit(50)
         .lean<Array<{ docId: Types.ObjectId }>>();
       const linkDocIds = linkHits.map((l) => l.docId).filter(Boolean);
-      filter.$or = [{ title: rx }, { shareId: rx }, ...(linkDocIds.length ? [{ _id: { $in: linkDocIds } }] : [])];
+      /**
+       * `$and`, never `filter.$or = …`.
+       *
+       * The tenancy clause above is itself an `$or` whenever `allowLegacyByUserId` holds — which is
+       * every account sitting in its own personal workspace, i.e. the default. Assigning `$or` here
+       * replaced it outright, and the query that reached Mongo carried no workspace filter at all:
+       * `{isDeleted, isArchived, $or: [{title: rx}, …]}`. Any signed-in user could search every
+       * document in the database by title or slug and read the titles, slugs and summaries back.
+       *
+       * Combining through `$and` keeps both conditions: still this workspace, and matching the
+       * query. It also survives a future third clause being added to either side.
+       */
+      const searchClauses: Array<Record<string, unknown>> = [
+        { title: rx },
+        { shareId: rx },
+        ...(linkDocIds.length ? [{ _id: { $in: linkDocIds } }] : []),
+      ];
+      const existingAnd = Array.isArray(filter.$and) ? (filter.$and as Array<Record<string, unknown>>) : [];
+      filter.$and = [...existingAnd, { $or: searchClauses }];
     }
 
     const useIds = Boolean(ids.length);
@@ -239,16 +265,43 @@ export async function GET(request: Request) {
         }
 
         if (d.shareId) continue;
+        /**
+         * The backfill carries the caller's workspace, not just a document id.
+         *
+         * This is a *write* inside a listing, and it mints a public `/s/:slug` — `resolveShareLink`
+         * falls through to `Doc.findOne({shareId})` and `ensureDefaultLink` materialises an enabled
+         * link for it. Anchored on `{_id, shareId: absent}` alone, the only thing standing between a
+         * signed-in stranger and a live public link on someone else's unshared draft was the
+         * tenancy of the `find` above. That is the wrong place for it to live: the listing filter
+         * has been widened by accident once already (the `filter.$or` clobber noted above), and a
+         * read that fails open returns titles, while this one leaves a permanent, publicly
+         * reachable slug on another tenant's row. So the update states the rule itself, and a
+         * document that is not this caller's matches nothing and is skipped.
+         *
+         * Note the in-memory `d.orgId` assignment above: a legacy document backfilled a moment ago
+         * now carries `orgId`, so the first arm matches it here.
+         */
+        const ownedByCaller = allowLegacyByUserId
+          ? {
+              $or: [
+                { _id: d._id, orgId },
+                { _id: d._id, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+              ],
+            }
+          : { _id: d._id, orgId };
         for (let i = 0; i < 3; i++) {
           const candidate = newShareId();
           try {
-            await DocModel.updateOne(
-              { _id: d._id, shareId: { $in: [null, undefined, ""] } },
+            const res = await DocModel.updateOne(
+              { ...ownedByCaller, shareId: { $in: [null, undefined, ""] } },
               { $set: { shareId: candidate } },
               // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
               { timestamps: false },
             );
-            d.shareId = candidate;
+            // Only report a slug that was actually persisted. The old code assigned `candidate`
+            // whatever the write did, so a row the filter declined — now including one that is not
+            // this caller's — came back carrying a slug that resolves to nothing.
+            if (res?.matchedCount) d.shareId = candidate;
             break;
           } catch (e) {
             // Duplicate shareId; retry.
@@ -362,6 +415,11 @@ export async function POST(request: Request) {
     // Viewers can read a workspace but must not create docs in it.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    const queued = await forbidWaitlisted(actor, "create a document");
+    if (queued) return queued;
     await connectMongo();
 
     const body = (await request.json().catch(() => ({}))) as Partial<{

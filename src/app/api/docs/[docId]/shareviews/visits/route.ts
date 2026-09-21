@@ -14,10 +14,12 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { PROJECT_LINK_FILTER, ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { projectLinkSlugsForDocs } from "@/lib/analytics/docScope";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { RECIPIENT_ONLY_MATCH, shareIdClause } from "@/lib/analytics/shareViewAggregates";
+import { currentPageFromRow } from "@/lib/analytics/reading/currentPage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -108,12 +110,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     // `docId` of each document opened inside the data room, so the unfiltered branch has to drop
     // the slugs that are not this document's links — the same bound `/shareviews` applies, for the
     // same reason: those sessions belong to the project's timeline, not the document's.
-    const foreignShareIds: string[] = link
-      ? []
-      : ((await ShareLinkModel.find({
-          shareId: { $in: (await ShareVisitModel.distinct("shareId", { docId: docObjectId })) as unknown as string[] },
-          ...PROJECT_LINK_FILTER,
-        }).distinct("shareId")) as unknown as string[]);
+    const foreignShareIds: string[] = link ? [] : await projectLinkSlugsForDocs([docObjectId], { source: "visits" });
     const query: Record<string, unknown> = {
       ...(link
         ? { docId: docObjectId, shareId: link.shareId }
@@ -134,6 +131,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         pagesSeen: 1,
         pageTimeMsByPage: 1,
         pageVisitCountByPage: 1,
+        // The last two segments are enough to say where the reader is: a `turn` records the page
+        // they left and `toPage` the one they went to, so the newest event names the page they are
+        // on now. Only the tail is read; the array itself is capped by the ingest.
+        pageEvents: 1,
+        pageCount: 1,
       })
       .lean();
 
@@ -153,6 +155,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             pagesSeen: Array.isArray(v.pagesSeen) ? v.pagesSeen : [],
             pageTimeMsByPage: v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object" ? v.pageTimeMsByPage : {},
             pageVisitCountByPage: v.pageVisitCountByPage && typeof v.pageVisitCountByPage === "object" ? v.pageVisitCountByPage : {},
+            /**
+             * The page this session is on, as far as the ingest knows.
+             *
+             * The rule — newest page event, then the page that event ended on, then the furthest
+             * page seen — is `currentPageFromRow`, shared with the project scope. It lived in both
+             * files once, and the copies drifted: only one of them knew that a document with one
+             * page never writes an event at all.
+             */
+            currentPage: currentPageFromRow(v),
+            /** What the viewer reported the document's length to be, for "page 4 of 9". */
+            pageCount: Number.isFinite(Number(v.pageCount)) && Number(v.pageCount) > 0 ? Math.floor(Number(v.pageCount)) : null,
           })),
         },
         { headers: { "cache-control": "no-store" } },

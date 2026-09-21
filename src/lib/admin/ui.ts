@@ -44,11 +44,12 @@ export const ADMIN_HEAD_TEXT = "text-[11px] font-semibold uppercase tracking-[0.
 /**
  * The admin focus ring.
  *
- * `--ring` is an alpha wash (`#000 16%` light, `#fff 20%` dark). Over a `--panel` row it
- * resolves to roughly 1.4:1 — invisible, and since every admin control also sets
- * `outline-none` there is no UA fallback. WCAG 2.4.11 wants 3:1, so the ring is a real
- * colour: `--fg` is near-black in light and near-white in dark, which is >15:1 against
- * both `--panel` and `--panel-2`. The offset keeps it off the control's own border.
+ * `--ring` is still an alpha wash in dark (`#fff 20%`), which over a `--panel` row resolves to
+ * roughly 1.8:1 — and since every admin control also sets `outline-none` there is no UA fallback.
+ * WCAG 2.4.11 wants 3:1, so the ring is a real colour: `--fg` is near-black in light and
+ * near-white in dark, which is >15:1 against both `--panel` and `--panel-2`. The offset keeps it
+ * off the control's own border. (Light's `--ring` has since become a real colour too; dark's has
+ * not, so this and `ADMIN_FOCUS_SCOPE` still earn their keep.)
  */
 export const ADMIN_FOCUS_RING =
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]";
@@ -123,6 +124,11 @@ const TONE_HUE: Record<Exclude<AdminTone, "neutral" | "quiet">, string> = {
 /**
  * Inline style for a toned chip. Mixing against the theme's own `--fg` / `--panel`
  * keeps one declaration legible on both grounds without a `dark:` variant.
+ *
+ * The hue's share of that mix is itself a token (`--tone-text-mix`). One weight could not serve
+ * both themes: mixing a fixed slice of a *near-black* `--fg` into a mid-tone hue darkens it far
+ * less than mixing the same slice of a *near-white* one lightens it, so at dark's weight the light
+ * amber chip sat at 4.39:1 against dark's 8.68:1 — under AA for the 11px type these carry.
  */
 export function toneStyle(tone: AdminTone): CSSProperties {
   if (tone === "neutral") {
@@ -141,7 +147,7 @@ export function toneStyle(tone: AdminTone): CSSProperties {
   }
   const hue = TONE_HUE[tone];
   return {
-    color: `color-mix(in srgb, ${hue} 62%, var(--fg))`,
+    color: `color-mix(in srgb, ${hue} var(--tone-text-mix), var(--fg))`,
     backgroundColor: `color-mix(in srgb, ${hue} 13%, var(--panel))`,
     borderColor: `color-mix(in srgb, ${hue} 34%, var(--border))`,
   };
@@ -151,7 +157,7 @@ export function toneStyle(tone: AdminTone): CSSProperties {
 export function toneTextStyle(tone: AdminTone): CSSProperties {
   if (tone === "neutral") return { color: "var(--fg)" };
   if (tone === "quiet") return { color: "var(--muted-2)" };
-  return { color: `color-mix(in srgb, ${TONE_HUE[tone]} 62%, var(--fg))` };
+  return { color: `color-mix(in srgb, ${TONE_HUE[tone]} var(--tone-text-mix), var(--fg))` };
 }
 
 /* ----------------------------------------------------------------------- ids */

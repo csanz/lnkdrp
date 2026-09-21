@@ -14,7 +14,9 @@
  * Primary UI unit is credits; dollars are secondary and only shown in the limit editor.
  */
 import { NextResponse } from "next/server";
+import { errorJson } from "@/lib/http/errorResponse";
 import { Types } from "mongoose";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor, resolveActorForStats, tryResolveUserActorFast } from "@/lib/gating/actor";
@@ -220,8 +222,10 @@ export async function GET(request: Request) {
 
       return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 400 });
+      // A caught failure here is ours, not the caller's: the raw message went straight to the
+      // browser (Mongo and Stripe internals included) and nothing reached the logs. `errorJson`
+      // redacts, logs one line always, and keeps `detail` for non-production.
+      return errorJson(err, { status: 500, publicMessage: "Could not load or change the spend limit.", context: "[api/billing/spend] request failed" });
     }
   });
 }
@@ -233,6 +237,10 @@ export async function POST(request: Request) {
       if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       if (!Types.ObjectId.isValid(actor.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
       if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+      // The on-demand spend limit is the ceiling on what this workspace can be charged. A document
+      // key must not be able to raise it.
+      const keyForbidden = forbidApiKey(actor, "change the on-demand spend limit");
+      if (keyForbidden) return keyForbidden;
 
       const body = (await request.json().catch(() => null)) as { spendLimitCents?: unknown } | null;
       const limitCents = normalizeLimitCents(body?.spendLimitCents);
@@ -294,8 +302,10 @@ export async function POST(request: Request) {
         { headers: { "cache-control": "no-store" } },
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 400 });
+      // A caught failure here is ours, not the caller's: the raw message went straight to the
+      // browser (Mongo and Stripe internals included) and nothing reached the logs. `errorJson`
+      // redacts, logs one line always, and keeps `detail` for non-production.
+      return errorJson(err, { status: 500, publicMessage: "Could not load or change the spend limit.", context: "[api/billing/spend] request failed" });
     }
   });
 }

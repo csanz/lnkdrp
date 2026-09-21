@@ -86,7 +86,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ projectSl
 
     await assertLinkOnProject(orgId, projectId, linkId);
     if (promoteDefault) await setDefaultProjectLink({ orgId, projectId, linkId });
-    const { link } = await updateProjectLink({ orgId, linkId, settings });
+    const { link, restored } = await updateProjectLink({ orgId, linkId, settings });
     const dto = toProjectLinkDTO(link, (await projectLinkStatsByShareId([link.shareId])).get(link.shareId) ?? null);
 
     void recordActivity({
@@ -116,7 +116,21 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ projectSl
       request,
     });
 
-    return applyTempUserHeaders(NextResponse.json({ link: dto }, { headers: { "cache-control": "no-store" } }), actor);
+    // Enabling a link can republish the project page and bring back the links that page switch had
+    // taken down. That is a change to who can reach the room, so it is reported rather than left
+    // for the caller to discover by listing.
+    const warnings = restored?.length
+      ? [
+          `Turning this link on republished the project's public page, which also restored ${restored.length} link(s) ` +
+            `that were disabled when the page was switched off: ${restored
+              .map((l) => (typeof l.label === "string" && l.label.trim() ? l.label.trim() : l.shareId))
+              .join(", ")}. Links revoked individually were not restored.`,
+        ]
+      : [];
+    return applyTempUserHeaders(
+      NextResponse.json({ link: dto, ...(warnings.length ? { warnings } : {}) }, { headers: { "cache-control": "no-store" } }),
+      actor,
+    );
   } catch (err) {
     return linkErrorResponse(err, actor);
   }

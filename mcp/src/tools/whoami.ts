@@ -50,7 +50,7 @@ function buildCapabilities(
       feature: "requestRepos",
       reason: featureRequestsEnabled
         ? "exists on this deployment (upload requests, review) but no MCP tool covers it yet"
-        : "disabled on this deployment (NEXT_PUBLIC_FEATURE_REQUESTS) — the web app hides it too",
+        : "disabled on this deployment by NEXT_PUBLIC_FEATURE_REQUESTS, so the web app hides it too",
     },
     { feature: "downloadAccessRequests", reason: "no MCP tool, and the app itself has no read endpoint for these yet" },
   ];
@@ -80,6 +80,39 @@ function buildCapabilities(
 }
 
 /** Register `lnkdrp_whoami`. */
+/**
+ * The whoami answer, built once.
+ *
+ * Exported because the `lnkdrp://workspace` resource used to build its own — it returned
+ * `api.whoami()` raw, eleven of nineteen fields, missing credits, capabilities, costs and the
+ * version, while describing itself as "whoami JSON". Every field it did return matched, so it read
+ * as complete rather than as a subset, and an agent that took the resource instead of the tool
+ * could not see the plan limits it was about to hit. One builder is the only way two surfaces
+ * claiming to be the same answer stay the same answer.
+ */
+export async function buildWhoamiPayload(ctx: ToolContext): Promise<Record<string, unknown>> {
+  const whoami = await ctx.api.whoami();
+  ctx.setWhoami(whoami);
+  // Best-effort: whoami must not fail because the credits or plan snapshot could not be read.
+  const [credits, plan] = await Promise.all([
+    ctx.api.creditsSnapshot().catch(() => null),
+    ctx.api.planSnapshot().catch(() => null),
+  ]);
+  return {
+    ...whoami,
+    plan: plan?.plan ?? whoami.plan,
+    creditsRemaining: credits?.creditsRemaining ?? null,
+    creditsResetAt: credits?.resetAt ?? null,
+    // `false` when the snapshot could not be read, same as every other credits field here —
+    // a Pro workspace with this false just means the read failed, not that on-demand is off.
+    onDemand: credits?.onDemandEnabled ?? false,
+    capabilities: buildCapabilities(plan, ctx.config.featureRequestsEnabled),
+    costTiers: [...COST_TIERS],
+    costs: creditCosts(),
+    mcpVersion: MCP_SERVER_VERSION,
+  };
+}
+
 export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     "lnkdrp_whoami",
@@ -105,27 +138,6 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    handleTool(async () => {
-      const whoami = await ctx.api.whoami();
-      ctx.setWhoami(whoami);
-      // Best-effort: whoami must not fail because the credits or plan snapshot could not be read.
-      const [credits, plan] = await Promise.all([
-        ctx.api.creditsSnapshot().catch(() => null),
-        ctx.api.planSnapshot().catch(() => null),
-      ]);
-      return {
-        ...whoami,
-        plan: plan?.plan ?? whoami.plan,
-        creditsRemaining: credits?.creditsRemaining ?? null,
-        creditsResetAt: credits?.resetAt ?? null,
-        // `false` when the snapshot could not be read, same as every other credits field here —
-        // a Pro workspace with this false just means the read failed, not that on-demand is off.
-        onDemand: credits?.onDemandEnabled ?? false,
-        capabilities: buildCapabilities(plan, ctx.config.featureRequestsEnabled),
-        costTiers: [...COST_TIERS],
-        costs: creditCosts(),
-        mcpVersion: MCP_SERVER_VERSION,
-      };
-    }),
+    handleTool(async () => buildWhoamiPayload(ctx)),
   );
 }

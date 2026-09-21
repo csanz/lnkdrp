@@ -21,8 +21,9 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { DOC_LINK_FILTER, ShareLinkModel, type ShareLink, type ShareLinkKind } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { newShareId } from "@/lib/crypto/randomBase62";
-import { encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
+import { encryptSharePassword, hashSharePassword, shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { checkLimit, type LimitCheck } from "@/lib/billing/planLimits";
 import { SHARE_PASSWORD_MIN, SHARE_PASSWORD_MAX } from "./passwordPolicy";
 
@@ -105,6 +106,61 @@ export function isExpired(link: Pick<ShareLink, "expiresAt">, now = Date.now()):
 /** Enabled, not archived, not expired. */
 export function isLinkActive(link: Pick<ShareLink, "enabled" | "archivedAt" | "expiresAt">, now = Date.now()): boolean {
   return Boolean(link.enabled) && !link.archivedAt && !isExpired(link, now);
+}
+
+/** The password material a link carries; both halves are needed for the gate to be on. */
+export type PasswordProtectedLink = { passwordHash?: string | null; passwordSalt?: string | null };
+
+/** Whether this link asks for a password at all (both halves of the scrypt material present). */
+export function shareLinkPasswordEnabled(link: PasswordProtectedLink | null | undefined): boolean {
+  if (!link) return false;
+  return (
+    typeof link.passwordHash === "string" &&
+    Boolean(link.passwordHash) &&
+    typeof link.passwordSalt === "string" &&
+    Boolean(link.passwordSalt)
+  );
+}
+
+/** One cookie off a raw request. The share-auth value is opaque base64url and needs no decoding. */
+function readCookie(request: Request, name: string): string {
+  const raw = request.headers.get("cookie");
+  if (!raw) return "";
+  for (const part of raw.split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === name) return rest.join("=") || "";
+  }
+  return "";
+}
+
+/**
+ * Has this request passed the link's password gate?
+ *
+ * A password on a link is the owner saying **the URL is not enough**: the slug travels in inboxes,
+ * Slack channels, browser histories and referrers, and the password is the only thing that makes
+ * forwarding it harmless. That promise holds only if every path to the document asks, and one did
+ * not. `/s/:shareId`, its PDF proxy and the revision-history route each carry their own copy of the
+ * check; the download-request chain — a third way to the same bytes — carried none. Anyone holding
+ * a protected slug could file a download request, have the owner approve it (the mail names a
+ * document they did share and an address the requester chose, and says nothing about a gate), then
+ * claim the PDF and a permanent copy of it through `/api/download/:token/*`.
+ *
+ * So the rule lives here and those routes call it: **a protected link answers nothing — not the
+ * document, not a request about it, not its download setting — to a caller who has not entered the
+ * password.** Being signed in is no substitute, and neither is the owner's approval: an approval is
+ * permission for a person, the password is permission for a browser, and an owner who adds or
+ * rotates one is cutting off everyone who has not typed the new one.
+ *
+ * True when the link has no password, so a caller can ask unconditionally and cannot acquire the
+ * bug by forgetting the `if`. The cookie is set by `POST /api/share/:shareId/unlock` and is an HMAC
+ * over the stored hash, so it dies on its own when the password changes — no revocation list, and
+ * no way to mint one without knowing the password.
+ */
+export function shareLinkUnlocked(request: Request, shareId: string, link: PasswordProtectedLink): boolean {
+  if (!shareLinkPasswordEnabled(link)) return true;
+  const cookie = readCookie(request, shareAuthCookieName(shareId));
+  if (!cookie) return false;
+  return cookie === shareAuthCookieValue({ shareId, sharePasswordHash: String(link.passwordHash) });
 }
 
 /**
@@ -190,11 +246,35 @@ export function toShareLinkDTO(link: ShareLink, stats?: ShareLinkStats | null): 
 /**
  * Materialise the default link for a document that predates the model, copying its share
  * settings. Idempotent: the unique `shareId` index makes a concurrent double-create a no-op.
+ *
+ * Null when the document has neither a workspace nor an owner to hang the link on — see
+ * {@link ensureDefaultLink}, the throwing wrapper every org-scoped caller uses. Only the public
+ * resolve below can meet such a document, and its answer is a miss, not an error.
  */
-export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web" | "api" | "mcp" } = {}): Promise<ShareLink> {
+async function ensureDefaultLinkOrNull(doc: DocLike, opts: { createdVia?: "web" | "api" | "mcp" } = {}): Promise<ShareLink | null> {
   await connectMongo();
   const existing = await ShareLinkModel.findOne({ docId: doc._id, isDefault: true }).lean<ShareLink>();
   if (existing) return existing;
+  // `ShareLink.orgId` is `required: true`, so a document that predates workspaces — no `orgId`,
+  // only a `userId`, which is exactly the row `buildDocMatch`'s `allowLegacyByUserId` exists to
+  // serve and the one `scripts/sharelinks-backfill.ts` deliberately skips — used to make this a
+  // *throw* rather than a backfill: `create` was rejected by the required field, the catch below
+  // found no row to fall back on and rethrew, and the throw came out of `resolveShareLink` as the
+  // error boundary on the public `/s/:shareId`. The recipient's link was neither served nor
+  // refused. Adopt the document into its owner's personal workspace instead and write the id back
+  // so it happens once — the same move `ensureDefaultProjectLink` makes for `/p/:shareId`.
+  let orgId = doc.orgId ?? null;
+  if (!orgId && doc.userId) {
+    try {
+      orgId = (await ensurePersonalOrgForUserId({ userId: oid(doc.userId) })).orgId;
+      await DocModel.updateOne({ _id: doc._id }, { $set: { orgId } });
+    } catch {
+      orgId = null;
+    }
+  }
+  // Nothing to adopt it into (no owner either): hand back nothing rather than throw, so the caller
+  // treats the slug as a miss instead of 500-ing on it.
+  if (!orgId) return null;
   let shareId = (doc.shareId && String(doc.shareId).trim()) || newShareId();
   const byShareId = await ShareLinkModel.findOne({ shareId }).lean<ShareLink>();
   // `Doc.shareId` and `Project.shareId` are unique in their own collections but not against each
@@ -205,13 +285,18 @@ export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web"
   else if (byShareId) return byShareId;
   try {
     const created = await ShareLinkModel.create({
-      orgId: doc.orgId ?? undefined,
+      orgId,
       docId: doc._id,
       shareId,
       label: DEFAULT_LINK_LABEL,
       audience: null,
       isDefault: true,
       enabled: doc.shareEnabled !== false,
+      // Born off *because the document is off* — which is the document switch having disabled it,
+      // and is why the marker is set here. Without it this row looks exactly like a link the sender
+      // revoked by hand, and `setAllLinksEnabled` must never restore one of those: the two are told
+      // apart by this field alone.
+      disabledByDocSwitch: doc.shareEnabled === false,
       allowDownload: Boolean(doc.shareAllowPdfDownload),
       allowRevisionHistory: Boolean(doc.shareAllowRevisionHistory),
       expiresAt: null,
@@ -235,6 +320,21 @@ export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web"
   }
 }
 
+/**
+ * {@link ensureDefaultLinkOrNull} for the callers that already hold an org-scoped document and so
+ * cannot be handed a null: every route and script here reached the document through a workspace or
+ * its owner, which means the adoption above always finds one, and a document with neither is a
+ * corrupt row rather than a case to branch on. Kept non-null so those call sites stay unchanged.
+ *
+ * The public slug is the one caller that can genuinely meet a document with no owner at all, and it
+ * uses the nullable form — a stranger gets a 404, never a 500.
+ */
+export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web" | "api" | "mcp" } = {}): Promise<ShareLink> {
+  const link = await ensureDefaultLinkOrNull(doc, opts);
+  if (!link) throw new ShareLinkError("not_found", "This document has no workspace or owner to attach a link to.");
+  return link;
+}
+
 export type ResolvedShareLink = {
   link: ShareLink;
   doc: DocLike & Record<string, unknown>;
@@ -244,8 +344,9 @@ export type ResolvedShareLink = {
 
 /**
  * Turn a public slug into its link and document. Falls back to `Doc.shareId` for documents that
- * have no link row yet (and creates their default link). Returns null when nothing matches.
- * The caller decides what to do with `refusal` (share routes answer 404).
+ * have no link row yet (and creates their default link). Returns null when nothing matches — and
+ * also when a matching document has no workspace to hang a link on, which is a miss rather than an
+ * error. The caller decides what to do with `refusal` (share routes answer 404).
  */
 export async function resolveShareLink(shareId: string, opts: { select?: Record<string, 1> } = {}): Promise<ResolvedShareLink | null> {
   const slug = (shareId || "").trim();
@@ -268,7 +369,11 @@ export async function resolveShareLink(shareId: string, opts: { select?: Record<
       .select({ ...DOC_SHARE_FIELDS, ...(opts.select ?? {}) })
       .lean()) as (DocLike & Record<string, unknown>) | null;
     if (!doc) return null;
-    link = await ensureDefaultLink(doc);
+    link = await ensureDefaultLinkOrNull(doc);
+    // No link could be materialised (a document with neither workspace nor owner). The slug is
+    // real but there is nothing to serve it with, so this is a 404, never a 500 — the same answer
+    // `resolveProjectLink` gives for the project-shaped version of this row.
+    if (!link) return null;
   }
   if (!doc || doc.isDeleted) return link ? { link, doc: doc ?? ({ _id: link.docId } as DocLike & Record<string, unknown>), refusal: "doc_gone" } : null;
   const refusal: ResolvedShareLink["refusal"] = doc.isArchived
@@ -555,6 +660,24 @@ export function passwordFields(password: string | null | undefined): Record<stri
  * Keep the legacy Doc fields coherent: `shareEnabled` = any active link; the default link's
  * settings mirrored so readers that still look at the document (and a rollback build) agree.
  */
+/**
+ * Is this document shared *right now* — does it own any link that is on, unarchived and unexpired?
+ *
+ * This is the question the Free cap actually asks. `getWorkspaceUsage` counts documents whose
+ * `shareEnabled` is not false, and `syncDocShareState` sets `shareEnabled = anyActive`, so a
+ * document whose links are all switched off does not count. That is what made the cap bypassable:
+ * turn a document's only link off (count drops), upload another document (the cap lets you), turn
+ * the first link back on — and nothing re-checked. Repeat for as many documents as you like.
+ *
+ * So the rule is not "links are capped" — links are deliberately unlimited, one per audience. The
+ * rule is that the *transition* of a document from unshared to shared is the thing the cap governs,
+ * exactly as it governs sharing a document from the document-level switch.
+ */
+async function isDocCurrentlyShared(docId: Types.ObjectId): Promise<boolean> {
+  const links = await ShareLinkModel.find({ docId, archivedAt: null }).lean<ShareLink[]>();
+  return links.some((l) => isLinkActive(l));
+}
+
 export async function syncDocShareState(docId: string | Types.ObjectId): Promise<void> {
   await connectMongo();
   const id = oid(docId);
@@ -614,8 +737,22 @@ export async function createShareLink(input: {
   // workspace sitting at three documents could not add a second link to any of them: the feature
   // switched off at exactly the moment someone starts to use it. `SHARE_LINKS_PER_DOC_MAX` is the
   // only ceiling, and it is a runaway guard rather than a plan limit.
-  const enabled = input.settings.enabled !== false;
-  const limit: LimitCheck = { ok: true, warning: null };
+  //
+  // What *is* capped is putting one more document into the shared state. A new enabled link on a
+  // document that is not currently shared does exactly that, so it answers to the documents cap —
+  // the same answer `PATCH /api/docs/:id { shareEnabled: true }` gives. The link is still created,
+  // switched off, and `limit.ok === false` tells the route to surface the upsell.
+  let enabled = input.settings.enabled !== false;
+  let limit: LimitCheck = { ok: true, warning: null };
+  if (enabled && !(await isDocCurrentlyShared(docId))) {
+    const documentsLimit = await checkLimit(orgId, "documents");
+    if (!documentsLimit.ok) {
+      enabled = false;
+      limit = documentsLimit;
+    } else if (documentsLimit.warning) {
+      limit = documentsLimit;
+    }
+  }
 
   let created: ShareLink | null = null;
   for (let i = 0; i < 5 && !created; i++) {
@@ -644,14 +781,27 @@ export async function createShareLink(input: {
   return { link: created as ShareLink, limit };
 }
 
-export type UpdateShareLinkResult = { link: ShareLink; limit: LimitCheck | null };
+export type UpdateShareLinkResult = {
+  link: ShareLink;
+  limit: LimitCheck | null;
+  /**
+   * Links this call brought back: siblings the document switch had disabled, restored because
+   * enabling one link re-shares the document. Present only when there were any.
+   */
+  restored?: ShareLink[];
+};
 
 /** Patch a link's settings. Enabling a disabled link re-checks the Free cap. */
 export async function updateShareLink(input: {
   orgId: string | Types.ObjectId;
   linkId: string | Types.ObjectId;
   settings: ShareLinkSettingsInput;
-  /** Internal: set by the document-level switch so it can tell its own disables from the sender's. */
+  /**
+   * Internal: set by the document-level switch so it can tell its own disables from the sender's —
+   * and so the documents-cap check below knows the caller already ran it. `PATCH /api/docs/:id
+   * { shareEnabled: true }` asks the cap before it calls in; asking again here would refuse the
+   * switch the approval it was just given.
+   */
   viaDocSwitch?: boolean;
 }): Promise<UpdateShareLinkResult> {
   await connectMongo();
@@ -675,18 +825,70 @@ export async function updateShareLink(input: {
   }
   if (s.expiresAt !== undefined) set.expiresAt = validateExpiry(s.expiresAt);
   Object.assign(set, passwordFields(s.password));
-  const limit: LimitCheck | null = null;
+  let limit: LimitCheck | null = null;
   if (s.enabled !== undefined) {
-    // Re-enabling a link is not a plan decision either: the Free cap counts the *document*, and
-    // that document is counted whether this link is switched on or off.
+    /**
+     * Turning a link *on* is a plan decision when nothing else is keeping its document shared.
+     *
+     * The comment here used to say the cap counts the document "whether this link is switched on or
+     * off", which is not what `getWorkspaceUsage` measures: it counts `shareEnabled`, and
+     * `syncDocShareState` derives that from whether any link is active. So off really did mean
+     * uncounted, and the disable → upload → re-enable cycle walked a Free workspace past the cap
+     * indefinitely. Turning a link off is never gated; only the transition back into shared is.
+     */
+    if (
+      s.enabled === true &&
+      input.viaDocSwitch !== true &&
+      !isLinkActive(link) &&
+      !(await isDocCurrentlyShared(link.docId as Types.ObjectId))
+    ) {
+      const documentsLimit = await checkLimit(link.orgId, "documents");
+      if (!documentsLimit.ok) return { link, limit: documentsLimit };
+      if (documentsLimit.warning) limit = documentsLimit;
+    }
     set.enabled = Boolean(s.enabled);
     set.disabledByDocSwitch = !s.enabled && input.viaDocSwitch === true;
   }
   if (Object.keys(set).length === 0) return { link, limit };
   const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true }).lean<ShareLink>();
+
+  /**
+   * Enabling one link re-shares the document, so it has to restore what the document switch took
+   * down. The mirror of the same rule in `updateProjectLink`, and it was missing here.
+   *
+   * `Doc.shareEnabled` is derived from "at least one active link" (`syncDocShareState`), so turning
+   * any single link on makes the document shared again. There were then two routes to a shared
+   * document and only one put the other links back: the explicit switch calls
+   * `setAllLinksEnabled`, which restores every link marked `disabledByDocSwitch`, while enabling
+   * one link restored nothing. The document came back with most of its recipients still locked out,
+   * silently, and nothing would ever clear their marker.
+   *
+   * Only marked links are restored. A link the sender revoked on its own is not marked and stays
+   * revoked — the distinction the marker exists for.
+   */
+  const restored: ShareLink[] = [];
+  if (set.enabled === true && !input.viaDocSwitch) {
+    const siblings = await ShareLinkModel.find({
+      docId: link.docId,
+      ...DOC_LINK_FILTER,
+      archivedAt: null,
+      _id: { $ne: link._id },
+      enabled: false,
+      disabledByDocSwitch: true,
+    }).lean<ShareLink[]>();
+    for (const sib of siblings) {
+      const back = await ShareLinkModel.findOneAndUpdate(
+        { _id: sib._id },
+        { $set: { enabled: true, disabledByDocSwitch: false } },
+        { new: true },
+      ).lean<ShareLink>();
+      if (back) restored.push(back);
+    }
+  }
+
   // `DOC_LINK_FILTER` on the lookup above guarantees a document link, so `docId` is set.
   await syncDocShareState(link.docId as Types.ObjectId);
-  return { link: updated ?? link, limit };
+  return { link: updated ?? link, limit, ...(restored.length ? { restored } : {}) };
 }
 
 /**
@@ -730,22 +932,49 @@ export async function archiveShareLink(input: { orgId: string | Types.ObjectId; 
 }
 
 /**
+ * A disabled link the document switch is allowed to turn back on.
+ *
+ * Only the switch's own work: `disabledByDocSwitch` is written on every disable that goes through
+ * `updateShareLink`, `true` when the document switch did it and `false` when the sender disabled
+ * that one link — which, for a default link, is the only way the product lets them revoke a
+ * recipient at all (`archiveShareLink` refuses to delete it). `ensureDefaultLink` marks a link it
+ * has to create already-off for the same reason: the document is off, so the switch owns it.
+ *
+ * The rows with **no marker** are the ones written before the field existed, and they keep the old
+ * behaviour *exactly*: restored only when every link on the document is off. That condition is the
+ * whole of the old rule and it matters. Treating an unmarked row as restorable on its own widened
+ * the switch in precisely the mixed case the fix was written for — a pre-marker document with link
+ * A live and link B revoked would hand B back, which is the same silent un-revoking, one branch
+ * over. Unknown provenance is a reason to be conservative, not permissive.
+ *
+ * This used to be decided per *document* instead of per link — "no marked links and none enabled"
+ * meant legacy — and that shape cannot tell a pre-marker document from one whose every link the
+ * owner deliberately revoked. It read the second as the first, so turning sharing back on handed a
+ * revoked recipient their original URL again, silently, with no warning in the response or the UI.
+ */
+export function switchMayRestore(link: ShareLink, opts: { everyLinkDisabled: boolean }): boolean {
+  // Absent, not false: `.lean()` returns the stored row, so a field never written stays undefined.
+  const marker = (link as { disabledByDocSwitch?: boolean | null }).disabledByDocSwitch;
+  if (marker === true) return true; // the switch turned it off, so the switch may turn it back on
+  if (marker === false) return false; // the sender revoked this one recipient; that stands
+  return opts.everyLinkDisabled; // pre-marker: only the old all-off fallback
+}
+
+/**
  * Enable or disable every link of a document at once (the document-level share switch).
  *
  * Turning the switch off marks each link it disables (`disabledByDocSwitch`). Turning it back on
- * re-enables only those, so a link the sender revoked on its own stays revoked. Documents switched
- * off before the marker existed have no marked links and no enabled ones; for those the switch
- * falls back to enabling every link, which is what it always did.
+ * re-enables only those, so a link the sender revoked on its own stays revoked — see
+ * {@link switchMayRestore} for the one exception, links written before the marker existed.
  */
 export async function setAllLinksEnabled(input: { orgId: string | Types.ObjectId; docId: string | Types.ObjectId; enabled: boolean }): Promise<{ changed: number; limit: LimitCheck | null }> {
   const links = await listShareLinks({ orgId: input.orgId, docId: input.docId });
-  const marked = links.filter((l) => !l.enabled && l.disabledByDocSwitch);
-  const legacyAllOff = marked.length === 0 && links.every((l) => !l.enabled);
+  const everyLinkDisabled = links.every((l) => !l.enabled);
   let changed = 0;
   let limit: LimitCheck | null = null;
   for (const l of links) {
     if (Boolean(l.enabled) === input.enabled) continue;
-    if (input.enabled && !l.disabledByDocSwitch && !legacyAllOff) continue;
+    if (input.enabled && !switchMayRestore(l, { everyLinkDisabled })) continue;
     const res = await updateShareLink({ orgId: input.orgId, linkId: l._id, settings: { enabled: input.enabled }, viaDocSwitch: true });
     if (res.limit && !res.limit.ok) {
       limit = res.limit;

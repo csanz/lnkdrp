@@ -524,7 +524,7 @@ export default function RequestUploadPageClient(props: {
               </div>
               <div className="mt-2 text-sm text-[var(--fg)]">{statusLabel}</div>
               <div className="mt-1 text-sm text-[var(--muted)]">
-                Please keep this tab open — everything happens in this browser session.
+                Please keep this tab open. Everything happens in this browser session.
               </div>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
                 <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--primary-bg)]" />
@@ -659,7 +659,7 @@ export default function RequestUploadPageClient(props: {
             </div>
             <div className="mt-2 text-lg font-semibold text-[var(--fg)]">{statusLabel}</div>
             <div className="mt-2 text-sm text-[var(--muted)]">
-              Please keep this tab open — closing or refreshing can interrupt the upload and processing.
+              Please keep this tab open. Closing or refreshing can interrupt the upload and processing.
             </div>
             <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
               <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--primary-bg)]" />

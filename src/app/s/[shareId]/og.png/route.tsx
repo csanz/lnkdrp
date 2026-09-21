@@ -1,9 +1,8 @@
 import { ImageResponse } from "next/og";
 import { notFound } from "next/navigation";
 import type { NextRequest } from "next/server";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { resolveShareLink } from "@/lib/share/links";
+import { fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 import {
   DEFAULT_OG_SIZE,
   imageResponseFromBytes,
@@ -12,6 +11,58 @@ import {
 } from "@/lib/og/imageResponse";
 
 export const runtime = "nodejs";
+
+
+
+/**
+ * The revocation window, in seconds, that a shared cache may keep serving this image for.
+ *
+ * This number is the entire trade this header makes. Read `OG_CACHE_CONTROL` before changing it.
+ */
+const OG_SHARED_CACHE_SECONDS = 60;
+
+/**
+ * A bounded shared cache — deliberately neither of the two headers this route has worn before.
+ *
+ * This is the one share surface that is fetched with no cookie and no viewer: unfurl bots. It is
+ * therefore both the surface where revocation is easiest to lose *and* the surface with the worst
+ * fan-out, and the two previous headers each fixed one of those by giving up the other.
+ *
+ *  - `public, s-maxage=3600, stale-while-revalidate=86400` lost revocation. A shared cache is keyed
+ *    on the URL alone and never re-asks, so once any bot had warmed an edge entry the document's
+ *    title and a picture of its first page kept being served for up to 25 hours after the owner
+ *    disabled, expired, archived or password-protected the link. `stale-while-revalidate` was the
+ *    worse half: it exists precisely to keep serving an entry the cache already knows is expired.
+ *  - `private, max-age=300` fixed that by banning shared storage outright, and paid for it at the
+ *    origin. `private` means no edge or proxy may store the bytes, so *every* unfurl becomes a cold
+ *    render here: `resolveShareLink`, a server-side blob fetch, and a satori `ImageResponse`. Bots
+ *    re-fetch per channel, per recipient, per re-share, so one link pasted into a large Slack
+ *    workspace turns what used to be free CDN reads into a burst of serverless invocations.
+ *
+ * `public` is correct on the *content*: this image is scoped to the link, not to the viewer. There
+ * is no cookie, no `Vary`, and no per-recipient variation — everyone who may see this link sees the
+ * identical bytes, which is exactly the case a URL-keyed shared cache is built for. The only thing
+ * `private` was ever buying was freshness after a revoke, and `s-maxage` buys that directly, in
+ * seconds, instead of by forbidding caching.
+ *
+ * Why 60s, and why nothing longer: the load this header exists to absorb is a *burst*. A link
+ * posted once fans out to many unfurl bots within seconds of the post, and a minute of shared
+ * caching collapses that burst into a single origin render. A re-share hours later is a cold render
+ * under any window we would be willing to accept, so raising 60s to an hour buys almost no extra
+ * hit rate while multiplying the revocation window sixtyfold. One minute of stale exposure after an
+ * owner revokes a link is under the time it takes them to check that the revoke worked; an hour is
+ * not, and a day certainly is not.
+ *
+ * `stale-while-revalidate` is absent on purpose and must stay absent — it re-opens the exact hole
+ * above by licensing a cache to serve an expired entry. `stale-if-error` is the same hazard wearing
+ * a different name; do not add it either. `max-age=0` keeps a client that already has the image
+ * from holding it privately past the revoke: its re-ask lands on the edge, not on us.
+ *
+ * The gates themselves are untouched and still run per request: `resolveShareLink`'s refusal and
+ * the password check below both `notFound()` on every request that actually reaches this function,
+ * and those 404s do not carry this header, so nothing caches a refusal either.
+ */
+const OG_CACHE_CONTROL = `public, max-age=0, s-maxage=${OG_SHARED_CACHE_SECONDS}`;
 
 /**
  * Dynamic OG image route for a share page.
@@ -64,28 +115,21 @@ export async function GET(
 
   try {
     if (!candidate) throw new Error("no image candidate");
-
-    let buf: Buffer;
-    let mime: string;
-
-    if (/^https?:\/\//i.test(candidate)) {
-      const res = await fetch(candidate, { cache: "no-store" });
-      if (!res.ok) throw new Error(`failed to fetch preview (${res.status})`);
-      const arr = await res.arrayBuffer();
-      buf = Buffer.from(arr);
-      mime = res.headers.get("content-type")?.split(";")[0]?.trim() || mimeFromPath(candidate);
-    } else {
-      const abs = join(process.cwd(), candidate);
-      buf = readFileSync(abs);
-      mime = mimeFromPath(candidate);
-    }
+    // Not a preview we are allowed to dereference, or one that redirects off the store: fall
+    // through to the text card. `fetchStoredBlob` re-applies the allowlist to every hop, because
+    // a check that only sees the first URL says nothing about where it leads.
+    const res = await fetchStoredBlob(candidate);
+    if (!res) throw new Error("preview URL is not on the blob store");
+    if (!res.ok) throw new Error(`failed to fetch preview (${res.status})`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const mime = res.headers.get("content-type")?.split(";")[0]?.trim() || mimeFromPath(candidate);
 
     return imageResponseFromBytes({
       bytes: buf,
       mime,
       alt: title,
       dims: sniffImageDims(buf) ?? DEFAULT_OG_SIZE,
-      cacheControl: "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400",
+      cacheControl: OG_CACHE_CONTROL,
     });
   } catch {
     const res = new ImageResponse(
@@ -111,10 +155,8 @@ export async function GET(
       ),
       DEFAULT_OG_SIZE,
     );
-    res.headers.set(
-      "Cache-Control",
-      "public, max-age=300, s-maxage=300, stale-while-revalidate=3600",
-    );
+    // The text card is the document's real title, so it is revocable too — same header.
+    res.headers.set("Cache-Control", OG_CACHE_CONTROL);
     return res;
   }
 }

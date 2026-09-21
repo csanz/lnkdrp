@@ -20,6 +20,7 @@ import { creditsForRun } from "@/lib/credits/schedule";
 import { idempotencyKeyFromRequest, generateIdempotencyKey } from "@/lib/credits/idempotency";
 import { DAILY_CAP_CODE, isDailyCapError, isOutOfCreditsError, OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 import { UploadModel } from "@/lib/models/Upload";
 import { attachPageContext, loadChangedPages, type ChangedPage } from "@/lib/history/changedPages";
 
@@ -47,6 +48,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     // Viewers must not trigger owner-billed processing.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    // The header above says this route is credit-gated on every plan — but a credit gate only asks
+    // whether the workspace can pay, never whether the account was let in, and a queued person's
+    // free credits are still the operator's AI spend. Refuse here, before `reserveCreditsOrThrow`.
+    const queued = await forbidWaitlisted(actor, "rerun a comparison");
+    if (queued) return queued;
     const { docId, changeId } = await ctx.params;
     if (!isObjectId(docId)) return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
     if (!isObjectId(changeId)) return NextResponse.json({ error: "Invalid changeId" }, { status: 400 });

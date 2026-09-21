@@ -97,16 +97,39 @@ describe("POST one-click unsubscribe (RFC 8058)", () => {
 });
 
 describe("GET stays a confirmation page", () => {
-  test("valid token sets off and renders the page with the preferences link to the anchor", async () => {
+  test("a valid token renders a button and changes nothing until it is pressed", async () => {
+    // A member who still gets these emails — the case where there is something to turn off.
+    membershipFindOne.mockReturnValue(lean({ orgId: ORG, viewEmailMode: "immediate" }));
     const res = await GET(new Request(url(createViewEmailsOffToken(MEMBERSHIP))));
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
-    expect(html).toContain("View emails are off");
+    expect(html).toContain("<form method=\"post\"");
     expect(html).toContain(`href="${VIEW_EMAIL_PREFERENCES_PATH}"`);
     expect(VIEW_EMAIL_PREFERENCES_PATH).toBe("/dashboard?tab=account#email-preferences");
-    expect(membershipFindOneAndUpdate).toHaveBeenCalledTimes(1);
+
+    /**
+     * This test used to assert the opposite — that a GET wrote `viewEmailMode: "off"` on sight of
+     * the token, and it asserted `membershipFindOneAndUpdate` had been called once. That was the
+     * bug, not the contract. The unsubscribe URL is printed in the visible footer of every view
+     * email, so any link scanner, security proxy or client prefetch that fetches the links in a
+     * message silently switched a member's notifications off — and the token is a bearer with no
+     * revocation, so the member could not tell what had happened or stop it happening again.
+     *
+     * The write now lives only on POST, which is also where the mail provider's RFC 8058
+     * one-click unsubscribe already sent it, so the human path and the provider path share one
+     * write path instead of two.
+     */
+    expect(membershipFindOneAndUpdate).not.toHaveBeenCalled();
     expect(membershipUpdateOne).not.toHaveBeenCalled();
+  });
+
+  test("a member who is already unsubscribed is told so, with nothing to press", async () => {
+    const res = await GET(new Request(url(createViewEmailsOffToken(MEMBERSHIP))));
+    const html = await res.text();
+    expect(html).toContain("View emails are off");
+    expect(html).not.toContain("<form method=\"post\"");
+    expect(membershipFindOneAndUpdate).not.toHaveBeenCalled();
   });
 
   test("HEAD never writes", async () => {

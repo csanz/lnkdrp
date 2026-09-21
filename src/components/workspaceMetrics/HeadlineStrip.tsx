@@ -69,10 +69,23 @@ export default function HeadlineStrip({
               onClick={() => onSelect(key)}
               title={chip?.title ?? `Show ${meta.label.toLowerCase()} per day`}
               className={cn(
-                "min-w-0 rounded-2xl border p-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                "min-w-0 rounded-2xl border p-4 text-left shadow-[var(--shadow-card)] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                // A card, not an inset: white like every other top-level card on the page, and
+                // selected by its edge rather than by a fill — a darker fill reads as pressed or
+                // disabled, which is the opposite of chosen.
+                //
+                // That edge used to be `--fg`, a near-black border *and* ring, which came out as a
+                // ~2px black rectangle beside three 1.27:1 hairlines: the harshest thing on the
+                // page, and it read as an error rather than a selection. It was that heavy because
+                // light had no ground to lift a card off — `--bg` and `--panel` were the same
+                // white, so weight was the only signal available. Now that the page sits below the
+                // card, the chosen tile can say so quietly: it takes the chart's own colour, which
+                // is the honest cue — this tile is the series the graph below is drawing. The lift
+                // is on the base class, because every card on this page is a card; using elevation
+                // to mark selection made the other three look like they had not finished loading.
                 active
-                  ? "border-[var(--fg)] bg-[var(--panel-hover)]"
-                  : "border-[var(--border)] bg-[var(--panel-2)] hover:bg-[var(--panel-hover)]",
+                  ? "border-[var(--chart-views)] bg-[var(--panel)]"
+                  : "border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-2)]",
               )}
             >
               <div className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">{meta.label}</div>

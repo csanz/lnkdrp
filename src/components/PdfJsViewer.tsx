@@ -28,6 +28,18 @@ import {
 } from "@/lib/share/readingClock";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { CATEGORY_LABELS } from "@/lib/ai/constants";
+import type { ShareWorkspaceBrand } from "@/lib/share/brand";
+import {
+  clearShareViewerProfile,
+  normalizeShareViewerEmail,
+  normalizeShareViewerName,
+  readShareViewerProfile,
+  readShareViewerProfilePrefill,
+  shareBrandOwnerKey,
+  writeShareViewerProfile,
+  type ShareViewerProfile,
+  type ShareViewerScope,
+} from "@/lib/share/viewerProfile";
 /**
  * Title From Enum (uses join, map, filter).
  */
@@ -52,9 +64,34 @@ type Props = {
    */
   revisionHistoryEnabled?: boolean;
   /**
+   * Whether "Request download" may be offered when downloads are off.
+   *
+   * A data room says no. The request route resolves its slug with `resolveShareLink`, which
+   * refuses a project link by design, so inside a room the button opened a modal whose submit
+   * always 404s — and every room starts with downloads off, so that was the default experience.
+   * Until the claim chain can resolve a project slug (see the KNOWN GAP note in
+   * `src/app/api/share/[shareId]/download-requests/route.ts`) the honest thing is not to offer it.
+   */
+  canRequestDownload?: boolean;
+  /**
    * Endpoint for fetching revision history JSON (typically `/api/share/:shareId/changes`).
    */
   revisionHistoryUrl?: string | null;
+  /**
+   * The workspace that shared this document, drawn beside our logo in the header. Omitted inside
+   * the app (an owner reading their own document already knows whose it is); present on every
+   * recipient-facing route.
+   */
+  workspace?: ShareWorkspaceBrand | null;
+  /**
+   * Where this document sits, when it was opened from a data room: the room's URL and its name.
+   *
+   * A recipient who clicks a document out of a data room is one browser-back from the list — and
+   * browser-back is exactly what people do not reach for inside a viewer that has taken over the
+   * window. Without this, the way back is a guess.
+   */
+  backHref?: string | null;
+  backLabel?: string | null;
   /**
    * If true, show a receiver-facing "Download PDF" button.
    */
@@ -127,8 +164,110 @@ type PdfPage = {
   render: (opts: {
     canvasContext: CanvasRenderingContext2D;
     viewport: { width: number; height: number };
+    /**
+     * Extra transform applied before the viewport's, as `[a, b, c, d, e, f]`.
+     *
+     * This is how pdf.js is told to paint into a backing store larger than the CSS box: the canvas
+     * is sized in device pixels and the page is scaled up to fill it.
+     */
+    transform?: number[];
   }) => PdfRenderTask;
 };
+
+/**
+ * Device pixels per CSS pixel, clamped to something a phone can afford.
+ *
+ * Every canvas here used to be sized `Math.floor(viewport.width)` — CSS pixels, with no
+ * `devicePixelRatio` — so on a Retina laptop or any modern phone the page was rasterised at half
+ * the screen's resolution and then stretched: soft text in a product whose whole job is showing
+ * someone a document. The clamp is the other half of the trade: the backing store costs the square
+ * of this number in memory, so a 3x phone renders at 2x (4x the pixels of before) rather than 9x.
+ */
+const MAX_CANVAS_PIXEL_RATIO = 2;
+
+/** The tightest canvas area a shipping browser will actually paint (iOS Safari, ~16.7M pixels). */
+const MAX_CANVAS_BACKING_PIXELS = 16 * 1024 * 1024;
+
+function canvasPixelRatio(): number {
+  if (typeof window === "undefined") return 1;
+  const raw = window.devicePixelRatio;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return 1;
+  return Math.min(MAX_CANVAS_PIXEL_RATIO, Math.max(1, raw));
+}
+
+/**
+ * Size a canvas for a viewport at the current pixel ratio: backing store in device pixels, CSS box
+ * in CSS pixels, and the transform pdf.js needs to fill the former.
+ *
+ * The explicit CSS size is load-bearing beyond sharpness. Without it a canvas lays out at its
+ * intrinsic size, so dropping the backing store to 0x0 (which is how a far-offscreen page's memory
+ * is released) would collapse its box and yank the scroll position out from under the reader.
+ */
+function sizeCanvasForViewport(
+  canvas: HTMLCanvasElement,
+  viewport: { width: number; height: number },
+  ratio: number,
+): number[] {
+  const cssWidth = Math.max(1, Math.floor(viewport.width));
+  const cssHeight = Math.max(1, Math.floor(viewport.height));
+  /**
+   * Browsers cap how big a canvas may be, and go blank rather than complain when you exceed it —
+   * iOS Safari at roughly 16.7M device pixels. Zoom already multiplies the page up to 4x, so
+   * doubling it again for the pixel ratio has to give way at the top end: a slightly softer page
+   * at maximum zoom is a page, and an over-budget canvas is a white rectangle.
+   */
+  const budget = Math.sqrt(MAX_CANVAS_BACKING_PIXELS / (cssWidth * cssHeight));
+  const effective = Math.max(0.1, Math.min(ratio, budget));
+  canvas.width = Math.max(1, Math.floor(cssWidth * effective));
+  canvas.height = Math.max(1, Math.floor(cssHeight * effective));
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  return [effective, 0, 0, effective, 0, 0];
+}
+
+/**
+ * How far either side of the visible pages a painted bitmap is kept.
+ *
+ * Wider than the one-page-either-side that gets rendered, so a reader nudging the scrollbar back
+ * and forth across a page boundary does not repaint constantly; grid tiles are a fraction of the
+ * size of a full page, and a wide screen shows a lot of them, so that window is much wider.
+ */
+const ALL_PAGES_KEEP_RADIUS = 3;
+const GRID_KEEP_RADIUS = 30;
+
+/**
+ * Release the bitmaps of pages that are nowhere near the viewport.
+ *
+ * "All pages" and "Grid" mount one canvas per page and, until this, never let a painted one go: a
+ * 300-page deck kept 300 full-resolution backing stores alive at once, which is hundreds of
+ * megabytes and a dead tab — and the device-pixel-ratio fix above multiplies exactly that number.
+ * Memory now tracks what is on screen instead of how long the document is. The canvas element and
+ * its CSS box stay exactly where they were, so nothing moves under the reader; scrolling back re-
+ * renders the page, which is what already happens for one never painted.
+ */
+function releaseDistantCanvases(
+  canvases: Map<number, HTMLCanvasElement>,
+  renderedKeys: Map<number, string>,
+  tasks: Map<number, { key: string; task: { cancel?: () => void; promise: Promise<unknown> } }>,
+  keep: (pageNumber: number) => boolean,
+): void {
+  for (const [p, canvas] of canvases) {
+    if (keep(p)) continue;
+    if (canvas.width === 0 && canvas.height === 0) continue;
+    const inFlight = tasks.get(p);
+    if (inFlight) {
+      try {
+        inFlight.task.cancel?.();
+      } catch {
+        // ignore
+      }
+      tasks.delete(p);
+    }
+    canvas.width = 0;
+    canvas.height = 0;
+    renderedKeys.delete(p);
+  }
+}
 
 /** Return whether a pdf.js error is the expected "render was cancelled" rejection. */
 function isRenderingCancelled(e: unknown): boolean {
@@ -150,6 +289,14 @@ const SHARE_VISIT_SESSION_PREFIX = "lnkdrp_share_visit_session_v1:";
 const SHARE_VISIT_PAGES_PREFIX = "lnkdrp_share_visit_pages_v1:";
 
 /** Pages already reported during this tab session, and whether the load POST has gone out. */
+/**
+ * What this visit has already reported, keyed by **link and document**.
+ *
+ * It used to be keyed on the link alone, which is correct for a document link and wrong for a data
+ * room: every document in a room is read through the same `shareId`, so opening a second one found
+ * `loaded: true` and its pages already "seen", and reported nothing at all. A reader who opened
+ * three documents appeared in the metrics having opened one — the bug this key fixes.
+ */
 function readVisitReported(shareId: string): { loaded: boolean; pages: Set<number> } {
   if (!isBrowser()) return { loaded: false, pages: new Set() };
   try {
@@ -179,77 +326,12 @@ function writeVisitReported(shareId: string, next: { loaded: boolean; pages: Set
     // ignore
   }
 }
-const SHARE_VIEWER_PROFILE_KEY = "lnkdrp_share_viewer_profile_v1";
-
+/**
+ * The recipient's volunteered identity now lives in `@/lib/share/viewerProfile`: the data room's
+ * front page asks for it too, and both surfaces have to store the same thing under the same key.
+ */
 type OwnerStats = { views: number; pagesViewed: number };
 type ShareContext = { isOwner: boolean; stats?: OwnerStats };
-
-type ShareViewerProfile = {
-  name?: string;
-  email?: string;
-  updatedAt?: number;
-};
-
-function normalizeShareViewerName(v: string): string | null {
-  const s = v.replace(/\s+/g, " ").trim();
-  if (!s) return null;
-  return s.length > 80 ? s.slice(0, 80) : s;
-}
-
-function normalizeShareViewerEmail(v: string): string | null {
-  const s = v.trim().toLowerCase();
-  if (!s) return null;
-  if (s.length > 254) return null;
-  if (!s.includes("@") || s.startsWith("@") || s.endsWith("@")) return null;
-  return s;
-}
-
-function readShareViewerProfile(): ShareViewerProfile | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(SHARE_VIEWER_PROFILE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") return null;
-    const nameRaw = (parsed as any).name;
-    const emailRaw = (parsed as any).email;
-    const updatedAtRaw = (parsed as any).updatedAt;
-    const name = typeof nameRaw === "string" ? normalizeShareViewerName(nameRaw) : null;
-    const email = typeof emailRaw === "string" ? normalizeShareViewerEmail(emailRaw) : null;
-    const updatedAt = typeof updatedAtRaw === "number" && Number.isFinite(updatedAtRaw) ? Math.floor(updatedAtRaw) : undefined;
-    if (!name && !email) return null;
-    return { ...(name ? { name } : {}), ...(email ? { email } : {}), ...(updatedAt ? { updatedAt } : {}) };
-  } catch {
-    return null;
-  }
-}
-
-function writeShareViewerProfile(next: { name: string | null; email: string | null }) {
-  if (typeof window === "undefined") return;
-  try {
-    const name = typeof next.name === "string" ? normalizeShareViewerName(next.name) : null;
-    const email = typeof next.email === "string" ? normalizeShareViewerEmail(next.email) : null;
-    if (!name && !email) {
-      window.localStorage.removeItem(SHARE_VIEWER_PROFILE_KEY);
-      return;
-    }
-    window.localStorage.setItem(
-      SHARE_VIEWER_PROFILE_KEY,
-      JSON.stringify({ ...(name ? { name } : {}), ...(email ? { email } : {}), updatedAt: Date.now() } satisfies ShareViewerProfile),
-    );
-  } catch {
-    // ignore (best-effort)
-  }
-}
-
-function clearShareViewerProfile() {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(SHARE_VIEWER_PROFILE_KEY);
-  } catch {
-    // ignore
-  }
-}
 
 type HistoryItem = {
   fromVersion: number | null;
@@ -362,7 +444,11 @@ export function PdfJsViewer({
   initialPage = 1,
   shareId,
   revisionHistoryEnabled = false,
+  canRequestDownload = true,
   revisionHistoryUrl = null,
+  workspace = null,
+  backHref = null,
+  backLabel = null,
   allowDownload = false,
   downloadUrl = null,
   relevancyEnabled: _relevancyEnabled = false,
@@ -462,13 +548,74 @@ export function PdfJsViewer({
   >({ kind: "idle" });
 
   const shareIdSafe = typeof shareId === "string" && shareId.trim() ? shareId.trim() : null;
+
+  /**
+   * The key this visit's "already reported" state is stored under.
+   *
+   * A data room's documents all share one `shareId`, so keying on that alone made the second
+   * document a visitor opened report nothing: the gate said this visit had already sent its load
+   * and its pages. The document id — which is in the PDF URL on a project link,
+   * `/p/:shareId/:docId/pdf` — puts each document back in its own bucket.
+   */
+  const reportKey = useMemo(() => {
+    if (!shareIdSafe) return null;
+    const match = /\/p\/[^/]+\/([^/?#]+)\//.exec(url ?? "");
+    return match?.[1] ? `${shareIdSafe}:${match[1]}` : shareIdSafe;
+  }, [shareIdSafe, url]);
   const canDownload = Boolean(allowDownload && downloadUrl);
 
+  /**
+   * Who the recipient's volunteered identity belongs to.
+   *
+   * It used to belong to nobody in particular: one origin-wide localStorage key, replayed onto the
+   * very first stats POST of any link this browser opened, including a sender the recipient had
+   * never introduced themselves to. The dialog below promises the opposite ("Goes to this
+   * document's owner only"), and `/p/`'s LandingBeacon has always behaved — botId and visitId until
+   * somebody presses Save. This scopes the stored identity to the sending workspace so the viewer
+   * behaves the same way.
+   *
+   * `ownerKey` is read off the brand payload defensively: `ShareWorkspaceBrand` does not carry a
+   * workspace id yet (that is a server-side change, outside this component), and until it does the
+   * scope falls back to this link. Falling back costs a recipient one extra introduction across a
+   * sender's links; the global key cost them their name on a stranger's.
+   */
+  const viewerProfileScope: ShareViewerScope = useMemo(
+    () => ({ ownerKey: shareBrandOwnerKey(workspace), shareId: shareIdSafe }),
+    [workspace, shareIdSafe],
+  );
+
   function applyViewerProfileToStatsPayload(payload: Record<string, unknown>) {
-    const p = readShareViewerProfile();
+    // Deliberately the scoped read and never the pre-fill: an identity the recipient typed for
+    // someone else is a convenience for their fingers, not something to send on their behalf.
+    const p = readShareViewerProfile(viewerProfileScope);
     if (p?.email) payload.viewerEmail = p.email;
     if (p?.name) payload.viewerName = p.name;
   }
+
+  /**
+   * Open the introduction modal with the fields filled in as far as we honestly can.
+   *
+   * What this sender has been told wins; failing that, the identity this browser last saved
+   * elsewhere, which fills the inputs and nothing else. Until Save is pressed here, the owner is
+   * told nothing.
+   */
+  const openIntro = useCallback(() => {
+    setIntroError(null);
+    const stored = readShareViewerProfile(viewerProfileScope);
+    const prefill = stored ?? readShareViewerProfilePrefill();
+    setIntroName(prefill?.name ?? "");
+    setIntroEmail(prefill?.email ?? "");
+    setIntroOpen(true);
+  }, [viewerProfileScope]);
+
+  /**
+   * Set once an introduction is stored, turning the modal into a confirmation instead of closing.
+   *
+   * Closing on save was the entire acknowledgement, which reads as a form that may or may not have
+   * worked. Someone who has just chosen to stop being anonymous is owed the other half: what the
+   * owner sees now, in the words they typed, before going back to the document.
+   */
+  const [introSaved, setIntroSaved] = useState<{ name: string | null; email: string } | null>(null);
 
   const [downloadRequestOpen, setDownloadRequestOpen] = useState(false);
   const [downloadRequestEmail, setDownloadRequestEmail] = useState("");
@@ -490,9 +637,10 @@ export function PdfJsViewer({
       setViewerProfile(null);
       return;
     }
-    // Best-effort: hydrate intro state from localStorage.
-    setViewerProfile(readShareViewerProfile());
-  }, [shareIdSafe]);
+    // Best-effort: hydrate intro state from localStorage. Scoped, so "Viewing as …" only ever
+    // claims an identity this sender has actually been given.
+    setViewerProfile(readShareViewerProfile(viewerProfileScope));
+  }, [shareIdSafe, viewerProfileScope]);
 
   useEffect(() => {
     if (!canDownload) return;
@@ -893,6 +1041,10 @@ export function PdfJsViewer({
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented) return;
+      // Typed as a string, not always one: password managers and autofill dispatch synthetic
+      // keydowns with no `key`, and this viewer is the page a recipient opens with whatever
+      // extensions they happen to run. Same guard as the ⌘K listener in `src/app/providers.tsx`.
+      if (typeof e.key !== "string") return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       const target = e.target as HTMLElement | null;
@@ -1301,10 +1453,11 @@ export function PdfJsViewer({
         const context = canvas.getContext("2d");
         if (!context) throw new Error("Canvas 2D context not available");
 
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
+        // Backing store in device pixels, CSS box in CSS pixels (see `sizeCanvasForViewport`):
+        // the fit-to-viewport maths above is unchanged, only the resolution it is painted at.
+        const transform = sizeCanvasForViewport(canvas, viewport, canvasPixelRatio());
 
-        const renderTask = page.render({ canvasContext: context, viewport });
+        const renderTask = page.render({ canvasContext: context, viewport, transform });
         singleRenderTaskRef.current = renderTask;
         try {
           await renderTask.promise;
@@ -1439,6 +1592,21 @@ export function PdfJsViewer({
     }
     if (toRender.size === 0) toRender.add(Math.min(Math.max(1, pageNumber), totalPages));
 
+    // Hand back the memory of pages the reader has scrolled well past, before painting the ones
+    // they are looking at. Without this a long PDF accumulates one full-resolution bitmap per page
+    // for as long as the tab is open, and eventually the tab dies mid-read.
+    const keepAnchors = visiblePages.length ? visiblePages : Array.from(toRender);
+    if (keepAnchors.length) {
+      const keepMin = Math.min(...keepAnchors) - ALL_PAGES_KEEP_RADIUS;
+      const keepMax = Math.max(...keepAnchors) + ALL_PAGES_KEEP_RADIUS;
+      releaseDistantCanvases(
+        allCanvasesRef.current,
+        allRenderedKeyRef.current,
+        allRenderTasksRef.current,
+        (p) => p >= keepMin && p <= keepMax,
+      );
+    }
+
     // Fit pages to the actual all-pages column width (not the full viewport),
     // and account for per-page card padding (p-3).
     const targetWidth = Math.max(1, width - 24);
@@ -1454,7 +1622,10 @@ export function PdfJsViewer({
         if (cancelled) return;
 
         const rotation = normalizePdfRotation(page);
-        const key = `${targetWidth}:${zoom}:${pdfVersion}:${rotation}`;
+        // The pixel ratio is part of the key: dragging the window to a screen with a different one
+        // (or a released page coming back) has to repaint, not sit there at the old resolution.
+        const ratio = canvasPixelRatio();
+        const key = `${targetWidth}:${zoom}:${pdfVersion}:${rotation}:${ratio}`;
         const prevKey = allRenderedKeyRef.current.get(p);
         if (prevKey === key) return;
 
@@ -1475,13 +1646,12 @@ export function PdfJsViewer({
         const context = canvas.getContext("2d");
         if (!context) return;
 
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
+        const transform = sizeCanvasForViewport(canvas, viewport, ratio);
         // Make rendering deterministic even if a canvas was previously painted.
         context.setTransform(1, 0, 0, 1, 0, 0);
         context.clearRect(0, 0, canvas.width, canvas.height);
 
-        const renderTask = page.render({ canvasContext: context, viewport }) as unknown as {
+        const renderTask = page.render({ canvasContext: context, viewport, transform }) as unknown as {
           cancel?: () => void;
           promise: Promise<unknown>;
         };
@@ -1606,6 +1776,19 @@ export function PdfJsViewer({
       for (let p = 1; p <= Math.min(12, totalPages); p++) toRender.add(p);
     }
 
+    // Same bound as "All pages": a thumbnail is small, but one per page of a long deck is not.
+    const keepAnchors = gridVisiblePages.length ? gridVisiblePages : Array.from(toRender);
+    if (keepAnchors.length) {
+      const keepMin = Math.min(...keepAnchors) - GRID_KEEP_RADIUS;
+      const keepMax = Math.max(...keepAnchors) + GRID_KEEP_RADIUS;
+      releaseDistantCanvases(
+        gridCanvasesRef.current,
+        gridRenderedKeyRef.current,
+        gridRenderTasksRef.current,
+        (p) => p >= keepMin && p <= keepMax,
+      );
+    }
+
     let cancelled = false;
 
     async function renderThumb(p: number, doc: PdfDoc, pages: number) {
@@ -1617,7 +1800,8 @@ export function PdfJsViewer({
         const page = await doc.getPage(p);
         if (cancelled) return;
         const rotation = normalizePdfRotation(page);
-        const key = `${gridTileWidth}:${zoom}:${pdfVersion}:${rotation}`;
+        const ratio = canvasPixelRatio();
+        const key = `${gridTileWidth}:${zoom}:${pdfVersion}:${rotation}:${ratio}`;
         const prevKey = gridRenderedKeyRef.current.get(p);
         if (prevKey === key) return;
 
@@ -1637,11 +1821,10 @@ export function PdfJsViewer({
         const viewport = page.getViewport({ scale: Math.max(0.1, fitScale * zoom), rotation });
         const context = canvas.getContext("2d");
         if (!context) return;
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
+        const transform = sizeCanvasForViewport(canvas, viewport, ratio);
         context.setTransform(1, 0, 0, 1, 0, 0);
         context.clearRect(0, 0, canvas.width, canvas.height);
-        const renderTask = page.render({ canvasContext: context, viewport }) as unknown as {
+        const renderTask = page.render({ canvasContext: context, viewport, transform }) as unknown as {
           cancel?: () => void;
           promise: Promise<unknown>;
         };
@@ -1716,7 +1899,7 @@ export function PdfJsViewer({
     return () => {
       cancelled = true;
     };
-  }, [hasFirstPaint, shareIdSafe]);
+  }, [hasFirstPaint, shareIdSafe, reportKey]);
 
   useEffect(() => {
     numPagesRef.current = numPages;
@@ -1819,7 +2002,7 @@ export function PdfJsViewer({
     // Gated on the visit, not on the browser. The server's unique (shareId, botIdHash) index is
     // what stops a repeat view being counted twice, so this gate only saves a request — and paying
     // for it with a missing `ShareVisit` row on every return visit was a bad trade.
-    const reported = readVisitReported(shareIdSafe);
+    const reported = readVisitReported(reportKey ?? shareIdSafe);
     if (!reported.loaded || !reported.pages.has(pageNumber)) {
       scheduleAfterPaint(() => {
         const payload = buildSeenPayload({ botId, visitId, pageNumber, numPages: numPagesRef.current });
@@ -1831,7 +2014,7 @@ export function PdfJsViewer({
         }).catch(() => void 0);
       });
       reported.pages.add(pageNumber);
-      writeVisitReported(shareIdSafe, { loaded: true, pages: reported.pages });
+      writeVisitReported(reportKey ?? shareIdSafe, { loaded: true, pages: reported.pages });
       // Kept for anything still reading it; it no longer gates a request.
       const local = readLocalShareStats(shareIdSafe);
       const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
@@ -1855,7 +2038,7 @@ export function PdfJsViewer({
     // Per visit, for the same reason as the load POST above: a `ShareVisit` row's `pagesSeen` is
     // what "which pages did they read this time" is built from, and gating on a browser-lifetime
     // record meant a returning reader's second visit recorded no pages they had seen before.
-    const reported = readVisitReported(shareIdSafe);
+    const reported = readVisitReported(reportKey ?? shareIdSafe);
     if (reported.pages.has(pageNumber)) return;
 
     scheduleAfterPaint(() => {
@@ -1869,7 +2052,7 @@ export function PdfJsViewer({
     });
 
     reported.pages.add(pageNumber);
-    writeVisitReported(shareIdSafe, { loaded: true, pages: reported.pages });
+    writeVisitReported(reportKey ?? shareIdSafe, { loaded: true, pages: reported.pages });
     const local = readLocalShareStats(shareIdSafe);
     const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
     pagesSeen.add(pageNumber);
@@ -1887,7 +2070,28 @@ export function PdfJsViewer({
       {/* Top bar (fixed layout; does not overlay PDF) */}
       <BrandHeader
         ref={headerRef}
+        workspace={workspace}
         left={
+          <>
+            {backHref ? (
+              /* Built like the button groups either side of it — a `p-1.5` shell around an `h-8`
+                 row — rather than as a plain `h-9` pill. Every other control on this bar is 46px
+                 tall by that arithmetic (32 + 12 padding + 2 border) and this one was 36, which
+                 reads as a mistake next to them. Stating the height directly would work until
+                 somebody changes the shell padding; sharing the recipe is what keeps them equal.
+                 The hover fill moves inside the border for the same reason: that is where
+                 Summary's is. */
+              <a
+                href={backHref}
+                className="inline-flex min-w-0 shrink-0 items-center rounded-2xl border border-white/10 bg-white/5 p-1.5 text-white/80 transition-colors hover:text-white"
+                title={backLabel ? `Back to ${backLabel}` : "Back"}
+              >
+                <span className="inline-flex h-8 min-w-0 items-center gap-1.5 rounded-xl px-3 text-xs font-medium hover:bg-white/10">
+                  <span aria-hidden="true">←</span>
+                  <span className="max-w-[160px] truncate">{backLabel || "Back"}</span>
+                </span>
+              </a>
+            ) : null}
               <div className="inline-flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-1.5">
                 <button
                   type="button"
@@ -1923,6 +2127,7 @@ export function PdfJsViewer({
 
                 {/* Intentionally no share-context badge here; share links are self-evident. */}
               </div>
+          </>
         }
       >
             {/* Right */}
@@ -2063,12 +2268,7 @@ export function PdfJsViewer({
                     <button
                       type="button"
                       className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
-                      onClick={() => {
-                        setIntroError(null);
-                        setIntroName(viewerProfile?.name ?? "");
-                        setIntroEmail(viewerProfile?.email ?? "");
-                        setIntroOpen(true);
-                      }}
+                      onClick={openIntro}
                       title="Edit how you appear to the document owner"
                     >
                       Viewing as{" "}
@@ -2080,12 +2280,7 @@ export function PdfJsViewer({
                     <button
                       type="button"
                       className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
-                      onClick={() => {
-                        setIntroError(null);
-                        setIntroName("");
-                        setIntroEmail("");
-                        setIntroOpen(true);
-                      }}
+                      onClick={openIntro}
                       title="Tell the owner who you are"
                     >
                       Introduce yourself
@@ -2188,12 +2383,7 @@ export function PdfJsViewer({
                     {shareIdSafe && !shareContext?.isOwner ? (
                       <button
                         type="button"
-                        onClick={() => {
-                          setIntroError(null);
-                          setIntroName(viewerProfile?.name ?? "");
-                          setIntroEmail(viewerProfile?.email ?? "");
-                          setIntroOpen(true);
-                        }}
+                        onClick={openIntro}
                         className="rounded-xl px-2.5 py-2.5 text-left text-sm font-medium text-white/90 hover:bg-white/10"
                       >
                         {viewerProfile?.name || viewerProfile?.email
@@ -2213,7 +2403,7 @@ export function PdfJsViewer({
                   >
                     Download PDF
                   </a>
-                ) : (
+                ) : canRequestDownload ? (
                   <button
                     type="button"
                     className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
@@ -2226,7 +2416,7 @@ export function PdfJsViewer({
                   >
                     Download PDF
                   </button>
-                )
+                ) : null
               ) : null}
             </div>
       </BrandHeader>
@@ -2403,11 +2593,60 @@ export function PdfJsViewer({
           if (introBusy) return;
           setIntroOpen(false);
           setIntroError(null);
+          setIntroSaved(null);
         }}
         ariaLabel="Introduce yourself"
         panelClassName="w-[min(680px,calc(100vw-32px))] border-white/15 bg-black/95 text-white ring-white/15"
         contentClassName="px-6 pb-6 pt-5"
       >
+        {introSaved ? (
+          <>
+            <div className="pr-10">
+              <div className="text-base font-semibold text-white">Thank you</div>
+              <div className="mt-2 text-sm leading-6 text-white/70">
+                The owner of this document can see who is reading it now. The pages you open and how
+                long you spend on them are attributed to you from here.
+              </div>
+            </div>
+
+            {/* The same row the form previewed, now as fact. "Saved" on its own does not tell them
+                which of the two fields the owner actually sees. */}
+            <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">You show up as</div>
+              <div className="mt-2.5 flex items-center gap-3">
+                <span
+                  aria-hidden="true"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white text-[13px] font-semibold text-black"
+                >
+                  {(introSaved.name ?? introSaved.email).trim().charAt(0).toUpperCase()}
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-white">{introSaved.name || introSaved.email}</div>
+                  {introSaved.name ? <div className="truncate text-xs text-white/50">{introSaved.email}</div> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 text-xs leading-5 text-white/55">
+              You can change it or clear it any time from &ldquo;Viewing as&rdquo; in the toolbar.
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setIntroOpen(false);
+                  setIntroError(null);
+                  setIntroSaved(null);
+                }}
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black hover:bg-white/90"
+              >
+                Back to the document
+              </button>
+            </div>
+          </>
+        ) : (
+        <>
         {/*
           Why a viewer would bother: the owner sees who each visit belongs to, and an anonymous visit
           is only a number in their analytics — there is nobody to reply to. The preview below shows
@@ -2437,7 +2676,7 @@ export function PdfJsViewer({
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-white">{introPreviewName || "Anonymous viewer"}</div>
               <div className="truncate text-xs text-white/50">
-                {introPreviewEmail || "No name, no email — just another view on the chart"}
+                {introPreviewEmail || "No name, no email: just another view on the chart"}
               </div>
             </div>
           </div>
@@ -2531,7 +2770,7 @@ export function PdfJsViewer({
                 className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"
                 disabled={introBusy}
                 onClick={() => {
-                  clearShareViewerProfile();
+                  clearShareViewerProfile(viewerProfileScope);
                   setViewerProfile(null);
                   setIntroName("");
                   setIntroEmail("");
@@ -2594,8 +2833,8 @@ export function PdfJsViewer({
                 setIntroError(null);
 
                 // Persist locally immediately (best-effort).
-                writeShareViewerProfile({ name, email });
-                const stored = readShareViewerProfile();
+                writeShareViewerProfile(viewerProfileScope, { name, email });
+                const stored = readShareViewerProfile(viewerProfileScope);
                 setViewerProfile(stored);
 
                 // Best-effort: persist to server so owner metrics show it.
@@ -2606,7 +2845,16 @@ export function PdfJsViewer({
                     if (!botId) return;
                     const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareIdSafe);
                     if (visitId) shareVisitIdRef.current = visitId;
-                    const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), viewerEmail: email };
+                    // `introduced` marks *this* post as the act of introducing, as opposed to the
+                    // heartbeats that follow, every one of which replays the same stored profile.
+                    // The server still decides whether it is news; this only tells it when to ask,
+                    // so the check costs nothing on the hot path.
+                    const payload: Record<string, unknown> = {
+                      botId,
+                      ...(visitId ? { visitId } : {}),
+                      viewerEmail: email,
+                      introduced: true,
+                    };
                     if (name) payload.viewerName = name;
                     await fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
                       method: "POST",
@@ -2617,7 +2865,7 @@ export function PdfJsViewer({
                     // ignore (best-effort)
                   } finally {
                     setIntroBusy(false);
-                    setIntroOpen(false);
+                    setIntroSaved({ name: name || null, email });
                   }
                 })();
               }}
@@ -2626,6 +2874,8 @@ export function PdfJsViewer({
             </button>
           </div>
         </div>
+        </>
+        )}
       </Modal>
 
       <Modal
@@ -2889,9 +3139,14 @@ export function PdfJsViewer({
               onError={() => setNativePdfError("Failed to load PDF in native viewer.")}
             />
             <div className="pointer-events-none absolute left-0 right-0 bottom-0 z-20 p-4">
+              {/* This banner is shown to recipients in production, not to us in dev. It used to say
+                  "pdf.js failed in dev" and offer "Try pdf.js again": a stranger who opened a link
+                  was handed the name of a library they have never heard of and a claim about an
+                  environment they are not in. The document is readable, which is the only thing
+                  they need told — plus a way back, because this fallback is often a one-off. */}
               <div className="inline-flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/80 backdrop-blur-sm">
-                <span className="font-semibold text-white/90">Viewer fallback</span>
-                <span>Using the browser’s native PDF viewer (pdf.js failed in dev).</span>
+                <span className="font-semibold text-white/90">Simplified view</span>
+                <span>This document is open in your browser’s own PDF viewer, so some controls are unavailable.</span>
                 <a
                   className="pointer-events-auto ml-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 font-semibold text-white/90 hover:bg-black/30"
                   href={url}
@@ -2908,7 +3163,7 @@ export function PdfJsViewer({
                     setReloadKey((k) => k + 1);
                   }}
                 >
-                  Try pdf.js again
+                  Try the full viewer
                 </button>
               </div>
             </div>

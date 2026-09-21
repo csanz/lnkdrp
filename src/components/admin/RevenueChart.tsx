@@ -12,7 +12,11 @@ import { Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts"
 import { fmtMoney, type RevenueDay } from "@/lib/admin/revenue";
 
 const PACK_COLOR = "var(--chart-views)";
-const ON_DEMAND_COLOR = "color-mix(in srgb, var(--chart-views) 45%, var(--panel))";
+/* The second series used to be mixed toward `--panel`, i.e. defined in terms of the ground it is
+   drawn on, which caps its contrast by construction: 1.76:1 in light, 2.03:1 in dark, and at 30%
+   fill the band all but vanished while the tooltip insisted there were two. A categorical token
+   separates by hue instead of by a luminance step light cannot supply. */
+const ON_DEMAND_COLOR = "var(--chart-work-2)";
 
 /** At most seven dates under the plot, evenly picked, so 90 days stays readable. */
 function tickDays(days: RevenueDay[], max = 7): string[] {

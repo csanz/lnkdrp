@@ -10,11 +10,13 @@ import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
-import { newShareId } from "@/lib/crypto/randomBase62";
+import { newSecretToken, newShareId } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
 import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
 import { setAllProjectLinksEnabled } from "@/lib/share/projectLinks";
+import { removeAllTagsFromTarget } from "@/lib/tags/service";
+import { liveProjectByIdMatch } from "@/lib/projects/scope";
 
 export const runtime = "nodejs";
 
@@ -102,6 +104,42 @@ async function ensureUniqueProjectName(opts: { orgId: Types.ObjectId; legacyUser
 function newProjectShareId() {
   return newShareId();
 }
+
+/**
+ * A request repo's two capability links — `/r/:requestUploadToken` (upload here) and
+ * `/request-view/:requestViewToken` (read what was uploaded) — were mint-once and forever. Nothing
+ * in the app, the MCP server or the admin area could replace a live one: every write either
+ * created a fresh row or back-filled an empty slot behind an `$exists:false` guard. So once a
+ * recipient forwarded the link, or it fell out of an email thread, the owner had no move left —
+ * not even deleting the repo, because the public readers did not check `isDeleted` either (fixed
+ * in the same pass, see the token lookups under src/app/r and src/app/request-view).
+ *
+ * Rotation is the fix rather than revocation-to-null, and deliberately so:
+ *  - a fresh token cuts off *every* holder of the old one the instant it is written, which is
+ *    exactly the "make the leaked link stop working" the owner needs;
+ *  - the repo keeps working. `Project`'s pre-validate invariant requires a request repo to carry a
+ *    `requestUploadToken`, and `GET /api/requests` finds repos by `isRequest` **or** that token, so
+ *    nulling it would either invalidate the row or make the repo vanish from its owner's own list.
+ *    Degrading to a new link beats refusing to have one.
+ *
+ * Same length and alphabet as the original mint in `POST /api/requests` (32 base62 chars).
+ */
+function newRequestToken() {
+  return newSecretToken(32);
+}
+
+/** Which of a request repo's two capability tokens a PATCH asked us to replace. */
+type RequestTokenRotation = "upload" | "view" | "both";
+
+/**
+ * Read `{ rotateRequestTokens }` off the body. Anything that is not one of the three known words —
+ * including `true`, which an over-eager client might send — is treated as "not asked for", so a
+ * typo can never silently rotate the wrong token or half of a pair.
+ */
+function parseRequestTokenRotation(raw: unknown): RequestTokenRotation | null {
+  if (raw === "upload" || raw === "view" || raw === "both") return raw;
+  return null;
+}
 /**
  * Escape Regex (uses replace).
  */
@@ -138,11 +176,20 @@ export async function PATCH(
       requestReviewPrompt: string;
       requestRequireAuthToUpload: boolean;
       shareEnabled: boolean;
+      rotateRequestTokens: RequestTokenRotation;
     }>;
 
     // `{ shareEnabled }` on its own is a visibility toggle: it must not require or overwrite the
     // name/description/autoAddFiles the full settings form sends.
     const shareOnly = body.name === undefined && typeof body.shareEnabled === "boolean";
+    const rotateRequestTokens = parseRequestTokenRotation(body.rotateRequestTokens);
+    // `{ rotateRequestTokens }` on its own is the same shape of partial update as `shareOnly`:
+    // "cut off the leaked link" is an emergency button, not the settings form, and it must not be
+    // made to carry a name it does not have. Without this the rotate call fell into the
+    // "Project name is required" 400 below and there was no way to reach the new code at all.
+    const rotateOnly = body.name === undefined && typeof body.shareEnabled !== "boolean" && rotateRequestTokens !== null;
+    // Both partial shapes skip the settings half of this handler.
+    const omitsSettings = shareOnly || rotateOnly;
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const description = typeof body.description === "string" ? body.description.trim() : "";
     const autoAddFiles = typeof body.autoAddFiles === "boolean" ? body.autoAddFiles : false;
@@ -152,7 +199,7 @@ export async function PATCH(
       typeof body.requestReviewPrompt === "string" ? body.requestReviewPrompt.trim() : "";
     const requestRequireAuthToUploadRaw =
       typeof body.requestRequireAuthToUpload === "boolean" ? body.requestRequireAuthToUpload : null;
-    if (!shareOnly && !name) return NextResponse.json({ error: "Project name is required" }, { status: 400 });
+    if (!omitsSettings && !name) return NextResponse.json({ error: "Project name is required" }, { status: 400 });
     if (name.length > MAX_PROJECT_NAME_LENGTH) {
       return NextResponse.json(
         { error: `Project name must be ${MAX_PROJECT_NAME_LENGTH} characters or less` },
@@ -169,18 +216,7 @@ export async function PATCH(
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
     const project = await ProjectModel.findOne(
-      allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: new Types.ObjectId(projectIdParam), orgId },
-              {
-                _id: new Types.ObjectId(projectIdParam),
-                userId: legacyUserId,
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: new Types.ObjectId(projectIdParam), orgId },
+      liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId),
     );
     if (!project) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -189,12 +225,12 @@ export async function PATCH(
     if (typeof body.shareEnabled === "boolean") {
       (project as unknown as { shareEnabled?: boolean }).shareEnabled = body.shareEnabled;
     }
-    if (!shareOnly && project.orgId && name.toLowerCase() !== String(project.name ?? "").toLowerCase()) {
+    if (!omitsSettings && project.orgId && name.toLowerCase() !== String(project.name ?? "").toLowerCase()) {
       if (await projectNameTaken(project.orgId as Types.ObjectId, name, project._id)) {
         return NextResponse.json({ error: "A project with that name already exists" }, { status: 409 });
       }
     }
-    if (!shareOnly) {
+    if (!omitsSettings) {
       project.name = name;
       // Only fields the caller sent: a rename alone used to reset description to "" and
       // autoAddFiles to false.
@@ -202,7 +238,7 @@ export async function PATCH(
       if (typeof body.autoAddFiles === "boolean") project.autoAddFiles = autoAddFiles;
     }
     const isRequest = Boolean((project as unknown as { isRequest?: unknown }).isRequest);
-    if (isRequest && !shareOnly) {
+    if (isRequest && !omitsSettings) {
       debugLog(1, "[api/projects/:id] PATCH request review settings", {
         projectId: projectIdParam,
         requestReviewEnabled,
@@ -216,9 +252,36 @@ export async function PATCH(
           requestRequireAuthToUploadRaw;
       }
     }
+    // Rotate the request repo's capability tokens. See `newRequestToken` for why this exists and
+    // why it is a rotation rather than a revocation. Order matters: this runs *after* the settings
+    // block and before `save()`, so one PATCH can turn "require sign-in to upload" on and cut the
+    // old link in the same write rather than leaving a window between two requests.
+    const rotatedTokens: Array<"upload" | "view"> = [];
+    if (rotateRequestTokens) {
+      if (!isRequest) {
+        // Nothing to rotate, and silently succeeding would tell the caller a leaked link was cut
+        // when no such link exists. This is the one place refusing beats degrading.
+        return applyTempUserHeaders(
+          NextResponse.json({ error: "This project is not a request repository" }, { status: 400 }),
+          actor,
+        );
+      }
+      if (rotateRequestTokens === "upload" || rotateRequestTokens === "both") {
+        (project as unknown as { requestUploadToken?: string }).requestUploadToken = newRequestToken();
+        rotatedTokens.push("upload");
+      }
+      if (rotateRequestTokens === "view" || rotateRequestTokens === "both") {
+        (project as unknown as { requestViewToken?: string }).requestViewToken = newRequestToken();
+        rotatedTokens.push("view");
+      }
+      debugLog(1, "[api/projects/:id] PATCH rotate request tokens", {
+        projectId: projectIdParam,
+        rotated: rotatedTokens,
+      });
+    }
     // A public page switched in the same save as a rename belongs in this row too; a switch on its
     // own is the share.updated row below.
-    const changedFields = shareOnly
+    const changedFields = omitsSettings
       ? []
       : (["name", "description", "autoAddFiles", "shareEnabled"] as const).filter((f) => project.isModified(f));
     await project.save();
@@ -262,6 +325,23 @@ export async function PATCH(
         request,
       });
     }
+    if (rotatedTokens.length) {
+      // Cutting off everyone who holds a link is exactly the kind of thing the owner will later
+      // want to find in the feed ("when did that link stop working, and who did it?"). Reuses
+      // `share.updated` with a project and no doc — the same row shape the project share switch
+      // writes, which `src/lib/activity/labels.ts` already renders as "updated sharing for
+      // project X". The token values are never written to the feed.
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: "share.updated",
+        projectId: project._id,
+        title: project.name ?? null,
+        meta: { scope: "requestTokens", rotated: rotatedTokens },
+        request,
+      });
+    }
     if (isRequest) {
       debugLog(1, "[api/projects/:id] PATCH request review saved", {
         projectId: projectIdParam,
@@ -294,7 +374,13 @@ export async function PATCH(
           isRequest,
           request: isRequest
             ? {
+                // Already the *new* link after a rotation — this is read off the saved document,
+                // and the owner is the only one who ever sees this response.
                 uploadPath: requestUploadPath,
+                // Which tokens this call replaced, so the caller can say "the old link no longer
+                // works" without guessing. Never the token values themselves for the view link:
+                // the app reads that back from `GET /api/projects/:id/docs`, as it did before.
+                tokensRotated: rotatedTokens,
                 requireAuthToUpload: Boolean(
                   (project as unknown as { requestRequireAuthToUpload?: unknown }).requestRequireAuthToUpload,
                 ),
@@ -382,18 +468,7 @@ export async function DELETE(
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
     const project = await ProjectModel.findOne(
-      allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: new Types.ObjectId(projectIdParam), orgId },
-              {
-                _id: new Types.ObjectId(projectIdParam),
-                userId: legacyUserId,
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: new Types.ObjectId(projectIdParam), orgId },
+      liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId),
     );
     if (!project) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -550,6 +625,10 @@ export async function DELETE(
     }
 
     await ProjectModel.deleteOne({ _id: projectId, ...docTenant });
+
+    // The project row is gone for good (this delete is not a soft one), so its tag assignments
+    // have nothing left to point at (src/lib/tags/service.ts).
+    void removeAllTagsFromTarget({ orgId: actor.orgId, targetKind: "project", targetId: projectId }).catch(() => {});
     void recordActivity({
       orgId: actor.orgId,
       userId: actor.userId,

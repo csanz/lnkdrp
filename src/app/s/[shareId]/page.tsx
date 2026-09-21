@@ -11,6 +11,7 @@ import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "./PasswordGate";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { buildShareMetadata } from "@/lib/share/shareMetadata";
+import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -118,16 +119,14 @@ export async function generateMetadata(props: {
     meta.title || og.title || (typeof doc?.title === "string" ? doc.title : "") || "Shared document";
   const description = meta.description || og.description || "Shared with LinkDrop.";
 
-  // Prefer the doc preview thumbnail (if it's a real URL). `buildShareMetadata` falls back to the
-  // site default OG image for anything it cannot use.
-  const previewCandidate =
-    (typeof (doc as { previewImageUrl?: unknown })?.previewImageUrl === "string" &&
-      (doc as { previewImageUrl: string }).previewImageUrl) ||
-    (typeof (doc as { firstPagePngUrl?: unknown })?.firstPagePngUrl === "string" &&
-      (doc as { firstPagePngUrl: string }).firstPagePngUrl) ||
-    null;
-
-  return buildShareMetadata({ title, description, previewUrl: previewCandidate });
+  // The preview goes out through our own proxy, never as the blob's own URL.
+  //
+  // This used to publish `doc.previewImageUrl` verbatim, which is the storage URL and carries the
+  // document id and upload id in its path — so the unfurl card in every Slack channel and mailbox a
+  // link was forwarded to disclosed both, to anyone who saw the message rather than only to whoever
+  // opened the link. `/s/:shareId/og.png` re-serves the same bytes from this origin and applies the
+  // same refusal and password gates the page does, so a revoked link stops unfurling too.
+  return buildShareMetadata({ title, description, previewUrl: `/s/${shareId}/og.png` });
 }
 
 /**
@@ -148,6 +147,8 @@ export default async function SharePage(props: {
     select: {
       title: 1,
       blobUrl: 1,
+      // The workspace behind the link, so the header can say who shared this.
+      orgId: 1,
       // Perf: only fetch receiver-facing AI snapshot fields (avoid huge aiOutput JSON).
       "aiOutput.one_liner": 1,
       "aiOutput.core_problem_or_need": 1,
@@ -170,12 +171,27 @@ export default async function SharePage(props: {
   if (!resolved || resolved.refusal) notFound();
   const { link, doc } = resolved;
 
-  const previewUrl =
-    typeof doc.previewImageUrl === "string"
-      ? doc.previewImageUrl
-      : typeof doc.firstPagePngUrl === "string"
-        ? doc.firstPagePngUrl
-        : null;
+  // Who this is from. Read once, used on every branch below — the gate included, which is the one
+  // page a recipient sees that says nothing else about what they are being shown.
+  const docOrgId = (doc as { orgId?: unknown }).orgId;
+  const workspace = await workspaceBrandForOrg(typeof docOrgId === "undefined" || docOrgId === null ? null : String(docOrgId));
+
+  /**
+   * Whether there is a preview, not where it lives.
+   *
+   * This used to be the stored value, rendered as `<img src>` — a Vercel Blob URL on a public,
+   * unauthenticated CDN. The recipient walked away with a permanent copy of the first page, and
+   * with the document and upload ids, which are in the path; every other artifact the pipeline
+   * writes hangs off that same prefix, `extracted.txt` included. Nothing the owner did to the link
+   * afterwards could take any of it back.
+   *
+   * The bytes come through `/s/:shareId/preview` now, which re-proves this link's refusals and its
+   * password before serving anything. The same change was made on the data-room side first.
+   */
+  const hasPreview =
+    Boolean(typeof doc.previewImageUrl === "string" ? doc.previewImageUrl.trim() : "") ||
+    Boolean(typeof doc.firstPagePngUrl === "string" ? doc.firstPagePngUrl.trim() : "");
+  const previewUrl = hasPreview ? `/s/${encodeURIComponent(shareId)}/preview` : null;
 
   const sharePasswordHash = link.passwordHash;
   const sharePasswordSalt = link.passwordSalt;
@@ -197,7 +213,7 @@ export default async function SharePage(props: {
       // rendered first page, which is the document. A gate that shows a deck's title and its cover
       // slide to anyone holding the URL has already given away most of what the password was set
       // to protect — and the sender chose a password precisely because the URL is not the secret.
-      return <PasswordGate shareId={shareId} title={null} previewUrl={null} />;
+      return <PasswordGate shareId={shareId} title={null} previewUrl={null} workspace={workspace} />;
     }
   }
 
@@ -220,6 +236,7 @@ export default async function SharePage(props: {
           downloadUrl={allowDownload ? `/s/${encodeURIComponent(shareId)}/pdf?download=1` : null}
           revisionHistoryEnabled={allowRevisionHistory}
           revisionHistoryUrl={allowRevisionHistory ? `/s/${encodeURIComponent(shareId)}/changes` : null}
+          workspace={workspace}
         />
       </main>
     );
@@ -228,7 +245,7 @@ export default async function SharePage(props: {
   // Fallback if we don't have a PDF URL yet (older docs / processing).
   return (
     <main className="min-h-screen bg-black text-white" style={{ backgroundColor: "#000", color: "#fff" }}>
-      <BrandHeader />
+      <BrandHeader workspace={workspace} />
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
         <div className="text-lg font-semibold tracking-tight text-white/90">Shared document</div>
         <div className="mt-2 text-sm text-white/70">

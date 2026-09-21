@@ -30,14 +30,19 @@ type UsageDailyResponse = {
 type Metric = "credits" | "spend";
 type Grouping = "model" | "total";
 
+/* One array feeds both the stacked bars and the legend, so a colour that fails takes its swatch
+   with it. These were dark-tuned 400/500-level hues — sky-400 measured 2.14:1 on the white panel
+   and the slate-200 tail 1.31:1, i.e. a stack segment invisible against the card it sits on. The
+   app's per-theme ramps are the fix; the tail takes `--chart-actor-rest`, which is the de-emphasis
+   grey the activity donut already solved this exact slot with. */
 const COLORS = [
-  "rgb(148 163 184)", // slate
-  "rgb(56 189 248)", // sky
-  "rgb(16 185 129)", // emerald
-  "rgb(168 85 247)", // violet
-  "rgb(251 146 60)", // orange
-  "rgb(34 197 94)", // green
-  "rgb(203 213 225)", // slate light
+  "var(--chart-actor-1)",
+  "var(--chart-work-5)",
+  "var(--chart-views)",
+  "var(--chart-work-2)",
+  "var(--chart-work-3)",
+  "var(--chart-downloads)",
+  "var(--chart-actor-rest)",
 ];
 
 function niceNumber(v: unknown): number {
@@ -177,7 +182,7 @@ export default function DailyUsageChart({
   }, [chartData, group, keys]);
 
   return (
-    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6", className)}>
+    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6", className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">Daily usage</div>

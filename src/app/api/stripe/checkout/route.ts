@@ -31,6 +31,8 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
 import { isBillableSubscription } from "@/lib/billing/subscriptionState";
 import { ensureWorkspaceStripeCustomer } from "@/lib/billing/workspaceCustomer";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
+import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 
 export const runtime = "nodejs";
 
@@ -75,6 +77,23 @@ export async function POST(request: Request) {
       }
       if (!Types.ObjectId.isValid(actor.orgId)) {
         return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+      }
+
+      /**
+       * Starting a subscription is a billing action, like managing or cancelling one.
+       *
+       * The role rule was applied to the portal, the manage route and invoices and stopped at this
+       * sibling, which is the one that actually commits the workspace to a charge: any member —
+       * a viewer included — could open Checkout and put the owner's workspace on a paid plan.
+       */
+      const keyForbidden = forbidApiKey(actor, "start a subscription");
+      if (keyForbidden) return keyForbidden;
+      const role = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "admin" });
+      if (!role.ok) {
+        return NextResponse.json(
+          { error: "Only an owner or admin can start a subscription for this workspace." },
+          { status: 403 },
+        );
       }
 
       const body = (await request.json().catch(() => null)) as { plan?: unknown } | null;

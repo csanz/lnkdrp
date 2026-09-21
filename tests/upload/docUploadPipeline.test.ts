@@ -43,7 +43,7 @@ describe("docUploadPipeline.startBlobUploadAndProcess", () => {
 
   it("happy path: uploads to Blob, PATCHes upload record, triggers processing, then notifies docs changed", async () => {
     blobUploadMock.mockResolvedValueOnce({
-      url: "https://blob.example/test.pdf",
+      url: "https://store123.public.blob.vercel-storage.com/test.pdf",
       pathname: "docs/doc1/uploads/u1/ts-test.pdf",
     });
     fetchJsonMock.mockResolvedValueOnce({ ok: true });
@@ -77,7 +77,7 @@ describe("docUploadPipeline.startBlobUploadAndProcess", () => {
       }),
     );
     expect(fetchJsonMock.mock.calls[0]?.[1]?.body).toContain("\"status\":\"uploaded\"");
-    expect(fetchJsonMock.mock.calls[0]?.[1]?.body).toContain("https://blob.example/test.pdf");
+    expect(fetchJsonMock.mock.calls[0]?.[1]?.body).toContain("https://store123.public.blob.vercel-storage.com/test.pdf");
 
     expect(fetchWithTempUserMock).toHaveBeenCalledTimes(1);
     expect(fetchWithTempUserMock).toHaveBeenCalledWith("/api/uploads/u1/process", { method: "POST" });

@@ -68,6 +68,9 @@ import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPl
 import { PROJECT_LINK_FILTER, ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { toShareLinkDTO } from "@/lib/share/links";
 import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
+import { ProjectModel } from "@/lib/models/Project";
+import { projectLinkMetricsHref } from "@/lib/analytics/workspace/shape";
+import { splitProjectViewerKey, viewerKeyMatchClause } from "@/lib/share/projectPublic";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   shareIdClause,
@@ -187,6 +190,30 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const shareIdFilter = (url.searchParams.get("shareId") ?? "").trim();
       const wantsViewers = url.searchParams.get("viewers") === "1";
       const viewersOnly = url.searchParams.get("viewersOnly") === "1";
+      /**
+       * One reader, by the key their page is addressed with.
+       *
+       * The reader page used to fetch the whole viewer list and pick its row out in the browser.
+       * Both lists are capped at 100, so past a hundred readers in the window the hundred-and-first
+       * person's permalink rendered "No reader by that id in this window" — indistinguishable from
+       * a bad link, on a page that exists. It also pulled tens of kilobytes to render one row.
+       *
+       * Both filters match on the same fields the aggregates already group by, so they narrow the
+       * existing pipelines rather than adding a query shape.
+       */
+      const viewerUserIdParam = (url.searchParams.get("viewerUserId") ?? "").trim();
+      const viewerBotIdHashParam = (url.searchParams.get("botIdHash") ?? "").trim();
+      const oneViewerMatch: Record<string, unknown> | null = viewerUserIdParam
+        ? Types.ObjectId.isValid(viewerUserIdParam)
+          ? { viewerUserId: new Types.ObjectId(viewerUserIdParam) }
+          : // Not an id at all: match nothing. `viewerUserId: null` would have meant "the rows with
+            // no signed-in user", which is every anonymous reader — so a malformed key in the URL
+            // answered with somebody else's reading.
+            { viewerUserId: { $in: [] } }
+        : viewerBotIdHashParam
+          ? // A project link stores `<digest>.<docId>`, so the person is a prefix, not an equality.
+            { $or: viewerKeyMatchClause(viewerBotIdHashParam) }
+          : null;
 
       await connectMongo();
 
@@ -241,11 +268,29 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // used to go through `listShareLinks`, which lists every link of the document *and* runs
       // `ensureDefaultLink` — i.e. a read-only analytics GET could create a share link and update
       // the document as a side effect, twelve times over on a twelve-link metrics page.
+      //
+      // `archivedAt: null` because deleting a link soft-archives the row. Without it a deleted link
+      // was still found and served, and the answer was a success: `perLink: true` with a window of
+      // zeroes, which reads as "this link exists and nobody opened it" rather than "this link is
+      // gone". An agent asked how a revoked link performed reported no traffic, confidently. The
+      // shareId-only form already refused it; this is the form the tool description recommends for
+      // a non-default link, so it was the one most likely to be asked.
       const link = shareIdFilter
-        ? await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId }).lean<ShareLink>()
+        ? await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId, archivedAt: null }).lean<ShareLink>()
         : null;
       if (shareIdFilter && !link) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+        // Separate the two 404s: a slug that was never on this document, and one that was deleted.
+        // Only the second is something the caller can act on ("it existed; it is gone").
+        const deleted = await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId })
+          .select({ _id: 1 })
+          .lean();
+        return applyTempUserHeaders(
+          NextResponse.json(
+            { error: deleted ? "Link deleted" : "Not found", ...(deleted ? { deleted: true } : {}) },
+            { status: 404 },
+          ),
+          actor,
+        );
       }
       /**
        * The slugs `{ docId }` matches that are **not** this document's links.
@@ -627,7 +672,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         ? await Promise.all([
             ShareViewModel.aggregate([
               // Same window as `viewerCount`: people active in `days`, last seen by real view activity.
-              { $match: { ...scopeMatch, viewerUserId: { $ne: null }, ...activityWindowMatch(start) } },
+              {
+                $match: {
+                  ...scopeMatch,
+                  viewerUserId: { $ne: null },
+                  ...activityWindowMatch(start),
+                  // `?viewerUserId=` / `?botIdHash=`: one reader, for their own page. Through
+                  // `$and`, so it narrows this match rather than replacing a key it shares.
+                  ...(oneViewerMatch ? { $and: [oneViewerMatch] } : {}),
+                },
+              },
               // Ensure we pick the most recent denormalized viewerName/email snapshots.
               { $sort: { updatedDate: -1 } },
               {
@@ -692,8 +746,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               {
                 $match: {
                   ...scopeMatch,
-                  // `activityWindowMatch` is itself an `$or`, so the two conditions go through `$and`.
-                  $and: [{ $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] }, activityWindowMatch(start)],
+                  // `activityWindowMatch` is itself an `$or`, so the conditions go through `$and`.
+                  // So does the single-reader filter, whose anonymous form is an `$or` over the
+                  // bare digest and the `<digest>.<docId>` composite a project link writes.
+                  $and: [
+                    { $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] },
+                    activityWindowMatch(start),
+                    ...(oneViewerMatch ? [oneViewerMatch] : []),
+                  ],
                 },
               },
               { $sort: { updatedDate: -1 } },
@@ -865,6 +925,188 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         }
       }
 
+      /**
+       * Traffic this document earned inside a project link — the data room's front door, one slug
+       * for every document in it.
+       *
+       * `scopeMatch` excludes these rows on purpose: a project link has no `docId`, so letting them
+       * into the document's totals made them render as "Deleted link" and made three surfaces
+       * disagree. But a reader asking "who read this document" was then told nobody, while the
+       * activity feed showed a named person reading it minutes earlier. So the rows are reported
+       * here instead: their own section, their own figures, never folded into `totals`.
+       *
+       * Identities follow the same rule as the rest of the page: on Basic the projection never asks
+       * for a name, so a Free workspace gets the counts and the grouping and no identity at all.
+       */
+      /**
+       * Skipped when the page is scoped to one of the document's own links: "traffic that came
+       * through a project link" is not a fact about the link the reader selected, and rendering it
+       * there answers a question nobody asked.
+       *
+       * Wrapped in its own catch for the reason the identity block above is: these are three new
+       * queries inside the route's single big try, and a failure in any of them used to turn a
+       * document metrics page that had always rendered into a 400. A missing section degrades; a
+       * 400 does not.
+       */
+      // Skipped for a single-reader request: that page renders one person, never the document's
+      // project traffic, and this is three aggregations to build it.
+      const projectLinkTraffic = foreignShareIds.length && !link && !oneViewerMatch
+        ? await (async () => {
+            const match = {
+              docId: docObjectId,
+              shareId: { $in: foreignShareIds },
+              ...RECIPIENT_ONLY_MATCH,
+              ...activityWindowMatch(start),
+            };
+            const rows = (await ShareViewModel.aggregate([
+              { $match: match },
+              { $sort: { updatedDate: -1 } },
+              {
+                $group: {
+                  _id: { shareId: "$shareId", viewer: { $ifNull: ["$viewerUserId", "$botIdHash"] } },
+                  views: { $sum: 1 },
+                  lastSeen: { $max: LAST_ACTIVITY_EXPR },
+                  timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
+                  /**
+                   * How much of the document they reached, through the project's link.
+                   *
+                   * Without it the UI judges a visit by its total alone, and 58 seconds spread
+                   * across nine pages reads like a minute spent on one — a skim labelled as a
+                   * read. Distinct pages, because a reader who returns to page 3 has not seen a
+                   * fourth page.
+                   */
+                  pagesSeen: { $addToSet: "$pagesSeen" },
+                  /**
+                   * Who this is, in the form the project's own reader page is addressed by.
+                   *
+                   * Without it the only thing a row could link to was the project's metrics index
+                   * — so clicking a person on this page took you to a list of everyone, which is
+                   * not what clicking a person means anywhere else in the app.
+                   */
+                  viewerUserId: { $first: "$viewerUserId" },
+                  ...(includeViewers
+                    ? {
+                        viewerName: { $first: "$viewerName" },
+                        viewerEmailSnapshot: { $first: "$viewerEmailSnapshot" },
+                        viewerEmail: { $first: "$viewerEmail" },
+                      }
+                    : {}),
+                },
+              },
+              { $sort: { lastSeen: -1 } },
+              { $limit: 200 },
+            ])) as Array<{
+              _id: { shareId: string; viewer: unknown };
+              views: number;
+              lastSeen?: Date | null;
+              timeSpentMs?: number;
+              /** `$addToSet` over an array field: an array of each row's `pagesSeen`. */
+              pagesSeen?: unknown[];
+              viewerName?: string | null;
+              viewerEmailSnapshot?: string | null;
+              viewerEmail?: string | null;
+              viewerUserId?: unknown;
+            }>;
+            if (!rows.length) return null;
+
+            const slugs = [...new Set(rows.map((r) => String(r._id.shareId)))];
+            const links = (await ShareLinkModel.find({ shareId: { $in: slugs } })
+              .select({ shareId: 1, label: 1, projectId: 1 })
+              .lean()) as Array<{ shareId: string; label?: string | null; projectId?: Types.ObjectId | null }>;
+            const projectIds = links.map((l) => l.projectId).filter(Boolean) as Types.ObjectId[];
+            const projects = projectIds.length
+              ? ((await ProjectModel.find({ _id: { $in: projectIds } }).select({ name: 1 }).lean()) as Array<{
+                  _id: Types.ObjectId;
+                  name?: string | null;
+                }>)
+              : [];
+            const projectById = new Map(projects.map((p) => [String(p._id), p.name ?? null]));
+            const linkBySlug = new Map(links.map((l) => [l.shareId, l]));
+
+            const groups = new Map<
+              string,
+              { shareId: string; label: string | null; projectId: string | null; projectName: string | null; href: string | null; views: number; viewers: number; lastViewedAt: string | null }
+            >();
+            const viewers: Array<Record<string, unknown>> = [];
+            for (const r of rows) {
+              const shareId = String(r._id.shareId);
+              const link = linkBySlug.get(shareId);
+              const projectId = link?.projectId ? String(link.projectId) : null;
+              const projectName = projectId ? projectById.get(projectId) ?? null : null;
+              const g = groups.get(shareId) ?? {
+                shareId,
+                label: link?.label ?? null,
+                projectId,
+                projectName,
+                href: projectId ? projectLinkMetricsHref(projectId, shareId) : null,
+                views: 0,
+                viewers: 0,
+                lastViewedAt: null,
+              };
+              g.views += r.views;
+              g.viewers += 1;
+              const seen = r.lastSeen ? new Date(r.lastSeen).toISOString() : null;
+              if (seen && (!g.lastViewedAt || seen > g.lastViewedAt)) g.lastViewedAt = seen;
+              groups.set(shareId, g);
+              // `$addToSet` over an array field gives an array of arrays; flatten and de-duplicate.
+              const pagesViewed = new Set<number>();
+              for (const group of (r.pagesSeen ?? []) as unknown[]) {
+                for (const page of Array.isArray(group) ? group : [group]) {
+                  const n = Number(page);
+                  if (Number.isFinite(n) && n >= 1) pagesViewed.add(Math.floor(n));
+                }
+              }
+              /**
+               * The project's address for this reader: `u_<userId>` signed in, `a_<digest>` not.
+               *
+               * A project-link row stores `botIdHash` as `<digest>.<docId>` (`projectViewerKey`)
+               * so three documents behind one link do not collide; the project's viewer page is
+               * keyed on the digest alone, so the suffix comes off here.
+               */
+              const viewerKey = r.viewerUserId
+                ? `u_${String(r.viewerUserId)}`
+                : (() => {
+                    const digest = splitProjectViewerKey(String(r._id.viewer ?? "")).botIdHash;
+                    return digest ? `a_${digest}` : null;
+                  })();
+
+              viewers.push({
+                shareId,
+                projectId,
+                projectName,
+                /**
+                 * This reader's key, so the page can tell that the person who read through the
+                 * project is the same person who later opened the document's own link. Both rows
+                 * carry the same digest — a project row just stores it with the document appended.
+                 */
+                viewerKey,
+                /** The pages themselves, not just how many: two reads merge by union, not by sum. */
+                pagesSeen: [...pagesViewed].sort((a, b) => a - b),
+                /** Where this person's reading is recorded — their page in that project. */
+                viewerHref: projectId && viewerKey ? `/project/${encodeURIComponent(projectId)}/metrics/viewer/${viewerKey}` : null,
+                views: r.views,
+                pagesViewed: pagesViewed.size,
+                timeSpentMs: Math.max(0, Math.floor(r.timeSpentMs ?? 0)),
+                lastViewedAt: seen,
+                ...(includeViewers
+                  ? {
+                      viewerName: r.viewerName ?? null,
+                      viewerEmail: r.viewerEmail ?? r.viewerEmailSnapshot ?? null,
+                    }
+                  : {}),
+              });
+            }
+            const list = [...groups.values()].sort((a, b) => b.views - a.views);
+            return {
+              views: list.reduce((n, g) => n + g.views, 0),
+              viewers: list.reduce((n, g) => n + g.viewers, 0),
+              links: list,
+              // Newest activity first, like the other viewer lists.
+              viewerRows: viewers.slice(0, 100),
+            };
+          })().catch(() => null)
+        : null;
+
       const res = NextResponse.json(
         {
         ok: true,
@@ -962,6 +1204,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
          * not a filter: the download numbers above are counted either way.
          */
         downloadsEnabled,
+        /**
+         * Views of this document that came through a project link, kept out of `totals` on purpose
+         * (see the comment where it is built). `null` when the document has no such traffic.
+         */
+        ...(projectLinkTraffic ? { projectLinkTraffic } : {}),
         ...(viewersOnly ? {} : { series }),
         // On Basic both viewer arrays are `[]` (the aggregates never run), which also omits the
         // per-viewer `pageTimeMsByPage` / `pagesSeen` maps.

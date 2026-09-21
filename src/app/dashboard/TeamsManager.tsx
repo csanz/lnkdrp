@@ -13,6 +13,8 @@ import {
   refreshOrgsCache,
 } from "@/lib/orgsCache";
 import { useNavigationLocked } from "@/app/providers";
+import Modal from "@/components/modals/Modal";
+import RemoveMemberModal from "@/components/modals/RemoveMemberModal";
 import Pill from "@/components/ui/Pill";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { planLimitPrompt } from "@/lib/client/planLimit";
@@ -40,6 +42,36 @@ function formatDate(s: string | null): string {
   const t = Date.parse(s);
   if (!Number.isFinite(t)) return "—";
   return new Date(t).toLocaleDateString();
+}
+
+type InviteCounts = { notUsed: number; used: number; expired: number; all: number };
+
+/**
+ * Read the Not used / Used / Expired / All counts out of `GET /api/org-invites`.
+ *
+ * The counts used to be derived here from the rows the page was handed, which is only right while
+ * the route returns every invite — it caps the list, so a workspace past the cap read tab labels
+ * that were short by however many invites were truncated. The route is being taught to count
+ * server-side; until it everywhere does, accept either shape (server counts when present, the old
+ * derivation otherwise) so neither version of the route puts a wrong number on a tab.
+ */
+function readServerInviteCounts(raw: unknown): InviteCounts | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const pick = (...keys: string[]): number | null => {
+    for (const k of keys) {
+      const v = o[k];
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) return Math.floor(v);
+    }
+    return null;
+  };
+  const notUsed = pick("notUsed", "not_used", "pending");
+  const used = pick("used", "redeemed");
+  const expired = pick("expired");
+  const all = pick("all", "total");
+  // Partial counts are worse than none: a mix of server and derived numbers would not add up.
+  if (notUsed === null || used === null || expired === null || all === null) return null;
+  return { notUsed, used, expired, all };
 }
 
 function isValidEmail(email: string): boolean {
@@ -95,6 +127,11 @@ export default function TeamsManager() {
   const [membersBusy, setMembersBusy] = useState(false);
   const [membersError, setMembersError] = useState<string | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
+  // The member the Remove button is asking about. A browser confirm() named nobody and said nothing
+  // about what removal does; this carries the row so the modal can.
+  const [removing, setRemoving] = useState<MemberRow | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const [inviteRole, setInviteRole] = useState<"member" | "viewer" | "admin">("member");
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -122,7 +159,13 @@ export default function TeamsManager() {
       createdDate: string | null;
     }>
   >([]);
+  const [serverInviteCounts, setServerInviteCounts] = useState<InviteCounts | null>(null);
   const [inviteFilter, setInviteFilter] = useState<"not_used" | "used" | "expired" | "all">("not_used");
+  // The invite the Revoke button is asking about — the same shape the Remove-member flow uses, so
+  // the dialog can name the link it is about to kill instead of asking about "this invite".
+  const [revokingInvite, setRevokingInvite] = useState<{ id: string; email: string | null; role: string } | null>(null);
+  const [revokeInviteBusy, setRevokeInviteBusy] = useState(false);
+  const [revokeInviteError, setRevokeInviteError] = useState<string | null>(null);
 
   const activeOrgId = serverActiveOrgId ?? (session as any)?.activeOrgId ?? null;
 
@@ -154,6 +197,19 @@ export default function TeamsManager() {
   const isPersonalOrg = currentOrg?.type === "personal";
   // Personal workspaces are single-user; teams + invites are not allowed.
   const canAdminTeams = !isPersonalOrg && (activeOrgRole === "owner" || activeOrgRole === "admin");
+
+  /**
+   * Whether this viewer may remove that member — the client-side mirror of what
+   * `/api/orgs/:orgId/members/:userId/revoke` allows. The server stays the authority; this only
+   * keeps the UI from offering a button that cannot work.
+   */
+  function canRemoveMember(viewerRole: string | null, targetRole: string | null): boolean {
+    const target = (targetRole ?? "member").toLowerCase();
+    if (target === "owner") return false;
+    if (viewerRole === "owner") return true;
+    if (viewerRole === "admin") return target === "member" || target === "viewer";
+    return false;
+  }
   const canInvite = canAdminTeams;
   // Plan gate: Free workspaces are single-user (the invite form renders disabled with a one-line
   // note whose Upgrade button opens the upgrade modal, instead of a 402); Pro includes one
@@ -161,6 +217,14 @@ export default function TeamsManager() {
   const { plan } = usePlan();
   const { openUpgrade } = useUpgradeModal();
   const inviteBlockedByPlan = plan?.plan === "free";
+  // `usePlan()` is null until `/api/plan` answers, so gating the controls on `inviteBlockedByPlan`
+  // alone left them fully enabled for the few hundred ms of the first load: a Free owner who
+  // clicked in that window got the route's raw plan-limit error instead of the upgrade notice
+  // below, and the same click a second later did nothing at all. An unknown plan is not a permit —
+  // block until it resolves. (The notice itself still keys off `inviteBlockedByPlan`, so a Pro
+  // workspace never flashes a Free upsell while loading.)
+  const planUnresolved = plan === null;
+  const inviteControlsBlocked = planUnresolved || inviteBlockedByPlan;
   const proSeatsFull = plan?.plan === "pro" && plan.atLimit.collaborators;
   const proSeatsPrompt = planLimitPrompt("collaborators", { max: plan?.limits.collaborators ?? 1 });
   // Avoid flashing "no permission" while org/role context is still loading.
@@ -279,11 +343,12 @@ export default function TeamsManager() {
       if (!force) setExistingInvitesBusy(true);
       setExistingInvitesError(null);
       try {
-        const json = await fetchJson<{ invites?: typeof existingInvites }>(
+        const json = await fetchJson<{ invites?: typeof existingInvites; counts?: unknown }>(
           `/api/org-invites?orgId=${encodeURIComponent(activeOrgId)}`,
           { method: "GET" },
         );
         setExistingInvites(Array.isArray(json?.invites) ? json.invites : []);
+        setServerInviteCounts(readServerInviteCounts(json?.counts));
       } catch (e) {
         setExistingInvitesError(e instanceof Error ? e.message : "Failed to load invite links");
       } finally {
@@ -300,6 +365,7 @@ export default function TeamsManager() {
     setMembers([]);
     setExistingInvitesError(null);
     setExistingInvites([]);
+    setServerInviteCounts(null);
     setInviteError(null);
     setInviteLink("");
     setInviteEmailError(null);
@@ -311,7 +377,10 @@ export default function TeamsManager() {
     }
   }, [tab, loadMembers, loadExistingInvites, isPersonalOrg]);
 
-  const inviteCounts = useMemo(() => {
+  const inviteCounts = useMemo((): InviteCounts => {
+    // Server totals cover every invite; the derivation below can only see the page of rows the
+    // route returned, so it is the fallback, not the source of truth.
+    if (serverInviteCounts) return serverInviteCounts;
     const now = Date.now();
     let used = 0;
     let expired = 0;
@@ -325,7 +394,7 @@ export default function TeamsManager() {
       else notUsed++;
     }
     return { used, expired, notUsed, all: (existingInvites ?? []).length };
-  }, [existingInvites]);
+  }, [existingInvites, serverInviteCounts]);
 
   const filteredInvites = useMemo(() => {
     const now = Date.now();
@@ -355,7 +424,7 @@ export default function TeamsManager() {
     if (!session?.user) return;
     if (!activeOrgId) return;
     if (!canInvite) return;
-    if (inviteBlockedByPlan) return;
+    if (inviteControlsBlocked) return;
     if (navLocked) return;
     if (inviteBusy) return;
     setInviteBusy(true);
@@ -386,13 +455,13 @@ export default function TeamsManager() {
     } finally {
       setInviteBusy(false);
     }
-  }, [session?.user, activeOrgId, canInvite, inviteBlockedByPlan, navLocked, inviteBusy, inviteRole, loadExistingInvites]);
+  }, [session?.user, activeOrgId, canInvite, inviteControlsBlocked, navLocked, inviteBusy, inviteRole, loadExistingInvites]);
 
   const sendInviteEmail = useCallback(async () => {
     if (!session?.user) return;
     if (!activeOrgId) return;
     if (!canInvite) return;
-    if (inviteBlockedByPlan) return;
+    if (inviteControlsBlocked) return;
     if (navLocked) return;
     if (inviteEmailBusy) return;
     const email = inviteEmail.trim().toLowerCase();
@@ -424,13 +493,52 @@ export default function TeamsManager() {
     session?.user,
     activeOrgId,
     canInvite,
-    inviteBlockedByPlan,
+    inviteControlsBlocked,
     navLocked,
     inviteEmailBusy,
     inviteEmail,
     inviteRole,
     loadExistingInvites,
   ]);
+
+  /**
+   * Cancel an invite that has not been claimed yet.
+   *
+   * `POST /api/org-invites/revoke` shipped with no caller: the Invites table was read-only, so an
+   * invite sent to the wrong address — a typo, or a generated link pasted into the wrong channel —
+   * stayed claimable for its full 14-day TTL, and an Admin invite meant admin access for whoever
+   * held the link. The route is the authority on who may revoke and on what (owner/admin only,
+   * never an already-redeemed invite), so this surfaces its refusal rather than restating its
+   * rules; the button below is only kept off rows the route would certainly reject.
+   */
+  const revokeInvite = useCallback(
+    async (inviteId: string) => {
+      if (!session?.user) return;
+      if (!activeOrgId) return;
+      if (!canInvite) return;
+      if (navLocked) return;
+      if (!inviteId) return;
+      setRevokeInviteBusy(true);
+      setRevokeInviteError(null);
+      try {
+        await fetchJson("/api/org-invites/revoke", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ inviteId, orgId: activeOrgId }),
+        });
+        setRevokingInvite(null);
+        // force: true keeps the list on screen while it refetches — a revoke is a row disappearing,
+        // not a reason to blank the table.
+        await loadExistingInvites({ force: true });
+      } catch (e) {
+        // Shown inside the dialog, next to the button that failed, rather than behind it.
+        setRevokeInviteError(e instanceof Error ? e.message : "Failed to revoke invite");
+      } finally {
+        setRevokeInviteBusy(false);
+      }
+    },
+    [session?.user, activeOrgId, canInvite, navLocked, loadExistingInvites],
+  );
 
   const revokeMember = useCallback(
     async (userId: string) => {
@@ -439,20 +547,24 @@ export default function TeamsManager() {
       if (!canAdminTeams) return;
       if (navLocked) return;
       if (!userId) return;
-      const ok = window.confirm("Remove this member from the workspace?");
-      if (!ok) return;
+      setRemoveBusy(true);
+      setRemoveError(null);
       try {
         await fetchJson(`/api/orgs/${encodeURIComponent(activeOrgId)}/members/${encodeURIComponent(userId)}/revoke`, {
           method: "POST",
         });
+        setRemoving(null);
         await loadMembers();
         // Removing a member frees a collaborator seat.
         refreshPlan();
       } catch (e) {
-        setMembersError(e instanceof Error ? e.message : "Failed to remove member");
+        // Shown inside the dialog, next to the button that failed, rather than behind it.
+        setRemoveError(e instanceof Error ? e.message : "Failed to remove member");
+      } finally {
+        setRemoveBusy(false);
       }
     },
-    [session?.user, activeOrgId, canAdminTeams, navLocked, loadMembers],
+    [session?.user, activeOrgId, canAdminTeams, navLocked, loadMembers, refreshPlan],
   );
 
   useEffect(() => {
@@ -579,7 +691,7 @@ export default function TeamsManager() {
               </div>
               <div className="h-px bg-[var(--border)]" />
 
-              {membersError ? <div className="px-3 py-3 text-[12px] text-red-500 sm:px-4">{membersError}</div> : null}
+              {membersError ? <div className="px-3 py-3 text-[12px] text-red-600 dark:text-red-500 sm:px-4">{membersError}</div> : null}
 
               {membersBusy ? (
                 <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">Loading…</div>
@@ -608,11 +720,20 @@ export default function TeamsManager() {
                         </div>
 
                         <div className="shrink-0">
-                          {m.userId && !isSelf ? (
+                          {/*
+                            The same matrix the revoke route enforces: an owner may remove anyone
+                            below them, an admin may remove members and viewers only. Offering the
+                            button on the owner's row — or, for an admin, on another admin's — put a
+                            control in front of people that answers "Not found" when clicked.
+                          */}
+                          {m.userId && !isSelf && canRemoveMember(activeOrgRole, m.memberRole) ? (
                             <button
                               type="button"
                               className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)]"
-                              onClick={() => void revokeMember(m.userId)}
+                              onClick={() => {
+                                setRemoveError(null);
+                                setRemoving(m);
+                              }}
                             >
                               Remove
                             </button>
@@ -659,7 +780,7 @@ export default function TeamsManager() {
                     className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)] disabled:opacity-60 sm:w-[180px]"
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value as "member" | "viewer" | "admin")}
-                    disabled={inviteBusy || inviteEmailBusy || inviteBlockedByPlan}
+                    disabled={inviteBusy || inviteEmailBusy || inviteControlsBlocked}
                   >
                     <option value="member">Member</option>
                     <option value="viewer">Viewer</option>
@@ -668,9 +789,15 @@ export default function TeamsManager() {
                   <button
                     type="button"
                     className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
-                    disabled={inviteBusy || inviteEmailBusy || inviteBlockedByPlan}
-                    aria-disabled={inviteBusy || inviteEmailBusy || inviteBlockedByPlan}
-                    title={inviteBlockedByPlan ? "Collaborators are a Pro feature" : undefined}
+                    disabled={inviteBusy || inviteEmailBusy || inviteControlsBlocked}
+                    aria-disabled={inviteBusy || inviteEmailBusy || inviteControlsBlocked}
+                    title={
+                      inviteBlockedByPlan
+                        ? "Collaborators are a Pro feature"
+                        : planUnresolved
+                          ? "Checking this workspace's plan…"
+                          : undefined
+                    }
                     onClick={() => void createInvite()}
                   >
                     {inviteBusy ? "Generating…" : inviteLink ? "Generate new link" : "Generate link"}
@@ -683,7 +810,7 @@ export default function TeamsManager() {
               )}
             </div>
 
-            {inviteError ? <div className="text-[12px] text-red-500">{inviteError}</div> : null}
+            {inviteError ? <div className="text-[12px] text-red-600 dark:text-red-500">{inviteError}</div> : null}
 
             {canInvite && inviteBlockedByPlan ? (
               <div
@@ -730,9 +857,9 @@ export default function TeamsManager() {
                       value={inviteEmail}
                       onChange={(e) => setInviteEmail(e.target.value)}
                       placeholder="name@company.com"
-                      disabled={inviteEmailBusy || inviteBlockedByPlan}
+                      disabled={inviteEmailBusy || inviteControlsBlocked}
                     />
-                    {inviteEmailError ? <div className="mt-1 text-[12px] text-red-500">{inviteEmailError}</div> : null}
+                    {inviteEmailError ? <div className="mt-1 text-[12px] text-red-600 dark:text-red-500">{inviteEmailError}</div> : null}
                     {inviteEmailSentTo ? (
                       <div className="mt-1 text-[12px] text-[var(--muted-2)]">Invite email sent to {inviteEmailSentTo}.</div>
                     ) : null}
@@ -740,8 +867,9 @@ export default function TeamsManager() {
                   <button
                     type="button"
                     className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                    disabled={inviteEmailBusy || inviteBlockedByPlan || !isValidEmail(inviteEmail)}
-                    aria-disabled={inviteEmailBusy || inviteBlockedByPlan || !isValidEmail(inviteEmail)}
+                    disabled={inviteEmailBusy || inviteControlsBlocked || !isValidEmail(inviteEmail)}
+                    aria-disabled={inviteEmailBusy || inviteControlsBlocked || !isValidEmail(inviteEmail)}
+                    title={planUnresolved && !inviteBlockedByPlan ? "Checking this workspace's plan…" : undefined}
                     onClick={() => void sendInviteEmail()}
                   >
                     {inviteEmailBusy ? "Sending…" : "Send invite"}
@@ -807,16 +935,17 @@ export default function TeamsManager() {
               </button>
             </div>
 
-            {existingInvitesError ? <div className="text-[12px] text-red-500">{existingInvitesError}</div> : null}
+            {existingInvitesError ? <div className="text-[12px] text-red-600 dark:text-red-500">{existingInvitesError}</div> : null}
 
             <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
               <div className="overflow-x-auto">
-                <div className="min-w-[560px]">
-                  <div className="grid grid-cols-[1fr_90px_90px_90px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
+                <div className="min-w-[640px]">
+                  <div className="grid grid-cols-[1fr_90px_90px_90px_88px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
                     <div>Link</div>
                     <div>Role</div>
                     <div>Status</div>
                     <div>Expires</div>
+                    <div className="sr-only">Actions</div>
                   </div>
                   <div className="h-px bg-[var(--border)]" />
 
@@ -842,7 +971,7 @@ export default function TeamsManager() {
                           return (
                             <div
                               key={`${inv.id ?? inv.createdDate ?? "x"}:${idx}`}
-                              className="grid grid-cols-[1fr_90px_90px_90px] items-center gap-3 px-3 py-2 text-[12px] text-[var(--fg)] hover:bg-[var(--panel-hover)] sm:px-4"
+                              className="grid grid-cols-[1fr_90px_90px_90px_88px] items-center gap-3 px-3 py-2 text-[12px] text-[var(--fg)] hover:bg-[var(--panel-hover)] sm:px-4"
                             >
                               <div className="min-w-0">
                                 {email ? (
@@ -877,6 +1006,31 @@ export default function TeamsManager() {
                                 </span>
                               </div>
                               <div className="text-[12px] text-[var(--muted-2)]">{expiresLabel}</div>
+                              <div className="text-right">
+                                {/*
+                                  Only unclaimed, unexpired invites are worth revoking: the route
+                                  refuses a redeemed one outright, and an expired link is already
+                                  dead — offering the button there would be a control that only ever
+                                  answers with an error. A legacy row with no id cannot be addressed.
+                                */}
+                                {status === "Not used" && inv.id ? (
+                                  <button
+                                    type="button"
+                                    className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                                    disabled={revokeInviteBusy}
+                                    onClick={() => {
+                                      setRevokeInviteError(null);
+                                      setRevokingInvite({
+                                        id: String(inv.id),
+                                        email: email || null,
+                                        role: inv.role || "member",
+                                      });
+                                    }}
+                                  >
+                                    Revoke
+                                  </button>
+                                ) : null}
+                              </div>
                             </div>
                           );
                         })}
@@ -893,6 +1047,79 @@ export default function TeamsManager() {
           </div>
         )
       ) : null}
+      {/*
+        Revoking an invite is destructive and irreversible — the link stops working for whoever
+        holds it — so it asks first, the same way removing a member does. There is no dedicated
+        component for it because the question is one line; what it must carry is *which* invite,
+        since the table can show several rows that differ only by role.
+      */}
+      <Modal
+        open={revokingInvite !== null}
+        ariaLabel="Revoke invite"
+        onClose={() => {
+          if (revokeInviteBusy) return;
+          setRevokingInvite(null);
+          setRevokeInviteError(null);
+        }}
+        panelClassName="w-[min(560px,calc(100vw-32px))]"
+      >
+        <div className="text-base font-semibold text-[var(--fg)]">Revoke this invite?</div>
+        <div className="mt-2 text-sm text-[var(--muted)]">
+          {revokingInvite?.email ? (
+            <span className="font-semibold text-[var(--fg)]">{revokingInvite.email}</span>
+          ) : (
+            <span className="font-semibold text-[var(--fg)]">Invite link</span>
+          )}
+          {revokingInvite?.role ? <span> · {revokingInvite.role}</span> : null}
+        </div>
+
+        <div className="mt-3 text-sm leading-6 text-[var(--muted)]">
+          The link stops working immediately, for anyone who has it. Nobody is removed from the
+          workspace — this only cancels an invite that has not been used yet. You can send a new one
+          any time.
+        </div>
+
+        {revokeInviteError ? <div className="mt-3 text-sm font-medium text-red-600">{revokeInviteError}</div> : null}
+
+        <div className="mt-5 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
+            disabled={revokeInviteBusy}
+            onClick={() => {
+              setRevokingInvite(null);
+              setRevokeInviteError(null);
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+            disabled={revokeInviteBusy}
+            onClick={() => {
+              if (revokingInvite) void revokeInvite(revokingInvite.id);
+            }}
+          >
+            {revokeInviteBusy ? "Revoking…" : "Revoke"}
+          </button>
+        </div>
+      </Modal>
+      <RemoveMemberModal
+        open={removing !== null}
+        busy={removeBusy}
+        name={removing?.name ?? null}
+        email={removing?.email ?? null}
+        role={removing?.memberRole ?? null}
+        error={removeError}
+        onCancel={() => {
+          setRemoving(null);
+          setRemoveError(null);
+        }}
+        onConfirm={() => {
+          if (removing) void revokeMember(removing.userId);
+        }}
+      />
     </div>
   );
 }

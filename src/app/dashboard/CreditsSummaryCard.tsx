@@ -139,7 +139,7 @@ function CreditsSummaryCardInner({
   if (plan === null) {
     // Plan still loading: keep the header and a quiet placeholder so the labels never flip.
     return (
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <div className="text-[13px] font-semibold text-[var(--fg)]">Credits</div>
@@ -153,7 +153,7 @@ function CreditsSummaryCardInner({
   }
 
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">Credits</div>

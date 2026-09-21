@@ -17,9 +17,10 @@ import { connectMongo } from "@/lib/mongodb";
 import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { debugError, debugLog } from "@/lib/debug";
-import { resolveActor } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
+import { membershipChanged, resolveActor } from "@/lib/gating/actor";
+import { UserModel } from "@/lib/models/User";
 
 export const runtime = "nodejs";
 
@@ -115,6 +116,29 @@ export async function POST(request: Request) {
       },
       { upsert: true },
     );
+
+    membershipChanged({ orgId: orgObjectId, userId: actor.userId });
+
+    // Same event as redeeming an invite, different door: this is the "created the workspace, then
+    // signed in as the account that will use it" path. `via` says which.
+    if (!alreadyMember) {
+      const joined = (await UserModel.findById(userId).select({ name: 1, email: 1 }).lean()) as
+        | { name?: string | null; email?: string | null }
+        | null;
+      void recordActivity({
+        orgId: orgObjectId,
+        userId: actor.userId,
+        actorKind: "user",
+        type: "member.joined",
+        meta: {
+          role: "member",
+          via: "join_secret",
+          name: joined?.name?.trim() || null,
+          email: joined?.email?.trim().toLowerCase() || null,
+        },
+        request,
+      });
+    }
 
     // Single-use: clear join secret on org.
     await OrgModel.updateOne(

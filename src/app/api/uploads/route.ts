@@ -22,6 +22,8 @@ import {
   PDF_ONLY_ERROR_MESSAGE,
   UNSUPPORTED_FILE_TYPE_CODE,
 } from "@/lib/blob/serverClientUploadRoute";
+import { buildDocMatch } from "@/lib/docs/docMatch";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -50,19 +52,69 @@ export async function GET(request: Request) {
     const actor = await resolveActor(request);
     await connectMongo();
 
+    const orgId = new Types.ObjectId(actor.orgId);
+    const actorUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+
+    /**
+     * The **workspace** bound — the rule `src/lib/docs/docMatch.ts` states for documents, applied
+     * to the uploads that carry them.
+     *
+     * This listing was scoped by `userId` alone and never read `actor.orgId`, which made "who
+     * uploaded it" the whole of the access decision and left the workspace out of it. Two callers
+     * whose access had already been taken away walked straight through:
+     *
+     * - an `lnk_` key is attributed to the member who minted it but scoped to *its own* workspace
+     *   (`apiKeyActor.ts`), so a key issued in workspace B returned that person's rows from every
+     *   workspace they had ever uploaded into — each row joined to its document's present-day
+     *   title and its public `/s/:shareId` slug;
+     * - a removed member's session falls back to their personal workspace, and every upload they
+     *   had made in the workspace they were removed from still came back.
+     *
+     * `orgId` is stamped on the row at creation from the document, so the bound is on the upload
+     * itself and no join can reintroduce the gap. `allowLegacyByUserId` is the same concession
+     * `docMatch` makes: rows that predate workspaces carry no `orgId` and belong to a person, so
+     * they resolve only while that person is sitting in their own personal workspace.
+     *
+     * It goes in `$and` rather than a top-level `$or`, because the search below wants an `$or` of
+     * its own and assigning `filter.$or` would replace this one outright — the exact shape that
+     * un-scoped document search in `/api/docs` once (see the note there).
+     */
+    const tenancy = allowLegacyByUserId
+      ? { $or: [{ orgId }, { orgId: { $exists: false } }, { orgId: null }] }
+      : { orgId };
+    const and: Array<Record<string, unknown>> = [tenancy];
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
-      userId: new Types.ObjectId(actor.userId),
+      userId: actorUserId,
+      $and: and,
     };
 
     if (q) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      const matchingDocs = await DocModel.find({ title: rx })
+      // Scoped to this actor's documents. Unscoped, the 100-row cap was filled from every
+      // workspace in the database, so a common word could push the caller's own matching documents
+      // out of the list entirely and their uploads would simply not be found. Same tenancy rule as
+      // the upload filter above: a title match in a workspace the caller is not in must not even
+      // reach the join, or a removed member learns titles by probing for them.
+      const matchingDocs = await DocModel.find({
+        title: rx,
+        ...(allowLegacyByUserId
+          ? {
+              $or: [
+                { orgId },
+                { userId: actorUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+              ],
+            }
+          : { orgId }),
+      })
         .select({ _id: 1 })
         .limit(100)
         .lean();
       const docIds = matchingDocs.map((d) => d._id);
-      filter.$or = [{ originalFileName: rx }, ...(docIds.length ? [{ docId: { $in: docIds } }] : [])];
+      and.push({
+        $or: [{ originalFileName: rx }, ...(docIds.length ? [{ docId: { $in: docIds } }] : [])],
+      });
     }
 
     const total = await UploadModel.countDocuments(filter);
@@ -127,6 +179,11 @@ export async function POST(request: Request) {
     // Viewers can read a workspace but must not add uploads to it.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    const queued = await forbidWaitlisted(actor, "upload a document");
+    if (queued) return queued;
     const body = (await request.json().catch(() => ({}))) as Partial<{
       docId: string;
       originalFileName: string;
@@ -170,13 +227,31 @@ export async function POST(request: Request) {
 
     await connectMongo();
 
-    // Ensure doc exists
-    let doc = await DocModel.findOne({
-      _id: new Types.ObjectId(body.docId),
-      userId: new Types.ObjectId(actor.userId),
-      isDeleted: { $ne: true },
-    });
-    if (!doc) return NextResponse.json({ error: "Doc not found" }, { status: 404 });
+    /**
+     * The document, scoped to the **workspace** rather than to whoever uploaded it.
+     *
+     * This used to match on `userId: actor.userId`, which meant an invited member of a shared
+     * workspace could open a document and then be told "Doc not found" when they replaced the
+     * file — the one write path still using pre-workspace ownership while every read path around
+     * it was org-scoped. `buildDocMatch` is the same rule `/api/docs/:docId` applies, legacy
+     * personal documents included.
+     */
+    let doc = await DocModel.findOne(
+      buildDocMatch(
+        new Types.ObjectId(body.docId),
+        new Types.ObjectId(actor.orgId),
+        new Types.ObjectId(actor.userId),
+        actor.orgId === actor.personalOrgId,
+      ),
+    );
+    if (!doc) {
+      return NextResponse.json(
+        // Say which of the two it is. "Doc not found" sent a member looking for a deleted document
+        // when the truth was that they were in the wrong workspace.
+        { error: "Doc not found", message: "That document isn't in this workspace. Switch workspaces and try again." },
+        { status: 404 },
+      );
+    }
 
     // Ensure the doc has a public shareId at upload time.
     if (!doc.shareId) {

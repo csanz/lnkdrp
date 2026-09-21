@@ -8,6 +8,7 @@
  */
 import dynamic from "next/dynamic";
 import type { AiOutput } from "@/components/PdfJsViewer";
+import type { ShareWorkspaceBrand } from "@/lib/share/brand";
 
 const PdfJsViewer = dynamic(async () => (await import("@/components/PdfJsViewer")).PdfJsViewer, {
   ssr: false,
@@ -50,7 +51,20 @@ export default function ShareViewerClient(props: {
   allowDownload: boolean;
   downloadUrl: string | null;
   revisionHistoryEnabled: boolean;
+  /** Only a data room sets this, and only to false — see the prop's note in `PdfJsViewer`. */
+  canRequestDownload?: boolean;
   revisionHistoryUrl: string | null;
+  /** The workspace that shared this, for the viewer's header. */
+  workspace?: ShareWorkspaceBrand | null;
+  /**
+   * Where this document was opened from, when it was opened from somewhere.
+   *
+   * Only a data room sets these. A document link is its own destination and has nothing to go back
+   * to; a document opened out of a room does, and the viewer takes over the window, so browser-back
+   * is not what a reader reaches for.
+   */
+  backHref?: string | null;
+  backLabel?: string | null;
 }) {
   return (
     <PdfJsViewer
@@ -62,7 +76,11 @@ export default function ShareViewerClient(props: {
       allowDownload={props.allowDownload}
       downloadUrl={props.downloadUrl}
       revisionHistoryEnabled={props.revisionHistoryEnabled}
+      canRequestDownload={props.canRequestDownload}
       revisionHistoryUrl={props.revisionHistoryUrl}
+      workspace={props.workspace ?? null}
+      backHref={props.backHref ?? null}
+      backLabel={props.backLabel ?? null}
     />
   );
 }

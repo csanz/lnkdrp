@@ -5,6 +5,7 @@ import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import { liveProjectByIdMatch } from "@/lib/projects/scope";
 
 export const runtime = "nodejs";
 /**
@@ -138,14 +139,7 @@ export async function GET(
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const projectId = new Types.ObjectId(projectIdParam);
     const project = await ProjectModel.findOne(
-      allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: projectId, orgId },
-              { _id: projectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-            ],
-          }
-        : { _id: projectId, orgId },
+      liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId),
     )
       .select({ _id: 1, name: 1, description: 1 })
       .lean();

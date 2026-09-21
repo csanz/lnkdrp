@@ -81,7 +81,13 @@ const ShareLinkSchema = new Schema(
     passwordEncTag: { type: String, default: null },
 
     createdByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
-    createdVia: { type: String, enum: ["web", "api", "mcp", "migration"], default: "web" },
+    /**
+     * Who made this link. `default` is the project's or document's own default link, materialised
+     * lazily the first time something reads it — which is not a migration, though it used to be
+     * recorded as one: a link created seconds after its project reported `createdVia: "migration"`,
+     * the marker meant for rows brought forward by the backfill script.
+     */
+    createdVia: { type: String, enum: ["web", "api", "mcp", "migration", "default"], default: "web" },
     /** Soft delete: the link stops resolving; analytics rows stay attached to its shareId. */
     archivedAt: { type: Date, default: null },
 

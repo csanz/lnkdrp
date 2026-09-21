@@ -18,11 +18,15 @@ export const dynamic = "force-dynamic";
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { notFound } from "next/navigation";
 
 import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "@/components/PasswordGate";
+import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
+import IntroduceYourself from "./IntroduceYourself";
+import { isOwnerSideViewer } from "@/lib/share/ownerSide";
+import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { listProjectDocuments, projectLinkPasswordEnabled, type PublicProjectDoc } from "@/lib/share/projectPublic";
@@ -42,12 +46,21 @@ function pickDocTitle(doc: PublicProjectDoc): string {
   return "Untitled document";
 }
 
-function pickDocPreviewUrl(doc: PublicProjectDoc): string | null {
+/**
+ * Whether this document has a stored first-page image at all — **not** where it is.
+ *
+ * This used to return the stored value and the card rendered it as `<img src>`. That value is a
+ * Vercel Blob URL on a public, unauthenticated CDN, so the room's HTML handed every visitor a
+ * permanent copy of the first page of every document in it (with the document and upload ids in the
+ * path), which no revoke, expiry or password could take back. The bytes now come through
+ * `/p/:shareId/:docId/preview`, which re-proves this link's gate on every request; all this
+ * predicate still decides is whether to draw the frame or the "No preview" placeholder.
+ */
+function docHasPreview(doc: PublicProjectDoc): boolean {
   const a = typeof doc.previewImageUrl === "string" ? doc.previewImageUrl.trim() : "";
-  if (a) return a;
+  if (a) return true;
   const b = typeof doc.firstPagePngUrl === "string" ? doc.firstPagePngUrl.trim() : "";
-  if (b) return b;
-  return null;
+  return Boolean(b);
 }
 
 type OgLike = { description?: unknown };
@@ -85,8 +98,8 @@ export async function generateMetadata(props: { params: Promise<{ shareId: strin
   const { shareId } = await props.params;
   if (!shareId) return buildShareMetadata({ title: "Shared documents", description: "" });
 
-  const resolved = await resolveProjectLink(shareId, { select: { description: 1 } });
-  if (!resolved || resolved.refusal || projectLinkPasswordEnabled(resolved.link)) {
+  const resolved = await resolveProjectLink(shareId, { select: { description: 1, isRequest: 1 } });
+  if (!resolved || resolved.refusal || Boolean(resolved.project.isRequest) || projectLinkPasswordEnabled(resolved.link)) {
     return buildShareMetadata({ title: "Shared documents", description: "" });
   }
   const { project } = resolved;
@@ -99,13 +112,43 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
   const { shareId } = await props.params;
   if (!shareId) notFound();
 
-  const resolved = await resolveProjectLink(shareId, { select: { description: 1 } });
+  // `isRequest` is selected for the rule below; `PROJECT_SHARE_FIELDS` does not carry it, and an
+  // unselected field reads as `undefined`, which would pass the check while meaning nothing.
+  const resolved = await resolveProjectLink(shareId, { select: { description: 1, isRequest: 1 } });
   // An unknown slug, a document link's slug, or a deleted project: indistinguishable, on purpose.
   if (!resolved || resolved.refusal === "project_gone") notFound();
+  /**
+   * A request repo has no public room, and this is where that is decided.
+   *
+   * A data room and a request repo are the same `Project` row pointing opposite ways. A room is
+   * documents the owner chose to hand out; a repo is an inbox — `isRequest`, with an upload token
+   * the owner sends to outsiders so they can drop files *in*. Those submissions are somebody else's
+   * confidential documents (pitch decks, applications, RFP responses) and nobody ever asked for
+   * them to be published.
+   *
+   * They were. A repo is created with a `shareId`, nothing in the resolver filtered on `isRequest`,
+   * and a missing `shareEnabled` reads as on everywhere (`shareEnabled !== false`), so the slug
+   * rendered as a room listing every submission — no password, no expiry, no sign-in. `GET
+   * /api/projects` hands that slug to every member including viewer-role, it never rotates, and the
+   * owner could not even switch it off: the project page swaps the share panel out for the
+   * request-repo panel when `isRequest`, so the one control that would set `shareEnabled: false` is
+   * not rendered for exactly these projects. Hence a rule and not a setting.
+   *
+   * A 404, indistinguishable from an unknown slug, because who submitted what to whom is not public
+   * either. The upload side is untouched: recipients still use `/request/:token`, which is the
+   * capability the owner actually sent them.
+   */
+  if (resolved.project.isRequest) notFound();
   const { link, project } = resolved;
-  // Expiry is the one refusal a recipient can act on, so it gets its own words (see RefusalNotice);
-  // a disabled or archived link reads exactly as it did before this feature existed.
+  // Kept, and no longer normally reached: `layout.tsx` now `notFound()`s a refused link so the
+  // response carries the 404 this screen was being served under a 200 with. The branch stays as the
+  // page's own check — the layout is the status, not the authorization — but a recipient sees the
+  // `/p` not-found screen, not these words. (Expiry used to get its own actionable copy here; a 404
+  // body cannot know which slug was asked for, so that wording belongs in `/p/not-found.tsx` now.)
   if (resolved.refusal) return <RefusalNotice kind={resolved.refusal === "expired" ? "expired" : "disabled"} />;
+
+  // Who this is from, on every branch below including the gate.
+  const workspace = await workspaceBrandForOrg(project.orgId);
 
   if (projectLinkPasswordEnabled(link)) {
     const c = await cookies();
@@ -115,7 +158,7 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
       // Nothing before the password — not the project's name, not how many documents are in it.
       // Same rule as the document gate: the sender chose a password because the URL is not the
       // secret, and "Acme — Series A data room · 11 documents" gives away most of the answer.
-      return <PasswordGate shareId={shareId} title={null} previewUrl={null} />;
+      return <PasswordGate shareId={shareId} title={null} previewUrl={null} workspace={workspace} />;
     }
   }
 
@@ -123,11 +166,27 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
   // of the project stops being listed — and stops being openable — on the very next load.
   const docs = await listProjectDocuments(project);
   const name = typeof project.name === "string" ? project.name : "";
+  // The same rule every figure on this link uses: the owner and their teammates are recorded and
+  // never counted (`isOwnerSideViewer`), so they are never asked to introduce themselves either.
+  // A server component has no `Request`, and the session resolver reads the JWT out of one. The
+  // cookie header is the only part of it that matters here.
+  const sessionUserId = await (async () => {
+    try {
+      const h = await headers();
+      const session = await tryResolveAuthUserId(new Request("http://localhost/p", { headers: new Headers({ cookie: h.get("cookie") ?? "" }) }));
+      return session?.userId ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const ownerSide = await isOwnerSideViewer(project as { orgId?: unknown; userId?: unknown }, sessionUserId);
   const description = typeof project.description === "string" ? project.description : "";
 
   return (
     <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]" style={PROJECT_SHARE_THEME}>
-      <BrandHeader />
+      {/* Asking who is here belongs at the top of the room, where the viewer asks it — and never of
+          the owning side, who would be introducing themselves to themselves. */}
+      <BrandHeader workspace={workspace}>{ownerSide ? null : <IntroduceYourself shareId={shareId} projectName={name} />}</BrandHeader>
       <LandingBeacon shareId={shareId} />
       <div className="mx-auto w-full max-w-5xl px-6 pb-12 pt-6">
         <div className="text-2xl font-semibold tracking-tight text-[var(--fg)]">{name}</div>
@@ -143,8 +202,9 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
             {docs.map((d) => {
               const docId = String(d._id);
               const title = pickDocTitle(d);
-              const previewUrl = pickDocPreviewUrl(d);
+              const hasPreview = docHasPreview(d);
               const summary = pickDocSummary(d.aiOutput ?? null);
+              const base = `/p/${encodeURIComponent(shareId)}/${encodeURIComponent(docId)}`;
 
               return (
                 <Link
@@ -152,15 +212,18 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
                   // The document opens *under this link*, never at `/s/<its own slug>`: that is what
                   // makes the reading time, the session and any download attributable to the
                   // audience this link was sent to.
-                  href={`/p/${encodeURIComponent(shareId)}/${encodeURIComponent(docId)}`}
+                  href={base}
                   className="group overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-sm transition-colors hover:bg-[var(--panel-hover)]"
                   aria-label={`Open shared document: ${title}`}
                 >
                   <div className="relative aspect-[16/10] w-full bg-[var(--panel-2)]">
-                    {previewUrl ? (
+                    {hasPreview ? (
+                      // Same origin, never the blob CDN: this path re-runs the link's own checks on
+                      // every request, so the thumbnail stops being servable the moment the link
+                      // does. See `docHasPreview` above and the route's own header comment.
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={previewUrl}
+                        src={`${base}/preview`}
                         alt=""
                         loading="lazy"
                         decoding="async"

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clearSidebarCache } from "@/lib/sidebarCache";
 import { clearOrgsCache } from "@/lib/orgsCache";
+import { clearEntityTitles } from "@/lib/client/entityTitles";
 import Button from "@/components/ui/Button";
 import {
   clearLocalStorageKeysByPrefix,
@@ -115,6 +116,8 @@ export default function CacheToolsClient() {
                 clearSidebarCache({ all: true });
                 // Clear in-memory + persisted orgs cache (so workspace switcher updates immediately).
                 clearOrgsCache();
+                // See the twin in src/app/a/tools/cache/page.tsx: the in-memory map goes too.
+                clearEntityTitles();
 
                 const attempted = clearLocalStorageKeysByPrefix("lnkdrp");
                 // Update UI snapshot after the clear.
@@ -137,6 +140,8 @@ export default function CacheToolsClient() {
               try {
                 clearSidebarCache({ all: true });
                 clearOrgsCache();
+                // See the twin in src/app/a/tools/cache/page.tsx: the in-memory map goes too.
+                clearEntityTitles();
                 clearLocalStorageKeysByPrefix("lnkdrp");
               } finally {
                 window.location.reload();

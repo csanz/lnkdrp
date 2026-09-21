@@ -194,7 +194,7 @@ export default function ChangePreviewModal({
           // No summary: either the version predates AI compare, or the workspace had no credits
           // when the file landed. Both are recoverable from the document, and neither is a lock.
           <div className="mt-4 rounded-xl bg-[var(--panel-2)] p-4 text-[13px] leading-6 text-[var(--muted)]">
-            The version was recorded, but no AI compare has run for it yet — it is skipped when a
+            The version was recorded, but no AI compare has run for it yet. The compare is skipped when a
             workspace is out of credits. You can run it from the document&apos;s history at any time.
           </div>
         )

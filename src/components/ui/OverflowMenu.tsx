@@ -28,6 +28,8 @@ export default function OverflowMenu({
   panelClassName,
   panelWidth = DEFAULT_PANEL_WIDTH,
   align = "end",
+  autoFocus = false,
+  panelRole = "menu",
   children,
 }: {
   /** Accessible name for the trigger button and the panel (`aria-label` on both). */
@@ -41,7 +43,27 @@ export default function OverflowMenu({
   panelWidth?: number;
   /** Which edge of the trigger the panel's own edge lines up with. */
   align?: "start" | "end";
-  children: React.ReactNode;
+  /**
+   * Move focus into the panel when it opens, and back to the trigger when it closes.
+   *
+   * Off by default, and deliberately so: the toolbar callers this was built for hold mixed content
+   * (toggle groups, sliders) where "focus the first thing" is usually the wrong thing. A panel of
+   * uniform choices is the opposite case — without it the panel is unreachable by keyboard, since
+   * it is portalled to the end of the body and nothing tab-ordered leads to it.
+   */
+  autoFocus?: boolean;
+  /**
+   * ARIA role for the panel. `menu` suits a list of commands; a grid of choices that stay put and
+   * report their state wants `group`, because a menu's children must be menuitems and these are
+   * buttons reporting `aria-pressed`.
+   */
+  panelRole?: "menu" | "group" | "dialog";
+  /**
+   * Panel contents. Given a function, it is called with a `close` callback — what a panel holding
+   * *choices* needs, since picking one should shut the panel and nothing else here can do that.
+   * A plain node keeps working unchanged, which is what every toolbar caller passes.
+   */
+  children: React.ReactNode | ((close: () => void) => React.ReactNode);
 }) {
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -67,13 +89,26 @@ export default function OverflowMenu({
     // Position after paint so the panel can be measured; no auto-focus into it — content varies
     // (toggle groups, sliders, buttons) and forcing focus to "the first thing" is often the wrong
     // element here, unlike a plain list of menu items.
-    window.requestAnimationFrame(reposition);
+    window.requestAnimationFrame(() => {
+      reposition();
+      if (!autoFocus) return;
+      // The choice already made, if there is one, so the panel opens on what is set rather than on
+      // whatever happens to be first.
+      const panel = panelRef.current;
+      const target =
+        panel?.querySelector<HTMLElement>('[aria-pressed="true"],[aria-checked="true"]') ??
+        panel?.querySelector<HTMLElement>("button:not([disabled]),[tabindex]:not([tabindex='-1'])");
+      target?.focus();
+    });
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setOpen(false);
         buttonRef.current?.focus();
       }
     };
+    // Focus goes back where it came from on any close, not only on Escape: a picker that leaves
+    // focus on document.body strands a keyboard user at the top of the page.
+    const restore = () => buttonRef.current?.focus();
     const onPointerDown = (e: PointerEvent) => {
       const t = e.target;
       if (!(t instanceof Node)) return;
@@ -89,18 +124,19 @@ export default function OverflowMenu({
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
+      if (autoFocus && panelRef.current?.contains(document.activeElement)) restore();
     };
-  }, [open, reposition]);
+  }, [open, reposition, autoFocus]);
 
   const panel = open ? (
     <div
       ref={panelRef}
-      role="menu"
+      role={panelRole}
       aria-label={label}
       style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width: panelWidth }}
       className={panelClassName ?? "fixed z-[1000] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-2 shadow-lg"}
     >
-      {children}
+      {typeof children === "function" ? children(() => setOpen(false)) : children}
     </div>
   ) : null;
 

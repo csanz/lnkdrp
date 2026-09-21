@@ -44,6 +44,7 @@ import {
   type ShareLinkSettingsInput,
   type ShareLinkStats,
 } from "./links";
+import { switchMayRestore } from "@/lib/share/links";
 
 /**
  * Runaway guard, not a plan limit — the same role `SHARE_LINKS_PER_DOC_MAX` plays for documents.
@@ -203,7 +204,7 @@ export function toProjectLinkDTO(link: ShareLink, stats?: ShareLinkStats | null)
  */
 export async function ensureDefaultProjectLink(
   project: ProjectLike,
-  opts: { createdVia?: "web" | "api" | "mcp" } = {},
+  opts: { createdVia?: "web" | "api" | "mcp" | "default" } = {},
 ): Promise<ShareLink | null> {
   await connectMongo();
   const existing = await ShareLinkModel.findOne({ projectId: project._id, isDefault: true }).lean<ShareLink>();
@@ -248,8 +249,10 @@ export async function ensureDefaultProjectLink(
       allowRevisionHistory: false,
       expiresAt: null,
       createdByUserId: project.userId ?? null,
-      // Only a deliberate create knows who made it; every lazy backfill is a migration.
-      createdVia: opts.createdVia ?? "migration",
+      // Only a deliberate create knows who made it. Everything else here is this project's own
+      // default link being materialised on first read — `default`, not `migration`, which belongs
+      // to rows the backfill script brought forward from before the link model existed.
+      createdVia: opts.createdVia ?? "default",
     });
     if (project.shareId !== shareId) await ProjectModel.updateOne({ _id: project._id }, { $set: { shareId } });
     return created.toObject() as ShareLink;
@@ -494,7 +497,7 @@ export async function updateProjectLink(input: {
   settings: ShareLinkSettingsInput;
   /** Internal: set by the project-level share switch so it can tell its own disables from the sender's. */
   viaProjectSwitch?: boolean;
-}): Promise<{ link: ShareLink }> {
+}): Promise<{ link: ShareLink; restored?: ShareLink[] }> {
   await connectMongo();
   const link = await ShareLinkModel.findOne({
     _id: oid(input.linkId),
@@ -519,8 +522,46 @@ export async function updateProjectLink(input: {
   }
   if (Object.keys(set).length === 0) return { link };
   const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true }).lean<ShareLink>();
+
+  /**
+   * Enabling one link republishes the page, so it has to restore what the page switch took down.
+   *
+   * `Project.shareEnabled` is derived — "this project has at least one active link"
+   * (`syncProjectShareState`) — so enabling any single link turns the public page back on. There
+   * were then two routes to a live page and only one of them put the other links back: the explicit
+   * `PATCH /api/projects/:id { shareEnabled: true }` calls `setAllProjectLinksEnabled`, which
+   * restores every link marked `disabledByDocSwitch`, while this path restored nothing.
+   *
+   * The result was a data room that came back up with most of its recipients still locked out,
+   * silently and permanently: the links were disabled only because the page had been switched off,
+   * the page was on again, and nothing would ever clear the marker. The owner saw a working room;
+   * two of three recipients saw a dead link.
+   *
+   * Restoring only marked links is what keeps this safe. A link the sender revoked on its own is
+   * not marked, so it stays revoked — the distinction the marker exists for.
+   */
+  const restored: ShareLink[] = [];
+  if (set.enabled === true && !input.viaProjectSwitch) {
+    const siblings = await ShareLinkModel.find({
+      projectId: link.projectId,
+      ...PROJECT_LINK_FILTER,
+      archivedAt: null,
+      _id: { $ne: link._id },
+      enabled: false,
+      disabledByDocSwitch: true,
+    }).lean<ShareLink[]>();
+    for (const sib of siblings) {
+      const back = await ShareLinkModel.findOneAndUpdate(
+        { _id: sib._id },
+        { $set: { enabled: true, disabledByDocSwitch: false } },
+        { new: true },
+      ).lean<ShareLink>();
+      if (back) restored.push(back);
+    }
+  }
+
   await syncProjectShareState(link.projectId as Types.ObjectId);
-  return { link: updated ?? link };
+  return { link: updated ?? link, ...(restored.length ? { restored } : {}) };
 }
 
 /**
@@ -619,12 +660,20 @@ export async function setAllProjectLinksEnabled(input: {
   const project = await findProject({ orgId: input.orgId, projectId: input.projectId });
   if (project) await ensureDefaultProjectLink(project);
   const links = await listProjectLinks({ orgId: input.orgId, projectId: input.projectId });
-  const marked = links.filter((l) => !l.enabled && l.disabledByDocSwitch);
-  const legacyAllOff = marked.length === 0 && links.every((l) => !l.enabled);
+  /**
+   * The same rule as the document switch, imported rather than re-derived.
+   *
+   * This carried its own copy — "no marked links and none enabled" decided per *project* — which is
+   * the shape the document side was fixed for and this one was not: it cannot tell a pre-marker
+   * project from one whose every link the owner deliberately revoked, so turning sharing back on
+   * handed revoked recipients their original URL again. Two implementations of one rule, and only
+   * one of them got the fix; now there is one.
+   */
+  const everyLinkDisabled = links.every((l) => !l.enabled);
   let changed = 0;
   for (const l of links) {
     if (Boolean(l.enabled) === input.enabled) continue;
-    if (input.enabled && !l.disabledByDocSwitch && !legacyAllOff) continue;
+    if (input.enabled && !switchMayRestore(l as unknown as Parameters<typeof switchMayRestore>[0], { everyLinkDisabled })) continue;
     await updateProjectLink({ orgId: input.orgId, linkId: l._id, settings: { enabled: input.enabled }, viaProjectSwitch: true });
     changed += 1;
   }

@@ -8,7 +8,14 @@
  * Two of the twelve columns this table used to carry are gone, because twelve did not fit and the
  * last three scrolled off the right edge where nobody found them. Expiry is answered by the
  * `Expired` state pill, with the exact timestamp in its `title`; audience, which was `—` on almost
- * every row, rides in the Link cell's `title`. Nothing is lost, and the nine that remain fit.
+ * every row, rides in the Link cell's `title`. Nothing is lost, and the ones that remain fit.
+ *
+ * The Slug column is gone for a different reason, and this one is not a layout call. `/s/:shareId`
+ * renders the customer's document, so a page of slugs filtered to `hasPassword: false` was a page
+ * of documents any staff account could open — and opening one writes a real recipient view into
+ * that customer's analytics, because an admin is not a member of their workspace. The route stops
+ * sending the slug; the search box above still matches one, so a slug a customer actually gave you
+ * finds its row.
  */
 "use client";
 
@@ -29,7 +36,6 @@ import {
   AdminTd,
   AdminTh,
   AdminTr,
-  IdCell,
   RowActionLink,
   RowActions,
   StatusPill,
@@ -38,13 +44,12 @@ import {
 } from "@/components/admin";
 import { ADMIN_DASH, ADMIN_FOCUS_RING, fmtAdminDateFull, type AdminTone } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
-import { linkStateLabel, publicLinkPath, type AdminLinkState } from "@/lib/admin/linksAdmin";
+import { linkStateLabel, type AdminLinkState } from "@/lib/admin/linksAdmin";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type LinkRow = {
   id: string;
   kind: string;
-  shareId: string | null;
   label: string | null;
   audience: string | null;
   isDefault: boolean;
@@ -71,7 +76,7 @@ type SortField = "createdDate" | "lastViewedAt" | "viewCount";
 type SortOrder = "desc" | "asc";
 
 /** Column count of the table below; the empty row's colSpan has to match it exactly. */
-const COLUMN_COUNT = 9;
+const COLUMN_COUNT = 8;
 
 /**
  * One state scale, and the STATE column is the only place on the page that uses a strong tone.
@@ -247,7 +252,6 @@ export default function AdminDataLinksPage() {
               <AdminTh align="right" width="w-[70px]">Views</AdminTh>
               <AdminTh align="right" width="w-[90px]">Downloads</AdminTh>
               <AdminTh align="right" width="w-[130px]">Created</AdminTh>
-              <AdminTh width="w-[128px]">Slug</AdminTh>
               <AdminTh align="right" sticky>
                 Actions
               </AdminTh>
@@ -264,7 +268,6 @@ export default function AdminDataLinksPage() {
             />
           ) : (
             items.map((l) => {
-              const path = publicLinkPath(l.kind, l.shareId);
               const target = l.kind === "project" ? l.projectName : l.docTitle;
               const stateLabel = linkStateLabel(l.state, { disabledByDocSwitch: l.disabledByDocSwitch });
               // Audience has no column of its own — it is a short tag that was mostly empty and cost
@@ -340,9 +343,6 @@ export default function AdminDataLinksPage() {
                   </AdminTd>
                   <AdminTd align="right" numeric>
                     <TimeCell value={l.createdDate} />
-                  </AdminTd>
-                  <AdminTd>
-                    <IdCell value={l.shareId} label="share id" head={8} tail={4} href={path ?? undefined} />
                   </AdminTd>
                   <AdminTd align="right" sticky actions>
                     {/* Links had no right-hand affordance at all, and no cue that a row opened

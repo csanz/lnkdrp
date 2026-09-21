@@ -20,10 +20,13 @@ import {
   EMAIL_CRON_SCHEDULES,
   buildEmailCatalogRows,
   describeCronSchedule,
+  queueDepthFigures,
   sendOutcome,
   sendStateLabel,
+  summarizeNotificationQueue,
   summarizeNotificationRun,
   summarizePlanLimitsRun,
+  toDeadNotificationRows,
   traceLabel,
 } from "@/lib/admin/emailsAdmin";
 
@@ -210,6 +213,121 @@ describe("plan-limits run summary", () => {
   test("null for another job's payload", () => {
     expect(summarizePlanLimitsRun({ processed: 9, days: 30 })).toBeNull();
     expect(summarizePlanLimitsRun(undefined)).toBeNull();
+  });
+});
+
+/**
+ * The queue block (M4 of docs/prds/lnkdrp-notification-queue.md).
+ *
+ * The distinction these pin is the one the page exists to make: "the queue is empty" and "we could
+ * not read the queue" must never render the same way. The cursor model's whole failure was that
+ * nothing owed was written down anywhere, so a surface that quietly shows zeros for a queue it
+ * could not reach would reproduce it on the admin side.
+ */
+describe("notification queue summary", () => {
+  test("narrows the counts the route sends", () => {
+    expect(
+      summarizeNotificationQueue({
+        pending: 12,
+        due: 4,
+        sending: 1,
+        sent24h: 40,
+        skipped: 3,
+        dead: 2,
+        oldestPendingAt: "2026-09-18T09:00:00.000Z",
+      }),
+    ).toEqual({
+      pending: 12,
+      due: 4,
+      sending: 1,
+      sent24h: 40,
+      skipped: 3,
+      dead: 2,
+      oldestPendingAt: "2026-09-18T09:00:00.000Z",
+    });
+  });
+
+  test("a status with no rows is zero, not a dash", () => {
+    const summary = summarizeNotificationQueue({ pending: 5 });
+    expect(summary?.dead).toBe(0);
+    expect(summary?.sent24h).toBe(0);
+    expect(summary?.oldestPendingAt).toBeNull();
+  });
+
+  test("null when there are no counts at all — not an empty queue", () => {
+    expect(summarizeNotificationQueue(null)).toBeNull();
+    expect(summarizeNotificationQueue(undefined)).toBeNull();
+    expect(summarizeNotificationQueue("unavailable")).toBeNull();
+    expect(summarizeNotificationQueue({ oldestPendingAt: "2026-09-18T09:00:00.000Z" })).toBeNull();
+  });
+
+  test("a count that is not a count reads as zero", () => {
+    const summary = summarizeNotificationQueue({ pending: -3, due: Number.NaN, dead: "2", sent24h: 7.6 });
+    expect(summary?.pending).toBe(0);
+    expect(summary?.due).toBe(0);
+    expect(summary?.dead).toBe(0);
+    expect(summary?.sent24h).toBe(7);
+  });
+});
+
+describe("dead letters", () => {
+  test("carries the four fields the list shows, and the times around them", () => {
+    const rows = toDeadNotificationRows([
+      {
+        id: "651f1f77bcf86cd799439011",
+        dedupeKey: "share_views:64a:651",
+        kind: "share_views",
+        attempts: 5,
+        lastError: "Resend 422: invalid recipient",
+        occurredAt: "2026-09-18T09:00:00.000Z",
+        failedAt: "2026-09-19T09:00:00.000Z",
+      },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      dedupeKey: "share_views:64a:651",
+      kind: "share_views",
+      attempts: 5,
+      lastError: "Resend 422: invalid recipient",
+    });
+  });
+
+  test("a row without an id or a dedupe key is not a queue row", () => {
+    expect(toDeadNotificationRows([{ dedupeKey: "share_views:64a:651" }, { id: "651" }, null, "x"])).toEqual([]);
+    expect(toDeadNotificationRows({ id: "651" })).toEqual([]);
+  });
+
+  test("a kind written by a newer deploy still renders", () => {
+    const [row] = toDeadNotificationRows([{ id: "651", dedupeKey: "k:1:2" }]);
+    expect(row.kind).toBe("unknown");
+    expect(row.attempts).toBe(0);
+    expect(row.lastError).toBeNull();
+  });
+});
+
+describe("queue depth on the cron board", () => {
+  const summary = {
+    pending: 0,
+    due: 0,
+    sending: 0,
+    sent24h: 5,
+    skipped: 0,
+    dead: 2,
+    oldestPendingAt: null,
+  };
+
+  test("what is not zero comes first, so the first figures are the interesting ones", () => {
+    expect(queueDepthFigures(summary).map((f) => f.label)).toEqual(["dead", "sent 24h", "pending", "due"]);
+  });
+
+  test("dead is the only toned figure, and only while there are any", () => {
+    expect(queueDepthFigures(summary).find((f) => f.label === "dead")?.tone).toBe("danger");
+    expect(queueDepthFigures({ ...summary, dead: 0 }).find((f) => f.label === "dead")?.tone).toBeUndefined();
+    expect(queueDepthFigures(summary).filter((f) => f.tone).length).toBe(1);
+  });
+
+  test("no figures at all when the queue could not be read", () => {
+    expect(queueDepthFigures(null)).toEqual([]);
   });
 });
 

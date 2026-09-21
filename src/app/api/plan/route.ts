@@ -43,6 +43,13 @@ export async function GET(request: Request) {
       {
         plan,
         orgId,
+        // True only in the caller's own workspace — the Billing tab picks its "who pays for this"
+        // wording from it. This was a lie for a while, and not a subtle one: the fast path inside
+        // `resolveActorForStats` copied the active org into `personalOrgId`, so the comparison held
+        // in *every* workspace and the tab greeted each team with "Your personal workspace is billed
+        // on its own". The resolver now resolves the real personal org (src/lib/gating/actor.ts), so
+        // this reads as what it means. An API-key actor whose owner has no personal org carries "",
+        // which is never equal to a real org id, so it answers `false` rather than guessing.
         isPersonalOrg: actor.orgId === actor.personalOrgId,
         role,
         // Derived here, not in the client, so these stay in step with the routes that enforce them:

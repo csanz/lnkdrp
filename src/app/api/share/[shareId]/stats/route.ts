@@ -14,8 +14,14 @@ import crypto from "node:crypto";
 import net from "node:net";
 import { Types } from "mongoose";
 import { DocModel } from "@/lib/models/Doc";
-import { resolveShareLink, touchShareLink } from "@/lib/share/links";
-import { projectLinkPasswordEnabled, projectViewerKey, resolveProjectStatsTarget } from "@/lib/share/projectPublic";
+import { resolveShareLink, shareLinkUnlocked, touchShareLink, type PasswordProtectedLink } from "@/lib/share/links";
+import { projectViewerKey, resolveProjectStatsTarget } from "@/lib/share/projectPublic";
+import { resolveProjectLink } from "@/lib/share/projectLinks";
+import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerIdentity";
+import { sendViewerIntroductionEmails, viewerIntroductionAppUrl } from "@/lib/share/viewerIntroductionEmails";
+import { isViewerEmailVerified } from "@/lib/share/viewerEmailVerification";
+import { enqueueNotification, notificationDedupeKey } from "@/lib/notifications/queue";
+import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
@@ -31,10 +37,8 @@ import {
   parseTimingVersion,
   visitTimeIncrement,
 } from "@/lib/analytics/shareTiming";
-import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
-import { cookies } from "next/headers";
 import { UserModel } from "@/lib/models/User";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -43,6 +47,60 @@ export const runtime = "nodejs";
 
 /** Public ingest budget per IP per minute (viewer heartbeats are a few per page). */
 const STATS_POST_LIMIT = 120;
+
+/**
+ * How many *first sightings of a new reader* one link may turn into mail in a day.
+ *
+ * `STATS_POST_LIMIT` bounds requests per address, which is the wrong unit for this: the expensive
+ * thing is not a request, it is a request that creates a `ShareView` row nobody has seen before,
+ * because each of those fans out to one queued email per member of the workspace. `botId` comes
+ * from the caller, so a new one is free — rotate it per request and every single call is a brand
+ * new reader, from any number of addresses.
+ *
+ * What an owner actually saw: a deck sent to twelve colleagues, and a stranger with the link
+ * turning that into thousands of messages naming readers who do not exist, in twelve mailboxes.
+ *
+ * The ceiling is per link per day and deliberately generous — a genuine send to a large list is
+ * well under it, and the number is about the tail, not the ordinary case. Past it the reading is
+ * still recorded: the `ShareView` row is written, the metrics page still counts it, and only the
+ * two fan-out side effects (the activity row and the mail) are skipped. Suppressing what the owner
+ * is *told* while keeping what they can *look up* is the safe direction — the opposite would hide
+ * real traffic.
+ */
+const NEW_VIEWER_FANOUT_PER_LINK_PER_DAY = 200;
+
+/**
+ * Confirmation mails one share link may cause in a day, counted across every address.
+ * See the note at the send site — the sender's own bounds are per address, which an attacker
+ * rotates freely, so this is the bound that actually holds.
+ */
+const VERIFY_MAIL_PER_LINK_PER_DAY = 50;
+
+/**
+ * A locked data room must answer the same thing about every document id, member or not.
+ *
+ * `resolveProjectStatsTarget` resolves the link *and* the document together, so a slug the caller
+ * has no password for still answered 404 for an id that is not in the room and fell through to a
+ * 200 for one that is. That sorts guessed ids into "inside" and "outside" — an inventory of the
+ * room, handed out to someone who has not given the password, which is the one thing the password
+ * is there to withhold. The page and the PDF proxy were reordered to close exactly this; the
+ * ingest was the third door.
+ *
+ * Reordering here would mean resolving the link twice on the hot path for every ordinary view, so
+ * instead this runs only on the branch that was about to 404: if the slug is a real project link
+ * and it is locked, answer whatever the locked case answers, so both outcomes look identical.
+ */
+async function lockedProjectLink(request: Request, shareId: string): Promise<boolean> {
+  try {
+    const linkOnly = await resolveProjectLink(shareId);
+    if (!linkOnly || linkOnly.refusal) return false;
+    return !shareLinkUnlocked(request, shareId, linkOnly.link as PasswordProtectedLink);
+  } catch {
+    // A lookup that fails must not turn into a different answer either.
+    return false;
+  }
+}
+
 const STATS_POST_WINDOW_MS = 60 * 1000;
 export const dynamic = "force-dynamic";
 /**
@@ -132,18 +190,6 @@ function normalizeEmail(v: string): string | null {
   return s;
 }
 /**
- * As Positive Int (uses Number, isFinite, floor).
- */
-
-
-function asPositiveInt(v: unknown): number | null {
-  const n = typeof v === "number" ? v : Number(v);
-  if (!Number.isFinite(n)) return null;
-  const i = Math.floor(n);
-  return i >= 1 ? i : null;
-}
-
-/**
  * As Duration Ms (clamped).
  */
 function asDurationMs(v: unknown): number | null {
@@ -194,7 +240,21 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         ? null
         : await resolveProjectStatsTarget({ shareId, request, select: { userId: 1, orgId: 1 } as Record<string, 1> });
       if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
+        // Same answer as the locked case below, so a guessed id learns nothing. See `lockedProjectLink`.
+        if (!resolved && (await lockedProjectLink(request, shareId))) {
+          return NextResponse.json({ isOwner: false }, { headers: { "cache-control": "no-store" } });
+        }
         return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      const link = resolved ? resolved.link : projectTarget!.link;
+      // A locked link answers nothing about itself until the password has been given — the same
+      // rule the share page itself runs, which has no owner exemption either (`/s/[shareId]`
+      // renders `PasswordGate` for anyone without the cookie, owner included). So the overlay is
+      // only ever read from a page that already passed the gate, and the check costs a real
+      // recipient nothing. Answered with the same `{ isOwner: false }` a stranger gets rather than
+      // a 404: the viewer's `loadContext` treats it as "no overlay", not as a broken link.
+      if (!shareLinkUnlocked(request, shareId, link as PasswordProtectedLink)) {
+        return NextResponse.json({ isOwner: false }, { headers: { "cache-control": "no-store" } });
       }
       const doc = (resolved ? resolved.doc : projectTarget!.doc) as { _id?: unknown; userId?: unknown };
       const docScope = projectTarget ? { docId: projectTarget.doc._id } : {};
@@ -256,7 +316,18 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
       const body = (await request.json().catch(() => ({}))) as unknown;
       const botId = asNonEmptyString((body as { botId?: unknown })?.botId);
-      const pageNumber = asPositiveInt((body as { pageNumber?: unknown })?.pageNumber);
+      /**
+       * Bounded like every other page field on this payload (`toPage`, `numPages`), which it was
+       * not: the old parser floored anything numeric and accepted it as long as it was >= 1, so a
+       * caller could post `pageNumber: 9e15`. Each distinct value is a new entry in the row's
+       * `pagesSeen` and a new key under `pageTimeMsByPage` / `pageVisitCountByPage`, and those are
+       * Map fields on ONE analytics document — enough of them and the row passes Mongo's 16MB
+       * limit, at which point every further write to that viewer fails and the owner's stats
+       * overlay for the link stops loading. 1..5000 is the same ceiling `parsePageBound` already
+       * imposed on the neighbouring fields, and it is the only bound — narrowing to the document's
+       * own page count was tried and reverted, for the reason recorded at `pageNumber` below.
+       */
+      const pageNumberRaw = parsePageBound((body as { pageNumber?: unknown })?.pageNumber);
       const durationMs = asDurationMs((body as { durationMs?: unknown })?.durationMs);
       /**
        * Time on the *current page*, which is a different interval from `durationMs` and must never
@@ -276,6 +347,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const numPages = parsePageBound((body as { numPages?: unknown })?.numPages);
       const viewerEmailRaw = asNonEmptyString((body as { viewerEmail?: unknown })?.viewerEmail);
       const viewerEmail = viewerEmailRaw ? normalizeEmail(viewerEmailRaw) : null;
+      /** This post is the act of introducing, not a heartbeat replaying a stored profile. */
+      const introducedNow = (body as { introduced?: unknown })?.introduced === true;
       const viewerNameRaw = asNonEmptyString((body as { viewerName?: unknown })?.viewerName, 160);
       const viewerNameIntro = viewerNameRaw ? normalizeViewerName(viewerNameRaw) : null;
       if (!botId) {
@@ -294,6 +367,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       if (!rl.ok) return rateLimitedResponse(rl);
 
       // Views are recorded against the link that was opened; a refused link records nothing.
+      // `slideNodes.pageNumber` used to ride along here as the document's real page count, to narrow
+      // `pageNumber` below. That narrowing is gone (see the note at `pageNumber`), so the projection
+      // went with it: it is one subdocument per page pulled out of Mongo on every 30-second
+      // heartbeat of every open viewer, for a value nothing reads.
       const resolved = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
       /**
        * The project-link path (PRD decision 5). `resolveShareLink` returns null for a project
@@ -307,27 +384,58 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
         ? null
         : await resolveProjectStatsTarget({ shareId, request, bodyDocId: (body as { docId?: unknown })?.docId, select: { title: 1, userId: 1, orgId: 1 } as Record<string, 1> });
       if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
+        // Same quiet 200 the locked case answers below, so a guessed id learns nothing about what
+        // the room holds. See `lockedProjectLink`.
+        if (!resolved && (await lockedProjectLink(request, shareId))) {
+          return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
+        }
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
       const link = resolved ? resolved.link : projectTarget!.link;
-      // A locked project link ingests nothing until the password has been given. The viewer at
-      // `/p/:shareId/:docId` only renders behind that gate, so this costs a real recipient nothing
-      // — but the route is public, and `resolveProjectStatsTarget` proves only that the document is
-      // *in* the project, never that this caller was allowed to open it. Same guard, same reasoning
-      // and same quiet 200 as `POST /api/share/:shareId/landing`.
-      //
-      // Project branch only, deliberately: the document ingest has always accepted a view on a
-      // locked `/s/:shareId` and changing that here would alter document behaviour, which this
-      // change must not do. Flagged in the report instead.
-      if (projectTarget && projectLinkPasswordEnabled(link as { passwordHash?: string | null; passwordSalt?: string | null })) {
-        const jar = await cookies();
-        const presented = jar.get(shareAuthCookieName(shareId))?.value ?? "";
-        const expected = shareAuthCookieValue({ shareId, sharePasswordHash: String((link as { passwordHash?: unknown }).passwordHash ?? "") });
-        if (!presented || presented !== expected) {
-          return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
-        }
+      /**
+       * A locked link ingests nothing until the password has actually been given.
+       *
+       * This used to be the project branch only, on the reasoning that the document ingest had
+       * always accepted a view on a locked `/s/:shareId`. It had, and that was the bug: this route
+       * is public and `resolveShareLink` says nothing about the password (it computes `refusal`
+       * from archived/disabled/expired alone), so anyone holding a forwarded slug could POST a
+       * view, a page and — worse than a number — an `introduced: true` name and email of their
+       * choosing, which lands in the owner's activity feed as a named reader and is mailed to the
+       * whole workspace as fact. A password on a link is the owner saying the URL is not enough;
+       * an analytics row that only a URL was needed to write breaks that promise as surely as
+       * serving the PDF would.
+       *
+       * One unconditional call covers both branches: `shareLinkUnlocked` returns true for a link
+       * with no password, so the guard cannot be acquired by forgetting the `if`, and it reads the
+       * cookie off the raw request (no `await cookies()` needed here).
+       *
+       * Answered 200 with no write, never 401, for the same reason as `POST
+       * /api/share/:shareId/landing`: a recipient whose browser refuses the cookie must see a
+       * quiet no-op, not an error in the console of a page that is otherwise working.
+       */
+      if (!shareLinkUnlocked(request, shareId, link as PasswordProtectedLink)) {
+        return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
       }
       const doc = (resolved ? resolved.doc : projectTarget!.doc) as Record<string, unknown> & { _id: unknown; orgId?: unknown };
+      /**
+       * The page this POST claims to be about. Its only bound is the 1..5000 parse above.
+       *
+       * A second narrowing — to the document's own page count, from `docPageCount(doc.slideNodes)`
+       * — was written here and removed, and the comment that described it as live outlived it by a
+       * commit. It is not coming back in that form: `Doc.slideNodes` is a render artifact, and when
+       * a replacement upload's slide pass fails the *previous* version's nodes are deliberately kept
+       * while `blobUrl` moves on to the new file (see `finalSlideNodes` in
+       * `/api/uploads/:uploadId/process`). A 9-page v1 then sits on a 30-page v2, recipients read
+       * the 30-page PDF, and every genuine reading past page 9 was being discarded — no `pagesSeen`,
+       * no heatmap, no "read to page N" in the owner's mail. Silently dropping real readings is a
+       * worse failure than the one the narrowing was added for.
+       *
+       * The finding it was added for was that `pageNumber` was *unbounded*: each distinct value is
+       * an entry in the row's `pagesSeen` and a key under `pageTimeMsByPage` / `pageVisitCountByPage`
+       * — Map fields on one analytics document, which stops accepting writes at Mongo's 16MB limit.
+       * `parsePageBound` is that bound, and it is the same one `toPage` and `numPages` get.
+       */
+      const pageNumber = pageNumberRaw;
       const shareLinkId = link._id;
       // Denormalized tenancy on the analytics rows (see `ShareView.orgId`).
       const shareOrgId = doc.orgId ? new Types.ObjectId(String(doc.orgId)) : null;
@@ -367,18 +475,49 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           // The one write that means "someone read this". `updatedDate` cannot carry it: Mongoose
           // stamps that on every update query, so a backfill or a metrics-page read moved it too
           // and "Last viewed" reported the maintenance instant (see `ShareView.lastViewedAt`).
-          setFields.lastViewedAt = new Date();
+          // Held in a local because the notification queued below records the same instant as its
+          // `occurredAt`, and a digest that sorts on a second reading of the clock is a digest
+          // whose order drifts from the analytics it is reporting.
+          const viewedAt = new Date();
+          setFields.lastViewedAt = viewedAt;
           // Recorded, not counted: the owner's own opens stay visible to anyone debugging a link
           // and stay out of every figure the owner reads (`RECIPIENT_ONLY_MATCH`). `$set` on every
           // heartbeat, so a row first written while signed out self-heals once they sign in.
           const ownerPreview = await isOwnerSideViewer(doc as Record<string, unknown>, viewerUserId);
           setFields.isOwnerPreview = ownerPreview;
 
+          /**
+           * Before the upsert, because the upsert is what would make it look like old news.
+           *
+           * Gated on `introduced`, which the viewer sets only on the post that carries a *fresh*
+           * introduction. Every heartbeat after it replays the same stored profile, and asking on
+           * each of those would put two indexed reads on the busiest write path in the product for
+           * an answer that is "no" every time. The client only chooses *when to ask*; the check
+           * below still decides whether it is news, so a client that lies gets nothing.
+           */
+          const identityNews =
+            introducedNow && !viewerUserId && (viewerNameIntro || viewerEmail)
+              ? await viewerIdentityNews({
+                  shareId,
+                  botIdHash,
+                  orgId: shareOrgId ? String(shareOrgId) : null,
+                  name: viewerNameIntro,
+                  email: viewerEmail,
+                })
+              : { isNew: false, changed: false };
+
           // The upsert is the write most likely to throw: two first-time POSTs for the same
           // (shareId, botIdHash) race and the unique index makes the loser fail with E11000. That
           // used to abort the whole analytics block — losing this heartbeat's pages and time too —
           // because the outer catch swallowed it. A duplicate key just means "the row exists".
           let created = false;
+          /**
+           * The `_id` of the row this POST inserted, and the identity the notification's
+           * `dedupeKey` is built from — one reading, one email owed, whatever replays this request.
+           * Only ever set on the insert; a returning viewer's heartbeat leaves it null because it
+           * owes nothing new.
+           */
+          let createdShareViewId: Types.ObjectId | null = null;
           try {
             const upsert = await ShareViewModel.updateOne(
               { shareId, botIdHash },
@@ -394,9 +533,180 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               { upsert: true },
             );
             created = Boolean((upsert as any)?.upsertedCount);
+            const upsertedId = (upsert as { upsertedId?: unknown } | null)?.upsertedId;
+            createdShareViewId =
+              created && upsertedId && Types.ObjectId.isValid(String(upsertedId))
+                ? new Types.ObjectId(String(upsertedId))
+                : null;
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             if (!/E11000|duplicate key/i.test(msg)) throw e;
+          }
+
+          /**
+           * Charged once per brand-new reader, never on a repeat visit by someone already known,
+           * so an ordinary audience never touches it however often they come back.
+           *
+           * The charge cannot hang off `created` alone. On a document link a row is one viewer, but
+           * on a project link a row is one (viewer, document) — so a ten-file data room sent to
+           * forty investors charged the budget four hundred times, spent it after the twentieth
+           * investor, and then stopped telling the owner about the twenty real people who came
+           * after. The extra `limit: 1` bucket is a per-day dedupe on the *person*: it answers
+           * "have we already charged for this reader today", so ten files cost one.
+           */
+          const firstSightingToday =
+            created &&
+            (
+              await rateLimit({
+                key: `viewfanseen:${shareId}:${viewerBotIdHash}`,
+                limit: 1,
+                windowMs: 24 * 60 * 60 * 1000,
+              })
+            ).ok;
+          const fanOutAllowed = firstSightingToday
+            ? (
+                await rateLimit({
+                  key: `viewfanout:${shareId}`,
+                  limit: NEW_VIEWER_FANOUT_PER_LINK_PER_DAY,
+                  windowMs: 24 * 60 * 60 * 1000,
+                })
+              ).ok
+            : true;
+
+          if ((identityNews.isNew || identityNews.changed) && !ownerPreview && shareOrgId && fanOutAllowed) {
+            void recordActivity({
+              orgId: String(shareOrgId),
+              userId: null,
+              actorKind: "viewer",
+              type: "viewer.introduced",
+              docId: String(docId),
+              projectId: projectTarget ? String(projectTarget.project._id) : null,
+              title: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
+              meta: {
+                changed: identityNews.changed,
+                // The person, so the feed can link their name to their reader page — and so a name
+                // given later renames this row too (the `viewerKey` join in /api/activity).
+                viewerKey: botIdHash,
+                authenticated: Boolean(viewerUserId),
+                viewerName: viewerNameIntro,
+                viewerEmail: viewerEmail,
+                shareId,
+                linkLabel: link.label ?? null,
+                isDefaultLink: Boolean(link.isDefault),
+                ...(projectTarget
+                  ? {
+                      projectName:
+                        typeof projectTarget.project.name === "string" ? projectTarget.project.name : null,
+                    }
+                  : null),
+              },
+              request,
+            });
+          }
+
+          /**
+           * A returning recipient is recognised from their browser's local storage, so they are
+           * only asked to introduce themselves once — which means a *corrected* name would land on
+           * this one row and nowhere else, and the owner would meet the same reader under two
+           * names on two pages. Write it through to the rest of this person's rows in this
+           * workspace. The realtime server watches these two fields, so an open metrics page
+           * updates itself from the same write (see `propagateViewerIdentity`).
+           */
+          // Gated on the same answer the event is: the viewer replays its stored profile on every
+          // heartbeat, and a rewrite that changes nothing still costs two collection-wide updates
+          // and — because the realtime server watches exactly these two fields — a frame per row
+          // it touches, to every open metrics page in the workspace.
+          if ((identityNews.isNew || identityNews.changed) && !viewerUserId && (viewerNameIntro || viewerEmail)) {
+            /**
+             * Has this workspace ever had a confirmed click for this address?
+             *
+             * Nothing on this request proves the address is the caller's — it is a string in a
+             * public POST body — so this is the only thing that separates "a reader told us who
+             * they are" from "a stranger holding the link typed a real person's name". The answer
+             * decides how far `propagateViewerIdentity` writes it; see `identityFanOutScope`.
+             * A lookup that throws is treated as unverified, which narrows the write.
+             */
+            const emailVerified = viewerEmail && shareOrgId
+              ? await isViewerEmailVerified(shareOrgId, viewerEmail).catch(() => false)
+              : false;
+            try {
+              await propagateViewerIdentity({
+                shareId,
+                botIdHash,
+                orgId: shareOrgId ?? null,
+                name: viewerNameIntro,
+                email: viewerEmail,
+                emailVerified,
+              });
+            } catch {
+              // best-effort: the row this heartbeat wrote already carries the new identity.
+            }
+
+            /**
+             * And now actually send the mail an introduction owes.
+             *
+             * What went wrong: `sendViewerIntroductionEmails` — the confirmation link to the
+             * reader, and the correction to the members who were already told about them
+             * anonymously — was written, tested and then never called from anywhere. Its own doc
+             * comment said it was called "from the two routes that can receive an introduction";
+             * neither route imported it. So the address on the row was accepted as fact and the
+             * only control that could ever turn it into a *proved* address was dead code, which is
+             * also why `/share/verify` was reachable only by a token nothing minted.
+             *
+             * Gated on the same answer the fan-out above is, plus the two gates this specific side
+             * effect needs: `!ownerPreview` (an owner testing their own link mails nobody) and
+             * `fanOutAllowed` (the per-link daily ceiling that already bounds the "new reader"
+             * mail, for the same reason — `botId` is the caller's and a fresh one is free).
+             *
+             * Awaited, not `void`-ed: this whole block is inside `after()`, which keeps the lambda
+             * alive only for work it is awaiting. The function never throws by contract.
+             */
+            if (viewerEmail && !ownerPreview && shareOrgId && fanOutAllowed) {
+              const appUrl = viewerIntroductionAppUrl();
+              /**
+               * A ceiling on confirmation mail per link, whatever address it is addressed to.
+               *
+               * The sender's own bounds are keyed on the address — three per address per workspace,
+               * one an hour — which is the right shape for someone who mistypes their own address
+               * and the wrong shape entirely for an attacker, who simply supplies a new one each
+               * time and is never the same key twice. `fanOutAllowed` does not cover it either: it
+               * is charged only when a `ShareView` row is *created*, so holding `botId` steady and
+               * rotating only the address makes every request after the first free.
+               *
+               * Wiring this previously-dead sender into a public, unauthenticated route without
+               * that second bound would have made the product an arbitrary-recipient mail relay —
+               * anyone with a live share link could have it email anyone they liked, from our own
+               * sending domain. That is a deliverability incident as much as an abuse one.
+               *
+               * So it is bounded by the thing the caller cannot rotate: the link. Degrades rather
+               * than refuses — the introduction is still accepted, recorded and shown in the feed.
+               */
+              const mailBudget = await rateLimit({
+                key: `viewerverify:${shareId}`,
+                limit: VERIFY_MAIL_PER_LINK_PER_DAY,
+                windowMs: 24 * 60 * 60 * 1000,
+              });
+              // No absolute base configured in production means a relative link, and a relative
+              // link in a mail client does nothing — so there is no confirmation to offer.
+              if (appUrl && mailBudget.ok) {
+                await sendViewerIntroductionEmails({
+                  orgId: shareOrgId,
+                  shareId,
+                  // The PERSON: never `botIdHash`, which on a project link carries the document
+                  // suffix. The token is about a reader, not about a reader-and-a-file.
+                  viewerKey: viewerBotIdHash,
+                  email: viewerEmail,
+                  name: viewerNameIntro,
+                  documentTitle: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
+                  // The same shape `buildMetricsUrl` produces, inlined rather than imported: the
+                  // module it lives in is the notification email pipeline, and pulling that onto
+                  // this route's cold start for one string is not a trade the busiest write path
+                  // in the product should make.
+                  metricsUrl: `${appUrl}/doc/${encodeURIComponent(String(docId))}/metrics?shareId=${encodeURIComponent(shareId)}`,
+                  appUrl,
+                });
+              }
+            }
           }
 
           // The link's `lastViewedAt` moves for every view, not only a first-time viewer's: a
@@ -437,6 +747,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                     ...(viewerUserId ? { viewerUserId } : {}),
                     isOwnerPreview: ownerPreview,
                     lastViewedAt: new Date(),
+                    // The introduction was in scope here and never copied across, so a visitor who
+                    // gave their name inside a data-room document stayed anonymous on the row that
+                    // says they came — the one row the room's own figures are keyed on.
+                    ...(!viewerUserId && viewerNameIntro ? { viewerName: viewerNameIntro } : {}),
+                    ...(!viewerUserId && viewerEmail ? { viewerEmailSnapshot: viewerEmail } : {}),
                   },
                   $addToSet: { docsOpened: new Types.ObjectId(String(docId)) },
                 },
@@ -462,8 +777,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             // the document's own page could ever show. The activity feed below still records the
             // view: the read happened, it is just the data room's.
             if (!projectTarget) await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
-            // Activity feed: one "viewed" event per new viewer of this share (not per page/visit).
-            void (async () => {
+            // Activity feed: one "viewed" event per new viewer of this share (not per page/visit),
+            // and the notification rows that reading owes.
+            //
+            // Awaited rather than `void`-ed: everything here already runs inside `after()`, so the
+            // response has gone out and nothing is waiting on it — but `after()` only keeps the
+            // lambda alive for work it is awaiting, and a fire-and-forget insert on the busiest
+            // write path in the product is one a freeze can drop. The block still swallows its own
+            // errors, so the best-effort contract is unchanged.
+            await (async () => {
               try {
                 const ownerUserId = (doc as any)?.userId ? new Types.ObjectId(String((doc as any).userId)) : null;
                 const docOrgId = (doc as any)?.orgId
@@ -478,6 +800,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                   actorKind: "viewer",
                   type: "share.viewed",
                   docId: String(docId),
+                  // A reading inside a data room belongs to the room as well as the document. It was
+                  // already in `meta`; on the row it also survives the project being renamed, and
+                  // lets the feed be filtered by project like every other project event.
+                  projectId: projectTarget ? String(projectTarget.project._id) : null,
                   title: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
                   meta: {
                     authenticated: Boolean(viewerUserId),
@@ -501,6 +827,58 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                   },
                   request,
                 });
+
+                /**
+                 * The mail this reading owes, written down here rather than rediscovered at the
+                 * next tick (PRD decision 1). Same block and same condition as the activity row
+                 * above — `created && !ownerPreview` — because "a new recipient opened this" is the
+                 * event both of them are about.
+                 *
+                 * Fan-out to the whole workspace happens now, one row per member, so a retry, a
+                 * preference and a failure are all per recipient. `viewEmailMode` is deliberately
+                 * NOT read here (decision 2): resolving it at send is what lets a member who turns
+                 * view emails on today hear about the readings from yesterday, which the cursor
+                 * model could never do.
+                 */
+                if (createdShareViewId && fanOutAllowed) {
+                  const members = (await OrgMembershipModel.find({
+                    orgId: new Types.ObjectId(docOrgId),
+                    isDeleted: { $ne: true },
+                  })
+                    .select({ userId: 1 })
+                    .lean()) as Array<{ userId?: unknown }>;
+                  // Awaited, unlike the `void` on `recordActivity` above, and the difference
+                  // matters here: this whole block runs inside `after()`, which keeps the lambda
+                  // alive only for work it is awaiting. An un-awaited insert on the busiest write
+                  // path in the product is one a freeze can cut off mid-flight — and losing this
+                  // row is not losing a feed entry, it is losing the email, which is the exact
+                  // failure the queue exists to remove.
+                  await Promise.all(
+                    members.map(async (m) => {
+                      const memberUserId = m?.userId ? String(m.userId) : "";
+                      if (!Types.ObjectId.isValid(memberUserId)) return;
+                      await enqueueNotification({
+                        orgId: docOrgId,
+                        userId: memberUserId,
+                        kind: "share_views",
+                        dedupeKey: notificationDedupeKey("share_views", memberUserId, createdShareViewId),
+                        event: {
+                          docId: String(docId),
+                          projectId: projectTarget ? String(projectTarget.project._id) : null,
+                          shareId,
+                          // The PERSON, so `viewerBotIdHash` and never `botIdHash` (decision 9): on
+                          // a project link the latter is the `<digest>.<docId>` composite, and the
+                          // document already has its own field on the row. Three bugs this month
+                          // came from those two shapes being compared literally.
+                          viewerKey: viewerBotIdHash,
+                          viewerName: viewerNameIntro ?? null,
+                          viewerEmail: viewerEmail ?? null,
+                        },
+                        occurredAt: viewedAt,
+                      });
+                    }),
+                  );
+                }
               } catch {
                 // best-effort
               }

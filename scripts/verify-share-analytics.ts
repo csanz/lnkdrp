@@ -56,7 +56,9 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { ShareLinkModel } from "@/lib/models/ShareLink";
+import { PROJECT_LINK_FILTER, ShareLinkModel } from "@/lib/models/ShareLink";
+import { projectLinkStatsByShareId } from "@/lib/share/projectLinks";
+import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { loadReadingCore } from "@/lib/analytics/loadReading";
@@ -161,6 +163,87 @@ async function checkPageTimeFitsTotal(
   return failures;
 }
 
+type LinkTruth = { viewCount: number; downloadCount: number; lastViewedAt?: Date | null };
+type StoredLink = { shareId?: unknown; viewCount?: number; downloadCount?: number; lastViewedAt?: Date | null; label?: string };
+
+const EMPTY_TRUTH: LinkTruth = { viewCount: 0, downloadCount: 0, lastViewedAt: null };
+
+/**
+ * One link's three counters against the rows behind them.
+ *
+ * Shared by the document half and the project half so the two cannot end up judging drift
+ * differently — what changes between them is how `truth` is computed, never what counts as wrong.
+ */
+function compareLinkCounters(link: StoredLink, truth: LinkTruth): Failure[] {
+  const failures: Failure[] = [];
+  const slug = String(link.shareId ?? "");
+  const scope = `link ${slug} (${link.label ?? "?"})`;
+  if ((link.viewCount ?? 0) !== truth.viewCount) {
+    failures.push({
+      invariant: "link counters match the rows",
+      scope,
+      detail: `ShareLink.viewCount is ${link.viewCount ?? 0} but ${truth.viewCount} recipient rows exist`,
+    });
+  }
+  if ((link.downloadCount ?? 0) !== truth.downloadCount) {
+    failures.push({
+      invariant: "link counters match the rows",
+      scope,
+      detail: `ShareLink.downloadCount is ${link.downloadCount ?? 0} but the rows sum to ${truth.downloadCount}`,
+    });
+  }
+  // Milliseconds apart is not drift. `touchShareLink` stamps the link with its own `new Date()`
+  // while the ingest stamps the row with another a few milliseconds earlier, so exact equality
+  // reports a failure on every healthy link that has just been viewed — and a check that cries
+  // wolf on healthy data is a check people learn to ignore.
+  const storedLast = link.lastViewedAt ? new Date(link.lastViewedAt).getTime() : null;
+  const truthLast = truth.lastViewedAt ? new Date(truth.lastViewedAt).getTime() : null;
+  const lastDrifted =
+    storedLast === null || truthLast === null ? storedLast !== truthLast : Math.abs(storedLast - truthLast) > LAST_VIEWED_TOLERANCE_MS;
+  if (lastDrifted) {
+    failures.push({
+      invariant: "link counters match the rows",
+      scope,
+      detail: `ShareLink.lastViewedAt is ${link.lastViewedAt ? new Date(link.lastViewedAt).toISOString() : "null"} but the rows say ${
+        truth.lastViewedAt ? new Date(truth.lastViewedAt).toISOString() : "null"
+      }`,
+    });
+  }
+  return failures;
+}
+
+/**
+ * Invariant 2, for the links a document does not own: a data room's.
+ *
+ * These were checked by nothing, and worse than nothing. A project link has `docId: null`, and
+ * `ShareLinkModel.distinct("docId")` returns that null as though it were a document — so
+ * `checkDocument(null)` ran once, matched all 184 of them with `find({ docId: null })`, and
+ * compared each against an aggregate of rows whose `docId` is null, of which there are none. Every
+ * project link with traffic was reported as completely drifted ("viewCount is 10 but 0 recipient
+ * rows exist"), and every one without traffic passed by comparing zero to zero. A check that is
+ * wrong on the links that have readers and silent on the rest is the shape of a check nobody can
+ * use: it made the script exit non-zero on any database with a data room, which is why it could
+ * not be the CI gate the runbook wants.
+ *
+ * The truth comes from `projectLinkStatsByShareId`, the same function the project read paths and
+ * the nightly reconcile already share — so "what a project link's viewCount is" keeps one
+ * definition in the codebase. It is not row-counting: a project link writes one row per (viewer,
+ * document), and `viewCount` means recipients, so the rows are grouped by reader first.
+ */
+async function checkProjectLinks(): Promise<Failure[]> {
+  const links = (await ShareLinkModel.find({ ...PROJECT_LINK_FILTER })
+    .select({ _id: 1, shareId: 1, label: 1, viewCount: 1, downloadCount: 1, lastViewedAt: 1 })
+    .lean()) as StoredLink[];
+  if (!links.length) return [];
+  const slugs = links.map((l) => String(l.shareId ?? "")).filter(Boolean);
+  const truth = await projectLinkStatsByShareId(slugs);
+  const failures: Failure[] = [];
+  for (const link of links) {
+    failures.push(...compareLinkCounters(link, truth.get(String(link.shareId ?? "")) ?? EMPTY_TRUTH));
+  }
+  return failures;
+}
+
 /** Invariants 2 and 3, for one document. */
 async function checkDocument(docId: Types.ObjectId): Promise<Failure[]> {
   const failures: Failure[] = [];
@@ -183,40 +266,7 @@ async function checkDocument(docId: Types.ObjectId): Promise<Failure[]> {
 
   for (const link of links) {
     const slug = String((link as { shareId?: unknown }).shareId ?? "");
-    const truth = bySlug.get(slug) ?? { viewCount: 0, downloadCount: 0, lastViewedAt: null };
-    const stored = link as { viewCount?: number; downloadCount?: number; lastViewedAt?: Date | null; label?: string };
-    const scope = `link ${slug} (${stored.label ?? "?"})`;
-    if ((stored.viewCount ?? 0) !== truth.viewCount) {
-      failures.push({
-        invariant: "link counters match the rows",
-        scope,
-        detail: `ShareLink.viewCount is ${stored.viewCount ?? 0} but ${truth.viewCount} recipient rows exist`,
-      });
-    }
-    if ((stored.downloadCount ?? 0) !== truth.downloadCount) {
-      failures.push({
-        invariant: "link counters match the rows",
-        scope,
-        detail: `ShareLink.downloadCount is ${stored.downloadCount ?? 0} but the rows sum to ${truth.downloadCount}`,
-      });
-    }
-    // Milliseconds apart is not drift. `touchShareLink` stamps the link with its own `new Date()`
-    // while the ingest stamps the row with another a few milliseconds earlier, so exact equality
-    // reports a failure on every healthy link that has just been viewed — and a check that cries
-    // wolf on healthy data is a check people learn to ignore.
-    const storedLast = stored.lastViewedAt ? new Date(stored.lastViewedAt).getTime() : null;
-    const truthLast = truth.lastViewedAt ? new Date(truth.lastViewedAt).getTime() : null;
-    const lastDrifted =
-      storedLast === null || truthLast === null ? storedLast !== truthLast : Math.abs(storedLast - truthLast) > LAST_VIEWED_TOLERANCE_MS;
-    if (lastDrifted) {
-      failures.push({
-        invariant: "link counters match the rows",
-        scope,
-        detail: `ShareLink.lastViewedAt is ${stored.lastViewedAt ? new Date(stored.lastViewedAt).toISOString() : "null"} but the rows say ${
-          truth.lastViewedAt ? new Date(truth.lastViewedAt).toISOString() : "null"
-        }`,
-      });
-    }
+    failures.push(...compareLinkCounters(link as StoredLink, bySlug.get(slug) ?? EMPTY_TRUTH));
   }
 
   // Invariant 3: the document total is the sum over its links, archived slugs included.
@@ -261,10 +311,20 @@ const VISIT_TOLERANCE_MS = 1000;
 /** Invariant names whose inputs are two separate reads, which traffic landing in between can split. */
 const READ_RACE_INVARIANTS = new Set(["people equals the shareviews viewer count", "total time equals shareviews visitTimeMs"]);
 
-/** `/shareviews` `viewerCount`, recomputed with the route's own `windowAgg` grouping. */
+/**
+ * `/shareviews` `viewerCount`, recomputed with the route's own `windowAgg` grouping.
+ *
+ * `docOnlyShareIdMatch` is not optional here, and leaving it out is what made this check fail on
+ * every document that lives in a data room. A read through a project link belongs to the project
+ * (`src/lib/analytics/docScope.ts`), so the route's `people` excludes it — while this aggregate,
+ * matching on `docId` alone, counted it. The document was then accused of disagreeing with itself
+ * over readers it was right to leave out. A recomputation has to apply every rule the read path
+ * applies, or it is not checking the read path, it is checking a different question.
+ */
 async function freshViewerCount(docId: Types.ObjectId, start: Date): Promise<number> {
+  const { match: docOnly } = await docOnlyShareIdMatch([docId]);
   const rows = (await ShareViewModel.aggregate([
-    { $match: { docId, ...RECIPIENT_ONLY_MATCH, ...activityWindowMatch(start) } },
+    { $match: { docId, ...RECIPIENT_ONLY_MATCH, ...docOnly, ...activityWindowMatch(start) } },
     {
       $group: {
         _id: {
@@ -284,10 +344,11 @@ async function freshViewerCount(docId: Types.ObjectId, start: Date): Promise<num
   return rows.reduce((a, r) => a + (typeof r.viewers === "number" ? r.viewers : 0), 0);
 }
 
-/** `/shareviews` `totals.visitTimeMs`, recomputed. */
+/** `/shareviews` `totals.visitTimeMs`, recomputed. Document scope for the reason in `freshViewerCount`. */
 async function freshVisitTimeMs(docId: Types.ObjectId, start: Date): Promise<number> {
+  const { match: docOnly } = await docOnlyShareIdMatch([docId]);
   const rows = (await ShareVisitModel.aggregate([
-    { $match: { docId, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start } } },
+    { $match: { docId, ...RECIPIENT_ONLY_MATCH, ...docOnly, lastEventAt: { $gte: start } } },
     { $group: { _id: null, ms: { $sum: { $ifNull: ["$timeSpentMs", 0] } } } },
   ])) as Array<{ ms?: number }>;
   const ms = rows[0]?.ms;
@@ -467,9 +528,15 @@ async function main(): Promise<void> {
   await connectMongo();
 
   const docId = docRaw ? new Types.ObjectId(docRaw) : null;
+  /**
+   * Only real documents. `distinct("docId")` includes the `null` every project link carries, and
+   * `checkDocument(null)` is not a no-op — see `checkProjectLinks` for what it did instead.
+   */
   const docIds: Types.ObjectId[] = docId
     ? [docId]
-    : ((await ShareLinkModel.distinct("docId")) as unknown as Types.ObjectId[]);
+    : ((await ShareLinkModel.distinct("docId")) as unknown as Array<Types.ObjectId | null>).filter(
+        (id): id is Types.ObjectId => Boolean(id),
+      );
 
   const failures: Failure[] = [
     ...(await checkPageTimeFitsTotal(ShareViewModel as never, "shareview", docId)),
@@ -477,6 +544,9 @@ async function main(): Promise<void> {
     ...(await checkOwnerPreviewSanity(docId)),
   ];
   for (const id of docIds) failures.push(...(await checkDocument(id)));
+  // Skipped when the run is scoped to one document with `--doc`: a project link belongs to no
+  // document, so there is nothing about it that a single-document run is asking.
+  if (!docId) failures.push(...(await checkProjectLinks()));
   const readingBefore = failures.length;
   for (const id of docIds) failures.push(...(await checkReadingSettled(id)));
 

@@ -34,6 +34,25 @@ function escapeRegex(s: string) {
 }
 
 /**
+ * The `$or` behind `?q=`: substring over the title, whole-value equality over the share slug.
+ *
+ * The route already refuses to *select* `shareId` (see the projection below) — and then the filter
+ * gave it back a character at a time. An unanchored `new RegExp(q, "i")` over a field the caller
+ * cannot read is an extraction oracle: find a row with a two-character `q`, extend the substring by
+ * one character and keep whichever of the 62 candidates keeps that row's `id` in the response.
+ * `newShareId()` is `randomBase62(12)`, so ~12 x 62 unthrottled requests recover a slug, and
+ * `/s/<shareId>` then renders the document. Matching the slug whole keeps the lookup the comment
+ * below describes — paste a slug the customer gave you — and returns nothing the caller did not
+ * already know. Case-sensitive: base62 slugs are, and a folded match would find a different doc.
+ *
+ * Written as `{ $eq: q }` rather than a bare `q`: the operator says *match this value*, and the
+ * source scan in `tests/lib/adminRouteSecrets.test.ts` reads these four files for that shape.
+ */
+function searchClauses(q: string): Record<string, unknown>[] {
+  return [{ title: new RegExp(escapeRegex(q), "i") }, { shareId: { $eq: q } }];
+}
+
+/**
  * `GET /api/admin/data/docs`
  *
  * Returns a paginated list of non-deleted docs for admin inspection, optionally filtered
@@ -60,8 +79,7 @@ export async function GET(request: Request) {
     isDeleted: { $ne: true },
   };
   if (q) {
-    const rx = new RegExp(escapeRegex(q), "i");
-    filter.$or = [{ title: rx }, { shareId: rx }];
+    filter.$or = searchClauses(q);
   }
   if (statusRaw) {
     const allowed = new Set(["draft", "preparing", "ready", "failed"]);
@@ -89,7 +107,10 @@ export async function GET(request: Request) {
       userId: 1,
       title: 1,
       status: 1,
-      shareId: 1,
+      // `shareId` is searched above but never selected: `/s/:shareId` renders the document, so a
+      // slug in a listing is the whole document redaction was built to withhold. Matching a slug
+      // the customer supplied — whole, see `searchClauses` — is a lookup; handing 200 of them back
+      // is a key ring, and so was matching them a character at a time.
       shareEnabled: 1,
       isArchived: 1,
       createdDate: 1,
@@ -111,7 +132,6 @@ export async function GET(request: Request) {
       userId: d.userId ? String(d.userId) : null,
       title: typeof d.title === "string" ? d.title : null,
       status: typeof d.status === "string" ? d.status : null,
-      shareId: typeof d.shareId === "string" ? d.shareId : null,
       shareEnabled: (d as { shareEnabled?: unknown }).shareEnabled !== false,
       isArchived: Boolean((d as { isArchived?: unknown }).isArchived),
       updatedDate: d.updatedDate ? new Date(d.updatedDate).toISOString() : null,

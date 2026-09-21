@@ -25,6 +25,9 @@ socket, so this runs on its own host.
    - `docs` status changes → `{"type":"doc","orgId","doc":{id,status,shareId}}`
    - `projects` insert/update/replace/delete → `{"type":"project","orgId","project":{id,name}}`
    - `uploads` writes that touch `progress` → `{"type":"upload","orgId","upload":{id,docId,percent,stage,status}}`
+   - `shareviews` and `projectlinkviews` updates touching `viewerName` / `viewerEmailSnapshot` → `{"type":"viewer","orgId","viewer":{docId,shareId,name}}` (`docId` is null for an arrival row)
+     (a recipient re-answered "introduce yourself"; the metrics pages refetch so a corrected name
+     does not wait for a reload — see docs/METRICS.md, "A recipient who changes the name they gave")
      — how far a running upload has got ("rendering page 3 of 9"). The pipeline writes it at every
      real boundary, throttled to ~one write per 750ms per upload (first and last exempt), and the
      Activity feed draws it as a bar. The routing key is `progress.orgId`, stamped by the writer so

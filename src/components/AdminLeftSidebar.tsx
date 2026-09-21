@@ -30,6 +30,7 @@ export default function AdminLeftSidebar() {
   const sections: NavSection[] = useMemo(
     () => [
       { label: "Home", items: [{ label: "Home", href: "/a", exact: true }] },
+      { label: "Access", items: [{ label: "Early access", href: "/a/waitlist", exact: true }] },
       { label: "Metrics", items: [{ label: "Share views", href: "/a/shareviews", exact: false }] },
       { label: "AI", items: [{ label: "Runs", href: "/a/ai-runs", exact: true }] },
       { label: "Billing", items: [{ label: "Credits", href: "/a/credits", exact: true }] },
@@ -49,6 +50,7 @@ export default function AdminLeftSidebar() {
         label: "System",
         items: [
           { label: "Cron health", href: "/a/cron-health", exact: true },
+          { label: "Deployments", href: "/a/deployments", exact: true },
           { label: "Deletions", href: "/a/deletions", exact: true },
           { label: "Emails", href: "/a/emails", exact: true },
         ],
@@ -108,8 +110,10 @@ export default function AdminLeftSidebar() {
                             href={item.href}
                             className={[
                               "block rounded-lg py-1.5 pl-5 pr-2 text-left text-[13px] font-medium transition-colors",
+                              // The current page used to paint the same token `hover:` uses, so
+                              // hovering any of the fourteen rows erased which page you were on.
                               active
-                                ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                                ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                                 : "text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)]",
                             ].join(" ")}
                           >

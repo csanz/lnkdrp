@@ -36,6 +36,9 @@ import SidebarRequestsModal from "@/components/modals/SidebarRequestsModal";
 import SidebarStarredModal from "@/components/modals/SidebarStarredModal";
 import AccountMenu from "@/components/AccountMenu";
 import SidebarProjectsSection from "@/components/SidebarProjectsSection";
+import SidebarTagsSection from "@/components/SidebarTagsSection";
+import TagDots from "@/components/tags/TagDots";
+import { useTargetTags } from "@/lib/client/useTargetTags";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import IconButton from "@/components/ui/IconButton";
 import SidebarCredits from "@/components/SidebarCredits";
@@ -1318,6 +1321,18 @@ export default function LeftSidebar({
   const seenRowIdsRef = useRef<Set<string> | null>(null);
   const markRowsSeen = useCallback((ids: string[]) => ids.forEach((id) => seenRowIdsRef.current?.add(id)), []);
   const docRowsForSidebar = useLeavingRows(docsForSidebar, leaveReasons, { requireReason: false, onBackfill: markRowsSeen });
+
+  /**
+   * The tags on the rows the sidebar is showing — the Docs list and the Starred list — in one
+   * request, so a row can print a dot per tag the way project rows do.
+   */
+  const docTagsById = useTargetTags(
+    "doc",
+    useMemo(
+      () => [...new Set([...docsForSidebar.map((d) => d.id), ...starredForSidebar.map((d) => d.id)])],
+      [docsForSidebar, starredForSidebar],
+    ),
+  );
   // Starred rows only fold for a known archive/delete: they also drop stale localStorage entries on
   // load and on unstar, which should not read as "Archived".
   const starredRowsForSidebar = useLeavingRows(starredForSidebar, leaveReasons, { requireReason: true, onBackfill: markRowsSeen });
@@ -1635,7 +1650,7 @@ export default function LeftSidebar({
           // Best-effort: keep the request link usable even if guide upload fails,
           // but disable review since the guide is required for automatic review.
           setRequestError(
-            "Repository created, but evaluation guide upload failed. Automatic review was disabled—attach a guide from the repo settings to enable it.",
+            "Repository created, but evaluation guide upload failed. Automatic review was disabled. Attach a guide from the repo settings to enable it.",
           );
           try {
             await fetchWithTempUser(`/api/projects/${encodeURIComponent(projectId)}`, {
@@ -1938,9 +1953,23 @@ export default function LeftSidebar({
   }, [deleteDocOpen, deleteDocTarget?.id]);
 
   return (
-    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
+    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[var(--sidebar-edge)] bg-[var(--sidebar-bg)]">
+      {/* Two parts, and the split is deliberate: everything you *browse* scrolls — the logo, the
+          workspace pill, the nav items and the lists — and the foot that says who you are and what
+          you have left stays put at the bottom. Pinning the header was wrong (it ate half a laptop
+          screen); letting the account block float up under a short list was wrong too, because it
+          is not part of the list. A stable gutter keeps rows from shifting sideways when a section
+          expands past the fold. */}
       <div className="flex h-full flex-col">
-        <div className="flex min-w-0 items-center gap-2 px-4 pb-5 pt-5">
+        <div
+          className="min-h-0 flex-1 overflow-y-scroll overflow-x-hidden"
+          style={{ scrollbarGutter: "stable" }}
+        >
+        {/* The logo row centres on the same line as a page title: AppPageHeader is `pt-6` above an
+            `h-8` row, so its title sits 40px from the top, and a 34px row (the workspace pill) needs 23px above it to
+            match. Anything else leaves the product's two fixed points — the mark and the page name —
+            a few pixels apart on every screen. */}
+        <div className="flex min-w-0 items-center gap-2 px-4 pb-5 pt-[23px]">
           <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
             <Image src={logoSrc} alt="LinkDrop" width={28} height={28} className="block" />
           </Link>
@@ -1958,11 +1987,11 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname.startsWith("/search")
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -1983,11 +2012,11 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname.startsWith("/metrics")
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -2008,13 +2037,13 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group relative w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group relative w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname === "/" || pathname.startsWith("/upload")
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
-                isAddNewDropActive ? "bg-[var(--sidebar-hover)] text-[var(--fg)]" : "",
+                isAddNewDropActive ? "bg-[var(--sidebar-active)] text-[var(--fg)]" : "",
               ].join(" ")}
               onClick={() => openAddNewPicker()}
               onDragEnter={(e) => {
@@ -2058,7 +2087,7 @@ export default function LeftSidebar({
 
               {isAddNewDropActive ? (
                 <div className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-10 -translate-x-1/2">
-                  <div className="whitespace-nowrap rounded-full bg-[var(--panel)]/90 px-3 py-1 text-[13px] font-semibold text-[var(--fg)] shadow-sm ring-1 ring-black/5 backdrop-blur">
+                  <div className="whitespace-nowrap rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1 text-[13px] font-semibold text-[var(--fg)] shadow-sm">
                     Drop to upload
                   </div>
                 </div>
@@ -2069,11 +2098,11 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname === "/activity"
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -2097,11 +2126,11 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-24 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-24 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname.startsWith("/connect")
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -2126,7 +2155,9 @@ export default function LeftSidebar({
             {agentStatus && !navLocked ? (
               <button
                 type="button"
-                className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-normal text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                // `right-0.5` against its own px-1.5: the two cancel to the same right edge every
+                // other item in this column sits on. (`right-2` put the words 6px inside it.)
+                className="absolute right-0.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-normal text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 onClick={(e) => {
                   e.stopPropagation();
                   router.push(agentStatus.connected ? "/activity?who=agents" : "/connect");
@@ -2144,37 +2175,20 @@ export default function LeftSidebar({
               </button>
             ) : null}
             </div>
-            {/* Most recent connected clients (up to 3) under the Agents entry; each row opens /connect.
-                In shared workspaces the owner's name is shown so a team sees whose agent it is. */}
-            {agentStatus?.connected && agentStatus.clients.length > 0 && !navLocked ? (
-              <ul className="mb-1 mt-0.5 space-y-0.5 pl-9 pr-2" aria-label="Connected clients">
-                {agentStatus.clients.slice(0, 3).map((c) => (
-                  <li key={c.client}>
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-left text-[11px] text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
-                      onClick={() => router.push("/connect")}
-                      title={`${c.client} · ${formatRelative(c.lastUsedAt)}${agentStatus.isPersonalOrg ? "" : ` · ${c.by.join(", ")}`}`}
-                    >
-                      <span className="min-w-0 truncate">
-                        {c.client}
-                        {!agentStatus.isPersonalOrg && c.by.length > 0 ? (
-                          <span className="text-[var(--muted-2)]"> · {c.by.length === 1 ? c.by[0] : `${c.by.length} members`}</span>
-                        ) : null}
-                      </span>
-                      <span className="shrink-0 text-[var(--muted-2)]">{formatRelative(c.lastUsedAt)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            {/* No per-client rows under Agents.
+                This used to list up to three connected clients, each as "<client> · <owner> ·
+                <when>". The client name is whatever the MCP client reports about itself, which is
+                often a single letter or a version string, so the sidebar carried a row reading
+                "V · Christian Sanz · 4 hrs ago" — three facts, none of them the one being asked.
+                The entry above already answers it ("1 connected"), the full list is in its tooltip,
+                and /connect is one click away for the detail. */}
 
             {FEATURE_REQUESTS_ENABLED ? (
               <button
                 type="button"
                 disabled={navLocked}
                 className={[
-                  "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                  "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                   navLocked ? "cursor-not-allowed opacity-50" : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
                 ].join(" ")}
                 onClick={() => {
@@ -2196,12 +2210,7 @@ export default function LeftSidebar({
           </div>
         </div>
 
-        <nav
-          // Force a stable scrollbar presence to avoid horizontal layout shift when sections collapse/expand.
-          // (Some browsers ignore `scrollbar-gutter`, so `overflow-y-scroll` is the reliable backstop.)
-          className="mt-1 flex-1 overflow-y-scroll overflow-x-hidden border-t border-[var(--border)] pl-3 pr-12 pb-4 pt-4"
-          style={{ scrollbarGutter: "stable" }}
-        >
+        <nav className="mt-1 border-t border-[var(--border)] pl-3 pr-12 pb-4 pt-4">
           {/* Sections may not grow past the nav's padding box: a long doc title's min-content width
               used to widen the Docs section, pushing rows and their "..." past the sidebar edge. */}
           <div className="grid gap-4 [&>*]:min-w-0">
@@ -2215,7 +2224,7 @@ export default function LeftSidebar({
                     setStarredCollapsed((v) => !v);
                   }}
                 >
-                  <StarIcon className="h-3.5 w-3.5 text-amber-400" filled />
+                  <StarIcon className="h-3.5 w-3.5 text-[var(--tag-amber)]" filled />
                   <span>Starred</span>
                 </button>
                 <IconButton
@@ -2303,13 +2312,13 @@ export default function LeftSidebar({
                             // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
                             "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
-                            activeDocId === d.id ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
+                            activeDocId === d.id ? "bg-[var(--sidebar-active)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
                           ].join(" ")}
                         >
                           {/* `pr-6` reserves the row menu's column, exactly as the Docs rows do, so
                               the version chip lands in the same place in both lists. */}
-                          <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal">
-                            <StarIcon className="h-3.5 w-3.5 shrink-0 text-amber-400 opacity-70" />
+                          <div className="flex min-w-0 items-center gap-2 pr-9 leading-normal">
+                            <StarIcon className="h-3.5 w-3.5 shrink-0 text-[var(--tag-amber)] opacity-70" />
                             <span className="block min-w-0 max-w-[220px] flex-1 truncate text-[var(--fg)]">
                               {title}
                             </span>
@@ -2318,6 +2327,7 @@ export default function LeftSidebar({
                                 that had failed to load. Same single weight as the Docs rows. Prefers
                                 the live sidebar list, falls back to the starred cache so the chip is
                                 there on the first paint. */}
+                            <TagDots tags={docTagsById[d.id]} />
                             {(() => {
                               const version =
                                 typeof sidebarMeta?.version === "number" && Number.isFinite(sidebarMeta.version)
@@ -2602,7 +2612,11 @@ export default function LeftSidebar({
                 truncateEnd={truncateEnd}
                 rowEnter={rowEnter}
               />
+
             </section>
+
+            {/* Below Projects: tags are a filing system, not the spine of the workspace. */}
+            <SidebarTagsSection />
 
             <section>
               <div className="group flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
@@ -2698,13 +2712,16 @@ export default function LeftSidebar({
                             // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
                             "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
-                            activeDocId === d.id ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
+                            activeDocId === d.id ? "bg-[var(--sidebar-active)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
                           ].join(" ")}
                           title={when ? `Updated ${when}` : undefined}
                         >
-                          <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal text-[var(--fg)]">
+                          <div className="flex min-w-0 items-center gap-2 pr-9 leading-normal text-[var(--fg)]">
                             <DocumentIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                             <span className="block min-w-0 flex-1 truncate">{title}</span>
+                            {/* The document's tags, as dots, in front of its version — the same
+                                treatment project rows get. */}
+                            <TagDots tags={docTagsById[d.id]} />
                             {/* Which version a row is on. v1 used to appear only on hover, which read as
                                 missing data next to a neighbour showing v7 — the Docs modal and the
                                 project rows show it on every row, so this one does too. One weight for
@@ -2771,6 +2788,7 @@ export default function LeftSidebar({
             </section>
           </div>
         </nav>
+        </div>
 
         {plan?.plan === "free" ? (
           // Free plan: proactive usage meters. Hidden on Pro and until the snapshot has loaded.
@@ -2823,7 +2841,7 @@ export default function LeftSidebar({
           </div>
         ) : null}
 
-        <div className="border-t border-[var(--border)] px-3 py-3">
+        <div className="shrink-0 border-t border-[var(--border)] px-3 py-3">
           <SidebarCredits />
           <AccountMenu />
         </div>

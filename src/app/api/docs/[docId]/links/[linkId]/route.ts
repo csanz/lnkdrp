@@ -85,10 +85,14 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
 
     await assertLinkOnDoc(orgId, docObjectId, linkId);
     if (makeDefault) await setDefaultShareLink({ orgId, docId: docObjectId, linkId });
-    const { link, limit } =
+    const { link, limit, restored } =
       Object.keys(settings).length > 0
         ? await updateShareLink({ orgId, linkId, settings })
-        : { link: (await listShareLinks({ orgId, docId: docObjectId })).find((l) => String(l._id) === String(linkId))!, limit: null };
+        : {
+            link: (await listShareLinks({ orgId, docId: docObjectId })).find((l) => String(l._id) === String(linkId))!,
+            limit: null,
+            restored: undefined,
+          };
 
     // Recomputed from the rows, like every other surface: returning the stored counters here made
     // an agent's `update_share_link` reply disagree with the `list_share_links` it had just read.
@@ -121,6 +125,36 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
         },
         request,
       });
+
+      /**
+       * The restore is its own event, because it is its own change.
+       *
+       * Enabling one link re-shares the document and brings back every link the document switch had
+       * disabled — so between two rows reading "sharing off" and "link A enabled", a document went
+       * from nothing reachable to five links live, and the feed said nothing about the other four.
+       * An audit trail that cannot account for who regained access is not one.
+       */
+      if (restored?.length) {
+        void recordActivity({
+          orgId: String(orgId),
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: "share.updated",
+          docId: docObjectId,
+          title,
+          meta: {
+            shareEnabled: true,
+            via: "link_enabled",
+            restoredCount: restored.length,
+            restoredLinks: restored.map((l) => ({
+              linkId: String(l._id),
+              shareId: l.shareId,
+              linkLabel: typeof l.label === "string" ? l.label : null,
+            })),
+          },
+          request,
+        });
+      }
     }
 
     // A refused version_history change is a hard no: nothing was written, so answer 402 with the
@@ -132,7 +166,26 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
 
     const planWarning = planWarningOf(limit);
     return applyTempUserHeaders(
-      NextResponse.json({ link: dto, ...(planWarning ? { planWarning } : {}) }, { headers: { "cache-control": "no-store" } }),
+      NextResponse.json(
+        {
+          link: dto,
+          ...(planWarning ? { planWarning } : {}),
+          // Enabling a link can re-share the document and bring back the links its switch had taken
+          // down. That changes who can reach the document, so it is reported rather than left for
+          // the caller to notice by listing.
+          ...(restored?.length
+            ? {
+                warnings: [
+                  `Turning this link on re-shared the document, which also restored ${restored.length} link(s) that were ` +
+                    `disabled when sharing was switched off: ${restored
+                      .map((l) => (typeof l.label === "string" && l.label.trim() ? l.label.trim() : l.shareId))
+                      .join(", ")}. Links revoked individually were not restored.`,
+                ],
+              }
+            : {}),
+        },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {

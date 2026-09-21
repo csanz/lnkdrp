@@ -13,8 +13,9 @@ import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
-import { resolveShareLink, touchShareLink } from "@/lib/share/links";
+import { resolveShareLink, shareLinkUnlocked, touchShareLink } from "@/lib/share/links";
 import { recordActivity } from "@/lib/activity/log";
+import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 
 export const runtime = "nodejs";
 
@@ -80,10 +81,33 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     const resolved = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
     if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+    // ...and to the link's password, which the approval does not stand in for. The owner approved a
+    // person; the password admits a browser, and one added or rotated after the request was filed
+    // is the owner revoking exactly this audience. Recoverable on purpose: unlocking the share page
+    // sets the cookie (14 days, path "/") and this link then works, so a claim opened on a device
+    // that never held the password is a detour rather than a dead end. Asked under the slug the
+    // recipient actually visited (the one on the request row), because that is the name the unlock
+    // cookie was set under.
+    if (!shareLinkUnlocked(request, shareIdOfRequest, resolved.link)) {
+      return new Response(
+        `This link is password protected. Open /s/${resolved.link.shareId}, enter the password, then use this download link again.`,
+        { status: 401, headers: { "content-type": "text/plain; charset=utf-8" } },
+      );
+    }
+
     const doc = await DocModel.findOne({ _id: docId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
       .select({ blobUrl: 1, title: 1, fileName: 1, userId: 1, orgId: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // The one path that never asked. `/s/:shareId/pdf` and the stats ingest both flag the owning
+    // side; this route did not, so a teammate — or the owner — who filed a download request and
+    // approved it wrote a `ShareView` row with no `isOwnerPreview` field at all. Absent reads as
+    // "recipient" to every downstream `{ $ne: true }`, and because this row is keyed on the
+    // approved person rather than a browser botId, nothing later ever corrects it: the miscount is
+    // permanent. Unlike the public route this one has a signed-in actor by construction, so the
+    // answer is not best-effort here.
+    const ownerPreview = await isOwnerSideViewer(doc as { orgId?: unknown; userId?: unknown }, actor.userId);
 
     const blobUrl = (doc as { blobUrl?: unknown }).blobUrl;
     if (typeof blobUrl !== "string" || !blobUrl) {
@@ -97,7 +121,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     });
 
     const headers = new Headers();
-    pickHeader(upstream.headers, headers, "content-type", { fallback: "application/pdf" });
+    // Pinned, not copied. These routes serve one thing — the stored PDF — so echoing the upstream
+  // `content-type` bought nothing and cost everything: with `content-disposition: inline` and no
+  // `script-src` in the app's CSP, an upstream that answered `text/html` made this origin serve
+  // attacker markup and script. The write path that made that reachable is closed
+  // (`blobUrl` is no longer patchable), and this is the second lock: even a blob the store itself
+  // mislabels can only ever be delivered as a PDF.
+  headers.set("content-type", "application/pdf");
     pickHeader(upstream.headers, headers, "content-length");
     pickHeader(upstream.headers, headers, "content-range");
     pickHeader(upstream.headers, headers, "accept-ranges");
@@ -114,7 +144,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     // The owner asked to be told when this person downloads; before, an approved download was
     // invisible in both the link's counters and the activity feed.
     if (upstream.ok) {
-      void touchShareLink(resolved.link.shareId, "download");
+      if (!ownerPreview) void touchShareLink(resolved.link.shareId, "download");
       // ...and record it on the analytics rows, which are what every surface now counts. Touching
       // only the link's counter made `ShareLink.downloadCount` read 4 where the rows summed to 3,
       // and pushed the link's "Last viewed" ahead of any view that had actually happened. Both
@@ -138,6 +168,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
                 ...((doc as { orgId?: unknown }).orgId ? { orgId: new Types.ObjectId(String((doc as { orgId: unknown }).orgId)) } : {}),
                 ...(requesterEmail ? { viewerEmail: requesterEmail, viewerEmailSnapshot: requesterEmail } : {}),
                 ...(actor.userId && Types.ObjectId.isValid(actor.userId) ? { viewerUserId: new Types.ObjectId(actor.userId) } : {}),
+                // Recorded, never counted — the same rule every other ingest applies.
+                isOwnerPreview: ownerPreview,
                 lastViewedAt: new Date(),
               },
               $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
@@ -149,7 +181,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
         }
       })();
       const orgIdForActivity = (doc as { orgId?: unknown }).orgId ? String((doc as { orgId: unknown }).orgId) : null;
-      if (orgIdForActivity) {
+      // "Someone downloaded this" about yourself is noise in your own feed, and it is the same
+      // event the counter above already declines to count.
+      if (orgIdForActivity && !ownerPreview) {
         void recordActivity({
           orgId: orgIdForActivity,
           userId: actor.userId,

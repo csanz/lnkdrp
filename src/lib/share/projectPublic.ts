@@ -22,18 +22,20 @@
  */
 import { Types } from "mongoose";
 
+import { PROJECT_VIEW_KEY_SEP } from "@/lib/analytics/project/viewerKey";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { isExpired } from "./links";
 import { resolveProjectLink, type ProjectLike, type ResolvedProjectLink } from "./projectLinks";
 
 /**
- * Separator between the viewer key and the document id in a project-link analytics row.
+ * The separator and the split live in `analytics/project/viewerKey`, which has no imports.
  *
- * `.` is not produced by either half (a sha256 hex digest and an ObjectId hex string), so the
- * composite splits unambiguously.
+ * They are re-exported here because this is where they were and where the rule is documented, and
+ * because the realtime server — a standalone process with its own dependency list — needs the
+ * split without this module's mongoose models coming with it.
  */
-export const PROJECT_VIEW_KEY_SEP = ".";
+export { PROJECT_VIEW_KEY_SEP, splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
 
 /**
  * The `botIdHash` a project-link `ShareView` / `ShareVisit` row is written under.
@@ -69,16 +71,30 @@ export function projectViewerKey(botIdHash: string, docId: string | Types.Object
 }
 
 /**
- * Split a stored key back into its viewer and its document.
+ * The Mongo `$or` clause for **every row one person owns**: the bare digest a document link writes,
+ * and any project key that starts with it.
  *
- * `docId` is null for a document link's row (a bare digest), which is how a caller tells the two
- * apart without consulting the link.
+ * It exists as a function because writing it inline got it wrong twice. The pattern needs a literal
+ * backslash before an interpolation — `` `^${key}\\${SEP}` `` — and one backslash instead of two
+ * escapes the `$`, turning the whole thing into the literal text "${PROJECT_VIEW_KEY_SEP}" with a
+ * stray end-anchor in front of it. That matches nothing, silently: no error, no empty result to
+ * notice, just an identity that never propagates to the rows read inside a data room. Built here,
+ * once, and asserted in tests/lib/projectPublic.test.ts.
+ *
+ * A key that is not a 64-character hex digest is matched exactly rather than interpolated into a
+ * pattern: these values are read back out of stored documents.
  */
-export function splitProjectViewerKey(key: string): { botIdHash: string; docId: string | null } {
-  const at = key.indexOf(PROJECT_VIEW_KEY_SEP);
-  if (at < 0) return { botIdHash: key, docId: null };
-  return { botIdHash: key.slice(0, at), docId: key.slice(at + PROJECT_VIEW_KEY_SEP.length) || null };
+export function viewerKeyMatchClause(viewerKey: string): Array<Record<string, unknown>> {
+  if (!/^[a-f0-9]{64}$/.test(viewerKey)) return [{ botIdHash: viewerKey }];
+  return [{ botIdHash: viewerKey }, { botIdHash: { $regex: viewerKeyPrefixPattern(viewerKey) } }];
 }
+
+/** The `^<digest>\.` pattern on its own, so a test can look at it without a Mongo clause around it. */
+export function viewerKeyPrefixPattern(viewerKey: string): string {
+  // Concatenation, not a template literal: the escaping that broke this twice cannot recur here.
+  return "^" + viewerKey + "\\" + PROJECT_VIEW_KEY_SEP;
+}
+
 
 /** The fields the public project page and the document cards on it render. */
 export const PROJECT_DOC_LIST_FIELDS = {
@@ -160,9 +176,23 @@ export async function findProjectDocument(
 }
 
 export type ResolvedProjectDocument = ResolvedProjectLink & {
-  /** The document being read, already proven to be a live member of the link's project. */
+  /**
+   * The document being read, already proven to be a live member of the link's project — **unless
+   * `refusal` is set**, in which case it is {@link REFUSED_LINK_DOC} and says nothing about the
+   * room. Read `refusal` first; every caller already does, because a refused link renders a notice
+   * and stops.
+   */
   doc: PublicProjectDoc;
 };
+
+/**
+ * The stand-in document a refused link answers with.
+ *
+ * It carries no field from any stored row, and the zero id is not a document that exists anywhere —
+ * it is a placeholder that keeps {@link ResolvedProjectDocument} one shape rather than two, so no
+ * caller outside this file has to change to get the refusal path right.
+ */
+const REFUSED_LINK_DOC: PublicProjectDoc = Object.freeze({ _id: new Types.ObjectId("000000000000000000000000") });
 
 /**
  * Resolve `/p/:shareId/:docId` in one call: the project link, its refusal state, and the document —
@@ -171,6 +201,8 @@ export type ResolvedProjectDocument = ResolvedProjectLink & {
  * Returning null for a non-member document rather than a refusal is deliberate: a recipient must
  * not be able to learn that a document id exists somewhere else in the workspace by watching the
  * shape of the answer.
+ *
+ * A refused link answers the same way for every id, member or not — see the branch below.
  */
 export async function resolveProjectDocument(
   shareId: string,
@@ -179,12 +211,21 @@ export async function resolveProjectDocument(
 ): Promise<ResolvedProjectDocument | null> {
   const resolved = await resolveProjectLink(shareId, { select: opts.projectSelect });
   if (!resolved) return null;
-  // A refused link still resolves its document: the caller renders the refusal, and it must do so
-  // identically whether the document exists or not.
-  if (resolved.refusal) {
-    const doc = await findProjectDocument(resolved.project, docId, { select: opts.select });
-    return doc ? { ...resolved, doc } : null;
-  }
+  /**
+   * A refused link is refused for every id it is handed, and the room is not asked anything.
+   *
+   * This branch used to promise exactly that in a comment and then do the opposite: it looked the
+   * document up and returned `null` on a miss — the same `null` that means "this slug is not a
+   * project link at all". Callers act on that difference (a refusal notice versus a 404, a 404
+   * versus the quiet 200 a locked link answers with), so an expired or disabled link — which a
+   * stranger may well be holding, since expiry is what happens to a forwarded link — became a
+   * membership oracle: walk candidate ids, and the two answers spell out the room's contents. The
+   * refusal is a property of the link, not of what is behind it.
+   *
+   * So the lookup is gone: no query, no timing difference, the same object for every id. What the
+   * caller needed from here it already has (`link`, `project`, `refusal`); `doc` is the placeholder.
+   */
+  if (resolved.refusal) return { ...resolved, doc: REFUSED_LINK_DOC };
   const doc = await findProjectDocument(resolved.project, docId, { select: opts.select });
   if (!doc) return null;
   return { ...resolved, doc };

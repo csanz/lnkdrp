@@ -67,7 +67,7 @@ function withUrl(api: ApiClient, link: ApiShareLink): ShareLinkResult {
  */
 function planNote(warning: PlanWarning | undefined, siteUrl: string): string | undefined {
   if (!warning) return undefined;
-  return `This link is active. Note the workspace is using ${warning.used} of ${warning.max} shared documents on Free — links are unlimited, documents are not. The owner can upgrade at ${siteUrl}/pricing.`;
+  return `This link is active. Note the workspace is using ${warning.used} of ${warning.max} shared documents on Free. Links are unlimited; documents are not. The owner can upgrade at ${siteUrl}/pricing.`;
 }
 
 export const createShareLinkInputShape = {
@@ -89,7 +89,7 @@ export const listShareLinksInputShape = {
     .max(120)
     .optional()
     .describe(
-      "Full-text search this document's links by label/audience instead of listing all of them (mt_9ceLy7DqEr) - ranked by " +
+      "Full-text search this document's links by label/audience instead of listing all of them - ranked by " +
         "relevance, whole-word matches only (not substrings: \"a16z\" matches, \"nest\" does not). Omit to list every link, default first.",
     ),
 };
@@ -145,6 +145,16 @@ export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext)
         enabled: args.enabled,
       };
       if (args.audience !== undefined) settings.audience = args.audience;
+      // `null` means "remove the password" when updating; on a link that does not exist yet it is
+      // almost always a lost value, and accepting it quietly produced an open link where the sender
+      // had asked for a gate.
+      if (args.password === null) {
+        throw new ToolError(
+          "validation",
+          "password: null has no meaning when creating a link - there is no password to remove. Omit it for an open link, " +
+            "or pass the password the human gave you.",
+        );
+      }
       if (args.password !== undefined) settings.password = args.password;
       if (args.expiresAt !== undefined) settings.expiresAt = args.expiresAt;
       // The label is how the human finds a link again; two identical ones on a document are
@@ -179,7 +189,8 @@ export function registerListShareLinksTool(server: McpServer, ctx: ToolContext):
     {
       title: "List share links",
       description:
-        "Every share link of a document, the default link first: label, audience, shareUrl, status (active|disabled|expired), " +
+        "Every share link of a document, the default link first: label, audience, shareUrl, status (active|disabled|expired|archived - " +
+        "archived means the document itself is archived, so none of its links resolve until it is brought back), " +
         "whether a password is set, expiry, and that link's view and download counts. Pass query to search this document's " +
         "links by label/audience instead of listing all of them, ranked by relevance. If you do not already know which " +
         "document a link is on, use lnkdrp_find_share_link instead - it searches by name across the whole workspace. " +
@@ -190,8 +201,17 @@ export function registerListShareLinksTool(server: McpServer, ctx: ToolContext):
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const links = await ctx.api.listShareLinks(args.docId, args.query);
-      return { docId: args.docId, links: links.map((l) => withUrl(ctx.api, l)) };
+      // The document's archive state decides whether any of these links opens, and it does not live
+      // on the link rows: an archived document keeps each link's own enabled/expiry so unarchiving
+      // restores exactly what was live. Reported here so a reader is never told "active" about a
+      // link that resolves for nobody.
+      const [links, doc] = await Promise.all([ctx.api.listShareLinks(args.docId, args.query), ctx.api.getDoc(args.docId)]);
+      const rows = links.map((l) => {
+        const row = withUrl(ctx.api, l);
+        if (!doc.isArchived) return row;
+        return { ...row, active: false, status: "archived" as const, docArchived: true };
+      });
+      return { docId: args.docId, ...(doc.isArchived ? { docArchived: true } : {}), links: rows };
     }),
   );
 }
@@ -223,13 +243,17 @@ export function registerUpdateShareLinkTool(server: McpServer, ctx: ToolContext)
       if (Object.keys(patch).length === 0) {
         throw new ToolError("validation", "Pass at least one of label, audience, enabled, allowDownload, password, expiresAt, allowRevisionHistory.");
       }
-      const { link, planWarning } = await ctx.api.updateShareLink(args.docId, args.linkId, patch);
+      const { link, planWarning, warnings } = await ctx.api.updateShareLink(args.docId, args.linkId, patch);
       const note = planNote(planWarning, ctx.api.baseUrl);
       return {
         link: withUrl(ctx.api, link),
         shareUrl: ctx.api.shareUrl(link.shareId),
         ...(planWarning ? { planWarning } : {}),
         ...(note ? { planNote: note } : {}),
+        // Enabling one link can re-share the whole document and restore the links its switch had
+        // taken down. The agent that made that happen has to be told, in the response to the call
+        // that did it — not left to notice by listing afterwards.
+        ...(warnings.length ? { warnings } : {}),
       };
     }),
   );

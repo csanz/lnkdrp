@@ -27,7 +27,19 @@ export type DocRef = { docId?: string | undefined; shareId?: string | undefined 
 /** Exactly one of `docId` / `shareId` must be given. */
 export function requireExactlyOneRef(ref: DocRef): DocRef {
   const has = [ref.docId, ref.shareId].filter((v) => typeof v === "string" && v.length > 0).length;
-  if (has !== 1) throw new ToolError("validation", "Pass exactly one of docId or shareId.");
+  // Two faults, two messages. One string for both meant an agent that passed *both* ids read "at
+  // least one" — it had passed two — and "some tools accept both", which is exactly what it had
+  // tried. It had no way to learn that this tool is not one of them.
+  if (has === 0) {
+    throw new ToolError("validation", "Pass docId or shareId. This tool needs one of them to know which document you mean.");
+  }
+  if (has > 1) {
+    throw new ToolError(
+      "validation",
+      "Pass docId or shareId, not both: this tool takes exactly one. Use the shareId alone to ask about a link, or the " +
+        "docId alone to ask about the document. (lnkdrp_get_share_stats is the tool that accepts the pair.)",
+    );
+  }
   return ref;
 }
 
@@ -53,7 +65,40 @@ export async function resolveDoc(api: ApiClient, ref: DocRef): Promise<ApiDoc> {
   const exact =
     matches.find((d) => d.shareId === shareId) ?? matches.find((d) => d.shareId?.toLowerCase() === shareId.toLowerCase());
   const hit = exact ?? (matches.length === 1 ? matches[0] : undefined);
-  if (!hit?.id) throw new ToolError("not_found", "No document with that shareId in this workspace.");
+  if (!hit?.id) {
+    /**
+     * Before saying it does not exist, look in the archive.
+     *
+     * `GET /api/docs?q=` lists live documents only, so an archived document's slug fell through to
+     * "No document with that shareId in this workspace" — a false statement, and byte-identical to
+     * a typo or another workspace's slug. An agent has no way to tell "you got the id wrong" from
+     * "this exists and is archived", and the second is recoverable in one call.
+     */
+    const archived = await api
+      .listDocsPage({ q: shareId, limit: 50, archived: true })
+      .then((page) => {
+        const rows = page.docs;
+        return (
+          rows.find((d) => d.shareId === shareId) ??
+          rows.find((d) => d.shareId?.toLowerCase() === shareId.toLowerCase()) ??
+          (rows.length === 1 ? rows[0] : undefined)
+        );
+      })
+      .catch(() => undefined);
+    if (archived?.id) {
+      throw new ToolError(
+        "not_found",
+        `That shareId belongs to an archived document (docId ${archived.id}). Archived documents are not served by ` +
+          "shareId. Use the docId, or bring it back with lnkdrp_archive_doc archived: false and try again.",
+        { status: 404, details: { docId: archived.id, archived: true } },
+      );
+    }
+    throw new ToolError(
+      "not_found",
+      "No document with that shareId in this workspace. Check the slug, or find the link by name with " +
+        "lnkdrp_find_share_link.",
+    );
+  }
   return api.getDoc(hit.id);
 }
 
@@ -82,21 +127,49 @@ export type ShareView = {
 };
 
 /**
- * A share view whose link fields describe the default link's own state.
+ * A share view that carries both answers under their own names.
  *
- * The document's `shareEnabled` means "any link still opens", so a disabled default link read as
- * enabled while lnkdrp_list_share_links said disabled. `shareEnabled` becomes the default link's,
- * `anyLinkActive` keeps the document-wide answer, and `link` carries the default link's status.
- * Used by every tool that returns this view, so get_share and set_share_access agree.
+ * There are two questions here and they are not the same one: "does this document still open for
+ * anybody" and "does its default link open". An earlier version answered the second under the name
+ * `shareEnabled`, because a disabled default link had been reading as enabled — which fixed that
+ * and broke something worse. `lnkdrp_set_share_access` *writes* `shareEnabled` meaning the switch
+ * over every link, and `lnkdrp_get_share` then *read it back* meaning the default link alone, so
+ * the round trip lied: revoke only the default link and the document reported `shareEnabled: false`
+ * while two other links went on serving the PDF to anyone holding them. An agent asked "is this
+ * still reachable?" got "no" about a document that was.
+ *
+ * So `shareEnabled` keeps the meaning the app writes and the rest of the product uses — any link
+ * live — and the default link's own state is `defaultLinkActive`, plus the `link` object that was
+ * already reporting `status: "disabled"` in exactly this case.
  */
 export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: ShareView) {
   const defaultLink = (await api.listShareLinks(doc.id).catch(() => [])).find((l) => l.isDefault) ?? null;
-  if (!defaultLink) return view;
+  if (!defaultLink) {
+    // No default link row yet (or the listing failed). Still answer with the full shape — a caller
+    // that has to check whether a field exists before reading it has been handed two contracts.
+    const anyLinkActive = doc.isArchived ? false : doc.shareEnabled;
+    return { ...view, shareEnabled: anyLinkActive, anyLinkActive, defaultLinkActive: false, link: null };
+  }
+  // An archived document's links stop resolving, but the link rows keep their own enabled/expiry
+  // state so unarchiving can restore exactly what was live. Reading them raw made get_share answer
+  // "active" about a link that opens for nobody, which is the one question this tool is asked.
+  const defaultLinkActive = !doc.isArchived && defaultLink.enabled && defaultLink.active;
+  const anyLinkActive = doc.isArchived ? false : doc.shareEnabled;
   return {
     ...view,
-    shareEnabled: defaultLink.enabled && defaultLink.active,
-    anyLinkActive: doc.shareEnabled,
-    link: { id: defaultLink.id, isDefault: true, status: defaultLink.status, expiresAt: defaultLink.expiresAt },
+    shareEnabled: anyLinkActive,
+    anyLinkActive,
+    defaultLinkActive,
+    link: {
+      id: defaultLink.id,
+      // Carried on both branches so a document's shape does not depend on which of its slugs was
+      // used to ask about it.
+      label: untrustedOrNull(defaultLink.label, "document", UNTRUSTED_LIMITS.short),
+      audience: untrustedOrNull(defaultLink.audience, "document", UNTRUSTED_LIMITS.short),
+      isDefault: true,
+      status: doc.isArchived ? "archived" : defaultLink.status,
+      expiresAt: defaultLink.expiresAt,
+    },
   };
 }
 
@@ -106,8 +179,9 @@ export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: Sh
  * through, while the tool refuses it after a dismissed prompt.
  */
 export const DISMISSED_PROMPT_NOTE =
-  "If the prompt comes back dismissed (userAction 'cancel' - headless clients dismiss it automatically), confirm: true " +
-  "will not override it: tell the human to do this in the lnkdrp app or from a client that can show the prompt. ";
+  "If the prompt comes back dismissed (userAction 'cancel' - a client that cannot show it dismisses it automatically), " +
+  "nobody was asked: put the preview in details to the human yourself, and call again with confirm: true only if they " +
+  "say yes. A human who actually declined (userAction 'decline') is final and confirm: true will not override it. ";
 
 /** The `lnkdrp_get_share` result for a doc. */
 export function shareView(api: ApiClient, doc: ApiDoc): ShareView {
@@ -130,4 +204,29 @@ export function shareView(api: ApiClient, doc: ApiDoc): ShareView {
     projectIds: doc.projectIds,
     isArchived: doc.isArchived,
   };
+}
+
+/**
+ * "Is this still there?", answered only by a genuine not-found.
+ *
+ * For `IdempotencyStore.run`'s `stillExists`, where getting this wrong is harmful in both
+ * directions and the first two attempts managed one each:
+ *
+ * - `Boolean(await api.getDoc(id))` never returns false, because a missing document *throws*
+ *   rather than resolving null — so the replay-of-a-deleted-object bug it was written to fix
+ *   carried on happening.
+ * - `await api.getX(id).catch(() => null)` returns false for *any* failure, so one bad minute on
+ *   the network is read as a deletion and the retry creates a duplicate.
+ *
+ * Only `not_found` means gone. Anything else is re-thrown for the caller to treat as "still
+ * there", which is the safe reading: a stale replay is recoverable, a duplicate document is not.
+ */
+export async function existsUnlessNotFound(lookup: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await lookup();
+    return true;
+  } catch (err) {
+    if (err instanceof ToolError && err.code === "not_found") return false;
+    throw err;
+  }
 }

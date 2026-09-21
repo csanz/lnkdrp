@@ -14,6 +14,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import AgentHintNotice from "@/components/AgentHintNotice";
 import Modal from "@/components/modals/Modal";
 import ProPill from "@/components/ProPill";
 import type { ShareLinkDTO } from "@/lib/share/links";
@@ -322,9 +323,12 @@ export default function ShareLinkModal({
         </div>
 
         <div className="text-sm text-[var(--muted)]">
-          Every link has its own settings and its own stats. Labels are private to you — recipients
+          Every link has its own settings and its own stats. Labels are private to you. Recipients
           never see them.
         </div>
+
+        {/* A project link is a different resource with its own tools, so name the right pair. */}
+        <AgentHintNotice hintKey={resourceNoun === "project" ? "project_link" : "share_link"} />
 
         {mode === "create" && copyOptions.length ? (
           <div>

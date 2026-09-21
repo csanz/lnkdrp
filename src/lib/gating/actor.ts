@@ -56,6 +56,173 @@ function setCachedMembershipExists(key: string, ok: boolean) {
 }
 
 /**
+ * Drop the cached membership answer for one (workspace, person).
+ *
+ * The cache above trades correctness for latency on a ten-second window, and for a *read* that is a
+ * fair trade. For a removal it is not: "remove" is a security action, and a removed member who can
+ * still read the workspace for another ten seconds is the one case where the reader is entitled to
+ * expect the click to have taken effect by the time the page repaints. Every route that adds or
+ * removes a membership calls this immediately after the write.
+ *
+ * Per-process, like the cache: on a multi-instance deploy the other instances still expire on their
+ * own TTL, so this shortens the window rather than closing it everywhere. That is why it is a
+ * companion to the membership check in `tryResolveUserActor`, not a substitute for it.
+ */
+/**
+ * Is this person currently a member of this workspace?
+ *
+ * The same short-lived cache the session resolvers use, so `membershipChanged()` invalidates every
+ * path at once. Exported because API keys need the identical question: a key acts *as* the person
+ * who created it, so if they are removed from the workspace the key has to stop working too —
+ * otherwise "remove member" only removes the browser and leaves the automation running.
+ *
+ * Fails CLOSED on a lookup error, unlike the session resolvers, which fall back to the person's own
+ * workspace. A key has no other workspace to fall back to, and refusing one request is recoverable
+ * where granting it is not.
+ */
+export async function isActiveMember(params: { orgId: string; userId: string }): Promise<boolean> {
+  const { orgId, userId } = params;
+  if (!Types.ObjectId.isValid(orgId) || !Types.ObjectId.isValid(userId)) return false;
+  const cacheKey = membershipCacheKey({ orgId, userId });
+  const cached = getCachedMembershipExists(cacheKey);
+  if (typeof cached === "boolean") return cached;
+  try {
+    await connectMongo();
+    const ok = Boolean(
+      await OrgMembershipModel.exists({
+        orgId: new Types.ObjectId(orgId),
+        userId: new Types.ObjectId(userId),
+        isDeleted: { $ne: true },
+      }),
+    );
+    setCachedMembershipExists(cacheKey, ok);
+    return ok;
+  } catch {
+    // Not cached: a blip must not lock a key out for the next ten seconds of requests.
+    return false;
+  }
+}
+
+/**
+ * `User.metadata.activeOrgId` — the workspace this person last chose, on any device.
+ *
+ * Cached because the fast resolvers exist to avoid exactly this read, and skipping it is what made
+ * them disagree with the full one (see `resolveActiveOrgId`). A short TTL is safe: the only thing
+ * that moves this value is `/org/switch`, which writes the **cookie** at the same time, and the
+ * cookie takes precedence — so a stale entry can only matter on a device that has no cookie yet,
+ * which is the case this read exists to serve in the first place.
+ */
+const ACTIVE_ORG_META_TTL_MS = 60_000;
+let activeOrgMetaCache: Map<string, { at: number; orgId: string }> | null = null;
+
+async function readActiveOrgMetadata(userId: string): Promise<string> {
+  activeOrgMetaCache = activeOrgMetaCache ?? new Map();
+  const hit = activeOrgMetaCache.get(userId);
+  if (hit && Date.now() - hit.at < ACTIVE_ORG_META_TTL_MS) return hit.orgId;
+  try {
+    const u = (await UserModel.findOne({ _id: new Types.ObjectId(userId) }).select({ metadata: 1 }).lean()) as
+      | { metadata?: { activeOrgId?: unknown } | null }
+      | null;
+    const raw = u?.metadata && typeof u.metadata === "object" ? u.metadata.activeOrgId : null;
+    const orgId = typeof raw === "string" && Types.ObjectId.isValid(raw.trim()) ? raw.trim() : "";
+    activeOrgMetaCache.set(userId, { at: Date.now(), orgId });
+    if (activeOrgMetaCache.size > 500) {
+      const oldest = [...activeOrgMetaCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]?.[0];
+      if (oldest) activeOrgMetaCache.delete(oldest);
+    }
+    return orgId;
+  } catch {
+    return "";
+  }
+}
+
+/** Forget the cached "last chosen workspace" for one person — called when they switch. */
+export function activeOrgChanged(userId: string | Types.ObjectId): void {
+  try {
+    activeOrgMetaCache?.delete(String(userId));
+  } catch {
+    // A cache that cannot be cleared must not fail the switch that cleared it.
+  }
+}
+
+/**
+ * Which workspace is this signed-in request acting in?
+ *
+ * **One answer, one precedence, every resolver.** There used to be three implementations that
+ * disagreed, and the disagreement was silent and destructive: the full resolver ended at
+ * cookie > metadata > claim, while the fast ones were `cookie || claim` and never read metadata at
+ * all. On a device with no `ld_active_org` cookie — a second laptop, cleared cookies — whose
+ * `metadata.activeOrgId` pointed at a team workspace, the sidebar, the plan and the credits
+ * snapshot (fast) said "Personal" while `POST /api/docs` and `POST /api/uploads` (full) wrote to
+ * the **team** workspace. The file landed where colleagues could read it, under a UI that said it
+ * was private.
+ *
+ * Order, each candidate confirmed against a live membership before it is accepted:
+ * 1. the active-org cookie — this browser's choice, and server-issued;
+ * 2. `User.metadata.activeOrgId` — the last choice made anywhere, which is what a new device wants;
+ * 3. the JWT claim — issued at sign-in and long-lived, so the weakest of the three;
+ * 4. the person's own workspace.
+ *
+ * A membership lookup that fails is treated as "not confirmed" and falls through rather than being
+ * accepted, so a database blip narrows access to the person's own workspace instead of widening it
+ * to one they may no longer belong to.
+ */
+/**
+ * The order alone, with no opinion about how a candidate is confirmed.
+ *
+ * It is split out because two callers answer "is this person a member" from different places and
+ * must still answer *which workspace* the same way. `resolveActiveOrgId` below confirms each
+ * candidate with `isActiveMember`; `GET /api/orgs` — the endpoint the workspace switcher renders
+ * from — already holds a complete membership map and confirms against that. They had drifted: the
+ * switcher ranked the JWT claim above the stored workspace, which is the reverse of this, so on a
+ * device with no cookie the switcher named one workspace while `POST /api/docs` created the
+ * document (with a live public link) in another.
+ *
+ * Invalid and empty ids are dropped here so neither caller has to remember to.
+ */
+export function activeOrgCandidateOrder(params: {
+  cookieOrgId: string | null | undefined;
+  metadataOrgId: string | null | undefined;
+  claimOrgId: string | null | undefined;
+}): string[] {
+  return [params.cookieOrgId, params.metadataOrgId, params.claimOrgId]
+    .map((c) => (typeof c === "string" ? c.trim() : ""))
+    .filter((c) => Boolean(c) && Types.ObjectId.isValid(c));
+}
+
+async function resolveActiveOrgId(params: {
+  request: Request;
+  userId: string;
+  claimOrgId: string;
+  personalOrgId: string | null;
+}): Promise<string | null> {
+  const { request, userId, claimOrgId, personalOrgId } = params;
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const cookieRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
+  const cookieOrgId = typeof cookieRaw === "string" ? cookieRaw.trim() : "";
+
+  const candidates = activeOrgCandidateOrder({
+    cookieOrgId,
+    metadataOrgId: await readActiveOrgMetadata(userId),
+    claimOrgId,
+  });
+  for (const candidate of candidates) {
+    // Their own workspace needs no membership round-trip: it is theirs by construction.
+    if (personalOrgId && candidate === personalOrgId) return candidate;
+    if (await isActiveMember({ orgId: candidate, userId })) return candidate;
+  }
+  return personalOrgId;
+}
+
+export function membershipChanged(params: { orgId: string | Types.ObjectId; userId: string | Types.ObjectId }): void {
+  try {
+    membershipExistsCache?.delete(membershipCacheKey({ orgId: String(params.orgId), userId: String(params.userId) }));
+  } catch {
+    // A cache that cannot be cleared must not fail the write that cleared it.
+  }
+}
+
+/**
  * Short-lived in-memory personal-org cache.
  *
  * Why: `ensurePersonalOrgForUserId()` is intentionally idempotent but not cheap (read + upsert).
@@ -318,63 +485,35 @@ export async function tryResolveUserActor(request: Request): Promise<Actor | nul
   await connectMongo();
   const fallbackOrg = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(session.userId) });
   const personalOrgId = String(fallbackOrg.orgId);
-  // Source of truth priority:
-  // 1) UserModel.metadata.activeOrgId (server-persisted, avoids cookie edge cases)
-  // 2) active-org cookie (membership validated)
-  // 3) JWT claim
-  // 4) personal org
-  let orgId = session.activeOrgId ?? personalOrgId;
 
-  try {
-    const u = await UserModel.findOne({ _id: new Types.ObjectId(session.userId) })
-      .select({ metadata: 1 })
-      .lean();
-    const raw =
-      u && typeof (u as { metadata?: unknown }).metadata === "object" ? (u as { metadata?: any }).metadata : null;
-    const dbOrgId = raw && typeof raw.activeOrgId === "string" ? String(raw.activeOrgId).trim() : "";
-    if (dbOrgId && Types.ObjectId.isValid(dbOrgId)) {
-      const ok = await OrgMembershipModel.exists({
-        orgId: new Types.ObjectId(dbOrgId),
-        userId: new Types.ObjectId(session.userId),
-        isDeleted: { $ne: true },
-      });
-      if (ok) orgId = dbOrgId;
-    }
-  } catch {
-    // ignore; best-effort
-  }
-
-  try {
-    const cookieHeader = request.headers.get("cookie") ?? "";
-    const raw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
-    const cookieOrgId = typeof raw === "string" ? raw.trim() : "";
-    if (cookieOrgId && Types.ObjectId.isValid(cookieOrgId)) {
-      const ok = await OrgMembershipModel.exists({
-        orgId: new Types.ObjectId(cookieOrgId),
-        userId: new Types.ObjectId(session.userId),
-        isDeleted: { $ne: true },
-      });
-      if (ok) orgId = cookieOrgId;
-    }
-  } catch {
-    // ignore; fall back to session claim/personal org
-  }
+  // One rule for which workspace a request is in, shared with every other resolver — see
+  // `resolveActiveOrgId`. This used to be spelled out here (claim, then DB metadata, then cookie,
+  // each overriding the last) while the fast resolvers used `cookie || claim` and never read
+  // metadata, so one request resolved to different workspaces depending on which resolver the
+  // route it hit happened to call.
+  const orgId =
+    (await resolveActiveOrgId({
+      request,
+      userId: session.userId,
+      claimOrgId: typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "",
+      personalOrgId,
+    })) ?? personalOrgId;
 
   return { kind: "user", userId: session.userId, orgId, personalOrgId };
 }
 
 /**
- * Fast path: resolve a signed-in user actor with exactly one membership check.
+ * Fast path: resolve a signed-in user actor without the full resolver's writes.
  *
- * This intentionally avoids:
- * - ensuring personal org exists
- * - reading User.metadata.activeOrgId
- * - reading/validating the active-org cookie
+ * What it still avoids, and why it is worth having: `tryResolveUserActor()` opens with
+ * `ensurePersonalOrgForUserId()` — a read plus an upsert — on every request before it has any idea
+ * whether the answer will be used. This path does the same membership-checked workspace resolution
+ * (`resolveActiveOrgId`, so cookie > metadata > claim, same as everywhere else) off short-lived
+ * caches, and mints nothing.
  *
  * Use this for performance-sensitive, read-only endpoints where:
- * - orgId from the JWT claim is sufficient, and
  * - the route still scopes data by orgId, and
- * - you can tolerate falling back to full `resolveActor()` when claim is missing.
+ * - you can tolerate falling back to full `resolveActor()` when no workspace is confirmed.
  */
 export async function tryResolveUserActorFast(request: Request): Promise<Actor | null> {
   const keyActor = await tryResolveApiKeyActor(request);
@@ -382,75 +521,45 @@ export async function tryResolveUserActorFast(request: Request): Promise<Actor |
   const session = await tryGetSessionClaims(request);
   if (!session?.userId) return null;
 
-  // Prefer the server-issued active-org cookie (it is set only after membership validation),
-  // then fall back to the JWT claim.
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
-  const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
-  const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
-  const orgId = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
-  if (!orgId || !Types.ObjectId.isValid(orgId)) return null;
-
+  // The same workspace this request would resolve to anywhere else — see `resolveActiveOrgId`.
+  // This used to be `cookie || claim`, which skipped `metadata.activeOrgId` and is what made the
+  // fast paths disagree with the full one about which workspace a request belonged to.
   await connectMongo();
-  const cacheKey = membershipCacheKey({ orgId, userId: session.userId });
-  const cachedOk = getCachedMembershipExists(cacheKey);
-  const ok =
-    typeof cachedOk === "boolean"
-      ? cachedOk
-      : Boolean(
-          await OrgMembershipModel.exists({
-            orgId: new Types.ObjectId(orgId),
-            userId: new Types.ObjectId(session.userId),
-            isDeleted: { $ne: true },
-          }),
-        );
-  if (typeof cachedOk !== "boolean") setCachedMembershipExists(cacheKey, ok);
-  if (!ok) return null;
+  const orgId = await resolveActiveOrgId({
+    request,
+    userId: session.userId,
+    claimOrgId: typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "",
+    // The fast path deliberately does not mint a personal org (that is a write); with no confirmed
+    // candidate it refuses and the caller falls back to the full resolver, as it always did.
+    personalOrgId: null,
+  });
+  if (!orgId) return null;
 
-  // Note: personalOrgId isn't needed for most hot read paths; keep it stable without extra DB work.
-  // Callers that require true personal-org resolution should use `tryResolveUserActor()` or `resolveActor()`.
-  return { kind: "user", userId: session.userId, orgId, personalOrgId: orgId };
+  // This used to be `personalOrgId: orgId`, on the reasoning that hot read paths did not need the
+  // field. They did — they just never said so out loud. Dozens of routes ask "is this the person's
+  // own workspace" as `actor.orgId === actor.personalOrgId`, to widen a query to legacy org-less
+  // rows or to pick the wording on a billing header, and copying the active org into the field made
+  // that question answer `true` in every workspace: a team workspace was told it was personal
+  // (/api/plan, /api/agent/status) and team queries were widened to the caller's own old rows.
+  // `apiKeyActor` carried the identical bug and was fixed the same way.
+  //
+  // The cost is one `_id`-projected indexed read behind a five-minute cache (`personalOrgCache`),
+  // not the read-plus-upsert the full resolver does, so the shortcut this path exists for is intact.
+  const personalOrgId = await resolvePersonalOrgIdCached(session.userId);
+  return { kind: "user", userId: session.userId, orgId, personalOrgId };
 }
 
 /**
- * Fast path: resolve a signed-in user actor with:
- * - org context from active-org cookie/JWT claim
- * - one membership check (cached)
- * - a cached personalOrgId (to preserve legacy personal-doc scoping behavior without extra upserts)
+ * The fast path, under the name the routes that needed a true `personalOrgId` reached for.
+ *
+ * It was a second copy of `tryResolveUserActorFast` that differed in one line: it resolved the real
+ * personal org instead of copying the active one. Now that the plain fast path no longer fakes the
+ * field, the two are the same function, and the names only recorded which routes had noticed the
+ * difference. Kept as an alias because its callers are scattered across the API surface; a second
+ * body is how the resolvers came to disagree in the first place.
  */
 export async function tryResolveUserActorFastWithPersonalOrg(request: Request): Promise<Actor | null> {
-  const keyActor = await tryResolveApiKeyActor(request);
-  if (keyActor) return keyActor;
-  const session = await tryGetSessionClaims(request);
-  if (!session?.userId) return null;
-
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
-  const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
-  const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
-  const orgId = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
-  if (!orgId || !Types.ObjectId.isValid(orgId)) return null;
-
-  await connectMongo();
-
-  // Membership check (cached)
-  const membershipKey = membershipCacheKey({ orgId, userId: session.userId });
-  const cachedOk = getCachedMembershipExists(membershipKey);
-  const ok =
-    typeof cachedOk === "boolean"
-      ? cachedOk
-      : Boolean(
-          await OrgMembershipModel.exists({
-            orgId: new Types.ObjectId(orgId),
-            userId: new Types.ObjectId(session.userId),
-            isDeleted: { $ne: true },
-          }),
-        );
-  if (typeof cachedOk !== "boolean") setCachedMembershipExists(membershipKey, ok);
-  if (!ok) return null;
-
-  const personalOrgId = await resolvePersonalOrgIdCached(session.userId);
-  return { kind: "user", userId: session.userId, orgId, personalOrgId };
+  return await tryResolveUserActorFast(request);
 }
 
 /**
@@ -603,39 +712,26 @@ export async function resolveActorForStats(request: Request): Promise<Actor> {
     const session = await tryGetSessionClaims(request);
     if (!session?.userId) return await resolveActorUncached(request);
 
-    const cookieHeader = request.headers.get("cookie") ?? "";
-    const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
-    const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
-    const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
-
-    // Prefer server-issued active-org cookie when present; otherwise fall back to JWT claim.
-    const orgId = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
-    if (!orgId || !Types.ObjectId.isValid(orgId)) {
-      // If org context is missing, fall back to the full resolver (ensures personal org exists).
-      return await resolveActorUncached(request);
-    }
-
-    // Security: membership can change after a cookie is minted. Validate membership once (1 query).
-    // (We intentionally avoid the heavier `tryResolveUserActor` flow that also ensures personal org.)
+    // One rule for which workspace a request is in — see `resolveActiveOrgId`. Membership is
+    // confirmed there, cached, and re-asked the moment `membershipChanged()` fires.
     await connectMongo();
-    const cacheKey = membershipCacheKey({ orgId, userId: session.userId });
-    const cachedOk = getCachedMembershipExists(cacheKey);
-    const ok =
-      typeof cachedOk === "boolean"
-        ? cachedOk
-        : Boolean(
-            await OrgMembershipModel.exists({
-              orgId: new Types.ObjectId(orgId),
-              userId: new Types.ObjectId(session.userId),
-              isDeleted: { $ne: true },
-            }),
-          );
-    if (typeof cachedOk !== "boolean") setCachedMembershipExists(cacheKey, ok);
-    if (!ok) return await resolveActorUncached(request);
+    const orgId = await resolveActiveOrgId({
+      request,
+      userId: session.userId,
+      claimOrgId: typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "",
+      // No confirmed candidate: fall back to the full resolver, which also ensures the personal
+      // org exists. That is what this path has always done when org context was missing.
+      personalOrgId: null,
+    });
+    if (!orgId) return await resolveActorUncached(request);
 
-    // For stats endpoints we don't need personalOrgId for legacy access checks.
-    // Keep it stable without extra DB reads.
-    return { kind: "user", userId: session.userId, orgId, personalOrgId: orgId };
+    // Same correction as `tryResolveUserActorFast`: this returned `personalOrgId: orgId`, which is
+    // not a stable placeholder but a wrong answer — `/api/plan` serializes `orgId === personalOrgId`
+    // as `isPersonalOrg`, so the Billing tab greeted every team workspace with "Your personal
+    // workspace is billed on its own". Cached (five minutes, `_id` only), so the round-trip this
+    // resolver was written to skip — `ensurePersonalOrgForUserId`'s upsert — is still skipped.
+    const personalOrgId = await resolvePersonalOrgIdCached(session.userId);
+    return { kind: "user", userId: session.userId, orgId, personalOrgId };
   })();
 
   ACTOR_CACHE.set(request, p);

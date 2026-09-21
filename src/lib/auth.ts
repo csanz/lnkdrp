@@ -6,6 +6,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { UserModel } from "@/lib/models/User";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
+import { initialAccessStatus } from "@/lib/waitlist/waitlist";
 
 /**
  * Best-effort backfill of `NEXTAUTH_URL` in development.
@@ -97,6 +98,7 @@ export const authOptions: NextAuthOptions = {
       if (existing && existing.isActive === false) return false;
 
       const now = new Date();
+      const initialStatus = initialAccessStatus(email);
 
       const setFields: Record<string, unknown> = {
         name: p.name ?? undefined,
@@ -122,6 +124,11 @@ export const authOptions: NextAuthOptions = {
             role: "user",
             onboardingCompleted: false,
             metadata: {},
+            // Only a brand-new account can land in the queue, because this is `$setOnInsert`:
+            // turning `WAITLIST_ENABLED` on never changes anyone who already signed in. See
+            // `src/lib/waitlist/waitlist.ts`.
+            accessStatus: initialStatus,
+            waitlistedAt: initialStatus === "waitlisted" ? now : null,
           },
           $set: setFields,
         },

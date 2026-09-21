@@ -98,6 +98,15 @@ const projectLinkViewSchema = new Schema(
      * Viewer identity (best-effort), field-for-field identical to `ShareView` so the two can be
      * read side by side without a translation layer.
      */
+    /**
+     * First time this person reached the project link's *front page*.
+     *
+     * Distinct from `firstViewedAt`, which the stats ingest also writes when someone deep-links
+     * straight to a document inside the room. Owned by the landing route alone, as the one flag
+     * that can say "this arrival has not been announced yet".
+     */
+    landedAt: { type: Date, default: null },
+
     viewerIp: { type: String, trim: true, default: null },
     viewerUserId: { type: Schema.Types.ObjectId, ref: "User", index: true, default: null },
     viewerEmail: { type: String, trim: true, lowercase: true, index: true, default: null },

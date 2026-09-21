@@ -50,6 +50,16 @@ const uploadSchema = new Schema(
     uploadSecret: { type: String, trim: true, default: null },
 
     /**
+     * This version's text is identical to the version before it.
+     *
+     * Set by the processor, which already computes it to decide whether paying for a fresh AI
+     * summary would buy anything (`sameAsPreviousVersion`). Recorded because the person who just
+     * replaced the file is owed the same answer: a new version landed, and it reads exactly like
+     * the last one — which is usually a sign they picked the wrong file.
+     */
+    unchangedFromPrevious: { type: Boolean, default: false },
+
+    /**
      * Optional flag to skip the review agent for this upload.
      * Used for "request guide documents" (thesis/RFP/JD) so they don't generate reviews themselves.
      */

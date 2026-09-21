@@ -25,7 +25,6 @@ import {
   AdminTd,
   AdminTh,
   AdminTr,
-  IdCell,
   RowActions,
   TimeCell,
   useAdminAccess,
@@ -47,7 +46,7 @@ import {
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
-const COLUMN_COUNT = 7;
+const COLUMN_COUNT = 6;
 
 /** One request brings every viewer of the document; the table pages them like every other list. */
 const PAGE_SIZE = 50;
@@ -123,10 +122,7 @@ export default function ShareViewsDocAdminPage() {
     const needle = q.trim().toLowerCase();
     if (!needle) return normalized;
     return normalized.filter(
-      (item) =>
-        viewerLabel(item).toLowerCase().includes(needle) ||
-        (item.shareId ?? "").toLowerCase().includes(needle) ||
-        (item.viewerIp ?? "").toLowerCase().includes(needle),
+      (item) => viewerLabel(item).toLowerCase().includes(needle) || (item.viewerIp ?? "").toLowerCase().includes(needle),
     );
   }, [normalized, q]);
 
@@ -174,9 +170,6 @@ export default function ShareViewsDocAdminPage() {
               <Link href="/a/shareviews" className={ADMIN_ROW_ACTION_LINK}>
                 All share views
               </Link>
-              {header?.shareId ? (
-                <></>
-              ) : null}
             </>
           }
         />
@@ -201,7 +194,7 @@ export default function ShareViewsDocAdminPage() {
               setPage(1);
               setQ(v);
             }}
-            placeholder="Search viewer, share or IP…"
+            placeholder="Search viewer or IP…"
             ariaLabel="Search viewers of this document"
           />
           <AdminSelect
@@ -280,7 +273,6 @@ export default function ShareViewsDocAdminPage() {
                 <AdminTh align="right">Downloads</AdminTh>
                 <AdminTh>IP</AdminTh>
                 <AdminTh align="right">Last seen</AdminTh>
-                <AdminTh>Share</AdminTh>
                 <AdminTh align="right" sticky>
                   Actions
                 </AdminTh>
@@ -317,16 +309,9 @@ export default function ShareViewsDocAdminPage() {
                     <AdminTd align="right" numeric>
                       <TimeCell value={v.updatedDate ?? v.createdDate ?? null} />
                     </AdminTd>
-                    <AdminTd>
-                      <IdCell value={v.shareId} label="share id" head={8} tail={4} />
-                    </AdminTd>
                     <AdminTd align="right" sticky actions>
                       <RowActions>
-                        {v.shareId ? (
-                          <span className="text-[12px] text-[var(--muted-2)]">—</span>
-                        ) : (
-                          <span className="text-[12px] text-[var(--muted-2)]">{ADMIN_DASH}</span>
-                        )}
+                        <span className="text-[12px] text-[var(--muted-2)]">{ADMIN_DASH}</span>
                       </RowActions>
                     </AdminTd>
                   </AdminTr>

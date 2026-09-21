@@ -13,8 +13,8 @@ const HOUR = 3_600_000;
 
 /** Two jobs with round numbers, so the arithmetic in each case is obvious. */
 const JOBS: CronJobSpec[] = [
-  { jobKey: "hourly", schedule: "0 * * * *", intervalMs: HOUR },
-  { jobKey: "daily", schedule: "0 3 * * *", intervalMs: 24 * HOUR },
+  { jobKey: "hourly", schedule: "0 * * * *", intervalMs: HOUR, what: "an hourly job", why: "test fixture" },
+  { jobKey: "daily", schedule: "0 3 * * *", intervalMs: 24 * HOUR, what: "a daily job", why: "test fixture" },
 ];
 
 /** A healthy row for `jobKey`, last run `minutesAgo` ago. */
@@ -79,7 +79,7 @@ describe("judgeCronHealth", () => {
   describe("a frequent job killed mid-run every time", () => {
     // Every five minutes; killed at 300 s. The six-minute lease makes the next tick skip, and the
     // one after restarts the row, so `lastRunAt` and `lastStartedAt` never get old.
-    const FIVE = [{ jobKey: "five", schedule: "*/5 * * * *", intervalMs: 5 * 60_000 }];
+    const FIVE = [{ jobKey: "five", schedule: "*/5 * * * *", intervalMs: 5 * 60_000, what: "a five-minute job", why: "test fixture" }];
     const judgeFive = (r: ReturnType<typeof row>) => judgeCronHealth({ rows: [r], now: NOW, jobs: FIVE }).jobs[0];
 
     /** A row at `running`, started `startedAgo` minutes ago, last finished `finishedAgo` minutes ago. */

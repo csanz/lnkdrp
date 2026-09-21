@@ -1,8 +1,15 @@
 /**
  * Admin API route: `/api/admin/data/projects/:projectId`
  *
- * - GET: returns a single project (raw)
+ * - GET: returns a single project row with its capability tokens removed
  * - POST: updates a project (admin tool). This is intended for manual fixes like setting `isRequest=true`.
+ *
+ * A Project row is three keys in a trench coat. `requestViewToken` streams the raw PDF of every
+ * document in the repo through `/api/request-view/:token/docs/:docId/pdf`, which resolves the
+ * project on the token alone — no session, no cookie, so the read is not even attributable to the
+ * admin who made it. `requestUploadToken` plants documents in the customer's repo as if a recipient
+ * had sent them. `shareId` is `/p/:shareId`, the repo itself. This route used to return the row
+ * whole, and the page printed it as JSON, so all three were a select-and-copy away.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -10,6 +17,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { newSecretToken } from "@/lib/crypto/randomBase62";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
+import { stripSecrets } from "@/lib/admin/docPrivacy";
 
 export const runtime = "nodejs";
 
@@ -42,7 +50,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
     ok: true,
     project: {
       id: String(project._id),
-      raw: project as Record<string, unknown>,
+      raw: stripSecrets(project as Record<string, unknown>),
     },
   });
 }
@@ -82,9 +90,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
       { _id: new Types.ObjectId(projectId) },
       { $set: { isRequest: true, requestUploadToken: nextToken, autoAddFiles: false } },
     );
+    // The minted token is not echoed back. Nothing on the page needs it — the owner gets their
+    // request link from their own app — and a token in a response is a token in a log, a history
+    // entry and a screenshot, for a capability that accepts uploads with no session.
     return NextResponse.json({
       ok: true,
-      project: { id: projectId, isRequest: true, requestUploadToken: nextToken },
+      project: { id: projectId, isRequest: true, hasRequestUploadToken: true },
     });
   }
 

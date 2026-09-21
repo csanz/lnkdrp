@@ -75,6 +75,8 @@ const {
   listProjectDocuments,
   resolveProjectDocument,
   projectLinkPasswordEnabled,
+  viewerKeyMatchClause,
+  viewerKeyPrefixPattern,
 } = await import("@/lib/share/projectPublic");
 
 const PROJECT_ID = new Types.ObjectId();
@@ -208,6 +210,22 @@ describe("resolveProjectDocument", () => {
     const r = await resolveProjectDocument("SLUG", String(DOC_A));
     expect(r!.refusal).toBe("expired");
   });
+
+  test("a refused link answers the same for a member id and an outsider id, and asks the room nothing", async () => {
+    // The refusal branch used to look the document up and return `null` on a miss — the same `null`
+    // that means "not a project link at all" — so an expired link's two answers spelled out the
+    // room's contents to anyone walking candidate ids. A refusal is a property of the link.
+    resolveProjectLink.mockResolvedValue({ link: { shareId: "SLUG" }, project, refusal: "expired" });
+    docFilters = [];
+    const member = await resolveProjectDocument("SLUG", String(DOC_A));
+    const outsider = await resolveProjectDocument("SLUG", String(OUTSIDER));
+    const nonsense = await resolveProjectDocument("SLUG", "not-an-object-id");
+    expect(member).toEqual(outsider);
+    expect(nonsense).toEqual(outsider);
+    // Nothing of the room comes back with the refusal, and nothing of the room was read.
+    expect(Object.keys(member!.doc)).toEqual(["_id"]);
+    expect(docFilters).toEqual([]);
+  });
 });
 
 describe("resolveProjectStatsTarget", () => {
@@ -243,5 +261,52 @@ describe("projectLinkPasswordEnabled", () => {
     expect(projectLinkPasswordEnabled({ passwordHash: "h", passwordSalt: null })).toBe(false);
     expect(projectLinkPasswordEnabled({ passwordHash: null, passwordSalt: "s" })).toBe(false);
     expect(projectLinkPasswordEnabled({})).toBe(false);
+  });
+});
+
+/**
+ * The prefix match that finds every row one person owns inside a data room.
+ *
+ * Pinned because it failed twice in the same way and neither time produced an error: the pattern
+ * needs a literal backslash in front of an interpolation, and one backslash instead of two escapes
+ * the `$`, leaving the literal text "${PROJECT_VIEW_KEY_SEP}" behind an end-anchor. That matches no
+ * row at all — so an identity simply never propagated to the readings behind a project link, and
+ * the only symptom was a reader who stayed "Someone". These assertions run the real regex rather
+ * than reading the source, which is the only way to tell the two spellings apart.
+ */
+describe("viewerKeyMatchClause", () => {
+  const DIGEST = "a".repeat(64);
+  const OTHER = "b".repeat(64);
+  const DOC_ID = "64b0c0ffee0000000000a001";
+
+  /** The compiled regex from the clause — what Mongo will actually run. */
+  function prefixRe(key: string): RegExp {
+    const clause = viewerKeyMatchClause(key).find((c: Record<string, any>) => c.botIdHash?.$regex);
+    expect(clause, "no regex clause was built").toBeTruthy();
+    return new RegExp((clause as Record<string, any>).botIdHash.$regex);
+  }
+
+  test("matches every document this person read behind the link", () => {
+    const re = prefixRe(DIGEST);
+    expect(re.test(projectViewerKey(DIGEST, DOC_ID))).toBe(true);
+    expect(re.test(projectViewerKey(DIGEST, "64b0c0ffee0000000000a002"))).toBe(true);
+  });
+
+  test("does not match a different reader", () => {
+    expect(prefixRe(DIGEST).test(projectViewerKey(OTHER, DOC_ID))).toBe(false);
+  });
+
+  test("the separator is escaped, so it is a dot and not “any character”", () => {
+    expect(prefixRe(DIGEST).test(`${DIGEST}X${DOC_ID}`)).toBe(false);
+    expect(viewerKeyPrefixPattern(DIGEST)).toBe(`^${DIGEST}\\.`);
+  });
+
+  test("the bare digest is matched exactly, beside the prefix", () => {
+    expect(viewerKeyMatchClause(DIGEST)[0]).toEqual({ botIdHash: DIGEST });
+  });
+
+  test("anything that is not a digest is matched exactly, never interpolated into a pattern", () => {
+    expect(viewerKeyMatchClause("not-a-digest")).toEqual([{ botIdHash: "not-a-digest" }]);
+    expect(viewerKeyMatchClause(".*")).toEqual([{ botIdHash: ".*" }]);
   });
 });

@@ -186,6 +186,10 @@ Rollback: the previous build ignores `sharelinks` and reads the still-present do
 
 ### M4 — Pro link security
 - `expiresAt` UI, require-email gate (Pro), later magic-link verification (Enterprise "verified access").
+- **Specced 2026-09-18 in [lnkdrp-link-access](./lnkdrp-link-access.md)**, which supersedes the
+  parenthetical above on two points: verification is a six-digit code rather than a magic link
+  (a magic link opens in the wrong browser), and verified access is Pro rather than Enterprise —
+  only SSO stays Enterprise. Allow lists (addresses and domains) are the other half.
 
 ## Decided (were open questions)
 

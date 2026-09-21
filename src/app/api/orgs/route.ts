@@ -11,8 +11,15 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { debugError, debugLog } from "@/lib/debug";
-import { resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
+import { activeOrgCandidateOrder, resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
+import { errorJson } from "@/lib/http/errorResponse";
+import {
+  FREE_TEAM_WORKSPACES,
+  UPGRADE_URL,
+  getWorkspacePlan,
+  planLimitResponse,
+} from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -111,23 +118,27 @@ export async function GET(request: Request) {
         ? String(orgs.find((o) => Boolean((o as unknown as { personalForUserId?: unknown }).personalForUserId))!._id)
         : "") ||
       "";
-    // Source-of-truth priority, the same order the API actor resolvers use:
-    // 1) server-issued active-org cookie (but only if the user has a membership for it)
-    // 2) JWT claim activeOrgId (but only if the user has a membership for it)
-    // 3) User.metadata.activeOrgId, read only when 1 and 2 are missing
-    // 4) personal org
-    // Step 3 used to be skipped: with no cookie (a new device, a cleared cookie) the switcher said
-    // "Personal" while billing, credits and uploads acted on the saved workspace.
-    let activeOrgId =
-      (cookieActiveOrgId && membershipByOrgId.has(cookieActiveOrgId) ? cookieActiveOrgId : "") ||
-      (claimActiveOrgId && membershipByOrgId.has(claimActiveOrgId) ? claimActiveOrgId : "");
-    if (!activeOrgId) {
+    // Which workspace is active is decided in exactly one place — `activeOrgCandidateOrder` in
+    // src/lib/gating/actor.ts — and confirmed here against the membership map this route has
+    // already built, rather than with a second round of lookups.
+    //
+    // The order used to be written out again here, with the JWT claim ranked *above* the stored
+    // workspace. A JWT is issued at sign-in and lives for weeks, so on a device with no cookie the
+    // switcher named the workspace the token remembered while `POST /api/docs` — which goes through
+    // the resolver — created the document in the workspace the person had actually last chosen, and
+    // published a live share link for it there. The comment above this block claimed the two agreed.
+    const savedActiveOrgId = await (async () => {
       const u = (await UserModel.findOne({ _id: userId }).select({ "metadata.activeOrgId": 1 }).lean()) as {
         metadata?: { activeOrgId?: unknown };
       } | null;
-      const saved = typeof u?.metadata?.activeOrgId === "string" ? u.metadata.activeOrgId.trim() : "";
-      if (saved && membershipByOrgId.has(saved)) activeOrgId = saved;
-    }
+      return typeof u?.metadata?.activeOrgId === "string" ? u.metadata.activeOrgId.trim() : "";
+    })();
+    let activeOrgId =
+      activeOrgCandidateOrder({
+        cookieOrgId: cookieActiveOrgId,
+        metadataOrgId: savedActiveOrgId,
+        claimOrgId: claimActiveOrgId,
+      }).find((candidate) => candidate === personalOrgId || membershipByOrgId.has(candidate)) ?? "";
     if (!activeOrgId) activeOrgId = personalOrgId || (orgs[0]?._id ? String(orgs[0]._id) : "");
 
     // Guardrail: if there are multiple personal orgs for this user (shouldn't happen),
@@ -178,6 +189,27 @@ export async function GET(request: Request) {
   }
 }
 
+/**
+ * The team workspaces this user owns — memberships with `role: "owner"` whose org is a live team.
+ *
+ * Personal workspaces are excluded by the `type` filter: everyone has exactly one, nobody chose it,
+ * and counting it would refuse the very first team workspace a Free user creates.
+ */
+async function ownedTeamWorkspaceIds(userId: Types.ObjectId): Promise<Types.ObjectId[]> {
+  const memberships = await OrgMembershipModel.find({ userId, role: "owner", isDeleted: { $ne: true } })
+    .select({ orgId: 1 })
+    .lean();
+  const orgIds = memberships
+    .map((m) => (m as { orgId?: unknown }).orgId)
+    .filter((id): id is Types.ObjectId => id instanceof Types.ObjectId || Types.ObjectId.isValid(String(id)))
+    .map((id) => new Types.ObjectId(String(id)));
+  if (!orgIds.length) return [];
+  const orgs = await OrgModel.find({ _id: { $in: orgIds }, type: "team", isDeleted: { $ne: true } })
+    .select({ _id: 1 })
+    .lean();
+  return orgs.map((o) => new Types.ObjectId(String((o as { _id: unknown })._id)));
+}
+
 export async function POST(request: Request) {
   try {
     debugLog(1, "[api/orgs] POST");
@@ -193,6 +225,44 @@ export async function POST(request: Request) {
 
     await connectMongo();
     const userId = new Types.ObjectId(String(actor.userId));
+
+    /**
+     * How many team workspaces this person may own.
+     *
+     * Every other plan limit in the product is counted per workspace — three shared documents, one
+     * project, no collaborators — and creating a workspace was free, instant and unlimited. So the
+     * Free caps were only ever "per workspace you happen to have", and the way around all of them
+     * was the New workspace button. This is the limit that makes the rest mean what they say.
+     *
+     * Pro is unlimited, and "Pro" here means the person, not the workspace they are creating (which
+     * does not exist yet): if any workspace they already own is on Pro, they are a paying customer
+     * and this is not the place to stop them. Owned workspaces are few — the Free ceiling is one —
+     * so the plan reads are bounded.
+     *
+     * Grandfathering is deliberate: someone already over the line keeps every workspace they have
+     * and is only refused the next one. Taking a workspace away from an existing user to enforce a
+     * cap introduced after they made it would be the wrong trade.
+     */
+    const ownedTeamOrgIds = await ownedTeamWorkspaceIds(userId);
+    if (ownedTeamOrgIds.length >= FREE_TEAM_WORKSPACES) {
+      const plans = await Promise.all(ownedTeamOrgIds.map((id) => getWorkspacePlan(id)));
+      if (!plans.some((plan) => plan === "pro")) {
+        return planLimitResponse({
+          ok: false,
+          code: "plan_limit",
+          limit: "team_workspaces",
+          used: ownedTeamOrgIds.length,
+          max: FREE_TEAM_WORKSPACES,
+          grace: null,
+          upgradeUrl: UPGRADE_URL,
+          message:
+            FREE_TEAM_WORKSPACES === 1
+              ? "Free accounts can have one team workspace. Upgrade to Pro to create another."
+              : `Free accounts can have ${FREE_TEAM_WORKSPACES} team workspaces. Upgrade to Pro to create another.`,
+        });
+      }
+    }
+
     const base = slugify(slugRaw || name);
     const slug = await ensureUniqueOrgSlug(base);
 
@@ -244,8 +314,14 @@ export async function POST(request: Request) {
     ) {
       return NextResponse.json({ error: "An org with that slug already exists" }, { status: 409 });
     }
-    debugError(1, "[api/orgs] POST failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    // Anything that reaches here is ours, not the caller's — the one client error this route
+    // produces (a slug collision) is answered above. The raw message used to go to the browser and
+    // `debugError` only logged it when DEBUG_LEVEL was set, which it is not in production.
+    return errorJson(err, {
+      status: 500,
+      publicMessage: "Could not create the workspace.",
+      context: "[api/orgs] POST failed",
+    });
   }
 }
 

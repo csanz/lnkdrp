@@ -6,6 +6,7 @@
  * This is used by the `/billing/success` page to poll until Stripe webhooks have updated MongoDB.
  */
 import { NextResponse } from "next/server";
+import { errorJson } from "@/lib/http/errorResponse";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
@@ -107,8 +108,10 @@ export async function GET(request: Request) {
 
       return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 400 });
+      // A caught failure here is ours, not the caller's: the raw message went straight to the
+      // browser (Mongo and Stripe internals included) and nothing reached the logs. `errorJson`
+      // redacts, logs one line always, and keeps `detail` for non-production.
+      return errorJson(err, { status: 500, publicMessage: "Could not load billing status.", context: "[api/billing/status] request failed" });
     }
   });
 }

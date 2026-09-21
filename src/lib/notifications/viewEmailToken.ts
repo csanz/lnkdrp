@@ -1,16 +1,20 @@
 /**
  * Signed one-click "turn off view emails" tokens.
  *
- * Every view notification email carries a link that sets the recipient member's
+ * Every view notification email carries a link that lets the recipient member set their
  * `OrgMembership.viewEmailMode` to `off` without a sign-in (the email is often opened on a
  * phone where the user is not signed in; see docs/prds/lnkdrp-view-notifications.md, decision 8).
  * The link therefore carries its own authority: a token binding a membership id, a purpose and
- * an expiry, signed with HMAC-SHA256.
+ * an expiry, signed with HMAC-SHA256. Opening the link only shows a page; the write happens when
+ * the member confirms (or when their mail provider posts RFC 8058 one-click). See the TTL note
+ * below for what that authority is and is not.
  *
  * Format: `<payload>.<signature>`, both base64url.
  * - payload: JSON `{ v: 1, p: "view_emails_off", m: <membershipId>, e: <expiry epoch ms> }`
  * - signature: HMAC-SHA256 over the payload segment, keyed by a key derived from the server
  *   secret and the purpose string, so a key for another purpose can never verify these tokens.
+ *   When the server secret is the shared `NEXTAUTH_SECRET`, that input is itself HKDF-derived
+ *   first — see `getTokenSecrets()` for why, and for the dual-read that keeps sent links working.
  *
  * Server-only (Node crypto).
  */
@@ -18,7 +22,20 @@ import crypto from "node:crypto";
 
 export const VIEW_EMAILS_OFF_PURPOSE = "view_emails_off";
 
-/** Default token lifetime: 30 days. */
+/**
+ * Default token lifetime: 30 days.
+ *
+ * This token is a bearer credential in a URL: the payload is `{ v, p, m, e }` and nothing else, so
+ * it is joined to no server state and there is no way to revoke an issued one — the expiry is the
+ * only bound on a link that leaks (a forwarded email, a mail archive, a shared screenshot). It is
+ * kept at 30 days deliberately: an unsubscribe link people may come back to weeks later should
+ * still work, and every view email ships a fresh one anyway. What makes that acceptable is that
+ * holding the token is no longer enough to act — the route (`/api/notifications/views/off`) only
+ * writes on an explicit POST (a person pressing the confirm button, or a mail provider's RFC 8058
+ * one-click), never on a GET. To make these revocable rather than merely short-lived, the payload
+ * needs a counter kept on the membership (see the note in the route) which is bumped whenever the
+ * member changes `viewEmailMode` themselves; that is an OrgMembership schema change.
+ */
 export const VIEW_EMAILS_OFF_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const TOKEN_VERSION = 1;
@@ -33,26 +50,89 @@ export type VerifyViewEmailsOffTokenResult =
   | { ok: true; membershipId: string }
   | { ok: false; reason: ViewEmailsOffTokenFailure; membershipId?: string };
 
-/** Return the server secret (throws in production if missing), mirroring sharePassword.getCookieSecret. */
-function getTokenSecret(): string {
-  const s = process.env.LNKDRP_NOTIFICATION_TOKEN_SECRET || process.env.NEXTAUTH_SECRET || "";
-  if (s) return s;
+/**
+ * Purpose label for the derived secret. Changing either string rotates the signing key for every
+ * deployment that has not set a distinct `LNKDRP_NOTIFICATION_TOKEN_SECRET`, i.e. invalidates live
+ * unsubscribe links, so they are versioned and left alone.
+ */
+const TOKEN_KEY_SALT = "lnkdrp-notification-token";
+const TOKEN_KEY_INFO = "notification-token-hkdf:v1";
 
-  // Dev fallback so local envs don't crash.
-  if (process.env.NODE_ENV !== "production") return "dev-lnkdrp-notification-token-secret";
+/** Dev fallback so local envs don't crash. Public by construction; never reached in production. */
+const DEV_FALLBACK_SECRET = "dev-lnkdrp-notification-token-secret";
 
-  // In production, do not silently degrade: an unsubscribe link signed with a public key is forgeable.
+let warnedAboutDerivedSecret = false;
+
+function deriveTokenSecret(master: string): string {
+  return Buffer.from(crypto.hkdfSync("sha256", master, TOKEN_KEY_SALT, TOKEN_KEY_INFO, 32)).toString("base64url");
+}
+
+/**
+ * The secrets these tokens are signed and verified with: `current` signs, `legacy` only verifies.
+ *
+ * What went wrong: this module took `NEXTAUTH_SECRET` verbatim whenever
+ * `LNKDRP_NOTIFICATION_TOKEN_SECRET` was unset. `NEXTAUTH_SECRET` is not a notification secret — it
+ * is the fallback behind session cookies, the AES key over every share password at rest
+ * (`src/lib/sharePassword.ts`), the AES key over org invite tokens, the internal upload-processing
+ * HMAC and this. The damage here was smaller than in `src/lib/realtime/ticket.ts`, because
+ * `signingKey()` below already ran the value through an HMAC with a purpose label before signing
+ * anything, and nothing outside this process ever saw it. But the *input* to that derivation was
+ * still the master secret, held in a variable named for a token module, and `getTokenSecret()` was
+ * a function that handed the master secret to any future caller that asked for "the token secret".
+ * This closes that: the value the module holds is already one-way separated from the master.
+ *
+ * Why the fix is shaped this way (the part that matters): these tokens sit in already-sent emails
+ * for 30 days (`VIEW_EMAILS_OFF_TTL_MS`). Rotating the key outright would mean every unsubscribe
+ * link currently in someone's mailbox answers "that link is not valid" — punishing recipients for
+ * a server-side hygiene change, on the one path in this product where the recipient is asking us to
+ * stop emailing them. So this degrades instead of refusing: new tokens are signed with the derived
+ * secret, and verification falls back to the old raw-master secret for tokens minted before this
+ * change. The fallback only exists on deployments that were using the master secret in the first
+ * place — where a distinct `LNKDRP_NOTIFICATION_TOKEN_SECRET` is configured, nothing rotates and
+ * `legacy` is null. It costs nothing in strength: the legacy key is the same HMAC-over-purpose
+ * construction that signed those links yesterday.
+ *
+ * Removing the fallback: safe once every email minted before the deploy has aged past
+ * `VIEW_EMAILS_OFF_TTL_MS` (30 days). Delete the `legacy` branch then; a stale link failing after
+ * that point was going to fail on expiry anyway.
+ *
+ * Mirrors `sharePassword.getCookieSecret` in throwing rather than degrading when nothing is
+ * configured in production: an unsubscribe link signed with a public key is forgeable.
+ */
+function getTokenSecrets(): { current: string; legacy: string | null } {
+  // Not trimmed: these are used as key material and were used untrimmed before, so trimming here
+  // would silently rotate the key for anyone whose configured value has stray whitespace.
+  const dedicated = process.env.LNKDRP_NOTIFICATION_TOKEN_SECRET || "";
+  const master = process.env.NEXTAUTH_SECRET || "";
+
+  // A secret set for this purpose is used exactly as configured — unless it is merely a copy of the
+  // master secret, which is the same mistake wearing a different variable name.
+  if (dedicated.trim() && dedicated.trim() !== master.trim()) return { current: dedicated, legacy: null };
+
+  const shared = dedicated.trim() ? dedicated : master;
+  if (shared.trim()) {
+    if (!warnedAboutDerivedSecret && process.env.NODE_ENV === "production") {
+      warnedAboutDerivedSecret = true;
+      console.warn(
+        "[notifications] LNKDRP_NOTIFICATION_TOKEN_SECRET is not set (or matches NEXTAUTH_SECRET); signing notification tokens with a secret derived from NEXTAUTH_SECRET. Set a distinct LNKDRP_NOTIFICATION_TOKEN_SECRET so this key is independent of the session secret.",
+      );
+    }
+    return { current: deriveTokenSecret(shared), legacy: shared };
+  }
+
+  if (process.env.NODE_ENV !== "production") return { current: DEV_FALLBACK_SECRET, legacy: null };
+
   throw new Error("Missing LNKDRP_NOTIFICATION_TOKEN_SECRET (or NEXTAUTH_SECRET) for notification tokens");
 }
 
-/** Derive the per-purpose signing key from the server secret. */
-function signingKey(purpose: string): Buffer {
-  return crypto.createHmac("sha256", getTokenSecret()).update(`lnkdrp.notification-token.v1:${purpose}`).digest();
+/** Derive the per-purpose signing key from a server secret. */
+function signingKey(purpose: string, secret: string): Buffer {
+  return crypto.createHmac("sha256", secret).update(`lnkdrp.notification-token.v1:${purpose}`).digest();
 }
 
 /** HMAC-SHA256 of a payload segment under the purpose-bound key. */
-function sign(payloadSegment: string, purpose: string): Buffer {
-  return crypto.createHmac("sha256", signingKey(purpose)).update(payloadSegment).digest();
+function sign(payloadSegment: string, purpose: string, secret: string): Buffer {
+  return crypto.createHmac("sha256", signingKey(purpose, secret)).update(payloadSegment).digest();
 }
 
 /** Constant-time equality that never throws: unequal lengths are simply unequal. */
@@ -75,7 +155,8 @@ export function createViewEmailsOffToken(membershipId: string, opts?: { now?: Da
     typeof opts?.ttlMs === "number" && Number.isFinite(opts.ttlMs) && opts.ttlMs > 0 ? opts.ttlMs : VIEW_EMAILS_OFF_TTL_MS;
   const payload = { v: TOKEN_VERSION, p: VIEW_EMAILS_OFF_PURPOSE, m: id, e: Math.floor(now.getTime() + ttlMs) };
   const payloadSegment = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-  const sig = sign(payloadSegment, VIEW_EMAILS_OFF_PURPOSE).toString("base64url");
+  // Minting always uses the current secret; `legacy` is a read-only concession to links already sent.
+  const sig = sign(payloadSegment, VIEW_EMAILS_OFF_PURPOSE, getTokenSecrets().current).toString("base64url");
   return `${payloadSegment}.${sig}`;
 }
 
@@ -97,9 +178,14 @@ export function verifyViewEmailsOffToken(token: string, opts?: { now?: Date }): 
     return { ok: false, reason: "malformed" };
   }
 
-  const expected = sign(payloadSegment, VIEW_EMAILS_OFF_PURPOSE);
+  const { current, legacy } = getTokenSecrets();
   const given = Buffer.from(sigSegment, "base64url");
-  if (!safeEqual(given, expected)) return { ok: false, reason: "bad_signature" };
+  // Current secret first; then, only where the key rotated (see `getTokenSecrets`), the secret that
+  // signed the links already sitting in people's mailboxes. Both comparisons are constant-time, and
+  // the second one runs on failure only, which leaks nothing a forger did not already know.
+  let matched = safeEqual(given, sign(payloadSegment, VIEW_EMAILS_OFF_PURPOSE, current));
+  if (!matched && legacy) matched = safeEqual(given, sign(payloadSegment, VIEW_EMAILS_OFF_PURPOSE, legacy));
+  if (!matched) return { ok: false, reason: "bad_signature" };
 
   let payload: unknown;
   try {

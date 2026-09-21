@@ -149,9 +149,14 @@ export type ApiShareLink = {
 
 /** One `GET /api/share-links` search hit — a link plus enough of its document to tell it apart. */
 export type ApiShareLinkSearchHit = {
-  docId: string;
+  /** "doc" for a document's link, "project" for a project (data room) link. */
+  kind: "doc" | "project";
+  /** null on a project link: it belongs to a project, not a document. */
+  docId: string | null;
   docTitle: string | null;
   docShareId: string | null;
+  projectId: string | null;
+  projectName: string | null;
   linkId: string;
   shareId: string;
   label: string;
@@ -259,6 +264,9 @@ export type DocPatch = Partial<{
 }>;
 
 /** One project from `/api/projects…`. Fields a given route does not return are null. */
+/** One tag, as the tag routes return it. `count` is present only on the workspace listing. */
+export type ApiTag = { id: string; name: string; slug: string; color: string; count: number | null };
+
 /** One starred document, as `GET /api/starred` lists it. */
 export type ApiStarredDoc = { id: string; title: string | null; starredAt: string | null };
 
@@ -326,8 +334,59 @@ export type ShareViewsViewer = {
   lastSeen: string | null;
 };
 
+/**
+ * Traffic that reached this document through a link belonging to a *project*, not to the document.
+ *
+ * Kept apart from `totals` rather than folded into it, matching the upstream route: a project
+ * link's rows have no `docId` of their own, and counting them in the document's totals once made
+ * them render as a "Deleted link". But they are real reads by real people — often the only named
+ * ones — so they are reported here instead of being dropped.
+ */
+export type ProjectLinkTraffic = {
+  views: number;
+  viewers: number;
+  links: Array<{
+    shareId: string;
+    label: string | null;
+    projectId: string | null;
+    projectName: string | null;
+    views: number;
+    viewers: number;
+    lastViewedAt: string | null;
+  }>;
+  /** Per-reader rows; names and emails only on the deep tier and only when viewers were asked for. */
+  viewerRows: Array<{
+    shareId: string;
+    projectId: string | null;
+    projectName: string | null;
+    views: number;
+    pagesViewed: number;
+    timeSpentMs: number;
+    lastViewedAt: string | null;
+    viewerName: string | null;
+    viewerEmail: string | null;
+  }>;
+};
+
 export type ShareViews = {
   days: number;
+  /**
+   * Lifetime figures for the same scope, beside the windowed ones.
+   *
+   * Without these the default 15-day window is the whole answer, so a deck shared three months ago
+   * and read then reports `views: 0` — and "has anyone read this?" answers "nobody" about a
+   * document with a hundred readings. The window is a lens, not the truth.
+   */
+  totalsAllTime: {
+    views: number;
+    ownerPreviews: number;
+    opens: number;
+    opensPartial: boolean;
+    downloads: number;
+    pagesViewed: number;
+  } | null;
+  /** Most recent recorded activity in this scope, ever. Null when nothing has been recorded. */
+  lastViewedAt: string | null;
   analyticsDaysLimit: number | null;
   analyticsTier: "basic" | "deep" | string;
   viewerCount: number;
@@ -335,6 +394,8 @@ export type ShareViews = {
   series: Array<{ date: string; views: number; opens: number; downloads: number }>;
   viewers: ShareViewsViewer[];
   anonymousViewers: ShareViewsViewer[];
+  /** Present only when project links carried traffic to this document in the window. */
+  projectLinkTraffic: ProjectLinkTraffic | null;
 };
 
 type Query = Record<string, string | number | boolean | undefined>;
@@ -384,6 +445,17 @@ function asDoc(raw: unknown): ApiDoc {
 }
 
 /** Normalise a project from any `/api/projects…` envelope (already unwrapped). */
+function asTag(raw: unknown): ApiTag {
+  const t = rec(raw);
+  return {
+    id: strOrNull(t.id) ?? "",
+    name: strOrNull(t.name) ?? "",
+    slug: strOrNull(t.slug) ?? "",
+    color: strOrNull(t.color) ?? "slate",
+    count: typeof t.count === "number" && Number.isFinite(t.count) ? t.count : null,
+  };
+}
+
 function asProject(raw: unknown): ApiProject {
   const p = rec(raw);
   const id = strOrNull(p.id);
@@ -760,6 +832,100 @@ export class ApiClient {
     });
   }
 
+  /**
+   * `GET /api/tags` — every tag in the workspace, alphabetical, with how many things carry each.
+   */
+  async listTags(): Promise<ApiTag[]> {
+    const body = rec(await this.request("GET", "/api/tags"));
+    return (Array.isArray(body.tags) ? body.tags : []).map(asTag);
+  }
+
+  /** `GET /api/tags/assignments` — the tags on one document or project. */
+  /**
+   * The tags on many things in one read — `GET /api/tags/targets`.
+   *
+   * The per-target endpoint above answers for one item; a list of twenty documents would be twenty
+   * round trips, which is why the sidebar has this and why the list tools use it.
+   */
+  async tagsForTargets(input: { targetKind: "doc" | "project"; ids: string[] }): Promise<Map<string, ApiTag[]>> {
+    const out = new Map<string, ApiTag[]>();
+    const ids = [...new Set(input.ids.filter(Boolean))];
+    if (!ids.length) return out;
+    // The route caps at 200 ids; page rather than silently losing the tail.
+    for (let i = 0; i < ids.length; i += 200) {
+      const body = rec(
+        await this.request("GET", "/api/tags/targets", {
+          query: { targetKind: input.targetKind, ids: ids.slice(i, i + 200).join(",") },
+        }),
+      );
+      const map = rec(body.tags);
+      for (const [targetId, list] of Object.entries(map)) {
+        out.set(targetId, (Array.isArray(list) ? list : []).map(asTag));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Everything carrying one tag — `GET /api/tags/by-slug/:slug/items`.
+   *
+   * Documents and projects together, because "fundraising" is one idea even when it is spread
+   * across both. The slug is folded by the route, so any spelling of the name reaches the tag.
+   */
+  async itemsForTag(slug: string): Promise<{ tag: ApiTag; docIds: string[]; projectIds: string[] }> {
+    const body = rec(await this.request("GET", `/api/tags/by-slug/${encodeURIComponent(slug)}/items`));
+    const docs = Array.isArray(body.docs) ? body.docs : [];
+    const projects = Array.isArray(body.projects) ? body.projects : [];
+    return {
+      tag: asTag(body.tag),
+      docIds: docs.map((d) => strOrNull(rec(d).id) ?? "").filter(Boolean),
+      projectIds: projects.map((p) => strOrNull(rec(p).id) ?? "").filter(Boolean),
+    };
+  }
+
+  async tagsForTarget(input: { targetKind: "doc" | "project"; targetId: string }): Promise<ApiTag[]> {
+    const body = rec(
+      await this.request("GET", "/api/tags/assignments", {
+        query: { targetKind: input.targetKind, targetId: input.targetId },
+      }),
+    );
+    return (Array.isArray(body.tags) ? body.tags : []).map(asTag);
+  }
+
+  /**
+   * `POST /api/tags/assignments` — attach a tag by name, creating it if the workspace has no such
+   * tag yet. One call on purpose: find-or-create-then-attach in the client would race with itself.
+   */
+  async attachTag(input: {
+    targetKind: "doc" | "project";
+    targetId: string;
+    name: string;
+  }): Promise<{ tags: ApiTag[]; created: boolean }> {
+    const body = rec(
+      await this.request("POST", "/api/tags/assignments", {
+        body: { targetKind: input.targetKind, targetId: input.targetId, name: input.name },
+      }),
+    );
+    return {
+      tags: (Array.isArray(body.tags) ? body.tags : []).map(asTag),
+      created: Boolean(body.created),
+    };
+  }
+
+  /** `DELETE /api/tags/assignments` — take one tag off one document or project. */
+  async detachTag(input: {
+    targetKind: "doc" | "project";
+    targetId: string;
+    tagId: string;
+  }): Promise<ApiTag[]> {
+    const body = rec(
+      await this.request("DELETE", "/api/tags/assignments", {
+        body: { targetKind: input.targetKind, targetId: input.targetId, tagId: input.tagId },
+      }),
+    );
+    return (Array.isArray(body.tags) ? body.tags : []).map(asTag);
+  }
+
   /** `GET /api/projects` — non-request projects, most recently updated first, page-based. */
   async listProjects(input: { q?: string | undefined; page?: number | undefined; limit: number }): Promise<ApiProjectsPage> {
     const body = rec(
@@ -839,8 +1005,31 @@ export class ApiClient {
    * the ones matching it by label/audience, ranked by relevance (mt_9ceLy7DqEr).
    */
   async listShareLinks(docId: string, query?: string | undefined): Promise<ApiShareLink[]> {
-    const body = rec(await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/links`, { query: { q: query || undefined } }));
-    return Array.isArray(body.links) ? body.links.map(asShareLink) : [];
+    return (await this.listShareLinksPage(docId, query)).links;
+  }
+
+  /**
+   * The same route, with the figure that says whether you got all of it.
+   *
+   * `GET /api/docs/:id/links` is page-based — default 25, max 100 — and this client was sending
+   * neither `page` nor `limit` and discarding `total`. A document with more than 25 links quietly
+   * lost the tail, and every caller above treated the answer as "every link on this document":
+   * `get_share` looked for the default link in it, `delete_doc` counted live links from it to
+   * decide how loudly to confirm. Asking for the maximum does not make the truncation impossible,
+   * so the count comes back too and the callers say "25 of 40" rather than implying completeness.
+   */
+  async listShareLinksPage(
+    docId: string,
+    query?: string | undefined,
+  ): Promise<{ links: ApiShareLink[]; total: number; truncated: boolean }> {
+    const body = rec(
+      await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/links`, {
+        query: { q: query || undefined, limit: 100 },
+      }),
+    );
+    const links = Array.isArray(body.links) ? body.links.map(asShareLink) : [];
+    const total = typeof body.total === "number" ? body.total : links.length;
+    return { links, total, truncated: total > links.length };
   }
 
   /**
@@ -854,9 +1043,15 @@ export class ApiClient {
     return rows.map((raw) => {
       const r = rec(raw);
       return {
-        docId: strOrNull(r.docId) ?? "",
+        // A workspace search now returns project links too (they live in the same collection), and
+        // they have no document: docId stays null rather than "" so nothing feeds an empty id back
+        // into a docId parameter.
+        kind: strOrNull(r.kind) === "project" ? "project" : "doc",
+        docId: strOrNull(r.docId),
         docTitle: strOrNull(r.docTitle),
         docShareId: strOrNull(r.docShareId),
+        projectId: strOrNull(r.projectId),
+        projectName: strOrNull(r.projectName),
         linkId: strOrNull(r.linkId) ?? "",
         shareId: strOrNull(r.shareId) ?? "",
         label: strOrNull(r.label) ?? "",
@@ -881,11 +1076,22 @@ export class ApiClient {
   }
 
   /** `PATCH /api/docs/:id/links/:linkId` — change one link's settings. */
-  async updateShareLink(docId: string, linkId: string, patch: ShareLinkPatch): Promise<{ link: ApiShareLink; planWarning?: PlanWarning }> {
+  async updateShareLink(
+    docId: string,
+    linkId: string,
+    patch: ShareLinkPatch,
+  ): Promise<{ link: ApiShareLink; planWarning?: PlanWarning; warnings: string[] }> {
     const body = rec(
       await this.request("PATCH", `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(linkId)}`, { body: patch }),
     );
-    return { link: asShareLink(body.link), planWarning: asPlanWarning(body.planWarning) };
+    return {
+      link: asShareLink(body.link),
+      planWarning: asPlanWarning(body.planWarning),
+      // The route reports when enabling this link re-shared the document and brought its other
+      // links back with it. Dropping that here made a change to who can reach the document
+      // invisible to the agent that caused it.
+      warnings: Array.isArray(body.warnings) ? body.warnings.filter((w): w is string => typeof w === "string") : [],
+    };
   }
 
   /**
@@ -948,11 +1154,21 @@ export class ApiClient {
   }
 
   /** `PATCH /api/projects/:id/links/:linkId` — change one project link's settings. */
-  async updateProjectLink(projectId: string, linkId: string, patch: ProjectLinkPatch): Promise<ApiProjectLink> {
+  async updateProjectLink(
+    projectId: string,
+    linkId: string,
+    patch: ProjectLinkPatch,
+  ): Promise<{ link: ApiProjectLink; warnings: string[] }> {
     const body = rec(
       await this.request("PATCH", `/api/projects/${encodeURIComponent(projectId)}/links/${encodeURIComponent(linkId)}`, { body: patch }),
     );
-    return asProjectLink(body.link);
+    return {
+      link: asProjectLink(body.link),
+      // Enabling a project link can republish the room's public page and restore every link that
+      // page switch had taken down. The route says so; dropping it here left the same silence the
+      // document version was fixed for, on the surface where one link is the whole data room.
+      warnings: Array.isArray(body.warnings) ? body.warnings.filter((w): w is string => typeof w === "string") : [],
+    };
   }
 
   /** `DELETE /api/projects/:id/links/:linkId` — soft-archive a project link (204; analytics kept). */
@@ -999,10 +1215,10 @@ export class ApiClient {
   }
 
   /** `GET /api/uploads/:id` — upload status plus the AI outcome (`ai` is null until processing finishes). */
-  async getUpload(uploadId: string): Promise<{ id: string; status: string | null; ai: UploadAi | null }> {
+  async getUpload(uploadId: string): Promise<{ id: string; status: string | null; ai: UploadAi | null; error: string | null }> {
     const body = rec(await this.request("GET", `/api/uploads/${encodeURIComponent(uploadId)}`));
     const u = rec(body.upload);
-    return { id: strOrNull(u.id) ?? uploadId, status: strOrNull(u.status), ai: asUploadAi(u.ai) };
+    return { id: strOrNull(u.id) ?? uploadId, status: strOrNull(u.status), ai: asUploadAi(u.ai), error: strOrNull(u.error) };
   }
 
   /** `GET /api/credits/snapshot?fast=1` — credits left in the workspace (read defensively). */
@@ -1068,6 +1284,61 @@ export class ApiClient {
       }),
       viewers: Array.isArray(body.viewers) ? body.viewers.map(asViewer) : [],
       anonymousViewers: Array.isArray(body.anonymousViewers) ? body.anonymousViewers.map(asViewer) : [],
+      // Whitelisted like everything else here, which is exactly how it went missing: the route
+      // added this section so that "who read this document" stops answering "nobody" while the
+      // activity feed names someone, and the mapper below silently dropped it.
+      projectLinkTraffic: asProjectLinkTraffic(body.projectLinkTraffic),
+      totalsAllTime: (() => {
+        if (!body.totalsAllTime || typeof body.totalsAllTime !== "object") return null;
+        const t = rec(body.totalsAllTime);
+        return {
+          views: num(t.views),
+          ownerPreviews: num(t.ownerPreviews),
+          opens: num(t.opens),
+          opensPartial: t.opensPartial === true,
+          downloads: num(t.downloads),
+          pagesViewed: num(t.pagesViewed),
+        };
+      })(),
+      lastViewedAt: strOrNull(body.lastViewedAt),
     };
   }
+}
+
+/** Normalise the project-link section, or null when the route omitted it (no such traffic). */
+function asProjectLinkTraffic(raw: unknown): ProjectLinkTraffic | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const t = rec(raw);
+  const links = Array.isArray(t.links) ? t.links : [];
+  const viewerRows = Array.isArray(t.viewerRows) ? t.viewerRows : [];
+  return {
+    views: num(t.views),
+    viewers: num(t.viewers),
+    links: links.map((rawLink) => {
+      const l = rec(rawLink);
+      return {
+        shareId: strOrNull(l.shareId) ?? "",
+        label: strOrNull(l.label),
+        projectId: strOrNull(l.projectId),
+        projectName: strOrNull(l.projectName),
+        views: num(l.views),
+        viewers: num(l.viewers),
+        lastViewedAt: strOrNull(l.lastViewedAt),
+      };
+    }),
+    viewerRows: viewerRows.map((rawRow) => {
+      const v = rec(rawRow);
+      return {
+        shareId: strOrNull(v.shareId) ?? "",
+        projectId: strOrNull(v.projectId),
+        projectName: strOrNull(v.projectName),
+        views: num(v.views),
+        pagesViewed: num(v.pagesViewed),
+        timeSpentMs: num(v.timeSpentMs),
+        lastViewedAt: strOrNull(v.lastViewedAt),
+        viewerName: strOrNull(v.viewerName),
+        viewerEmail: strOrNull(v.viewerEmail),
+      };
+    }),
+  };
 }

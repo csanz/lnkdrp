@@ -18,7 +18,7 @@ export default function MetricsSkeleton() {
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4 motion-safe:animate-pulse"
+            className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 motion-safe:animate-pulse"
             style={{ animationDelay: `${i * 80}ms` }}
           >
             <div className="h-3 w-20 rounded bg-[var(--panel-hover)]" />
@@ -28,7 +28,7 @@ export default function MetricsSkeleton() {
         ))}
       </div>
 
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
         <div className="h-3.5 w-28 rounded bg-[var(--panel-hover)]" />
         <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
           <div className="h-56 w-full rounded-lg bg-[var(--panel-hover)] motion-safe:animate-pulse" />
@@ -69,8 +69,8 @@ export function MetricsEmptyWorkspace() {
     <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-6 py-12 text-center">
       <h2 className="text-[15px] font-semibold text-[var(--fg)]">No shared documents yet</h2>
       <p className="mx-auto mt-2 max-w-md text-[13px] leading-5 text-[var(--muted)]">
-        Once you share a document, this page shows how many people opened it, how long they read, which
-        links are working and which have gone quiet — across the whole workspace.
+        This page covers the whole workspace. Once you share a document, it shows how many people opened
+        it, how long they read, and which links are working or have gone quiet.
       </p>
       <Link
         href="/upload"

@@ -23,8 +23,16 @@ import HeadlineStrip from "@/components/workspaceMetrics/HeadlineStrip";
 import HeroChart from "@/components/workspaceMetrics/HeroChart";
 import MetricsSkeleton, { MetricsEmptyWorkspace } from "@/components/workspaceMetrics/MetricsSkeleton";
 import RangeControl from "@/components/workspaceMetrics/RangeControl";
-import { PeopleSection, QuietDocsSection, TopDocsSection, TopLinksSection } from "@/components/workspaceMetrics/Sections";
+import {
+  ContributorsSection,
+  PeopleSection,
+  QuietDocsSection,
+  TopDocsSection,
+  TopLinksSection,
+} from "@/components/workspaceMetrics/Sections";
 import { outputSentence, type MetricKey } from "@/components/workspaceMetrics/format";
+// The same duration wording the document and project cards print, so "58s" means 58s everywhere.
+import { formatDurationShort } from "@/components/metrics/MetricsView";
 // `./types` and not the barrel: the barrel re-exports `./range`, which reaches the plan limits
 // and through them Mongoose. `types.ts` imports nothing, so nothing server-only follows it here.
 import {
@@ -36,6 +44,7 @@ import {
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import { usePlan } from "@/lib/client/usePlan";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import RecentVisitors from "@/components/metrics/RecentVisitors";
 
 /** Where the chosen range is remembered. Per browser, like the dashboard's usage range. */
 const RANGE_STORAGE_KEY = "lnkdrp:metrics:range";
@@ -248,6 +257,67 @@ export default function MetricsPageClient() {
           <MetricsEmptyWorkspace />
         ) : (
           <div className="grid gap-6">
+            {/* Who opened something in this workspace, newest first, above everything else — the
+                same strip the document and project metrics pages lead with, and now the same
+                behaviour: a reading badge on every row, and a way through to the full list.
+
+                `people.recent`, not `people.items`: the latter is the engagement ranking, already
+                trimmed to eight, so sorting it by recency gave "the most engaged, newest first"
+                under a heading that promises the newest. Someone who opened a document two minutes
+                ago and read a page of it was missing from the strip that exists to show them.
+
+                Named people only: the workspace payload identifies readers by person (an anonymous
+                browser id is nobody a sender can act on — `WORKSPACE_PERSON_KEY_EXPR`), and on Free
+                it identifies nobody, so the card simply does not appear there. The rows do not link
+                anywhere, unlike the document and project strips: a reader page is scoped to one
+                document or one room, and this person may have read several. */}
+            <RecentVisitors
+              visitors={data.people.recent.map((p) => ({
+                key: p.key,
+                name: (p.name ?? "").trim() || (p.email ?? "").trim() || null,
+                lastSeen: p.lastSeenAt,
+                /**
+                 * What they read, not how many. "1 document" is the one fact on this row nobody
+                 * needed — the name of the document is the answer to the question the card asks,
+                 * and it goes in the chip beside their name where the other pages put the project.
+                 * The count survives only when it adds something: a reader of several documents
+                 * gets "+2 more" after the one their badge is about.
+                 */
+                detail: [
+                  p.readingTimeMs > 0 ? formatDurationShort(p.readingTimeMs) : null,
+                  p.docs > 1 ? `+${p.docs - 1} more` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || null,
+                vias: p.docTitle && p.depthSample
+                  ? [{ name: p.docTitle, href: `/doc/${encodeURIComponent(p.depthSample.docId)}/metrics`, kind: "doc" as const }]
+                  : [],
+                /**
+                 * The badge is judged on one real reading, not on a workspace-wide average.
+                 *
+                 * Fed the workspace's own unit — documents — every row came out READ, including a
+                 * reader the document's own page calls SKIMMED. So the payload carries the inputs
+                 * of the single document this person spent longest in (`depthSample`), and the
+                 * same `readingDepth` runs here as everywhere else. The word on this card is now
+                 * the word you find when you click through to that reading.
+                 */
+                timeMs: p.depthSample?.timeMs ?? null,
+                pages: p.depthSample?.pages ?? null,
+                totalPages: p.depthSample?.totalPages ?? null,
+                // The same destination the badge is about: their page for the document they spent
+                // longest in. Null when that reading came through a project link, whose readers
+                // live on the project's pages rather than the document's.
+                href: p.readerHref,
+                hint: p.readerHref ? "See what they read" : undefined,
+              }))}
+              // The payload trims the recency slice to five, so the true count comes separately.
+              total={data.people.count}
+              seeAllLabel="See all readers"
+              onSeeAll={() => {
+                document.getElementById("workspace-people")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            />
+
             <HeadlineStrip
               headline={data.headline}
               selected={shownMetric}
@@ -274,7 +344,7 @@ export default function MetricsPageClient() {
                 <div className="order-1 min-w-0 lg:order-none">
                   <TopDocsSection docs={data.topDocs} now={now} opensPartial={data.opensPartial} />
                 </div>
-                <div className="order-3 min-w-0 lg:order-none">
+                <div className="order-3 min-w-0 lg:order-none" id="workspace-people">
                   <PeopleSection people={data.people} now={now} />
                 </div>
               </div>
@@ -284,6 +354,11 @@ export default function MetricsPageClient() {
                 </div>
                 <div className="order-4 min-w-0 lg:order-none">
                   <QuietDocsSection docs={data.quietDocs} now={now} />
+                </div>
+                {/* The workspace's own side of the period, under the reader-facing sections: who
+                    added, shared and replaced, with agents credited to their client. */}
+                <div className="order-5 min-w-0 lg:order-none">
+                  <ContributorsSection contributors={data.contributors} now={now} />
                 </div>
               </div>
             </div>

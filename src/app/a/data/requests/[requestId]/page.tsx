@@ -47,7 +47,6 @@ type DetailDoc = {
   userId: string | null;
   title: string | null;
   status: string | null;
-  shareId: string | null;
   createdDate: string | null;
   updatedDate: string | null;
   isGuideDoc?: boolean;
@@ -73,13 +72,9 @@ type DetailReview = {
   version: number | null;
   status: string | null;
   model: string | null;
-  outputMarkdown: string | null;
-  intel: unknown;
   agentKind: string | null;
-  agentOutput: unknown;
-  agentRawOutputText: string | null;
-  agentSystemPrompt: string | null;
-  agentUserPrompt: string | null;
+  /** Size of the prompt the agent ran on — the diagnostic the prompt itself used to stand in for. */
+  inputTextChars: number | null;
   createdDate: string | null;
   updatedDate: string | null;
   raw: Record<string, unknown> | null;
@@ -125,11 +120,17 @@ type AiRunDetail = {
   docId: string | null;
   uploadId: string | null;
   reviewId: string | null;
-  systemPrompt: string | null;
-  userPrompt: string | null;
   inputTextChars: number | null;
-  outputText: string | null;
-  outputObject: unknown;
+  /** Shape of the prompts and the output, never the text. See src/lib/admin/docPrivacy.ts. */
+  content: {
+    hasSystemPrompt: boolean | null;
+    systemPromptChars: number | null;
+    hasUserPrompt: boolean | null;
+    userPromptChars: number | null;
+    hasOutputText: boolean | null;
+    outputTextChars: number | null;
+    hasOutputObject: boolean | null;
+  } | null;
   error: unknown;
   updatedDate: string | null;
   createdDate: string | null;
@@ -148,12 +149,9 @@ function prettyJson(v: unknown) {
   }
 }
 
-/** The `aiOutput` object off a raw doc/upload document, or null when there is none. */
-function extractAiOutput(raw: Record<string, unknown> | null | undefined) {
-  if (!raw || typeof raw !== "object") return null;
-  const v = (raw as { aiOutput?: unknown }).aiOutput;
-  if (!v || typeof v !== "object") return null;
-  return v as Record<string, unknown>;
+/** "12,345 characters", or a dash when the route did not report a size. */
+function charCount(n: number | null | undefined) {
+  return typeof n === "number" && Number.isFinite(n) ? `${n.toLocaleString()} characters` : ADMIN_DASH;
 }
 
 /** A collapsible block of raw text, on the same rhythm everywhere on this page. */
@@ -213,11 +211,11 @@ export default function AdminDataRequestDetailPage() {
     const r = data.requestRaw ?? null;
     const name = typeof r?.name === "string" ? r.name : "Request";
     const slug = typeof r?.slug === "string" ? r.slug : null;
-    const token =
-      typeof (r as { requestUploadToken?: unknown } | null)?.requestUploadToken === "string"
-        ? ((r as { requestUploadToken: string }).requestUploadToken as string)
-        : null;
-    return { name, slug, token };
+    // Whether the repo is accepting uploads, not the token that does the accepting: `/request/:token`
+    // takes documents into this workspace with no session at all.
+    const s = (r as { secrets?: { hasRequestUploadToken?: boolean | null } } | null)?.secrets;
+    const accepting = s?.hasRequestUploadToken === true;
+    return { name, slug, accepting };
   }, [data.requestRaw]);
 
   const copyAllLoadedText = useMemo(() => {
@@ -377,16 +375,6 @@ export default function AdminDataRequestDetailPage() {
           description="The request repo record, the docs and uploads under it, and the AI runs behind them."
           actions={
             <>
-              {header.token ? (
-                <a
-                  className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
-                  href={`/request/${encodeURIComponent(header.token)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open upload page
-                </a>
-              ) : null}
               <Button variant="outline" disabled={loading} onClick={reload}>
                 {loading ? "Loading…" : "Refresh"}
               </Button>
@@ -410,8 +398,8 @@ export default function AdminDataRequestDetailPage() {
               {header.slug ? <CopyTextButton text={header.slug} label="Copy" /> : null}
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span>Token</span>
-              <IdCell value={header.token} label="request upload token" head={10} tail={4} />
+              <span>Accepting uploads</span>
+              <span className="font-mono text-[var(--fg)]">{header.accepting ? "yes" : "no"}</span>
             </span>
           </div>
         </div>
@@ -426,7 +414,7 @@ export default function AdminDataRequestDetailPage() {
           <DetailPanel
             className="mt-3"
             title="Raw request repo document"
-            description="Everything stored on this request repo, straight from Mongo."
+            description="Everything stored on this request repo bar its capability tokens and public slug."
             actions={<CopyTextButton text={prettyJson(data.requestRaw)} />}
             bodyClassName="p-2"
           >
@@ -447,7 +435,6 @@ export default function AdminDataRequestDetailPage() {
             ) : (
               data.docs.map((d) => {
                 const reviews = data.reviews.filter((r) => r.docId === d.id);
-                const aiOutput = extractAiOutput(d.raw);
                 return (
                   <DetailPanel
                     key={d.id}
@@ -472,14 +459,6 @@ export default function AdminDataRequestDetailPage() {
                       <DetailRow label="Doc ID">
                         <IdCell value={d.id} label="doc id" />
                       </DetailRow>
-                      <DetailRow label="Share link">
-                        {d.shareId ? (
-                          <span className="inline-flex items-center gap-1.5">
-                            <span className="font-mono text-[12px] text-[var(--fg)]">{d.shareId}</span>
-                            <CopyTextButton text={d.shareId} label="Copy" />
-                          </span>
-                        ) : null}
-                      </DetailRow>
                       <DetailRow label="Reviews">
                         {reviews.length ? (
                           <span className="tabular-nums">{reviews.length}</span>
@@ -491,9 +470,6 @@ export default function AdminDataRequestDetailPage() {
 
                     <div className="px-2.5 pb-1">
                       <RawDisclosure label="Raw doc JSON" text={prettyJson(d.raw)} />
-                      {aiOutput ? (
-                        <RawDisclosure label="AI output (doc.aiOutput)" text={prettyJson(aiOutput)} />
-                      ) : null}
                       {reviews.length ? (
                         <details className="mt-2">
                           <summary className="cursor-pointer rounded px-1 text-[12px] font-medium leading-5 text-[var(--muted-2)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]">
@@ -519,45 +495,15 @@ export default function AdminDataRequestDetailPage() {
                                     <TimeCell value={r.updatedDate ?? r.createdDate} />
                                   </div>
                                 </div>
-                                {r.outputMarkdown ? (
-                                  <JsonBlock
-                                    className="mt-2"
-                                    text={r.outputMarkdown}
-                                    maxHeight="max-h-[260px]"
-                                    actions={<CopyTextButton text={r.outputMarkdown} label="Copy markdown" />}
-                                  />
-                                ) : null}
-                                {r.intel ? (
-                                  <RawDisclosure
-                                    label="Intel (review.intel)"
-                                    text={prettyJson(r.intel)}
-                                    copyLabel="Copy intel"
-                                  />
-                                ) : null}
-                                {r.agentOutput ? (
-                                  <RawDisclosure
-                                    label="Agent output (review.agentOutput)"
-                                    text={prettyJson(r.agentOutput)}
-                                    copyLabel="Copy agent output"
-                                  />
-                                ) : null}
-                                {r.agentRawOutputText ? (
-                                  <RawDisclosure
-                                    label="Raw model output (review.agentRawOutputText)"
-                                    text={r.agentRawOutputText}
-                                    copyLabel="Copy raw output"
-                                  />
-                                ) : null}
-                                {r.agentSystemPrompt ? (
-                                  <RawDisclosure
-                                    label="System prompt"
-                                    text={r.agentSystemPrompt}
-                                    copyLabel="Copy system"
-                                  />
-                                ) : null}
-                                {r.agentUserPrompt ? (
-                                  <RawDisclosure label="User prompt" text={r.agentUserPrompt} copyLabel="Copy user" />
-                                ) : null}
+                                {/* The review's prompt is the deck's extracted text and its output is
+                                    the AI's reading of that deck — the same document the tab above
+                                    withholds. What is left is the run: did it happen, on how much
+                                    text, and did it fail. */}
+                                <p className="mt-2 px-1 text-[12px] leading-5 text-[var(--muted-2)]">
+                                  Ran on {charCount(r.inputTextChars)}
+                                  {r.agentKind ? ` · ${r.agentKind}` : ""}. Prompt and output are not
+                                  available in admin.
+                                </p>
                                 <RawDisclosure label="Raw review JSON" text={prettyJson(r.raw)} />
                               </div>
                             ))}
@@ -584,7 +530,6 @@ export default function AdminDataRequestDetailPage() {
               </DetailPanel>
             ) : (
               data.uploads.map((u) => {
-                const aiOutput = extractAiOutput(u.raw);
                 return (
                   <DetailPanel key={u.id} title={u.originalFileName ?? "Upload"}>
                     <DetailGrid columns={2}>
@@ -604,9 +549,6 @@ export default function AdminDataRequestDetailPage() {
                     </DetailGrid>
                     <div className="px-2.5 pb-1">
                       <RawDisclosure label="Raw upload JSON" text={prettyJson(u.raw)} />
-                      {aiOutput ? (
-                        <RawDisclosure label="AI output (upload.aiOutput)" text={prettyJson(aiOutput)} />
-                      ) : null}
                     </div>
                   </DetailPanel>
                 );
@@ -671,7 +613,7 @@ export default function AdminDataRequestDetailPage() {
                               setSelectedAiRunId(r.id);
                             }
                           }}
-                          title="Inspect prompts and output"
+                          title="Inspect this run"
                         >
                           <AdminTd align="right" numeric>
                             <TimeCell value={r.createdDate} />
@@ -708,7 +650,9 @@ export default function AdminDataRequestDetailPage() {
             <div className="min-w-0">
               <DetailPanel
                 title="Run detail"
-                description={selectedAiRunId ? "Full prompts and raw output." : "Select a run from the table."}
+                description={
+                  selectedAiRunId ? "Parameters, timing and failure — not the prompts." : "Select a run from the table."
+                }
                 actions={
                   aiRunDetail ? (
                     <>
@@ -762,24 +706,18 @@ export default function AdminDataRequestDetailPage() {
                     </DetailGrid>
 
                     <div className="px-2.5 pb-1">
-                      <RawDisclosure
-                        label="System prompt"
-                        text={aiRunDetail.systemPrompt ?? ADMIN_DASH}
-                        maxHeight="max-h-[240px]"
-                      />
-                      <RawDisclosure
-                        label="User prompt"
-                        text={aiRunDetail.userPrompt ?? ADMIN_DASH}
-                        maxHeight="max-h-[240px]"
-                      />
-                      <RawDisclosure
-                        label="Output"
-                        text={
-                          aiRunDetail.outputText ??
-                          (aiRunDetail.outputObject ? prettyJson(aiRunDetail.outputObject) : ADMIN_DASH)
-                        }
-                        maxHeight="max-h-[240px]"
-                      />
+                      {/* The user prompt is the customer's document with a template around it, and
+                          the output is the model's reading of it. Sizes answer the questions this
+                          pane is for — did anything go in, did anything come back — and the error
+                          is the run's own, not the customer's. */}
+                      <p className="mt-2 px-1 text-[12px] leading-5 text-[var(--muted-2)]">
+                        System prompt {charCount(aiRunDetail.content?.systemPromptChars)} · user prompt{" "}
+                        {charCount(aiRunDetail.content?.userPromptChars)} · output{" "}
+                        {aiRunDetail.content?.hasOutputObject
+                          ? "structured"
+                          : charCount(aiRunDetail.content?.outputTextChars)}
+                        . Prompts and output are not available in admin.
+                      </p>
                       <RawDisclosure
                         label="Error"
                         text={aiRunDetail.error ? prettyJson(aiRunDetail.error) : ADMIN_DASH}

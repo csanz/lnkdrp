@@ -212,13 +212,15 @@ export function optimizeImageDpi(env: NodeJS.ProcessEnv = process.env): number {
 /**
  * Ghostscript arguments for "same document, smaller images".
  *
- * `/printer` at 260dpi, not `/ebook` at 150: the first pass shrank a deck to a fifth of its size
- * and the owner found the images too soft, and 220 still showed artefacts on photo-heavy slides
- * (2026-09-17, 2026-09-18, three times). The preset matters as much as the resolution: /printer
- * re-encodes images harder than /prepress at the same dpi. the preset is what keeps the
- * pictures; 220 on /prepress takes a photo-heavy deck from 3.57MB to 1.71MB (48%) and still looks
- * nothing like 220 on /printer, which is where this started and was rejected. The owner walked the
- * dpi down from 300 to here one step at a time; treat it as tuned, not as a default to revisit. The explicit
+ * `/prepress` at 220dpi. Read that as one setting, not two: the preset matters at least as much as
+ * the resolution, because /printer and /ebook re-encode images harder than /prepress does at the
+ * same dpi. That was the whole lesson of the tuning. The first pass used /ebook at 150, shrank a
+ * deck to a fifth of its size, and the owner said the images were too soft; three further rounds of
+ * lowering dpi alone did not fix it (2026-09-17, 2026-09-18), because dpi was never what was
+ * costing the pictures. Moving to /prepress did: 220 on /prepress takes a photo-heavy deck from
+ * 3.57MB to 1.71MB (48%) and looks nothing like 220 on /printer, which is where this started and
+ * was rejected. Both halves were settled by the owner looking at the output, so treat them as
+ * tuned rather than as defaults to revisit. The explicit
  * `Downsample*` settings pin the resolutions rather than relying on the preset's defaults, which
  * vary between Ghostscript releases, and `ColorImageDownsampleThreshold=1.0` downsamples anything
  * above the target instead of only images far above it. `-dSAFER` because the input is a file the

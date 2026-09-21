@@ -7,11 +7,12 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { resolveActor } from "@/lib/gating/actor";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
-import { resolveShareLink } from "@/lib/share/links";
+import { resolveShareLink, shareLinkUnlocked } from "@/lib/share/links";
 import { newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
@@ -26,6 +27,27 @@ export async function POST(request: Request, ctx: { params: Promise<{ token: str
     if (actor.kind !== "user" || !Types.ObjectId.isValid(actor.userId)) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
+
+    /**
+     * "Save to my account" ends in `DocModel.create` below, so it is a document-creating path and
+     * answers to the same role check as every other one (`POST /api/docs`, the upload routes).
+     * This handler proved only that the caller's address matches `requesterEmail` — which is who
+     * the *document* was approved for, not what they may do in the workspace they happen to be
+     * sitting in. A `viewer` is read-only by definition (see requireOrgEditor), and without this
+     * they could write a row into a shared workspace they are only allowed to read.
+     *
+     * Scoped to the active workspace, so it refuses the destination rather than the claim: a
+     * viewer in a team workspace who owns another one switches workspace and saves there, and the
+     * 403 body from `requireOrgRole` is what the claim page renders.
+     *
+     * Deliberately no `checkLimit(actor.orgId, "documents")` beside it, unlike POST /api/docs. The
+     * Free cap counts *shared* documents (`getWorkspaceUsage` filters `shareEnabled: { $ne: false }`)
+     * and the row below is created `shareEnabled: false`, so the saved copy adds nothing to the
+     * count. Checking here would refuse a claim the recipient is entitled to because of other
+     * documents that this one does not touch.
+     */
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
 
     const { token } = await ctx.params;
     const rawToken = decodeURIComponent(token ?? "").trim();
@@ -59,6 +81,19 @@ export async function POST(request: Request, ctx: { params: Promise<{ token: str
     const shareIdOfRequest = typeof (reqDoc as { shareId?: unknown }).shareId === "string" ? String((reqDoc as { shareId: string }).shareId) : "";
     const resolvedLink = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
     if (!resolvedLink || resolvedLink.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // ...and to the same password gate as the download, for the stronger reason: this one leaves a
+    // permanent Doc in the claimer's own workspace pointing at the same blob, so a copy taken
+    // without the password outlives every control the owner still has over the link.
+    // The cookie is named for the slug the recipient visited — the one stored on the request row.
+    if (!shareLinkUnlocked(request, shareIdOfRequest, resolvedLink.link)) {
+      return NextResponse.json(
+        // The sentence goes in `error`: that is the field `fetchJson` shows the person, and the
+        // claim page renders it verbatim. It has to say what to do, because the fix is theirs.
+        { error: `This link is password protected. Open /s/${resolvedLink.link.shareId}, enter the password, then try again.` },
+        { status: 401 },
+      );
+    }
 
     const src = await DocModel.findOne({ _id: sourceDocId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
       .select({ title: 1, fileName: 1, blobUrl: 1, previewImageUrl: 1, firstPagePngUrl: 1 })

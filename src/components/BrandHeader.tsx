@@ -13,10 +13,14 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode, Ref } from "react";
 
+import ShareWorkspaceBrand from "@/components/ShareWorkspaceBrand";
+import type { ShareWorkspaceBrand as Brand } from "@/lib/share/brand";
+
 export default function BrandHeader({
   ref,
   left,
   children,
+  workspace,
   logoHref,
 }: {
   ref?: Ref<HTMLElement>;
@@ -24,6 +28,12 @@ export default function BrandHeader({
   left?: ReactNode;
   /** Right-aligned controls; omit on pages that have none. */
   children?: ReactNode;
+  /**
+   * The workspace that shared this, on recipient-facing pages. Rendered between our logo and
+   * `left`, so every page a recipient can land on says who it is from — including the password
+   * gate, where the document itself says nothing because it has not been shown yet.
+   */
+  workspace?: Brand | null;
   /**
    * Makes the logo a link. Left off on recipient-facing pages (share viewer, password gate,
    * project share): someone reading a shared deck shouldn't be one stray click from our homepage.
@@ -45,6 +55,7 @@ export default function BrandHeader({
                 {logo}
               </div>
             )}
+            <ShareWorkspaceBrand brand={workspace ?? null} />
             {left}
           </div>
           {children}

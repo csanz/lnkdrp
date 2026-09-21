@@ -41,7 +41,7 @@
  *   reported as `totals.ownerPreviews` so the exclusion is visible.
  */
 import { NextResponse } from "next/server";
-import type { PipelineStage } from "mongoose";
+import { Types, type PipelineStage } from "mongoose";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
@@ -71,6 +71,7 @@ import {
   type RawLandingRollup,
 } from "@/lib/analytics/project/pipelines";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
+import { splitProjectViewerKey, viewerKeyMatchClause } from "@/lib/share/projectPublic";
 import { DocModel } from "@/lib/models/Doc";
 import { accessProjectForLinks, linkErrorResponse } from "../links/shared";
 
@@ -161,6 +162,22 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
     const shareIdFilter = (url.searchParams.get("shareId") ?? "").trim();
     const wantsViewers = url.searchParams.get("viewers") === "1";
     const viewersOnly = url.searchParams.get("viewersOnly") === "1";
+    /**
+     * One reader, for their own page — the same narrowing the document route does, and for the
+     * same reason: both viewer lists stop at 100, so a reader page that filtered the list in the
+     * browser told the hundred-and-first person they do not exist.
+     */
+    const viewerUserIdParam = (url.searchParams.get("viewerUserId") ?? "").trim();
+    const viewerBotIdHashParam = (url.searchParams.get("botIdHash") ?? "").trim();
+    const oneViewerMatch: Record<string, unknown> | null = viewerUserIdParam
+      ? Types.ObjectId.isValid(viewerUserIdParam)
+        ? { viewerUserId: new Types.ObjectId(viewerUserIdParam) }
+        : // Not an id at all: match nothing, rather than "the rows with no signed-in user" —
+          // which is every anonymous reader.
+          { viewerUserId: { $in: [] } }
+      : viewerBotIdHashParam
+        ? { $or: viewerKeyMatchClause(viewerBotIdHashParam) }
+        : null;
 
     await connectMongo();
 
@@ -585,15 +602,28 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
     const [viewersAgg, anonymousAgg] = includeViewers
       ? ((await Promise.all([
           ShareViewModel.aggregate([
-            { $match: { ...scopeMatch, viewerUserId: { $ne: null }, ...activityWindowMatch(start) } },
+            {
+              $match: {
+                ...scopeMatch,
+                viewerUserId: { $ne: null },
+                ...activityWindowMatch(start),
+                // Through `$and`: a top-level spread would replace `viewerUserId` above.
+                ...(oneViewerMatch ? { $and: [oneViewerMatch] } : {}),
+              },
+            },
             ...viewerGroupStages("$viewerUserId"),
           ]),
           ShareViewModel.aggregate([
             {
               $match: {
                 ...scopeMatch,
-                // `activityWindowMatch` is itself an `$or`, so the two conditions go through `$and`.
-                $and: [{ $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] }, activityWindowMatch(start)],
+                // `activityWindowMatch` is itself an `$or`, so the conditions go through `$and` —
+                // and so does the single-reader filter, which is an `$or` for an anonymous key.
+                $and: [
+                  { $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] },
+                  activityWindowMatch(start),
+                  ...(oneViewerMatch ? [oneViewerMatch] : []),
+                ],
               },
             },
             ...viewerGroupStages(PROJECT_ANON_KEY_EXPR),
@@ -703,6 +733,85 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
     }
     const viewerCount = windowAuthedViewers + windowAnonymousViewers;
 
+    /**
+     * People who arrived and opened nothing — the visitors this collection exists to record, and
+     * the ones the viewer list could not show.
+     *
+     * Every row above comes from `ShareView`, i.e. from *reading*. A data room's distinguishing
+     * case is the visitor who opens the front door, reads the file list and leaves: they write an
+     * arrival row and no reading row at all, so they were counted in `landedWithoutOpening` and
+     * named nowhere. Introducing yourself and then finding yourself absent from the room you just
+     * told your name to reads as the feature being broken.
+     *
+     * Only those who told us who they are. An anonymous arrival that opened nothing is a number,
+     * and `landedWithoutOpening` is already that number; adding forty nameless rows to the list
+     * would bury the ones a sender can act on. Named ones are people who came.
+     */
+    type ArrivalRow = {
+      botIdHash?: string | null;
+      viewerUserId?: unknown;
+      viewerName?: string | null;
+      viewerEmailSnapshot?: string | null;
+      firstViewedAt?: Date | null;
+      lastViewedAt?: Date | null;
+      visits?: number | null;
+    };
+    const arrivalOnly: { authed: Array<[RawViewer, number]>; anon: Array<[RawViewer, number]> } = { authed: [], anon: [] };
+    if (includeViewers) {
+      try {
+        const seenAuthed = new Set(viewersAgg.map((v) => String(v.key ?? "")));
+        const seenAnon = new Set(anonymousAgg.map((v) => (typeof v.key === "string" ? v.key : "")));
+        const rows = (await ProjectLinkViewModel.find({
+          ...scopeMatch,
+          // Arrivals always stamp `lastViewedAt`, so the window needs no `$or` over other dates.
+          lastViewedAt: { $gte: start },
+          /**
+           * Named arrivals only — except when one reader is asked for by name.
+           *
+           * The list drops unnamed arrivals on purpose: a browser id is nobody a sender can act
+           * on, and a data room's viewer list would otherwise fill with rows that say nothing. But
+           * when a page asks for *this* reader, that reasoning is gone — somebody clicked them,
+           * usually from an activity row that says "Someone opened Lite Data Room", and the answer
+           * has to be what that person did, not "no reader by that id in this window".
+           */
+          $and: oneViewerMatch
+            ? [oneViewerMatch]
+            : [{ $or: [{ viewerName: { $nin: [null, ""] } }, { viewerEmailSnapshot: { $nin: [null, ""] } }] }],
+        })
+          .select({ botIdHash: 1, viewerUserId: 1, viewerName: 1, viewerEmailSnapshot: 1, firstViewedAt: 1, lastViewedAt: 1, visits: 1 })
+          .sort({ lastViewedAt: -1 })
+          .limit(200)
+          .lean()) as ArrivalRow[];
+
+        for (const r of rows) {
+          const authedKey = r.viewerUserId ? String(r.viewerUserId) : "";
+          // The arrival row is keyed on the person already (no document suffix), but normalise
+          // anyway so one shape of key cannot slip through — see `splitProjectViewerKey`.
+          const anonKey = r.botIdHash ? splitProjectViewerKey(String(r.botIdHash)).botIdHash : "";
+          // Anyone who read something is already in the list above, with real figures.
+          if (authedKey ? seenAuthed.has(authedKey) : seenAnon.has(anonKey)) continue;
+          if (!authedKey && !anonKey) continue;
+          const raw: RawViewer = {
+            key: authedKey || anonKey,
+            firstSeen: r.firstViewedAt ?? null,
+            lastSeen: r.lastViewedAt ?? null,
+            views: 0,
+            timeSpentMs: 0,
+            docsOpened: 0,
+            docTimes: [],
+            viewerName: r.viewerName ?? null,
+            viewerEmailSnapshot: r.viewerEmailSnapshot ?? null,
+          };
+          // Their sessions come from the arrival row: they have no `ShareVisit` rows to count.
+          const visits = Math.max(0, Math.floor(r.visits ?? 0));
+          if (authedKey) arrivalOnly.authed.push([raw, visits]);
+          else arrivalOnly.anon.push([raw, visits]);
+        }
+      } catch {
+        // The reading list is the one that must render; an arrival row is an addition to it.
+      }
+    }
+
     const mapViewer = (v: RawViewer, kind: "authed" | "anon") => ({
       ...(kind === "authed" ? { userId: String(v.key ?? "") } : { botIdHash: typeof v.key === "string" ? v.key : "" }),
       name: typeof v.viewerName === "string" ? v.viewerName : null,
@@ -770,8 +879,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
         ...(link ? { link: toProjectLinkDTO(link) } : {}),
         downloadsEnabled,
         ...(viewersOnly ? {} : { series }),
-        viewers: viewersAgg.map((v) => mapViewer(v, "authed")),
-        anonymousViewers: anonymousAgg.map((v) => mapViewer(v, "anon")),
+        viewers: [
+          ...viewersAgg.map((v) => mapViewer(v, "authed")),
+          ...arrivalOnly.authed.map(([v, sessions]) => ({ ...mapViewer(v, "authed"), sessions, openedNothing: true })),
+        ],
+        anonymousViewers: [
+          ...anonymousAgg.map((v) => mapViewer(v, "anon")),
+          ...arrivalOnly.anon.map(([v, sessions]) => ({ ...mapViewer(v, "anon"), sessions, openedNothing: true })),
+        ],
       },
       { headers: { "cache-control": "no-store" } },
     );

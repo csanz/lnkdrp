@@ -17,8 +17,22 @@ import { tryResolveUserActor } from "@/lib/gating/actor";
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { recordActivity } from "@/lib/activity/log";
 import { checkRecipientUploadCap, RECIPIENT_UPLOAD_LIMIT_CODE } from "@/lib/uploads/recipientCaps";
+import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 
 export const runtime = "nodejs";
+
+/**
+ * Burst brake for the public side of a request link.
+ *
+ * This route creates a Doc and an Upload and hands back a capability secret, on nothing but an
+ * `x-lnkdrp-botid` string the caller makes up — and it had no limiter of its own, so the only
+ * thing between a stranger and the owner's workspace was a daily cap read from a count. A real
+ * recipient picks one file at a time and then waits out an upload and a parse, so a handful a
+ * minute is far more than the flow needs while still collapsing a parallel flood to a trickle.
+ * Keyed per IP, which a shared office NAT does share — hence the headroom over "one at a time".
+ */
+const START_UPLOAD_PER_IP_LIMIT = 10;
+const START_UPLOAD_WINDOW_MS = 60_000;
 
 /**
  * Generate a short public identifier for `/s/:shareId`.
@@ -130,9 +144,30 @@ export async function POST(
     }
 
     debugLog(1, "[api/requests/:token/uploads] POST", { token: "[redacted]" });
+
+    // Before any lookup or write: the daily caps below are now atomic, but they are still a cap of
+    // twenty-odd, and nothing else stopped one client from spending them in a single round trip.
+    const ip = clientIpFromRequest(request);
+    const burst = await rateLimit({
+      key: `recipient-upload:ip:${ip}`,
+      limit: START_UPLOAD_PER_IP_LIMIT,
+      windowMs: START_UPLOAD_WINDOW_MS,
+    });
+    if (!burst.ok) {
+      return rateLimitedResponse(burst, "Too many uploads from this connection. Please try again in a minute.");
+    }
+
     await connectMongo();
 
-    const project = await ProjectModel.findOne({ requestUploadToken: requestToken })
+    // `isDeleted` belongs in the lookup, not just in the owner's own lists. Without it a retired
+    // request repo went on accepting uploads from anyone still holding the link — files landing in
+    // a repo the owner had already thrown away. Same clause as the page at `/r/:token` and as the
+    // view-token readers under src/app/request-view; a write path that outlives its own UI is the
+    // worse half of that pair, so it gets the clause too.
+    const project = await ProjectModel.findOne({
+      requestUploadToken: requestToken,
+      isDeleted: { $ne: true },
+    })
       .select({ _id: 1, orgId: 1, userId: 1, name: 1, description: 1, isRequest: 1, requestRequireAuthToUpload: 1 })
       .lean();
 
@@ -212,6 +247,30 @@ export async function POST(
           title,
           status: "draft",
           shareId: newDocShareId(),
+          // Off, explicitly — the document half of the answer `src/app/api/requests/route.ts`
+          // already writes for the repo itself. A submission is something a stranger pushed at the
+          // owner, not something the owner published, and it used to arrive public: the field was
+          // simply absent, the schema default is `true` (src/lib/models/Doc.ts), and `/s/:shareId`
+          // finds no `ShareLink` row, falls back to `Doc.findOne({ shareId })` and has
+          // `ensureDefaultLink` materialise one with `enabled: doc.shareEnabled !== false`
+          // (src/lib/share/links.ts) — enabled, no password, no expiry, no sign-in. The owner could
+          // not even take it down, because the doc page hides `DocSharePanel` for received
+          // documents. `false` makes that lazily-created link born disabled *and*
+          // `disabledByDocSwitch: true`, so `resolveShareLink` refuses it and `setAllLinksEnabled`
+          // could restore it later if the product ever gives the owner that switch.
+          //
+          // The slug still gets written: `Doc.shareId` is unique and every reader expects one. It
+          // just addresses nothing until the owner says otherwise.
+          //
+          // Nothing the owner or the sender actually uses goes through this field — the
+          // request-view link and its PDF route both match on `receivedViaRequestProjectId` plus
+          // `isDeleted`/`isArchived` (src/app/request-view/[token]/page.tsx,
+          // src/app/api/request-view/[token]/docs/[docId]/pdf/route.ts), and the owner's own doc
+          // page is org-scoped. The one behaviour that does change is the Free shared-document cap
+          // (`getWorkspaceUsage` counts `shareEnabled: { $ne: false }`): submissions stop consuming
+          // the owner's three slots, which is the right way round — an outsider should not be able
+          // to spend the owner's cap by uploading.
+          shareEnabled: false,
           projectId,
           projectIds: [projectId],
           receivedViaRequestProjectId: projectId,
@@ -281,6 +340,20 @@ export async function POST(
       },
       request,
     });
+
+    /**
+     * No notification is enqueued here, deliberately.
+     *
+     * It used to be: PRD decision 1's table said "on receipt", so the row was written the moment
+     * the Doc and Upload were created. But at this point the Upload is `uploading` and no bytes
+     * exist — a recipient who opens the picker and abandons it owed the whole workspace an email
+     * about a file that never landed. The scan this replaces matched `{version: 1, status:
+     * "completed"}`, and the queue field is documented as "the completed upload that landed in a
+     * request repo"; receipt was the odd one out.
+     *
+     * The enqueue lives in the upload processor's first-version branch instead, where the file is
+     * actually on disk. See `repo_link_requests` in src/app/api/uploads/[uploadId]/process/route.ts.
+     */
 
     return NextResponse.json(
       {

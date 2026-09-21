@@ -1,7 +1,8 @@
 /**
  * Admin route: `/a/ai-runs`
  *
- * The log of every model call: the list on the left, one run's prompts and output on the right.
+ * The log of every model call: the list on the left, one run's parameters and timing on the right.
+ * Prompts and output are never shown — they are the customer's document (src/lib/admin/docPrivacy.ts).
  * The list is the dense admin table — a run is six facts, and six facts fit on one line — and the
  * long text lives on the right, where the prompts start folded so the output is what you land on.
  *
@@ -39,6 +40,7 @@ import {
   useAdminAccess,
 } from "@/components/admin";
 import { fetchJson } from "@/lib/http/fetchJson";
+import { ADMIN_NO_CONTENT_NOTE } from "@/lib/admin/docPrivacy";
 import { fmtDuration } from "@/lib/admin/format";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import {
@@ -85,11 +87,21 @@ type AiRunDetail = {
   docId: string | null;
   uploadId: string | null;
   reviewId: string | null;
-  systemPrompt: string | null;
-  userPrompt: string | null;
   inputTextChars: number | null;
-  outputText: string | null;
-  outputObject: unknown;
+  /**
+   * The shape of what was sent and what came back — never the text. The user prompt is the
+   * customer's document with a template around it and the output is the model's reading of it,
+   * so this page reports sizes (see src/lib/admin/docPrivacy.ts).
+   */
+  content: {
+    hasSystemPrompt: boolean | null;
+    systemPromptChars: number | null;
+    hasUserPrompt: boolean | null;
+    userPromptChars: number | null;
+    hasOutputText: boolean | null;
+    outputTextChars: number | null;
+    hasOutputObject: boolean | null;
+  } | null;
   error: unknown;
   updatedDate: string | null;
   createdDate: string | null;
@@ -142,6 +154,7 @@ function TextBlock({
   chars?: number | null;
   defaultOpen?: boolean;
 }) {
+  // Kept for the error block, which is the run's own failure rather than the customer's document.
   return (
     <details open={defaultOpen} className="min-w-0 rounded-lg border border-[var(--border)] bg-[var(--panel)]">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg px-3 py-2 hover:bg-[var(--panel-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]">
@@ -157,7 +170,28 @@ function TextBlock({
   );
 }
 
-/** The AI run log: list on the left, one run's prompts and output on the right. */
+/** What was sent and what came back, as three measurements. */
+function Sizes({ content }: { content: AiRunDetail["content"] }) {
+  const n = (v: number | null | undefined) =>
+    typeof v === "number" && Number.isFinite(v) ? `${v.toLocaleString()} chars` : ADMIN_DASH;
+  const rows: Array<[string, string]> = [
+    ["System prompt", n(content?.systemPromptChars)],
+    ["User prompt", n(content?.userPromptChars)],
+    ["Output", content?.hasOutputObject ? "structured object" : n(content?.outputTextChars)],
+  ];
+  return (
+    <dl className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 sm:grid-cols-3">
+      {rows.map(([label, value]) => (
+        <div key={label} className="min-w-0">
+          <dt className={ADMIN_FIELD_LABEL}>{label}</dt>
+          <dd className={`mt-0.5 truncate tabular-nums ${ADMIN_FIELD_VALUE}`}>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** The AI run log: list on the left, one run's parameters and timing on the right. */
 export default function AdminAiRunsPage() {
   const access = useAdminAccess();
   const canUseAdmin = access.canUseAdmin;
@@ -233,12 +267,9 @@ export default function AdminAiRunsPage() {
   }, [canUseAdmin, selectedId]);
 
   if (!canUseAdmin) {
-    return <AdminAccessState access={access} title="AI runs" description="Every model call the product made, with the prompts it sent and the output it got back." callbackUrl="/a/ai-runs" />;
+    return <AdminAccessState access={access} title="AI runs" description="Every model call the product made: its parameters, its timing and how it failed." callbackUrl="/a/ai-runs" />;
   }
 
-  const outputText = detail
-    ? (detail.outputText ?? (detail.outputObject ? JSON.stringify(detail.outputObject, null, 2) : null))
-    : null;
   const errorText = detail?.error ? JSON.stringify(detail.error, null, 2) : null;
 
   return (
@@ -246,7 +277,7 @@ export default function AdminAiRunsPage() {
       <div className={ADMIN_PAGE_CONTAINER}>
         <AdminPageHeader
           title="AI runs"
-          description="Every model call the product made, with the prompts it sent and the output it got back."
+          description="Every model call the product made: its parameters, its timing and how it failed."
         />
 
         <AdminFilterBar
@@ -344,7 +375,7 @@ export default function AdminAiRunsPage() {
                     className={selected ? "bg-[var(--panel-hover)]" : undefined}
                     aria-selected={selected}
                     onClick={() => setSelectedId(r.id)}
-                    title="Inspect this run's prompts and output"
+                    title="Inspect this run"
                   >
                     <AdminTd align="right" numeric>
                       <TimeCell value={r.createdDate} />
@@ -366,7 +397,7 @@ export default function AdminAiRunsPage() {
                     <AdminTd align="right" sticky actions>
                       <RowActions>
                         <RowAction
-                          title="Inspect this run's prompts and output"
+                          title="Inspect this run"
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedId(r.id);
@@ -448,9 +479,13 @@ export default function AdminAiRunsPage() {
                       </Fact>
                     </dl>
 
-                    <TextBlock label="Output" value={outputText} defaultOpen />
-                    <TextBlock label="System prompt" value={detail.systemPrompt} />
-                    <TextBlock label="User prompt" value={detail.userPrompt} />
+                    {/* Three text blocks used to sit here, and all three were the customer's
+                        document: the user prompt is the PDF's text substituted into a template,
+                        the output is the model's reading of it, and the system prompt carries the
+                        requester's own instructions and their project descriptions. The sizes are
+                        what the page is actually used for — a truncated prompt or an empty
+                        response — and they survive. */}
+                    <Sizes content={detail.content} />
                     {errorText ? (
                       <TextBlock label="Error" value={errorText} defaultOpen />
                     ) : (
@@ -461,7 +496,7 @@ export default function AdminAiRunsPage() {
                     )}
 
                     <p className={ADMIN_NOTE}>
-                      Prompts are stored as sent. Nothing here is re-run; this is the record, not a replay.
+                      {ADMIN_NO_CONTENT_NOTE}
                     </p>
                   </div>
                 ) : null}

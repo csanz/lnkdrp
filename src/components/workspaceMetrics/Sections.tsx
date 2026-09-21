@@ -15,10 +15,18 @@
 import Link from "next/link";
 
 import PlanLimitNotice from "@/components/PlanLimitNotice";
+import { CpuChipIcon } from "@heroicons/react/24/outline";
+
 import { formatDwell, formatRelative } from "@/lib/analytics/reading/format";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
 import { formatInt } from "@/lib/format/number";
-import type { WorkspacePeople, WorkspaceQuietDoc, WorkspaceTopDoc, WorkspaceTopLink } from "@/lib/analytics/workspace/types";
+import type {
+  WorkspaceContributor,
+  WorkspacePeople,
+  WorkspaceQuietDoc,
+  WorkspaceTopDoc,
+  WorkspaceTopLink,
+} from "@/lib/analytics/workspace/types";
 import { linkDisplayName, peopleCountSentence } from "./format";
 
 const ROW_LINK_CLASS =
@@ -35,7 +43,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">{title}</h2>
         {hint ? <span className="shrink-0 text-[11px] text-[var(--muted-2)]">{hint}</span> : null}
       </div>
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]">{children}</div>
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)]">{children}</div>
     </section>
   );
 }
@@ -181,7 +189,7 @@ export function TopLinksSection({ links, now }: { links: WorkspaceTopLink[]; now
                 <Link
                   href={l.href}
                   className={ROW_LINK_CLASS}
-                  title={`${name} — ${isProject ? `${l.parentName} (project)` : l.parentName}`}
+                  title={`${name} · ${isProject ? `${l.parentName} (project)` : l.parentName}`}
                 >
                   <div className="min-w-0 flex-1">
                     <div className={TITLE_CLASS}>{name}</div>
@@ -268,6 +276,72 @@ export function PeopleSection({ people, now }: { people: WorkspacePeople; now: n
  * rows that all read "shared 2 hours ago", which cannot both be true. The API also holds a freshly
  * shared document back for a day, so the list ranks documents that have actually gone quiet.
  */
+/**
+ * Who did the work: people in the app and agents through the MCP, most actions first.
+ *
+ * Every other section on this page counts what readers did. This one counts what the workspace's
+ * own side did, and keeps the agent apart from the person whose key it used — "Claude Code filed
+ * nine documents" is the fact worth seeing, and folding it into a teammate's row would hide it.
+ */
+export function ContributorsSection({ contributors, now }: { contributors: WorkspaceContributor[]; now: number }) {
+  return (
+    <Section title="Who contributed" hint={contributors.length ? "by actions" : undefined}>
+      {contributors.length ? (
+        <ul className="divide-y divide-[var(--border)]">
+          {contributors.map((c) => {
+            const active = lastOpened(c.lastActiveAt, now, "last active");
+            // Only the counts that happened, so a link-only contributor does not read "0 documents".
+            const parts: string[] = [];
+            if (c.docsAdded) parts.push(`${formatInt(c.docsAdded)} ${c.docsAdded === 1 ? "document" : "documents"}`);
+            if (c.linksCreated) parts.push(`${formatInt(c.linksCreated)} ${c.linksCreated === 1 ? "link" : "links"}`);
+            if (c.docsReplaced) parts.push(`${formatInt(c.docsReplaced)} ${c.docsReplaced === 1 ? "replacement" : "replacements"}`);
+            return (
+              <li key={c.key} className={ROW_CLASS}>
+                <span
+                  aria-hidden="true"
+                  title={c.kind === "agent" ? `${c.name} · agent` : c.email ?? c.name}
+                  className={[
+                    "grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-semibold ring-1",
+                    c.kind === "agent"
+                      ? "bg-[var(--panel-2)] text-[var(--fg)] ring-[var(--fg)]/30"
+                      : "bg-[var(--panel-hover)] text-[var(--muted)] ring-[var(--border)]",
+                  ].join(" ")}
+                >
+                  {c.kind === "agent" ? <CpuChipIcon className="h-3.5 w-3.5" /> : initialsFromNameOrEmail(c.name)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <span className={TITLE_CLASS}>{c.name}</span>
+                    {c.kind === "agent" ? (
+                      <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
+                        Agent
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className={META_CLASS}>
+                    {parts.length ? <span className="tabular-nums">{parts.join(" · ")}</span> : <span>other actions</span>}
+                    {active ? (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <time dateTime={c.lastActiveAt ?? undefined} title={c.lastActiveAt ?? undefined}>
+                          {active}
+                        </time>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+                <RowFigure value={formatInt(c.actions)} label={c.actions === 1 ? "action" : "actions"} />
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <EmptyRow>Nothing was added or shared in this period.</EmptyRow>
+      )}
+    </Section>
+  );
+}
+
 export function QuietDocsSection({ docs, now }: { docs: WorkspaceQuietDoc[]; now: number }) {
   return (
     <Section title="Gone quiet" hint={docs.length ? "shared, not opened" : undefined}>

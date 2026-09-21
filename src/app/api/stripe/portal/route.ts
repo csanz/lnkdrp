@@ -11,6 +11,7 @@
  * cancelling there used to leave the person on Stripe with no sign in lnkdrp that anything changed.
  */
 import { NextResponse } from "next/server";
+import { errorJson } from "@/lib/http/errorResponse";
 import { Types } from "mongoose";
 import Stripe from "stripe";
 
@@ -19,6 +20,7 @@ import { resolveActor } from "@/lib/gating/actor";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 
@@ -62,9 +64,28 @@ export async function POST(request: Request) {
       const appUrl = appUrlFromRequest(request);
       const returnUrl = `${appUrl}/dashboard?tab=billing`;
 
+      /**
+       * Owner or admin for *any* portal session, not just the cancel flow.
+       *
+       * The check used to sit inside `if (wantsCancel)`, which read as "only an admin may cancel" —
+       * but a plain portal session lands on Stripe's own billing page, where Cancel plan, the
+       * payment method and every past invoice (with the payer's name and address) are one click
+       * away. A `viewer`, the read-only seat handed to outside reviewers, could therefore end the
+       * plan for the whole workspace by asking for the portal without `flow: "cancel"`. The
+       * dashboard already only shows the button to owner/admin; this is the rule the server states.
+       */
+      const role = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "admin" });
+      if (!role.ok) {
+        return NextResponse.json(
+          { error: "Only an owner or admin can manage this workspace's billing." },
+          { status: 403 },
+        );
+      }
+      // Money is not document work: a key that can open the portal can cancel the plan paying for it.
+      const keyForbidden = forbidApiKey(actor, "open the billing portal");
+      if (keyForbidden) return keyForbidden;
+
       if (wantsCancel) {
-        const role = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "admin" });
-        if (!role.ok) return NextResponse.json({ error: "Only an owner or admin can cancel this workspace's subscription." }, { status: 403 });
         const subscriptionId = typeof (sub as any)?.stripeSubscriptionId === "string" ? String((sub as any).stripeSubscriptionId).trim() : "";
         if (!subscriptionId) return NextResponse.json({ error: "This workspace has no subscription to cancel." }, { status: 400 });
         if ((sub as any)?.cancelAtPeriodEnd) {
@@ -92,8 +113,10 @@ export async function POST(request: Request) {
 
       return NextResponse.json({ url });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 400 });
+      // A caught failure here is ours, not the caller's: the raw message went straight to the
+      // browser (Mongo and Stripe internals included) and nothing reached the logs. `errorJson`
+      // redacts, logs one line always, and keeps `detail` for non-production.
+      return errorJson(err, { status: 500, publicMessage: "Could not open the billing portal.", context: "[api/stripe/portal] POST failed" });
     }
   });
 }

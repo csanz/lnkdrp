@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowUpTrayIcon, CpuChipIcon, DocumentPlusIcon, LinkIcon, LockClosedIcon } from "@heroicons/react/24/outline";
 import UploadButton from "@/components/UploadButton";
+import AgentHintNotice from "@/components/AgentHintNotice";
 import AgentMark from "@/components/AgentMark";
 import { usePlan } from "@/lib/client/usePlan";
 import { useAgentStatus } from "@/lib/client/useAgentStatus";
@@ -432,6 +433,9 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
                   {urlBusy ? "Fetching…" : "Import"}
                 </button>
               </form>
+
+              {/* The one form an MCP tool matches exactly: the same address, the same result. */}
+              <AgentHintNotice hintKey="import_url" className="mt-4" />
             </section>
 
             <section className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">

@@ -15,6 +15,8 @@ import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { ReviewModel } from "@/lib/models/Review";
 import { DocChangeModel } from "@/lib/models/DocChange";
+import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { enqueueNotification, notificationDedupeKey } from "@/lib/notifications/queue";
 import {
   buildDocExtractedTextPathname,
   buildDocPreviewPngPathname,
@@ -44,6 +46,7 @@ import { agentSummaryToAnalysis, readStoredAgentSummary } from "@/lib/ai/agentSu
 import { findRaiseAmount, resolveAsk } from "@/lib/ai/askFromText";
 import { INTERNAL_PROCESS_HEADER, verifyInternalProcessToken } from "@/lib/uploads/internalProcess";
 import { createUploadProgressReporter } from "@/lib/uploads/progressWriter";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 // PDF rasterization + AI passes can take minutes for large decks (Vercel Pro/Enterprise cap).
@@ -918,6 +921,11 @@ export async function POST(
     // Viewers must not trigger owner-billed processing.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    const queued = await forbidWaitlisted(actor, "process a document");
+    if (queued) return queued;
 
     // Authorization: upload must belong to the actor.
     const allowed = await UploadModel.exists({
@@ -1674,7 +1682,22 @@ export async function POST(
       // Extract text (retryable)
       try {
         await progress.report("extracting");
-        const existingText = upload.rawExtractedText ?? upload.pdfText ?? null;
+        /**
+         * Stored text is a cache of what the PDF says — and only an owner may fill that cache.
+         *
+         * This branch trusted whatever sat on the upload row. A link recipient holds an upload
+         * secret, and the PATCH on that secret used to accept `rawExtractedText`/`pdfText`, so a
+         * recipient could hand the processor a body of text and the PDF would never be read: the
+         * summary, the version compare, the doc body and every AI pass downstream would describe
+         * a document nobody uploaded. The write path is closed now (`buildPatchUpdate` in
+         * src/app/api/uploads/[uploadId]/route.ts takes those two fields from an owner only); this
+         * is the second lock, so however a value got onto the row, it cannot decide the parse of a
+         * recipient upload.
+         *
+         * It degrades rather than refuses: the upload still completes, it just always reads the
+         * bytes it was actually given. The only cost is re-parsing on a retried recipient run.
+         */
+        const existingText = viaUploadSecret ? null : (upload.rawExtractedText ?? upload.pdfText ?? null);
         if (existingText) {
           extractedText = existingText;
           debugLog(2, "[process] extracted text already exists", { uploadId });
@@ -1845,7 +1868,7 @@ export async function POST(
       /** The reservation came back already charged (a retried job): run without charging again. */
       let summaryAlreadyPaid = false;
       const aiState: {
-        summary: "done" | "skipped" | "failed" | "pending";
+        summary: "done" | "skipped" | "failed" | "pending" | "unchanged";
         compare: "done" | "skipped" | "failed" | "not_applicable" | "pending";
         reason: string | null;
         code: "out_of_credits" | "daily_cap" | "plan" | "recipient" | "error" | null;
@@ -1862,8 +1885,34 @@ export async function POST(
         creditsUsed: 0,
         source: viaUploadSecret ? "recipient" : "owner",
       };
+      // Re-uploading the same file: the previous version's summary already describes it, so paying
+      // for a fresh one buys a differently-worded copy. The doc keeps its existing aiOutput below
+      // (finalDocAiOutput falls back to the prior one), so nothing is lost by not running it.
+      const sameAsPreviousVersion =
+        isReplacement &&
+        !summaryRerun &&
+        Boolean(extractedText) &&
+        normalizeForCompare(priorExtractedTextRaw.toString()) === normalizeForCompare(extractedText ?? "");
       const summaryWanted =
-        !upload.aiOutput && !agentSummary && Boolean(extractedText) && Boolean(process.env.OPENAI_API_KEY);
+        !upload.aiOutput &&
+        !agentSummary &&
+        !sameAsPreviousVersion &&
+        Boolean(extractedText) &&
+        Boolean(process.env.OPENAI_API_KEY);
+      if (sameAsPreviousVersion) {
+        // The replacing UI polls this upload row, so the fact rides home on it rather than through
+        // a second request for the version history.
+        try {
+          await UploadModel.updateOne({ _id: upload._id }, { $set: { unchangedFromPrevious: true } });
+        } catch {
+          // best-effort: the banner falls back to its ordinary "Updated to vN".
+        }
+        // Its own state, not "skipped": nothing was withheld and nothing is missing, so readers
+        // must not warn about it or mark the kept summary as stale.
+        aiState.summary = "unchanged";
+        aiState.reason = aiState.reason ?? "the text is identical to the previous version, so its summary was kept";
+        debugLog(1, "[process] AI summary skipped: identical to the previous version", { uploadId, docId: String(docId), version: uploadVersion });
+      }
       if (summaryWanted && !viaUploadSecret) {
         try {
           const reserved = await reserveForAttempt({
@@ -1947,7 +1996,11 @@ export async function POST(
             if (nothingChanged) {
               debugLog(1, "[process] history compare skipped: identical text", { uploadId, docId: String(docId), version: uploadVersion });
             }
-            if (!historyAllowed) {
+            // Two different reasons land here, and they must not borrow each other's words: a
+            // recipient upload never spends the owner's credits, while an identical re-upload has
+            // nothing to compare. Saying "recipient upload" for the second one put a recipient in
+            // the owner's activity feed who never existed.
+            if (!historyAllowed && viaUploadSecret) {
               aiState.compare = "skipped";
               warningDetails.historyPlan = "recipient upload; AI compare is not run on the owner's credits";
               debugLog(1, "[process] history compare skipped (recipient upload)", { uploadId, docId: String(docId), version: uploadVersion });
@@ -2501,8 +2554,14 @@ export async function POST(
       }
       // IMPORTANT: for replacement uploads, never overwrite the existing doc on failures.
       // Only flip the doc over once we have enough artifacts to consider the replacement successful.
+      //
+      // The answer is kept: `false` means the document is gone or a newer upload is already its
+      // current one, which is also the answer to "does this version owe anyone an email?" — a
+      // deleted document has nothing to link to, and a superseded version is announced by the
+      // version that beat it rather than twice. See the `doc_updates` enqueue below.
+      let docWriteLanded = false;
       if (!isReplacement || !failed) {
-        await updateDocUnlessSuperseded(docId, upload, docUpdate);
+        docWriteLanded = await updateDocUnlessSuperseded(docId, upload, docUpdate);
       }
 
       // Last frame of the run: forced past the throttle so the bar always finishes, rather than
@@ -2566,6 +2625,107 @@ export async function POST(
             meta: { version: uploadVersion, code: aiState.code, creditsNeeded: aiState.creditsNeeded },
             request,
           });
+        }
+
+        /**
+         * The mail this replacement owes, written down as the pipeline finishes (PRD decision 1)
+         * rather than rediscovered at the tick by scanning `DocChange` against a per-member
+         * high-water mark.
+         *
+         * Three gates, each for its own reason. `isReplacement`, because a first version is the
+         * upload itself and nobody is subscribed to their own uploads. `!summaryRerun`, for the
+         * same reason the feed labels a rerun "wrote the AI summary" — the file did not change, so
+         * there is no update to announce. `docWriteLanded`, because a document that is gone or
+         * already superseded is not what this email would be about.
+         *
+         * Fan-out to the whole workspace happens here, one row per member; `docUpdateEmailMode` is
+         * resolved at send (decision 2). Best-effort and `void`, like `recordActivity` above: the
+         * replacement is already on disk and must not be failed by a queue write.
+         */
+        if (isReplacement && !summaryRerun && docWriteLanded) {
+          void (async () => {
+            try {
+              const members = (await OrgMembershipModel.find({
+                orgId: existingDocOrgId,
+                isDeleted: { $ne: true },
+              })
+                .select({ userId: 1 })
+                .lean()) as Array<{ userId?: unknown }>;
+              // Awaited, not fired and forgotten: the rows are the mail, and this handler can be
+              // torn down the moment it returns. `enqueueNotification` still never throws, so the
+              // gather above is the only thing the try is guarding.
+              await Promise.all(
+                members.map(async (m) => {
+                  const memberUserId = m?.userId ? String(m.userId) : "";
+                  if (!Types.ObjectId.isValid(memberUserId)) return;
+                  await enqueueNotification({
+                    orgId: existingDocOrgId,
+                    userId: memberUserId,
+                    kind: "doc_updates",
+                    // The upload row is the event's own identity. This route is re-entered for one
+                    // upload more often than any other in the product — a client retry, the
+                    // internal trigger, a re-claim after a stale `processing` — and every one of
+                    // those would otherwise be another email about the same version.
+                    dedupeKey: notificationDedupeKey("doc_updates", memberUserId, uploadId),
+                    // The document and the version travel on the row. The sender reads them from
+                    // here rather than from `DocChange`, which is not written for a replacement
+                    // with no extractable text (a scanned PDF) and would drop the mail silently.
+                    event: { docId, uploadId, version: uploadVersion },
+                  });
+                }),
+              );
+            } catch (e) {
+              debugError(1, "[process] doc_updates enqueue failed", {
+                uploadId,
+                message: e instanceof Error ? e.message : String(e),
+              });
+            }
+          })();
+        }
+
+        /**
+         * The first version of a file a recipient dropped into a request inbox.
+         *
+         * Enqueued here rather than in `POST /api/requests/:token/uploads`, which is where it used
+         * to be: that route runs at receipt, when the Upload is still `uploading` and no bytes
+         * exist, so somebody who opened the file picker and thought better of it owed the whole
+         * workspace an email about a file that never arrived. Here the file is on disk.
+         *
+         * `viaUploadSecret` is what makes it a drop-off rather than an ordinary upload: the secret
+         * is only minted for request links (see `Upload.uploadSecret`). `!isReplacement` keeps it
+         * to the arrival — a recipient replacing their own submission is not a second arrival.
+         */
+        if (!isReplacement && docWriteLanded && viaUploadSecret) {
+          void (async () => {
+            try {
+              const members = (await OrgMembershipModel.find({
+                orgId: existingDocOrgId,
+                isDeleted: { $ne: true },
+              })
+                .select({ userId: 1 })
+                .lean()) as Array<{ userId?: unknown }>;
+              await Promise.all(
+                members.map(async (m) => {
+                  const memberUserId = m?.userId ? String(m.userId) : "";
+                  if (!Types.ObjectId.isValid(memberUserId)) return;
+                  await enqueueNotification({
+                    orgId: existingDocOrgId,
+                    userId: memberUserId,
+                    kind: "repo_link_requests",
+                    // Same identity the receipt site used, so a row written by the old code path
+                    // before this moved is recognised as the same debt rather than duplicated.
+                    dedupeKey: notificationDedupeKey("repo_link_requests", memberUserId, uploadId),
+                    event: { docId, uploadId, requestId: uploadId },
+                  });
+                }),
+              );
+            } catch (e) {
+              debugError(1, "[process] repo_link_requests enqueue failed", {
+                uploadId,
+                message: e instanceof Error ? e.message : String(e),
+              });
+            }
+          })();
         }
       }
 

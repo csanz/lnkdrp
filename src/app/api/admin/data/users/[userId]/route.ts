@@ -1,7 +1,9 @@
 /**
- * Admin API route: `GET /api/admin/data/users/:userId`
+ * Admin API route: `GET /api/admin/data/users/:userId`, `DELETE /api/admin/data/users/:userId`
  *
- * Returns a user record (admin-only) plus org memberships for inspection.
+ * GET returns a user record (admin-only) plus org memberships for inspection. DELETE disables the
+ * account: it does not remove the row, and it takes away the API keys as well as the session (see
+ * the DELETE handler for why the keys are part of it).
  *
  * Notes:
  * - Intentionally does NOT return temp-user secrets/hashes.
@@ -10,9 +12,11 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
+import { ApiKeyModel } from "@/lib/models/ApiKey";
 import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
+import { accountDisabledChanged } from "@/lib/gating/actor";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
 
 export const runtime = "nodejs";
@@ -138,7 +142,28 @@ export async function GET(request: Request, ctx: { params: Promise<{ userId: str
 }
 
 /**
+ * `DELETE /api/admin/data/users/:userId` — staff disable an account.
  *
+ * Disabling has to take away *every* way in, not just the browser.
+ *
+ * This used to be a single `$set: { isActive: false }`. That ends the web session on the next
+ * request — `isAccountDisabled` in the actor gate reads this row — but an `lnk_` API key is not a
+ * session: `verifyBearerToken` asks whether the key is revoked and whether its owner is still a
+ * member of the workspace, and never whether the human behind it still has an account. Memberships
+ * are untouched by a disable, so every key that person had ever minted kept full read/write on
+ * every workspace they belonged to, for ever — nothing expires a key. Staff shutting down a
+ * compromised or abusive account were closing the front door and leaving the automation running.
+ *
+ * So the keys are revoked here, the way self-service deletion already does it
+ * (`src/app/api/account/delete/route.ts`). Revocation rather than a new check inside
+ * `verifyBearerToken` is deliberate: `revokedAt` is read from the database on every single agent
+ * request with no cache in front of it, so it takes effect immediately and on every instance,
+ * whereas an "is the owner active" check would have to be cached to stay off the hot path and would
+ * then lag by its TTL on every instance but this one.
+ *
+ * Order matters. Keys first, account second: if the second write fails, the residue is "keys dead,
+ * account still active" — visible, recoverable, and not a hole. The other order leaves a disabled
+ * account whose automation still works, which is exactly the bug being fixed.
  */
 export async function DELETE(request: Request, ctx: { params: Promise<{ userId: string }> }) {
   const auth = await requireAdmin(request);
@@ -149,10 +174,24 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ userId: 
   if (!Types.ObjectId.isValid(userId)) return NextResponse.json({ error: "Invalid userId" }, { status: 400 });
 
   await connectMongo();
-  const res = await UserModel.updateOne({ _id: new Types.ObjectId(userId) }, { $set: { isActive: false } });
+  const userObjectId = new Types.ObjectId(userId);
+  const disabledAt = new Date();
+
+  const keys = await ApiKeyModel.updateMany(
+    { createdByUserId: userObjectId, revokedAt: null, isDeleted: { $ne: true } },
+    { $set: { revokedAt: disabledAt } },
+  );
+
+  const res = await UserModel.updateOne({ _id: userObjectId }, { $set: { isActive: false } });
   if (!res.matchedCount) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
-  return NextResponse.json({ ok: true, userId, isActive: false });
+  // Drop the cached "is this account disabled" answer so the web session ends on the very next
+  // request instead of up to the cache's TTL later. Self-service deletion does the same.
+  accountDisabledChanged(userId);
+
+  // Reported so the staff page can say what the disable actually took away.
+  const revokedApiKeys = typeof keys?.modifiedCount === "number" ? keys.modifiedCount : 0;
+  return NextResponse.json({ ok: true, userId, isActive: false, revokedApiKeys });
 }
 
 

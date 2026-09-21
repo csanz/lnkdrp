@@ -181,13 +181,49 @@ export type WorkspacePerson = {
   /** Distinct documents this person opened in the range. */
   docs: number;
   lastSeenAt: string | null;
+  /**
+   * The one reading this person's badge is about, so the word here can never contradict the word
+   * on the document's own page.
+   *
+   * A workspace has no page count of its own — its unit is documents — so a badge judged at this
+   * scope would be judging a different thing from every other badge in the product. This carries
+   * the inputs of a single real reading instead (their time, the pages they reached, and that
+   * document's length), and the client runs the same `readingDepth` every other surface runs.
+   *
+   * The document chosen is the one they spent longest in, which for the overwhelmingly common case
+   * — a reader who opened one document — is simply that one. `null` when nothing can be judged:
+   * no visit rows, or a document whose page count was never recorded.
+   */
+  depthSample: { docId: string; timeMs: number; pages: number; totalPages: number | null } | null;
+  /**
+   * What that document is called — the answer to "what did they read", which "1 document" was
+   * carefully not giving. Null when the document has been deleted since.
+   */
+  docTitle: string | null;
+  /**
+   * This person's reader page for the reading their badge is about, or `null` when there is
+   * nowhere honest to send a click: a reading that happened through a project link lives on the
+   * project's pages, not the document's, and an unaddressable reader has no page at all.
+   */
+  readerHref: string | null;
 };
 
 export type WorkspacePeople = {
   /** Distinct named people in the range, on both plans. */
   count: number;
-  /** Always `[]` on Free. */
+  /** Ranked by reading time — the "Most engaged people" card. Always `[]` on Free. */
   items: WorkspacePerson[];
+  /**
+   * The same people, newest first — what the "Recent visitors" strip needs.
+   *
+   * A separate slice because the two answer different questions and `items` is already trimmed to
+   * the card's length: sorting the most *engaged* eight by recency is not the most *recent*, and a
+   * reader who opened something two minutes ago and read a page of it was simply absent from the
+   * strip that exists to show them. Bounded by `WORKSPACE_RECENT_PEOPLE_LIMIT`, and drawn from the
+   * same candidate pool, so a workspace with more than 50 named readers in the window can still
+   * miss someone recent who is far down the engagement ranking.
+   */
+  recent: WorkspacePerson[];
   /** True when the plan withheld the rows (Free), so the UI shows the upsell rather than "nobody". */
   gated: boolean;
 };
@@ -220,6 +256,35 @@ export type WorkspaceQuietDoc = {
  * first link" rather than "shared", because the two numbers read as a contradiction otherwise.
  */
 export type WorkspaceOutput = { docsShared: number; linksCreated: number; uploads: number };
+
+/**
+ * One contributor: a person working in the app, or an agent working through the MCP.
+ *
+ * The rest of this page is what *readers* did; this is what the workspace's own side did, and it
+ * keeps the two apart. An agent is credited to its client ("Claude Code"), never folded into the
+ * person who holds the key: an agent that filed forty documents overnight and the person who
+ * asked for it are different facts, and conflating them hides the one the product exists to show.
+ *
+ * Counts are actions in the window, from the same work vocabulary the Activity page uses
+ * (`ACTIVITY_WORK_TYPES`), so the two surfaces can never disagree about what counts as work.
+ */
+export type WorkspaceContributor = {
+  /** `user:<id>` or `agent:<client>`. */
+  key: string;
+  kind: "person" | "agent";
+  /** A person's name (or email when unnamed), or the agent's client label. */
+  name: string;
+  /** People only, and only where the app already shows teammates' addresses. */
+  email: string | null;
+  /** Agents only: the MCP client id, for the glyph and for grouping. */
+  client: string | null;
+  /** Every counted action, including types with no tile of their own. */
+  actions: number;
+  docsAdded: number;
+  linksCreated: number;
+  docsReplaced: number;
+  lastActiveAt: string | null;
+};
 
 /** `GET /api/metrics/workspace?range=7d|30d|90d`. */
 export type WorkspaceMetricsResponse = {
@@ -256,6 +321,8 @@ export type WorkspaceMetricsResponse = {
   people: WorkspacePeople;
   quietDocs: WorkspaceQuietDoc[];
   output: WorkspaceOutput;
+  /** Who did the work in the window — people and agents, most actions first. */
+  contributors: WorkspaceContributor[];
   /**
    * True when `opens` is known to be missing rows, so the UI withholds it instead of printing
    * something impossible.
@@ -274,4 +341,8 @@ export type WorkspaceMetricsResponse = {
 export const WORKSPACE_TOP_DOCS_LIMIT = 8;
 export const WORKSPACE_TOP_LINKS_LIMIT = 8;
 export const WORKSPACE_PEOPLE_LIMIT = 8;
+
+/** How many rows the "Recent visitors" strip holds — the same five the other metrics pages show. */
+export const WORKSPACE_RECENT_PEOPLE_LIMIT = 5;
 export const WORKSPACE_QUIET_DOCS_LIMIT = 8;
+export const WORKSPACE_CONTRIBUTORS_LIMIT = 8;

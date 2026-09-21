@@ -28,6 +28,8 @@
 import { Types, type PipelineStage } from "mongoose";
 
 import { projectLinkSlugsForOrg } from "@/lib/analytics/docScope";
+import { loadContributors } from "./contributors";
+import { PROJECT_ANON_KEY_EXPR, splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   activityWindowMatch,
@@ -74,6 +76,7 @@ import {
 } from "./shape";
 import {
   WORKSPACE_PEOPLE_LIMIT,
+  WORKSPACE_RECENT_PEOPLE_LIMIT,
   WORKSPACE_QUIET_DOCS_LIMIT,
   WORKSPACE_TOP_DOCS_LIMIT,
   WORKSPACE_TOP_LINKS_LIMIT,
@@ -149,6 +152,11 @@ type PersonRow = {
   lastSeen?: Date | null;
   name?: string | null;
   email?: string | null;
+  /** Pages reached in each document they opened — the grain the reading badge has to be judged at. */
+  perDoc?: Array<{ docId?: unknown; pages?: unknown; ownReads?: unknown; projectSlug?: unknown }>;
+  /** Their identity in URL terms, for the link from a row to their reader page. */
+  viewerUserId?: unknown;
+  botIdHash?: unknown;
 };
 /** The same person, from the window's visits: the only source of a range-scoped reading time. */
 type VisitPersonRow = {
@@ -158,6 +166,8 @@ type VisitPersonRow = {
   lastSeen?: Date | null;
   name?: string | null;
   email?: string | null;
+  /** Time spent in each document they opened, paired with `PersonRow.perDoc` by `docId`. */
+  perDoc?: Array<{ docId?: unknown; readingTimeMs?: unknown }>;
 };
 type CountRow = { n?: number };
 type TotalsRow = { views?: number; viewers?: number };
@@ -184,9 +194,10 @@ function emptyResponse(resolved: ResolvedWorkspaceRange, plan: PlanId, isPro: bo
     docsOpened: { opened: 0, shared: 0, openedOther: 0, returningReaders: 0 },
     topDocs: [],
     topLinks: [],
-    people: { count: 0, items: [], gated: !isPro },
+    people: { count: 0, items: [], recent: [], gated: !isPro },
     quietDocs: [],
     output: { docsShared: 0, linksCreated: 0, uploads: 0 },
+    contributors: [],
     opensPartial: false,
     generatedAt: new Date().toISOString(),
   };
@@ -217,12 +228,45 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   // parallel with the documents, because the facet below has to be built with them in hand.
   const [docs, projectShareIds] = (await Promise.all([
     DocModel.find({ orgId, isDeleted: { $ne: true } })
-      .select({ _id: 1, title: 1, isArchived: 1, shareEnabled: 1, createdDate: 1 })
+      .select({ _id: 1, title: 1, isArchived: 1, shareEnabled: 1, createdDate: 1, currentUploadId: 1 })
       .lean(),
     projectLinkSlugsForOrg(orgId),
   ])) as unknown as [DocRow[], string[]];
 
   if (!docs.length) return emptyResponse(resolved, input.plan, isPro);
+
+  /**
+   * How many pages each document has, from the upload its current version points at.
+   *
+   * Only the reading badge needs this, and only as a denominator: without it a reader who spent
+   * six minutes on one page of a nine-page deck reads as "Read" here and "Started" on the
+   * document's own page, which is the contradiction that kept the badge off this card. One lean
+   * read over the workspace's uploads, projected to a single number.
+   */
+  const pagesByDocId = new Map<string, number>();
+  {
+    const uploadIdByDoc = new Map<string, string>();
+    for (const d of docs as Array<DocRow & { currentUploadId?: unknown }>) {
+      if (d.currentUploadId) uploadIdByDoc.set(String(d._id), String(d.currentUploadId));
+    }
+    const uploadIds = [...new Set(uploadIdByDoc.values())]
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (uploadIds.length) {
+      const uploads = (await UploadModel.find({ _id: { $in: uploadIds } })
+        .select({ _id: 1, "metadata.pages": 1 })
+        .lean()) as Array<{ _id: Types.ObjectId; metadata?: { pages?: unknown } }>;
+      const pagesByUpload = new Map<string, number>();
+      for (const u of uploads) {
+        const n = u?.metadata?.pages;
+        if (typeof n === "number" && Number.isFinite(n) && n > 0) pagesByUpload.set(String(u._id), Math.floor(n));
+      }
+      for (const [docId, uploadId] of uploadIdByDoc) {
+        const pages = pagesByUpload.get(uploadId);
+        if (pages) pagesByDocId.set(docId, pages);
+      }
+    }
+  }
 
   const docById = new Map<string, DocRow>();
   const liveDocIds: Types.ObjectId[] = [];
@@ -370,9 +414,31 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
           // maximum is deterministic without paying for a blocking `$sort` inside the facet.
           name: { $max: "$viewerName" },
           email: { $max: { $ifNull: ["$viewerEmailSnapshot", "$viewerEmail"] } },
+          // Which pages of THIS document they reached. Kept per document because that is the only
+          // scope where a page number means anything: page 3 of the deck is not page 3 of the term
+          // sheet, so a union across documents would be a number about nothing.
+          pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
+          // Who they are in a URL, and whether this reading can be reached on the document's own
+          // reader page — a read through a project link belongs to the project, so the document's
+          // page would answer "no reader by that id" for it.
+          viewerUserId: { $max: "$viewerUserId" },
+          botIdHash: { $max: "$botIdHash" },
+          ownReads: { $sum: ownOnly("$shareId", 1, 0) },
+          // The project link they came through, when they came through one: their reading lives on
+          // that project's pages, so that is where a click on their row belongs.
+          projectSlug: { $max: ownOnly("$shareId", null, "$shareId") },
         },
       },
       { $match: { "_id.key": { $ne: null } } },
+      {
+        $addFields: {
+          pages: {
+            $size: {
+              $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } },
+            },
+          },
+        },
+      },
       {
         $group: {
           _id: "$_id.key",
@@ -381,6 +447,11 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
           lastSeen: { $max: "$lastSeen" },
           name: { $max: "$name" },
           email: { $max: "$email" },
+          // One entry per document this person opened, so the reading badge can be judged the way
+          // the document's own page judges it rather than by a workspace-wide average.
+          perDoc: { $push: { docId: "$_id.docId", pages: "$pages", ownReads: "$ownReads", projectSlug: "$projectSlug" } },
+          viewerUserId: { $max: "$viewerUserId" },
+          botIdHash: { $max: "$botIdHash" },
         },
       },
       { $sort: { views: -1, lastSeen: -1 } },
@@ -402,8 +473,11 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   /**
    * Opens, reading time and returning readers, in one scan of the window's visits.
    *
-   * One row per tab session, so `opens` counts events and `readingTimeMs` is time read *inside* the
-   * window rather than the lifetime of the readers who happened to be active in it.
+   * One row per tab session **per document**, which is the detail these two facets turn on. A
+   * project link keys its rows by `<digest>.<docId>` so three files behind one slug do not collide
+   * (`projectViewerKey`), and its `visitIdHash` is stored per link — so one sitting in a data room
+   * that opened two documents is two rows sharing a visit id. `readingTimeMs` is time read *inside*
+   * the window rather than the lifetime of the readers who happened to be active in it.
    *
    * `returning` counts readers, and is counted rather than derived. `opens - views` is the *surplus
    * sessions*, which is a different number and always the larger one: on the seed workspace's 30-day
@@ -412,10 +486,38 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
    * here is the same reader the view and viewer counts are built on.
    */
   const visitFacetStage: Record<string, PipelineStage.FacetPipelineStage[]> = {
-    byDay: [{ $group: { _id: VISIT_DAY_KEY_EXPR, opens: { $sum: 1 }, readingTimeMs: VISIT_TIME_SUM_EXPR } }],
+    /**
+     * Sessions, not rows.
+     *
+     * `$sum: 1` over the rows called one sitting in a data room two opens, because that sitting
+     * wrote a row per document. `docs/METRICS.md` defines Opens as tab sessions, and the project
+     * route already collapses them the same way (`countSessions`) — this was the surface still
+     * answering a different question with the same word. Measured on the launch workspace's
+     * 30-day window: 39 rows, 37 sessions.
+     *
+     * The time is summed across the session's rows rather than deduped with it: each row holds the
+     * time spent in its own document, and the sitting's reading time is their total.
+     *
+     * Grouping by the day of each row means a session straddling midnight is counted on both days,
+     * which is what a per-day series should say.
+     */
+    byDay: [
+      {
+        $group: {
+          _id: { day: VISIT_DAY_KEY_EXPR, shareId: "$shareId", visit: "$visitIdHash" },
+          readingTimeMs: VISIT_TIME_SUM_EXPR,
+        },
+      },
+      { $group: { _id: "$_id.day", opens: { $sum: 1 }, readingTimeMs: { $sum: "$readingTimeMs" } } },
+    ],
     // Same split as the view facet's `byDoc`, and for the same reason: the ranked row's opens and
     // reading time have to come from the document's own links, or a row reconciles on views and
     // disagrees on everything beside them.
+    //
+    // No session collapse here, unlike `byDay` above: a row is already one session *per document*,
+    // and this facet is per document. Deduping on `{docId, shareId, visitIdHash}` changes nothing —
+    // 39 rows, 39 per-document sessions on the same window that has 37 sittings — and a sitting
+    // that opened two documents is genuinely one open of each.
     byDoc: [
       {
         $group: {
@@ -427,9 +529,37 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
         },
       },
     ],
+    /**
+     * Readers who came back: more than one *sitting*, by a person rather than by a stored key.
+     *
+     * Both halves were wrong in the same direction. The key was `LINK_VIEWER_KEY_EXPR`, which on a
+     * project link carries the document (`<digest>.<docId>`), so one reader split into one "reader"
+     * per file they opened — the same mistake `linkReaderKeyExpr` exists to fix a hundred lines
+     * above, with a comment saying so. And the count was of rows, so a single sitting that opened
+     * two documents already looked like a return visit. On the launch workspace both compounded:
+     * 3 readers reported, 2 real.
+     *
+     * Sessions first, then readers with more than one. The reader stays link-scoped, so "a reader"
+     * here is still the reader the view and viewer counts are built on.
+     */
     returning: [
-      { $group: { _id: LINK_VIEWER_KEY_EXPR, opens: { $sum: 1 } } },
-      { $match: { opens: { $gt: 1 } } },
+      {
+        $group: {
+          _id: {
+            shareId: "$shareId",
+            viewer: {
+              $cond: [
+                { $ne: [{ $ifNull: ["$viewerUserId", null] }, null] },
+                { $concat: ["u:", { $toString: "$viewerUserId" }] },
+                { $concat: ["a:", PROJECT_ANON_KEY_EXPR] },
+              ],
+            },
+            visit: "$visitIdHash",
+          },
+        },
+      },
+      { $group: { _id: { shareId: "$_id.shareId", viewer: "$_id.viewer" }, sessions: { $sum: 1 } } },
+      { $match: { sessions: { $gt: 1 } } },
       { $count: "n" },
     ],
   };
@@ -460,6 +590,8 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
           lastSeen: { $max: "$lastSeen" },
           name: { $max: "$name" },
           email: { $max: "$email" },
+          // Time per document, to pair with the pages per document from the view facet.
+          perDoc: { $push: { docId: "$_id.docId", readingTimeMs: "$readingTimeMs" } },
         },
       },
       // Ranked on the figure the card prints, so the candidates Mongo keeps are the top readers of
@@ -725,9 +857,89 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   for (const row of peopleRows) if (typeof row?._id === "string" && row._id) viewPersonByKey.set(row._id, row);
   const trimmed = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-  const people: WorkspacePerson[] = isPro
-    ? rankPeople(
-        (() => {
+  /**
+   * The single reading a person's badge should be about: the document they spent longest in.
+   *
+   * Pages come from the view rows, time from the visit rows, length from the upload — three
+   * sources that only line up per (person, document), which is why both facets keep that grain.
+   * A document with no recorded length is still usable: `readingDepth` simply skips the coverage
+   * rule, exactly as it does on a document page whose page count is unknown.
+   */
+  const depthSampleFor = (
+    viewRow: PersonRow | undefined,
+    visitRow: VisitPersonRow | undefined,
+  ): WorkspacePerson["depthSample"] => {
+    const pagesByDoc = new Map<string, number>();
+    for (const entry of (viewRow?.perDoc ?? []) as Array<{ docId?: unknown; pages?: unknown }>) {
+      const docId = entry?.docId ? String(entry.docId) : "";
+      const pages = safeCount(entry?.pages);
+      if (docId) pagesByDoc.set(docId, pages);
+    }
+    let best: { docId: string; timeMs: number } | null = null;
+    for (const entry of (visitRow?.perDoc ?? []) as Array<{ docId?: unknown; readingTimeMs?: unknown }>) {
+      const docId = entry?.docId ? String(entry.docId) : "";
+      if (!docId) continue;
+      const timeMs = safeCount(entry?.readingTimeMs);
+      if (!best || timeMs > best.timeMs) best = { docId, timeMs };
+    }
+    if (!best || best.timeMs <= 0) return null;
+    return {
+      docId: best.docId,
+      timeMs: best.timeMs,
+      pages: pagesByDoc.get(best.docId) ?? 0,
+      totalPages: pagesByDocId.get(best.docId) ?? null,
+    };
+  };
+
+  /**
+   * Where a row goes: this person's page for the reading its badge is about.
+   *
+   * Two guards, because a link that lands on "No reader by that id in this window" is worse than
+   * no link. The reading has to have happened on the document's *own* links — a read through a
+   * project link belongs to the project, and the document's reader page excludes it by design —
+   * and the person has to be addressable, which an anonymous reader is only through the device
+   * digest a project key stores with a document appended.
+   */
+  const readerHrefFor = (viewRow: PersonRow | undefined, sample: WorkspacePerson["depthSample"]): string | null => {
+    if (!sample?.docId) return null;
+    const entry = ((viewRow?.perDoc ?? []) as Array<{ docId?: unknown; ownReads?: unknown; projectSlug?: unknown }>).find(
+      (e) => String(e?.docId ?? "") === sample.docId,
+    );
+    const userId = viewRow?.viewerUserId ? String(viewRow.viewerUserId) : "";
+    const digest = viewRow?.botIdHash ? splitProjectViewerKey(String(viewRow.botIdHash)).botIdHash : "";
+    const key = userId ? `u_${userId}` : digest ? `a_${digest}` : null;
+    if (!key) return null;
+    // Read on the document's own link: the document's reader page holds it.
+    if (safeCount(entry?.ownReads)) return `/doc/${encodeURIComponent(sample.docId)}/metrics/viewer/${key}`;
+    // Read through a project link: the project's reader page holds it, and the document's would
+    // answer "no reader by that id" because it excludes project traffic by design.
+    const projectId = entry?.projectSlug ? projectIdBySlug.get(String(entry.projectSlug)) : null;
+    return projectId ? `/project/${encodeURIComponent(projectId)}/metrics/viewer/${key}` : null;
+  };
+
+  /**
+   * Every named person in the window, before either card trims them.
+   *
+   * Two lists come off this: the engagement ranking ("Most engaged people") and the recency slice
+   * the "Recent visitors" strip needs. Built once because they are the same people asked two
+   * different questions.
+   */
+  /**
+   * Project link slug -> the project it opens, so a reader who came through one can be sent to the
+   * pages that actually hold their reading. Bounded by the workspace's project links.
+   */
+  const projectIdBySlug = new Map<string, string>();
+  if (isPro && projectShareIds.length) {
+    const rows = (await ShareLinkModel.find({ orgId, shareId: { $in: projectShareIds } })
+      .select({ _id: 0, shareId: 1, projectId: 1 })
+      .lean()) as Array<{ shareId?: string; projectId?: unknown }>;
+    for (const r of rows) {
+      if (r?.shareId && r?.projectId) projectIdBySlug.set(String(r.shareId), String(r.projectId));
+    }
+  }
+
+  const peopleAll: WorkspacePerson[] = isPro
+    ? (() => {
           const rows: WorkspacePerson[] = [];
           const seen = new Set<string>();
           for (const row of visitPeopleRows) {
@@ -745,6 +957,16 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
               // described by their visits instead.
               docs: view ? safeCount(view.docs) : safeCount(row.docs),
               lastSeenAt: toIsoOrNull(view?.lastSeen ?? row.lastSeen),
+              depthSample: (() => depthSampleFor(view, row))(),
+              docTitle: (() => {
+                const sample = depthSampleFor(view, row);
+                const title = sample ? docById.get(sample.docId)?.title : null;
+                return typeof title === "string" && title.trim() ? title.trim() : null;
+              })(),
+              readerHref: (() => {
+                const sample = depthSampleFor(view, row);
+                return readerHrefFor(view, sample);
+              })(),
             });
           }
           for (const row of peopleRows) {
@@ -757,13 +979,22 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
               readingTimeMs: 0,
               docs: safeCount(row.docs),
               lastSeenAt: toIsoOrNull(row.lastSeen),
+              // No visit rows: their traffic predates the reading clock, so there is no reading to
+              // judge and the row carries figures without a word, and nowhere to send a click.
+              depthSample: null,
+              docTitle: null,
+              readerHref: null,
             });
           }
           return rows;
-        })(),
-        WORKSPACE_PEOPLE_LIMIT,
-      )
+      })()
     : [];
+  const people: WorkspacePerson[] = rankPeople(peopleAll, WORKSPACE_PEOPLE_LIMIT);
+  /** Newest first, and only people who have actually been seen — a null `lastSeenAt` cannot be recent. */
+  const recentPeople: WorkspacePerson[] = [...peopleAll]
+    .filter((p) => Boolean(p.lastSeenAt))
+    .sort((a, b) => new Date(b.lastSeenAt ?? 0).getTime() - new Date(a.lastSeenAt ?? 0).getTime())
+    .slice(0, WORKSPACE_RECENT_PEOPLE_LIMIT);
 
   const firstSharedById = new Map<string, string | null>();
   const lastLiveSharedById = new Map<string, string | null>();
@@ -774,6 +1005,10 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
     lastLiveSharedById.set(docId, toIsoOrNull(r.lastLiveSharedAt));
   }
   const startIso = start.toISOString();
+
+  // Who did the work, from the activity rows: two bounded reads, and independent of everything
+  // above, so it rides along rather than adding a round trip.
+  const contributors = await loadContributors({ orgId, start, endExclusive: new Date(now.getTime() + 1) });
 
   // One scope for the whole output line. `linksCreated` and `uploads` count every live document, so
   // this clause does too: scoping only it to the usage meter's set said "66 documents shared · 214
@@ -829,9 +1064,10 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
     },
     topDocs: rankTopDocs(topDocCandidates, WORKSPACE_TOP_DOCS_LIMIT),
     topLinks: rankedLinks,
-    people: { count: peopleCount, items: people, gated: !isPro },
+    people: { count: peopleCount, items: people, recent: recentPeople, gated: !isPro },
     quietDocs,
     output: { docsShared, linksCreated: safeCount(linksCreated), uploads: safeCount(uploads) },
+    contributors,
     opensPartial,
     generatedAt: new Date().toISOString(),
   };
