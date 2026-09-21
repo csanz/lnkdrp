@@ -212,6 +212,8 @@ How an agent finds documents it was not handed, and reads what happened in the w
   wrapped as untrusted — `viewerName`, `viewerEmail`, `linkLabel`, `audience`, `label`, `title`, `name`, `fileName`,
   `projectName`, `tagName`, `sourceHost`, `note`, `message`, and the same keys one level down inside a plain object
   (`share_link.updated` records an edited label under `meta.values.label`). Ids, slugs and enums stay raw.
+  `agent.label` is wrapped too — it is title-cased from the client id the connecting software chose for itself, so
+  it is a name a stranger picked; `agent.client` stays raw, because it is the slug `who: "agents"` filters on.
   Free strips viewer identity from `share.viewed`/`share.downloaded` rows, as the app does.
 
 ### `lnkdrp_share_pdf`
