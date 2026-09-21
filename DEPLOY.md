@@ -383,7 +383,9 @@ step 9), so don't go looking for them.
    `POST /api/stripe/checkout { plan: "payg" }` refuses with 400 `PAYG_RETIRED`. The app reports
    one meter unit per on-demand credit. Turning on-demand off does not cancel usage already
    recorded: those ledger rows are still reported by `stripe-credits-report` and invoiced.
-4. Webhook endpoint `https://lnkdrp.com/api/stripe/webhook` with these events:
+4. Webhook endpoint `https://www.lnkdrp.com/api/stripe/webhook` — **the `www`, not the apex**:
+   `lnkdrp.com` 308-redirects to `www` and webhook POSTs do not reliably follow redirects. With
+   these events:
    `checkout.session.completed`, `customer.subscription.created`,
    `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`,
    `invoice.payment_failed`, `checkout.session.async_payment_succeeded`, events from Your account
