@@ -60,6 +60,8 @@ import { NotificationEmailCursorModel } from "@/lib/models/NotificationEmailCurs
 import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { viewEmailsOffUrl } from "@/lib/notifications/viewEmailToken";
+import { splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
+import { viewerPageHref } from "@/lib/metrics/viewerRouteKey";
 import { debugError } from "@/lib/debug";
 
 // ---------------------------------------------------------------------------------------------
@@ -89,6 +91,11 @@ export const VIEW_EMAIL_FOOTER_REASON = "You get this because someone opened a l
 export const TURN_OFF_LABEL = "Turn off these emails";
 export const CHANGE_HOW_OFTEN_LABEL = "Change how often";
 export const PRIMARY_ACTION_LABEL = "See what they read";
+/** The action when the mail is about exactly one reader and we can address their page. */
+export const READER_ACTION_LABEL = "See what this reader read";
+/** Said of a name the reader typed in rather than one an account proved. */
+export const VOLUNTEERED_IDENTITY_NOTE =
+  "They told us who they are; the name and address are not verified.";
 
 /**
  * Loads end this long before now. `createdDate` is stamped by the app before the insert commits, so
@@ -174,6 +181,13 @@ export type ViewLinkInfo = {
   audience: string | null;
   isDefault: boolean;
   createdDate: Date | null;
+  /**
+   * Set when this is a data-room link. Decides which scope a reader's page lives in.
+   *
+   * Optional so the callers that build a link by hand — the admin email previews, the tests — do
+   * not all have to say "not a project"; absent and null mean the same thing here.
+   */
+  projectId?: string | null;
 };
 
 /** Identity fields as stored on the analytics row. Only ever rendered on Pro. */
@@ -235,9 +249,28 @@ export type WorkspacePlan = "free" | "pro";
 // Pure helpers: normalisation, escaping, formatting
 // ---------------------------------------------------------------------------------------------
 
-/** Readers treat anything missing or unknown as the default, `daily` (C1). */
+/**
+ * Anything missing or unknown means `immediate`.
+ *
+ * It was `daily` (PRD decision C1), and the digest is the wrong default for what this product is:
+ * knowing that someone is reading your deck is worth something while they are still reading it,
+ * and a summary that arrives tomorrow morning is a report. Nobody who wanted the alert was getting
+ * it unless they found the setting.
+ *
+ * The noisy case the digest was defending against is already handled somewhere better: a *return*
+ * only ever goes in the digest, so a reader flipping back to a document does not send anything,
+ * and one tick that finds thirty new readers sends one email naming `IMMEDIATE_MAX_VIEWERS` of
+ * them, not thirty emails. What "immediate" actually means is a few minutes — the cron runs every
+ * five, and loads stop `VIEW_EVENT_SETTLE_MS` short of now so a row is never read before it has
+ * committed.
+ *
+ * This only decides for a row with no value at all. Memberships written before the change hold
+ * "daily" explicitly — whether or not their owner ever picked it — and keep it; making somebody's
+ * inbox louder without asking is a surprise, not a default. New accounts are asked outright on
+ * `/welcome`, and everyone can change it in Settings.
+ */
 export function normalizeViewEmailMode(v: unknown): ViewEmailMode {
-  return v === "off" || v === "immediate" || v === "daily" ? v : "daily";
+  return v === "off" || v === "immediate" || v === "daily" ? v : "immediate";
 }
 
 /**
@@ -322,6 +355,25 @@ export function isAnonymousViewer(ev: ViewerIdentity): boolean {
 }
 
 /**
+ * Did this reader *tell* us who they are, rather than prove it?
+ *
+ * A name on a row with no account behind it was typed into the "introduce yourself" card, and
+ * `POST /api/share/:shareId/stats` accepts any `viewerName`/`viewerEmail` from anyone holding the
+ * link — no confirmation is required to record one (DEPLOY.md 12). On a metrics page that claim
+ * carries a chip saying so. An email is the surface where it matters most and where it was least
+ * visible: mail gets forwarded, screenshotted and acted on, and because identity is Pro-gated the
+ * name reads as something the owner paid to be told.
+ *
+ * So the email marks it too. It does not refuse to show the name — the name is the product, and
+ * most of the time it is exactly who they say — it just stops printing a claim in the typeface of
+ * a fact.
+ */
+export function isVolunteeredIdentity(ev: ViewerIdentity): boolean {
+  if (ev.viewerUserId) return false;
+  return Boolean(sanitizeInline(ev.viewerName, NAME_MAX) || sanitizeInline(ev.viewerEmail, NAME_MAX));
+}
+
+/**
  * The honesty line: the open came within ten minutes of the link being created by someone we
  * cannot identify. On Free the anonymity half is not evaluated — whether a viewer was identified is
  * itself identity, so the line depends on timing alone there.
@@ -337,6 +389,32 @@ export function needsFirstViewHonesty(ev: NewViewerEvent, link: ViewLinkInfo | n
 export function buildMetricsUrl(appUrl: string, docId: string, shareId?: string | null): string {
   const base = `${appUrl}/doc/${encodeURIComponent(docId)}/metrics`;
   return shareId ? `${base}?shareId=${encodeURIComponent(shareId)}` : base;
+}
+
+/**
+ * The page about *this reader*, when the mail is about exactly one of them.
+ *
+ * "Jaime Morales opened your deck" landing on the document's metrics page made the owner find the
+ * row again themselves, in a list of everyone. The reader page is the answer to the sentence the
+ * email just said.
+ *
+ * Two things it has to get right, and `null` rather than a wrong guess if it cannot:
+ *
+ *   - **Scope.** A read through a data-room link belongs to the project, so a document-scoped
+ *     address for such a reader is a link to a page that says "no reader by that id".
+ *   - **The key is a person.** On a project link the analytics key is `<digest>.<docId>`, one row
+ *     per reader *per document*; the page is addressed by the bare digest. Sending the composite
+ *     would 404 on the one link an owner is most likely to click.
+ */
+export function buildReaderUrl(
+  appUrl: string,
+  ev: Pick<ViewerIdentity, "viewerUserId"> & { docId: string; botIdHash: string },
+  link: ViewLinkInfo | null | undefined,
+): string | null {
+  const kind = ev.viewerUserId ? "authed" : "anon";
+  const key = ev.viewerUserId ?? splitProjectViewerKey(ev.botIdHash).botIdHash;
+  if (!key) return null;
+  return viewerPageHref({ appUrl, projectId: link?.projectId ?? null, docId: ev.docId, kind, key });
 }
 
 export function buildPreferencesUrl(appUrl: string): string {
@@ -785,17 +863,28 @@ export function composeImmediateEmail(params: {
   const title = sanitizeInline(doc.title, TITLE_MAX) || "Untitled document";
   const subject = immediateSubject(title, events, links);
   const shareIds = Array.from(new Set(events.map((e) => e.shareId)));
-  const actionUrl = buildMetricsUrl(ctx.appUrl, doc.docId, shareIds.length === 1 ? shareIds[0] : null);
+  /**
+   * One reader gets a link to that reader; several get the document, which is where a list lives.
+   * Falls back to the document page whenever the reader page cannot be addressed, so the mail
+   * always has somewhere to go.
+   */
+  const single = events.length === 1 ? events[0] : null;
+  const readerUrl = single ? buildReaderUrl(ctx.appUrl, single, links.get(single.shareId)) : null;
+  const actionUrl = readerUrl ?? buildMetricsUrl(ctx.appUrl, doc.docId, shareIds.length === 1 ? shareIds[0] : null);
+  const actionLabel = readerUrl ? READER_ACTION_LABEL : PRIMARY_ACTION_LABEL;
 
   const blocks: Block[] = [];
-  if (events.length === 1) {
-    const ev = events[0];
+  if (single) {
+    const ev = single;
     const link = links.get(ev.shareId);
     const label = realLinkLabel(link);
     const name = pro ? viewerDisplayName(ev) : null;
     const who = name ?? (label ? `Someone on the ${label} link` : "Someone");
     blocks.push({ kind: "heading", text: `${who} opened "${title}"` });
     blocks.push({ kind: "rows", rows: viewerRows(ev, link, doc, pro) });
+    // Only where a name was actually printed: on Free nothing was said about who they are, so
+    // there is no claim on the page to qualify.
+    if (name && isVolunteeredIdentity(ev)) blocks.push({ kind: "muted", text: VOLUNTEERED_IDENTITY_NOTE });
   } else {
     blocks.push({ kind: "heading", text: `${events.length} people opened "${title}"` });
     const when = eventTimeFormatter(events);
@@ -839,7 +928,7 @@ export function composeImmediateEmail(params: {
   if (events.some((ev) => needsFirstViewHonesty(ev, links.get(ev.shareId), ctx.plan))) {
     blocks.push({ kind: "muted", text: FIRST_VIEW_HONESTY_LINE });
   }
-  blocks.push({ kind: "action", label: PRIMARY_ACTION_LABEL, url: actionUrl });
+  blocks.push({ kind: "action", label: actionLabel, url: actionUrl });
   if (!pro) blocks.push({ kind: "muted", text: PRO_IDENTITY_LINE });
 
   return composed(subject, immediatePreheader(doc, events, links, ctx.plan), blocks, ctx);
@@ -1274,7 +1363,7 @@ export async function loadViewLinks(events: readonly ViewEvent[]): Promise<Map<s
   const rows = await ShareLinkModel.find({
     $or: [{ shareId: { $in: shareIds } }, ...(linkIds.length ? [{ _id: { $in: linkIds.map((id) => new Types.ObjectId(id)) } }] : [])],
   })
-    .select({ _id: 1, shareId: 1, label: 1, audience: 1, isDefault: 1, createdDate: 1 })
+    .select({ _id: 1, shareId: 1, label: 1, audience: 1, isDefault: 1, createdDate: 1, projectId: 1 })
     .lean();
   const byLinkId = new Map<string, ViewLinkInfo>();
   for (const r of rows as any[]) {
@@ -1286,6 +1375,7 @@ export async function loadViewLinks(events: readonly ViewEvent[]): Promise<Map<s
       audience: str(r?.audience),
       isDefault: r?.isDefault === true,
       createdDate: r?.createdDate ? new Date(r.createdDate) : null,
+      projectId: idString(r?.projectId),
     };
     out.set(shareId, info);
     const lid = idString(r?._id);

@@ -34,6 +34,7 @@ import ReaderDocuments, { type DocDetail } from "@/components/metrics/ReaderDocu
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import { useEntityIdentity } from "@/lib/client/entityIdentity";
+import { parseViewerRouteKey, viewerRouteKey } from "@/lib/metrics/viewerRouteKey";
 
 /**
  * The latest value of something, readable from a callback that must not be rebuilt to see it.
@@ -53,17 +54,13 @@ function useLatestRef<T>(value: T) {
   return ref;
 }
 
-/** `u_<userId>` for a signed-in reader, `a_<botIdHash>` for a device. Readable in a URL. */
-export function viewerRouteKey(kind: "authed" | "anon", key: string): string {
-  return `${kind === "authed" ? "u" : "a"}_${key}`;
-}
-
-function parseRouteKey(raw: string): { kind: "authed" | "anon"; key: string } | null {
-  const value = decodeURIComponent(raw ?? "").trim();
-  if (value.startsWith("u_")) return { kind: "authed", key: value.slice(2) };
-  if (value.startsWith("a_")) return { kind: "anon", key: value.slice(2) };
-  return null;
-}
+/**
+ * Re-exported, not defined here. The spelling of a reader's address moved to
+ * `@/lib/metrics/viewerRouteKey` when the view-notification email needed to link to a reader: a
+ * server module cannot import a `"use client"` component to find out what the URL looks like.
+ * Existing callers keep importing it from the page that owns the route.
+ */
+export { viewerRouteKey };
 
 type Visit = {
   visitId: string;
@@ -114,7 +111,7 @@ export default function ViewerProfile({
   routeKey: string;
   days?: number;
 }) {
-  const who = useMemo(() => parseRouteKey(routeKey), [routeKey]);
+  const who = useMemo(() => parseViewerRouteKey(routeKey), [routeKey]);
   // The document's page count, shared with the header above rather than fetched again.
   const { identity } = useEntityIdentity(scopeKind, scopeId);
   const apiBase = scopeKind === "doc" ? `/api/docs/${encodeURIComponent(scopeId)}` : `/api/projects/${encodeURIComponent(scopeId)}`;

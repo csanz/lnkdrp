@@ -99,11 +99,15 @@ function link(overrides: Partial<ViewLinkInfo> = {}): ViewLinkInfo {
 const DOC = { docId: "d1", title: "USAVX MEMO", pageCount: 12 };
 
 describe("mode and text helpers", () => {
-  test("normalizeViewEmailMode treats missing and unknown as daily", () => {
-    expect(vn.normalizeViewEmailMode(undefined)).toBe("daily");
-    expect(vn.normalizeViewEmailMode(null)).toBe("daily");
-    expect(vn.normalizeViewEmailMode("weekly")).toBe("daily");
+  test("normalizeViewEmailMode treats missing and unknown as immediate", () => {
+    // The default is the alert, not the report: knowing someone is reading your deck is worth
+    // something while they still are. A member who chose `daily` or `off` has it stored and is
+    // not touched by this.
+    expect(vn.normalizeViewEmailMode(undefined)).toBe("immediate");
+    expect(vn.normalizeViewEmailMode(null)).toBe("immediate");
+    expect(vn.normalizeViewEmailMode("weekly")).toBe("immediate");
     expect(vn.normalizeViewEmailMode("off")).toBe("off");
+    expect(vn.normalizeViewEmailMode("daily")).toBe("daily");
     expect(vn.normalizeViewEmailMode("immediate")).toBe("immediate");
   });
 
@@ -332,15 +336,81 @@ describe("email composition", () => {
     expect(email.text).toContain("How far: 4 of 12 pages · 3m 20s so far");
     // Always true for immediate emails, so it is not printed.
     expect(email.text).not.toContain("First open");
-    expect(email.text).toContain(`See what they read: ${APP}/doc/d1/metrics?shareId=shareA`);
+    // One reader, so the action is that reader's page rather than the document's list.
+    expect(email.text).toContain(`See what this reader read: ${APP}/doc/d1/metrics/viewer/a_bot1`);
     expect(email.text).toContain(vn.VIEW_EMAIL_FOOTER_REASON);
     expect(email.text).toContain(`Turn off these emails: ${ctxPro.offUrl}`);
     expect(email.text).toContain(`Change how often: ${APP}/dashboard?tab=account#email-preferences`);
     expect(email.text).not.toContain(vn.PRO_IDENTITY_LINE);
     expect(email.html).toContain("Jane Doe");
-    expect(email.html).toContain(`href="${APP}/doc/d1/metrics?shareId=shareA"`);
+    expect(email.html).toContain(`href="${APP}/doc/d1/metrics/viewer/a_bot1"`);
     expect(email.html).toContain("Turn off these emails");
     expect(email.html).toContain("Change how often");
+  });
+
+  test("a data room's reader link is project-scoped, and addresses the person not the file", () => {
+    // Two things this gets wrong easily. A read through a project link belongs to the PROJECT, so
+    // a /doc/ address for that reader is a page that says "no reader by that id". And the
+    // analytics key on a project link is `<digest>.<docId>` — one row per reader per document —
+    // while the page is addressed by the bare digest.
+    const room = link({ shareId: "roomA", projectId: "p9", label: "Lite Data Room" });
+    const ev = view({ shareId: "roomA", botIdHash: "digest123.6aac2b58", viewerName: "Jane Doe" });
+    const email = vn.composeImmediateEmail({ ctx: ctxPro, doc: DOC, events: [ev], links: new Map([["roomA", room]]) });
+    expect(email.text).toContain(`See what this reader read: ${APP}/project/p9/metrics/viewer/a_digest123`);
+    expect(email.text).not.toContain("/doc/d1/metrics/viewer");
+    expect(email.text).not.toContain("6aac2b58");
+  });
+
+  test("a signed-in reader is addressed by user id", () => {
+    const uid = new Types.ObjectId().toString();
+    const ev = view({ viewerUserId: uid, viewerUserName: "Jane Account" });
+    const email = vn.composeImmediateEmail({ ctx: ctxPro, doc: DOC, events: [ev], links });
+    expect(email.text).toContain(`${APP}/doc/d1/metrics/viewer/u_${uid}`);
+  });
+
+  test("several readers keep the document link, because that is where a list lives", () => {
+    const email = vn.composeImmediateEmail({
+      ctx: ctxPro,
+      doc: DOC,
+      events: [view(), view({ botIdHash: "bot2" })],
+      links,
+    });
+    expect(email.text).toContain(`See what they read: ${APP}/doc/d1/metrics?shareId=shareA`);
+    expect(email.text).not.toContain("/metrics/viewer/");
+  });
+
+  test("a typed-in name is marked as unverified; an account's name is not", () => {
+    // Anyone holding the link can POST any viewerName to the stats endpoint, and an email gets
+    // forwarded and acted on. The name still shows — it is the product — it just stops being
+    // printed in the typeface of a fact.
+    const told = vn.composeImmediateEmail({
+      ctx: ctxPro,
+      doc: DOC,
+      events: [view({ viewerName: "Jane Doe", viewerEmail: "jane@fund.com" })],
+      links,
+    });
+    expect(told.text).toContain("Jane Doe");
+    expect(told.text).toContain(vn.VOLUNTEERED_IDENTITY_NOTE);
+
+    const proved = vn.composeImmediateEmail({
+      ctx: ctxPro,
+      doc: DOC,
+      events: [view({ viewerUserId: new Types.ObjectId().toString(), viewerUserName: "Jane Account" })],
+      links,
+    });
+    expect(proved.text).toContain("Jane Account");
+    expect(proved.text).not.toContain(vn.VOLUNTEERED_IDENTITY_NOTE);
+  });
+
+  test("Free never carries the unverified note, because it never printed a name to qualify", () => {
+    const email = vn.composeImmediateEmail({
+      ctx: ctxFree,
+      doc: DOC,
+      events: [view({ viewerName: "Jane Doe", viewerEmail: "jane@fund.com" })],
+      links,
+    });
+    expect(email.text).not.toContain(vn.VOLUNTEERED_IDENTITY_NOTE);
+    expect(email.text).not.toContain("Jane Doe");
   });
 
   test("immediate Free email never carries identity, pages or time anywhere", () => {
@@ -1157,7 +1227,7 @@ describe("email design review (headers, preheader, Outlook, copy)", () => {
     expect(email.html).toContain("<!--[if mso]></td></tr></table><![endif]-->");
     // Background and padding on the cell, the link inside it.
     expect(email.html).toMatch(
-      /<td align="center" bgcolor="#18181b" style="[^"]*padding:10px 16px;[^"]*"><a href="https:\/\/app\.example\.com\/doc\/d1\/metrics\?shareId=shareA" style="[^"]*color:#ffffff;/,
+      /<td align="center" bgcolor="#18181b" style="[^"]*padding:10px 16px;[^"]*"><a href="https:\/\/app\.example\.com\/doc\/d1\/metrics\/viewer\/a_bot1" style="[^"]*color:#ffffff;/,
     );
     expect(email.html).not.toMatch(/<a [^>]*padding:10px 16px/);
     expect(email.html).toMatch(/<td style="[^"]*font-size:13px;[^"]*color:#71717a;">LinkDrop<\/td>/);
