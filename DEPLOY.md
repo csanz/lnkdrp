@@ -590,6 +590,14 @@ it before deploying, not after:
    sets `API_TEST_BYPASS_AUTH`, `API_TEST_USER_ID`, `DEBUG_LEVEL`, `BLOB_BASE_URL` and sandbox
    Stripe ids.
 
+> **A missing variable here fails the build, not the first request, and blames the wrong page.**
+> `src/app/layout.tsx` imports `authOptions`, so `next build` evaluates `src/lib/auth.ts` while
+> collecting page data for every page. Without `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` or
+> `NEXTAUTH_SECRET` the build stops with `Failed to collect page data for /_not-found` and the real
+> reason two levels down in a `cause` chain. A 404 page is not the cause; those three are. They are
+> checked as a set and reported together, so one failed build names all of them rather than costing
+> a deploy per variable. Set every row below **before** the first deploy.
+
 | Variable | Value |
 |---|---|
 | `NEXT_PUBLIC_SITE_URL` | `https://lnkdrp.com` |
