@@ -34,16 +34,37 @@ function ensureDevNextAuthUrl() {
 ensureDevNextAuthUrl();
 
 /**
- * Return an environment variable or throw with a clear configuration error.
+ * The variables NextAuth cannot be built without, checked together rather than one at a time.
+ *
+ * This module is imported by the root layout, so `next build` evaluates it while collecting page
+ * data for **every** page. A missing variable therefore fails the whole build, and the page Next
+ * names in the error is whichever it happened to be collecting — usually `/_not-found`, which has
+ * nothing to do with authentication and sends everyone looking in the wrong place.
+ *
+ * Checked as a set because they are almost always missing as a set: a fresh Vercel project has
+ * none of them, and failing on the first cost one ~90-second deploy per variable to discover the
+ * next. One failure, the whole list, and where to put them.
  */
-function mustGetEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    // Fail fast on misconfiguration (production-safe).
-    throw new Error(`Missing required env var: ${name}`);
+const REQUIRED_AUTH_ENV = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "NEXTAUTH_SECRET"] as const;
+
+function authEnv(): Record<(typeof REQUIRED_AUTH_ENV)[number], string> {
+  const missing = REQUIRED_AUTH_ENV.filter((name) => !process.env[name]);
+  if (missing.length) {
+    throw new Error(
+      `Missing required env var${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}. ` +
+        "This module is evaluated by the root layout, so during `next build` a missing value fails " +
+        "page-data collection for every page — the page named above is not the cause. " +
+        "Set them in Vercel under Settings → Environment Variables, scoped to the environment you " +
+        "are deploying (DEPLOY.md section 5 lists every variable the web app needs).",
+    );
   }
-  return value;
+  return Object.fromEntries(REQUIRED_AUTH_ENV.map((name) => [name, process.env[name] as string])) as Record<
+    (typeof REQUIRED_AUTH_ENV)[number],
+    string
+  >;
 }
+
+const AUTH_ENV = authEnv();
 
 /** Minimal Google profile shape used by our sign-in callback. */
 type GoogleProfileShape = {
@@ -63,12 +84,12 @@ type GoogleProfileShape = {
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({
-      clientId: mustGetEnv("GOOGLE_CLIENT_ID"),
-      clientSecret: mustGetEnv("GOOGLE_CLIENT_SECRET"),
+      clientId: AUTH_ENV.GOOGLE_CLIENT_ID,
+      clientSecret: AUTH_ENV.GOOGLE_CLIENT_SECRET,
     }),
   ],
 
-  secret: mustGetEnv("NEXTAUTH_SECRET"),
+  secret: AUTH_ENV.NEXTAUTH_SECRET,
 
   // JWT sessions are the default and work well on Vercel (stateless).
   session: { strategy: "jwt" },

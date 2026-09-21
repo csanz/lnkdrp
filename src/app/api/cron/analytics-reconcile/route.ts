@@ -37,40 +37,79 @@ const SETTLE_MS = 3 * 60 * 1000;
 /** Tolerance on the comparison: both numbers are best-effort deltas reported by a browser. */
 const TIME_TOLERANCE_MS = 2000;
 
-function sumMap(raw: unknown): number {
-  if (!raw || typeof raw !== "object") return 0;
-  let total = 0;
-  for (const v of Object.values(raw as Record<string, unknown>)) {
-    if (typeof v === "number" && Number.isFinite(v) && v > 0) total += v;
-  }
-  return total;
-}
+/**
+ * How far back this check looks.
+ *
+ * It used to look at everything, forever, and that is what made it dangerous rather than slow: a
+ * nightly job that loads every settled row of two of the largest collections into a Node array
+ * fails the moment the collection outgrows the function's heap, and it takes the counter
+ * reconciliation in the same run down with it.
+ *
+ * A week is enough because of what this detects. An overrun means the ingest double-counted when
+ * the row was written; it does not appear later. Every row older than this window was checked on
+ * the night it was written and on the six nights after, so looking again buys nothing and the cost
+ * of looking grows without limit.
+ */
+const OVERRUN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Settled rows whose per-page times do not fit inside their total. Reported, never repaired. */
+/**
+ * Settled rows whose per-page times do not fit inside their total. Reported, never repaired.
+ *
+ * The comparison happens in the database, and that is the whole change. It used to be
+ * `model.find(settled).lean()` with no bound, materialising every settled row of `shareviews` and
+ * `sharevisits` in Node and filtering them in a loop; `limit` capped the sample that came back, not
+ * the scan. A nightly job that holds two of the busiest collections in memory does not get slower
+ * as they grow, it stops working, and it takes the counter reconciliation in the same run with it.
+ *
+ * Now the server does the summing and the filtering and returns at most `limit` rows, so the memory
+ * this costs is fixed no matter how large the collections get. Bounded in time as well by
+ * `OVERRUN_WINDOW_MS`, and matched on each collection's own activity field rather than an `$or`
+ * over both, so the window can use the indexes that already exist
+ * (`shareviews.orgId_1_lastViewedAt_-1`, `sharevisits.orgId_1_lastEventAt_-1` and their siblings).
+ */
 async function findPageTimeOverruns(limit = 25): Promise<Array<{ collection: string; id: string; shareId: string; pagesMs: number; totalMs: number }>> {
-  const settledBefore = new Date(Date.now() - SETTLE_MS);
-  const settled = {
-    $or: [
-      { lastEventAt: { $lt: settledBefore } },
-      { lastViewedAt: { $lt: settledBefore } },
-      { lastEventAt: null, lastViewedAt: null },
-    ],
-  };
+  const now = Date.now();
+  const settledBefore = new Date(now - SETTLE_MS);
+  const windowStart = new Date(now - OVERRUN_WINDOW_MS);
+
   const out: Array<{ collection: string; id: string; shareId: string; pagesMs: number; totalMs: number }> = [];
-  for (const [name, model] of [
-    ["shareviews", ShareViewModel],
-    ["sharevisits", ShareVisitModel],
-  ] as Array<[string, typeof ShareViewModel]>) {
-    const rows = (await model
-      .find(settled)
-      .select({ _id: 1, shareId: 1, timeSpentMs: 1, pageTimeMsByPage: 1 })
-      .lean()) as unknown as Array<{ _id: unknown; shareId?: string; timeSpentMs?: number; pageTimeMsByPage?: unknown }>;
+  for (const [name, model, activityField] of [
+    ["shareviews", ShareViewModel, "lastViewedAt"],
+    ["sharevisits", ShareVisitModel, "lastEventAt"],
+  ] as Array<[string, typeof ShareViewModel, string]>) {
+    if (out.length >= limit) break;
+    const rows = (await model.aggregate([
+      { $match: { [activityField]: { $gte: windowStart, $lt: settledBefore } } },
+      {
+        $project: {
+          shareId: 1,
+          totalMs: { $ifNull: ["$timeSpentMs", 0] },
+          // `pageTimeMsByPage` is a map of page number to milliseconds, so summing it means turning
+          // the object into pairs first. Negative and non-numeric values are floored at zero, the
+          // same way the old in-process sum did, because both numbers are deltas a browser reported.
+          pagesMs: {
+            $sum: {
+              $map: {
+                input: { $objectToArray: { $ifNull: ["$pageTimeMsByPage", {}] } },
+                as: "kv",
+                in: { $cond: [{ $gt: [{ $ifNull: ["$$kv.v", 0] }, 0] }, "$$kv.v", 0] },
+              },
+            },
+          },
+        },
+      },
+      { $match: { $expr: { $gt: ["$pagesMs", { $add: ["$totalMs", TIME_TOLERANCE_MS] }] } } },
+      { $limit: limit - out.length },
+    ])) as Array<{ _id: unknown; shareId?: string; totalMs?: number; pagesMs?: number }>;
+
     for (const row of rows) {
-      const totalMs = typeof row.timeSpentMs === "number" && Number.isFinite(row.timeSpentMs) ? row.timeSpentMs : 0;
-      const pagesMs = sumMap(row.pageTimeMsByPage);
-      if (pagesMs > totalMs + TIME_TOLERANCE_MS) {
-        if (out.length < limit) out.push({ collection: name, id: String(row._id), shareId: row.shareId ?? "", pagesMs, totalMs });
-      }
+      out.push({
+        collection: name,
+        id: String(row._id),
+        shareId: row.shareId ?? "",
+        pagesMs: Number(row.pagesMs ?? 0),
+        totalMs: Number(row.totalMs ?? 0),
+      });
     }
   }
   return out;

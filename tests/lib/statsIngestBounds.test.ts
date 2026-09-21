@@ -43,7 +43,7 @@ const {
   shareVisitUpdateOne,
   docUpdateOne,
   recordActivity,
-  enqueueNotification,
+  enqueueNotifications,
   tryResolveAuthUserId,
   isOwnerSideViewer,
   viewerIdentityNews,
@@ -58,7 +58,7 @@ const {
   shareVisitUpdateOne: vi.fn(async () => ({ acknowledged: true })),
   docUpdateOne: vi.fn(async () => ({ modifiedCount: 1 })),
   recordActivity: vi.fn(async () => undefined),
-  enqueueNotification: vi.fn(async () => undefined),
+  enqueueNotifications: vi.fn(async () => ({ enqueued: 0, duplicates: 0 })),
   tryResolveAuthUserId: vi.fn(async () => null as { userId?: string } | null),
   isOwnerSideViewer: vi.fn(async () => false),
   viewerIdentityNews: vi.fn(async () => ({ isNew: true, changed: false })),
@@ -113,7 +113,7 @@ vi.mock("@/lib/share/viewerIdentity", () => ({
 }));
 vi.mock("@/lib/activity/log", () => ({ recordActivity }));
 vi.mock("@/lib/notifications/queue", () => ({
-  enqueueNotification,
+  enqueueNotifications,
   notificationDedupeKey: (...parts: unknown[]) => parts.map(String).join(":"),
 }));
 /** Bucket key prefixes a test wants to report as spent. Reset in `beforeEach`. */
@@ -263,7 +263,7 @@ describe("POST on a password-protected document link", () => {
     await drainAfter();
 
     expect(recordActivity).not.toHaveBeenCalled();
-    expect(enqueueNotification).not.toHaveBeenCalled();
+    expect(enqueueNotifications).not.toHaveBeenCalled();
   });
 
   test("a cookie minted for another link is no cookie", async () => {
@@ -443,7 +443,7 @@ describe("the ceiling on new readers per link", () => {
     await drainAfter();
 
     expect(shareViewUpdateOne).toHaveBeenCalled();
-    expect(enqueueNotification).toHaveBeenCalled();
+    expect(enqueueNotifications).toHaveBeenCalled();
   });
 
   test("past the ceiling the reading is still recorded", async () => {
@@ -464,7 +464,7 @@ describe("the ceiling on new readers per link", () => {
     await post(fresh);
     await drainAfter();
 
-    expect(enqueueNotification).not.toHaveBeenCalled();
+    expect(enqueueNotifications).not.toHaveBeenCalled();
   });
 
   test("the ceiling is per link, so one link under attack does not mute another", async () => {
@@ -476,6 +476,113 @@ describe("the ceiling on new readers per link", () => {
     await post(fresh);
     await drainAfter();
 
-    expect(enqueueNotification).toHaveBeenCalled();
+    expect(enqueueNotifications).toHaveBeenCalled();
+  });
+});
+
+/**
+ * One heartbeat, one write to the reader's row.
+ *
+ * It used to be three, all to the same `{shareId, botIdHash}` document: the upsert, then a second
+ * to add the page, then a third to add the milliseconds. Every one of them carries `lastViewedAt`
+ * and `updatedDate`, and `shareviews` has six indexes across those two fields, so a single reading
+ * paid that index churn three times. One of the three was also a guaranteed no-op from the second
+ * heartbeat on a page onward, because its filter excludes the page the reader is sitting on.
+ *
+ * This is the hot path in the product: every open, every thirty-second heartbeat, every page turn,
+ * from every recipient.
+ */
+describe("what one heartbeat costs the reader's row", () => {
+  // The `heartbeat` helper above is scoped to its own describe, so this block builds its own.
+  const heartbeatOnKnownPage = () =>
+    post({
+      botId: "bot-of-a-stranger",
+      visitId: "visit-1",
+      pageNumber: 3,
+      tv: 2,
+      durationMs: 9_000,
+      pageDurationMs: 4_000,
+      enteredAtMs: Date.now() - 4_000,
+      leftAtMs: Date.now(),
+    });
+
+  test("the time rides on the upsert rather than a write of its own", async () => {
+    await heartbeatOnKnownPage();
+    await drainAfter();
+
+    const withInc = shareViewWrites().filter((w) => w.update.$inc);
+    expect(withInc).toHaveLength(1);
+    // The same write that creates the row on a first sighting.
+    expect(withInc[0]!.update.$setOnInsert).toBeDefined();
+  });
+
+  test("the page write carries the page and nothing else", async () => {
+    await heartbeatOnKnownPage();
+    await drainAfter();
+
+    const addWrite = shareViewWrites().find((w) => w.update.$addToSet);
+    expect(addWrite).toBeDefined();
+    // It used to re-send `$set: setFields`, which the upsert had already applied to the same
+    // document moments earlier.
+    expect(addWrite!.update.$set).toBeUndefined();
+  });
+
+  test("the reading is still recorded, which is the part that must not change", async () => {
+    await heartbeatOnKnownPage();
+    await drainAfter();
+
+    expect(incKeys()).toContain("timeSpentMs");
+    expect(incKeys()).toContain("pageTimeMsByPage.3");
+    expect(pagesAdded()).toContain(3);
+  });
+
+  test("a lost race still records the heartbeat", async () => {
+    // Two first-time POSTs for the same reader race and the unique index fails the loser. The row
+    // exists, so the insert is unwanted, but the reading is not: before, the catch swallowed and
+    // this heartbeat's time and identity went on the floor.
+    shareViewUpdateOne.mockImplementationOnce(async () => {
+      throw new Error("E11000 duplicate key error collection: shareviews");
+    });
+
+    await heartbeatOnKnownPage();
+    await drainAfter();
+
+    const retried = shareViewWrites().find((w) => w.update.$inc && !w.update.$setOnInsert);
+    expect(retried).toBeDefined();
+    expect(Object.keys(retried!.update.$inc)).toContain("timeSpentMs");
+  });
+});
+
+/**
+ * The fan-out is one insert, not one per member.
+ *
+ * "A new recipient opened this" owes one queue row to every member of the workspace, and that was a
+ * `Promise.all` over the single-row enqueue: a `create` and a unique-index probe each. A
+ * thirty-member workspace cost thirty round trips per new reader; a two-hundred-person send into it
+ * cost six thousand, all inside `after()`, where nothing is retried if the lambda is frozen.
+ */
+describe("the new-reader fan-out", () => {
+  test("the whole workspace is enqueued in a single call", async () => {
+    await post({ botId: "bot-brand-new", visitId: "v1", pageNumber: 1, tv: 2 });
+    await drainAfter();
+
+    expect(enqueueNotifications).toHaveBeenCalledTimes(1);
+  });
+
+  test("it hands over one row per member, addressed individually", async () => {
+    await post({ botId: "bot-brand-new-2", visitId: "v1", pageNumber: 1, tv: 2 });
+    await drainAfter();
+
+    const calls = enqueueNotifications.mock.calls as unknown as Array<Array<unknown>>;
+    const rows = (calls[0]?.[0] ?? []) as Array<Record<string, unknown>>;
+    expect(Array.isArray(rows)).toBe(true);
+    expect(rows.length).toBeGreaterThan(0);
+    // Per recipient, so a retry, a preference and a failure stay per person: that is the whole
+    // reason the queue holds a row each rather than one row for the workspace.
+    expect(new Set(rows.map((r) => String(r.userId))).size).toBe(rows.length);
+    for (const row of rows) {
+      expect(row.kind).toBe("share_views");
+      expect(String(row.dedupeKey)).toContain("share_views");
+    }
   });
 });

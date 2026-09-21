@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 
-import type { ApiClient, ApiDoc } from "../api";
+import type { ApiClient, ApiDoc, ApiShareLink } from "../api";
 import { ToolError } from "../errors";
 import { untrustedOrNull, UNTRUSTED_LIMITS, type Untrusted } from "../untrusted";
 
@@ -142,8 +142,17 @@ export type ShareView = {
  * live — and the default link's own state is `defaultLinkActive`, plus the `link` object that was
  * already reporting `status: "disabled"` in exactly this case.
  */
-export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: ShareView) {
-  const defaultLink = (await api.listShareLinks(doc.id).catch(() => [])).find((l) => l.isDefault) ?? null;
+export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: ShareView, knownLinks?: ApiShareLink[]) {
+  /**
+   * Take the caller's listing when it has one.
+   *
+   * `get_share` already reads every link to compute `anyLinkActive`, and this read the same route
+   * again — two round trips for one answer, and two chances to disagree, since one derived the
+   * document's state from the rows and the other from `doc.shareEnabled`. Same data, same answer,
+   * once.
+   */
+  const links = knownLinks ?? (await api.listShareLinks(doc.id).catch(() => []));
+  const defaultLink = links.find((l) => l.isDefault) ?? null;
   if (!defaultLink) {
     // No default link row yet (or the listing failed). Still answer with the full shape — a caller
     // that has to check whether a field exists before reading it has been handed two contracts.
@@ -154,7 +163,8 @@ export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: Sh
   // state so unarchiving can restore exactly what was live. Reading them raw made get_share answer
   // "active" about a link that opens for nobody, which is the one question this tool is asked.
   const defaultLinkActive = !doc.isArchived && defaultLink.enabled && defaultLink.active;
-  const anyLinkActive = doc.isArchived ? false : doc.shareEnabled;
+  // Derived from the rows, like the caller's own copy, rather than from the denormalised flag.
+  const anyLinkActive = !doc.isArchived && links.some((l) => l.enabled && l.active);
   return {
     ...view,
     shareEnabled: anyLinkActive,

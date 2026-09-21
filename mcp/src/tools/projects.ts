@@ -21,7 +21,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { ApiClient, ApiProject } from "../api";
-import { requireHumanConfirmation } from "../confirm";
+import { requireHumanConfirmation, severityFromTraffic } from "../confirm";
 import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
@@ -509,8 +509,8 @@ export function registerDeleteProjectTool(server: McpServer, ctx: ToolContext): 
         "fails with requiresConfirmation and a preview in details - show that preview to the user, ask them, and call again " +
         "with confirm: true only if they say yes. " +
         DISMISSED_PROMPT_NOTE +
-        "A preview with severity 'high' means the project has a live public page " +
-        "listing documents; do not confirm that on your own judgement. " +
+        "A preview with severity 'high' means recipients have already opened one of its links, or more than one live " +
+        "link stops resolving; do not confirm that on your own judgement. " +
         SAFETY_TAIL,
       inputSchema: { projectId: projectIdSchema, projectSlug: projectSlugSchema, confirm: confirmSchema },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -519,6 +519,24 @@ export function registerDeleteProjectTool(server: McpServer, ctx: ToolContext): 
       const { project, total } = await loadProject(ctx.api, args);
       const publicLive = project.shareEnabled !== false && Boolean(project.shareId);
       const publicUrl = project.shareId ? ctx.api.projectPublicUrl(project.shareId) : null;
+      /**
+       * Severity from traffic, like every other destructive tool.
+       *
+       * It used to be `publicLive && total > 0` — "the page is on and it is not empty" — which is
+       * not a fact about anyone losing anything. requireHumanConfirmation then printed its
+       * high-severity sentence ("recipients have opened this, or more than one live link stops
+       * resolving") above a facts list saying the project was made minutes ago, had one document
+       * and zero views: neither disjunct true, contradicted by the evidence directly beneath it.
+       * The traffic reading can fail (a link listing that 404s or times out), and the safe default
+       * for a confirmation prompt is the louder one, so an unreadable listing stays "high".
+       */
+      const links = await ctx.api.listProjectLinks(project.id).catch(() => null);
+      const severity = links
+        ? severityFromTraffic({
+            recipientViews: links.reduce((n, l) => n + l.viewCount, 0),
+            activeLinks: links.filter((l) => l.enabled && l.active).length,
+          })
+        : "high";
       await requireHumanConfirmation(
         server,
         {
@@ -530,7 +548,7 @@ export function registerDeleteProjectTool(server: McpServer, ctx: ToolContext): 
             publicLive && publicUrl ? `Its public page ${publicUrl} stops resolving` : "Its public page is already off",
             "The project itself cannot be restored from the app",
           ],
-          severity: publicLive && total > 0 ? "high" : "low",
+          severity,
           reversible: false,
         },
         args,

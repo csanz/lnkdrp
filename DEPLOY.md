@@ -590,6 +590,14 @@ it before deploying, not after:
    sets `API_TEST_BYPASS_AUTH`, `API_TEST_USER_ID`, `DEBUG_LEVEL`, `BLOB_BASE_URL` and sandbox
    Stripe ids.
 
+> **A missing variable here fails the build, not the first request, and blames the wrong page.**
+> `src/app/layout.tsx` imports `authOptions`, so `next build` evaluates `src/lib/auth.ts` while
+> collecting page data for every page. Without `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` or
+> `NEXTAUTH_SECRET` the build stops with `Failed to collect page data for /_not-found` and the real
+> reason two levels down in a `cause` chain. A 404 page is not the cause; those three are. They are
+> checked as a set and reported together, so one failed build names all of them rather than costing
+> a deploy per variable. Set every row below **before** the first deploy.
+
 | Variable | Value |
 |---|---|
 | `NEXT_PUBLIC_SITE_URL` | `https://lnkdrp.com` |
@@ -803,6 +811,18 @@ Scope every variable to Production or Preview on its own. Never use All Environm
 
 ### 5.4 Index check
 
+**One index must be dropped by hand.** `activityevents` carried `orgId_1_createdDate_-1`, which is
+now a prefix of `orgId_1_createdDate_-1__id_-1` and does nothing the wider one does not do.
+`autoIndex` creates and never drops, so both will exist until someone removes the old one, and every
+activity write pays for both:
+
+```
+mongosh "$MONGODB_URI" --quiet --eval 'db.activityevents.dropIndex("orgId_1_createdDate_-1")'
+```
+
+Safe to run at any time and safe to skip: the cost of leaving it is write amplification on the
+busiest collection, not a wrong answer.
+
 Migrations create only some indexes. Mongoose `autoIndex` is on, so every function builds the rest
 of the model indexes at cold start. A unique index that hits duplicate data fails **silently**,
 and the guarantee it gives (Stripe webhook dedupe, credit grant idempotency, one balance per
@@ -919,7 +939,19 @@ account deletions) and `/api/admin/*`. An admin is a
 To remove an admin, set `role` back to `"user"`. The API stops accepting them on the next call.
 Keep the list short.
 
-### 5.6 Vercel API token, for the Deployments page
+### 5.6 Web Analytics
+
+`@vercel/analytics` is mounted in the root layout and reports visitors and page views for the
+marketing and app pages. Turn it on in the Vercel dashboard under the project's Analytics tab; there
+is no key and nothing to configure in the app. It is inert outside production, so previews and local
+development post nothing.
+
+Keep it straight from the product's own numbers, because they answer different questions and will
+never agree. This counts people visiting LinkDrop. `ShareView` and `ShareVisit` count a recipient
+reading a document somebody shared, which happens on pages this script also runs on and on bytes it
+does not. If the two are ever compared in a meeting, that is the sentence to say.
+
+### 5.7 Vercel API token, for the Deployments page
 
 `/a/deployments` shows the last deployments with their state, target, commit and build duration.
 That is the one thing the admin area cannot learn from its own database, because only Vercel knows

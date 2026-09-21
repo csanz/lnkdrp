@@ -10,6 +10,7 @@ import { getServerSession } from "next-auth";
 import type { Session } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getMetadataBaseUrl } from "@/lib/urls";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: {
@@ -95,6 +96,18 @@ export default async function RootLayout({
         <Providers enableAuth={enableAuth} initialSession={initialSession}>
           {children}
         </Providers>
+        {/*
+          Vercel Web Analytics: visitors and page views for the marketing and app pages.
+
+          Distinct from the product's own analytics, and worth keeping straight. This measures
+          people visiting LinkDrop. `ShareView` and `ShareVisit` measure a recipient reading a
+          document somebody shared, and nothing here touches those: this script does not run on the
+          blob store or in a PDF, and the two never need to agree.
+
+          Off outside production by construction, so local development and previews do not post
+          events. It renders nothing.
+        */}
+        <Analytics />
       </body>
     </html>
   );

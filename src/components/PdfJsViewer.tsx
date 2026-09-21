@@ -27,6 +27,7 @@ import {
   type Flush,
 } from "@/lib/share/readingClock";
 import { fetchJson } from "@/lib/http/fetchJson";
+import { createStatsBeacon } from "@/lib/share/statsBeacon";
 import { CATEGORY_LABELS } from "@/lib/ai/constants";
 import type { ShareWorkspaceBrand } from "@/lib/share/brand";
 import {
@@ -516,6 +517,8 @@ export function PdfJsViewer({
   const historyScrollRef = useRef<HTMLDivElement | null>(null);
   const historySentinelRef = useRef<HTMLDivElement | null>(null);
   const clockRef = useRef<{ clock: ReadingClock; send: (flushes: Flush[]) => void } | null>(null);
+  /** The retrying sender for this viewer; stopped on unmount so a closed tab holds no timers. */
+  const statsBeaconRef = useRef<ReturnType<typeof createStatsBeacon> | null>(null);
   const numPagesRef = useRef<number | null>(null);
   const pageNumberRef = useRef<number>(initialPage);
   const shareVisitIdRef = useRef<string | null>(null);
@@ -1918,16 +1921,25 @@ export function PdfJsViewer({
     shareVisitIdRef.current = visitId;
 
     const clock = new ReadingClock({ now: Date.now(), page: pageNumberRef.current });
+    /**
+     * Through `createStatsBeacon`, not a bare `fetch`.
+     *
+     * This used to be `void fetch(...).catch(() => void 0)`, which never read the status — and
+     * `ReadingClock` clears its ledger the moment it hands a flush over, so anything the server did
+     * not accept was destroyed rather than delayed. Once a rate limiter went in front of the ingest
+     * that stopped being theoretical: the limiter is keyed per address, a real audience opens a
+     * data room from one office, and what a 429 took was the reading time of the people the deck
+     * was actually sent to.
+     */
+    const beacon = createStatsBeacon(`/api/share/${shareId}/stats`, (body, init) =>
+      fetchWithTempUser(`/api/share/${shareId}/stats`, { ...init, body }),
+    );
+    statsBeaconRef.current = beacon;
     const send = (flushes: Flush[]) => {
       for (const flush of flushes) {
         const payload = buildTimingPayload(flush, { botId, visitId, numPages: numPagesRef.current });
         applyViewerProfileToStatsPayload(payload);
-        void fetchWithTempUser(`/api/share/${shareId}/stats`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          keepalive: true,
-          body: JSON.stringify(payload),
-        }).catch(() => void 0);
+        beacon.send(JSON.stringify(payload));
       }
     };
     clockRef.current = { clock, send };
@@ -1961,7 +1973,12 @@ export function PdfJsViewer({
     const tickInterval = window.setInterval(() => send(clock.tick(Date.now())), IDLE_CHECK_MS);
     const heartbeatInterval = window.setInterval(() => send(clock.heartbeat(Date.now())), HEARTBEAT_MS);
     return () => {
+      // The last flush goes out before the beacon stops, so an unmount still reports its reading.
+      // It is `keepalive`, so the browser carries it even as the tab goes; what cannot survive is a
+      // *retry* of it, which is why the queue is drained rather than replayed.
       send(clock.unmount(Date.now()));
+      beacon.stop();
+      if (statsBeaconRef.current === beacon) statsBeaconRef.current = null;
       if (clockRef.current?.clock === clock) clockRef.current = null;
       window.clearInterval(tickInterval);
       window.clearInterval(heartbeatInterval);

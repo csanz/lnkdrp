@@ -209,19 +209,14 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
         );
       }
       /**
-       * Name the thing the caller actually asked about.
+       * Anything left is about a document.
        *
-       * "No such document" was returned for a bad *projectId* too — on lnkdrp_tag and lnkdrp_untag,
-       * where no docId had been supplied at all — so an agent went looking for a document id it
-       * never sent. The request path says which noun this is about.
+       * A second `/api/projects/` test used to sit here, meaning to name the right noun for
+       * lnkdrp_tag and lnkdrp_untag — but those write to `/api/tags/assignments`, which this regex
+       * never matched, and every path it *could* have matched was already answered by the anchored
+       * test above. Dead code describing a case it could not handle. The tag tools name their own
+       * noun, where the target kind is actually known (tools/tags.ts withTargetNoun).
        */
-      if (/\/api\/projects\//.test(where)) {
-        return new ToolError(
-          "not_found",
-          "No such project in this workspace. lnkdrp_list_projects lists the projects you can use, with their ids and slugs.",
-          { status },
-        );
-      }
       return new ToolError("not_found", "No such document in this workspace.", { status });
     case 400: {
       // Older routes (the project routes among them) catch the API-key limiter's error and answer 400.
@@ -277,7 +272,16 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
        * The raw text stays in `details` for whoever debugs it, and out of the message, which an
        * agent may repeat to a human.
        */
-      if (INTERNAL_FAULT_RE.test(errorText)) {
+      /**
+       * Three places the fault can show itself, because the app redacts in production.
+       *
+       * `errorJson` answers `{ error: <public sentence>, code: "UNHANDLED_EXCEPTION" }` and only
+       * attaches the real text as `detail` outside production — so keying on the text alone made
+       * this branch inert on exactly the routes that need it most, and on exactly the deployment
+       * that matters. The code survives redaction; `message` is checked too because some routes
+       * put the driver's sentence there instead of in `error`.
+       */
+      if (bodyCode === "UNHANDLED_EXCEPTION" || INTERNAL_FAULT_RE.test(errorText) || INTERNAL_FAULT_RE.test(message)) {
         return new ToolError(
           "upstream",
           "lnkdrp could not complete that request because of a problem on its side, not with your arguments. " +

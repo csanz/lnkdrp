@@ -40,7 +40,11 @@ export function registerStarDocsTool(server: McpServer, ctx: ToolContext): void 
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const ids = [...new Set(args.docIds)];
+      // Lower-cased at the door. docIdSchema accepts either case (/^[a-f0-9]{24}$/i) and the API
+      // normalises before writing, but every compare below is a string equality against the API's
+      // lower-case ids — so an upper-case id read as "not starred" both before and after its own
+      // successful write, and star_docs reported "unchanged" while the star went on and off.
+      const ids = [...new Set(args.docIds.map((id) => id.toLowerCase()))];
       let current = await ctx.api.listStarred();
       const changed: string[] = [];
       const unchanged: string[] = [];

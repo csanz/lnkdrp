@@ -68,7 +68,10 @@ async function handle(request: Request) {
     for (const userId of due) {
       const res = await purgeAccount(userId, { dryRun });
       if (!res) continue;
-      if (!dryRun) {
+      // An aborted purge deleted nothing on purpose (`abortedReason`): the account is intact and
+      // the next run retries it. Stamping `deletionPurgedAt` would mark it done and it would never
+      // be looked at again — the one outcome worse than failing.
+      if (!dryRun && !res.abortedReason) {
         // The user row is gone; this stamp is for the accounts that survive as tombstones (a
         // membership in a workspace that is still alive keeps no user row, so this is a no-op then).
         await UserModel.updateOne({ _id: new Types.ObjectId(userId) }, { $set: { deletionPurgedAt: new Date() } }).catch(() => undefined);
@@ -76,15 +79,21 @@ async function handle(request: Request) {
       results.push(res);
     }
 
+    // Anything that refused to delete is the headline, not a footnote in `lastResult`.
+    const aborted = results.filter((r) => r.abortedReason);
+
     const summary = {
       dryRun,
       due: due.length,
-      purged: dryRun ? 0 : results.length,
+      purged: dryRun ? 0 : results.filter((r) => !r.abortedReason).length,
       docs: results.reduce((n, r) => n + r.counts.docs, 0),
       uploads: results.reduce((n, r) => n + r.counts.uploads, 0),
       blobs: results.reduce((n, r) => n + r.counts.blobs, 0),
       blobsDeleted: results.reduce((n, r) => n + r.blobsDeleted, 0),
       blobErrors: results.reduce((n, r) => n + r.blobErrors, 0),
+      subscriptionsCancelled: results.reduce((n, r) => n + r.subscriptionsCancelled, 0),
+      stripeErrors: results.reduce((n, r) => n + r.stripeErrors, 0),
+      aborted: aborted.map((r) => ({ userId: r.userId, reason: r.abortedReason })),
       workspaces: results.reduce((n, r) => n + r.soloOrgIds.length, 0),
       accounts: results.map((r) => ({
         userId: r.userId,
@@ -97,16 +106,29 @@ async function handle(request: Request) {
     };
 
     const finishedAt = new Date();
+    /**
+     * An abort is a failure of the run, and the monitor has to say so.
+     *
+     * This reported `ok` whatever happened underneath: a rotated Blob token meant every file
+     * deletion threw, the rows were deleted anyway, and `/api/monitor/crons` stayed green while an
+     * account's files were orphaned beyond recovery. Now nothing is deleted in that case — and
+     * saying `ok` about a night where no account could be purged would be the same lie in the
+     * other direction.
+     */
+    const failureNote = aborted.length
+      ? `${aborted.length} account(s) not purged: ${aborted.map((r) => `${r.userId} (${r.abortedReason})`).join("; ")}`
+      : null;
     if (!dryRun) {
       await recordHealth({
-        status: "ok",
+        status: failureNote ? "error" : "ok",
         lastFinishedAt: finishedAt,
         lastRunAt: finishedAt,
         lastDurationMs: finishedAt.getTime() - startedAt.getTime(),
         lastResult: summary,
+        ...(failureNote ? { lastErrorAt: finishedAt, lastError: failureNote } : {}),
       });
     }
-    return NextResponse.json({ ok: true, ...summary });
+    return NextResponse.json({ ok: !failureNote, ...summary });
   } catch (err) {
     const finishedAt = new Date();
     const message = err instanceof Error ? err.message : String(err);

@@ -86,9 +86,37 @@ type SendMode = Exclude<Mode, "off">;
 // head of every tick's oldest-first budget forever. Doc-update emails are unaffected.
 const FEATURE_REQUESTS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
 
-/** Default and ceiling for `limitMembers`, counted in (member, kind) groups — one group, one email. */
-const DEFAULT_LIMIT_MEMBERS = 5_000;
+/**
+ * Default and ceiling for `limitMembers`, counted in (member, kind) groups — one group, one email.
+ *
+ * The default was five thousand, and a tick cannot send five thousand emails. The job runs every
+ * five minutes in a function capped at five minutes, and every group is a render plus an outbound
+ * provider call, so a tick finishes a few hundred of them. The budget was not a budget, it was a
+ * number larger than the work could ever reach.
+ *
+ * That matters more than it sounds, because of how the run dies. A killed run never reaches the
+ * `finally` that releases its lease, the lease lives six minutes, and the next tick is five minutes
+ * later — so it finds the job locked and skips. The effective cadence halves to ten minutes under
+ * exactly the backlog that caused the overrun, which is the wrong direction.
+ *
+ * Six hundred with `SEND_CONCURRENCY` below is sized to finish inside the window with room, so the
+ * run ends by choosing to rather than by being killed. Anything it does not reach is still pending
+ * and is the next tick's oldest work, which is the property that made the truncation safe already.
+ */
+const DEFAULT_LIMIT_MEMBERS = 600;
 const MAX_LIMIT_MEMBERS = 50_000;
+
+/**
+ * How many groups are in flight at once.
+ *
+ * Each is an independent email to a different member, so they do not contend with each other; the
+ * ceiling is the provider's appetite, not ours. Serial was the reason a tick could only clear a few
+ * hundred groups, since almost all of the wall time is waiting on a network call that is not ours.
+ *
+ * Deliberately small. This is a shared sending reputation and a rate-limited API, and the win from
+ * eight is most of the win from eighty.
+ */
+const SEND_CONCURRENCY = 8;
 
 /** Default and ceiling for `limitEventsPerMember`. */
 const DEFAULT_LIMIT_EVENTS_PER_MEMBER = 20;
@@ -1128,23 +1156,47 @@ export async function sendNotificationEmails(
   const workspaces = new Set<string>();
   const members = new Set<string>();
 
+  // Counted before the sends start, so the figures do not depend on the order they finish in.
   for (const group of groups) {
     workspaces.add(group.orgId);
     members.add(recipientKey(group.orgId, group.userId));
-    try {
-      await runGroup({ group, recipients, plans, appUrl, now, dryRun, allowDaily, limitEventsPerMember, totals });
-    } catch (err) {
-      // One member's render failing must not stop the rest of the run. The rows stay where they
-      // are — claimed rows are recovered by the stale sweep, unclaimed ones are due next tick.
-      if (group.kind === "share_views") totals.views.errors += 1;
-      debugError(1, "[notification-emails] group failed", {
-        orgId: group.orgId,
-        userId: group.userId,
-        kind: group.kind,
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
   }
+
+  /**
+   * `SEND_CONCURRENCY` at a time rather than one after another.
+   *
+   * Almost all of a group's wall time is a network call to the mail provider, so serial sending
+   * meant a five-minute function spent nearly all of it waiting. The groups are independent: each
+   * is one email to one member, claimed by `runGroup` itself, and the plan cache they share is a
+   * read-mostly map keyed by workspace where a duplicate lookup costs one extra read, never a wrong
+   * answer.
+   *
+   * Written out rather than pulled in: it is nine lines and this file already avoids dependencies
+   * on the send path.
+   */
+  let next = 0;
+  const workers = Array.from({ length: Math.min(SEND_CONCURRENCY, groups.length) }, async () => {
+    for (;;) {
+      const index = next;
+      next += 1;
+      const group = groups[index];
+      if (!group) return;
+      try {
+        await runGroup({ group, recipients, plans, appUrl, now, dryRun, allowDaily, limitEventsPerMember, totals });
+      } catch (err) {
+        // One member's render failing must not stop the rest of the run. The rows stay where they
+        // are — claimed rows are recovered by the stale sweep, unclaimed ones are due next tick.
+        if (group.kind === "share_views") totals.views.errors += 1;
+        debugError(1, "[notification-emails] group failed", {
+          orgId: group.orgId,
+          userId: group.userId,
+          kind: group.kind,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  });
+  await Promise.all(workers);
 
   totals.workspacesProcessed = workspaces.size;
   totals.membersProcessed = members.size;

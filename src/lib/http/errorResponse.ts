@@ -87,7 +87,19 @@ export function errorJson(err: unknown, opts: ErrorJsonOptions): NextResponse {
     }).catch(() => {});
   }
 
-  const body: { error: string; detail?: string } = { error: opts.publicMessage };
+  /**
+   * `code` so a machine can tell "we broke" from "you asked wrong", after the text is redacted.
+   *
+   * `error` is a public sentence and `detail` only exists outside production, so in production the
+   * one signal that this was an unhandled fault disappeared entirely — and the MCP, which infers
+   * the difference from the text, classified these as the caller's mistake and told agents to fix
+   * their arguments. There are no arguments that fix a caught exception, so they retried forever.
+   * This field survives redaction and says which kind it is.
+   */
+  const body: { error: string; code: string; detail?: string } = {
+    error: opts.publicMessage,
+    code: ERROR_CODE_UNHANDLED_EXCEPTION,
+  };
   if (process.env.NODE_ENV !== "production") body.detail = message;
 
   return NextResponse.json(body, { status: opts.status, headers: { "cache-control": "no-store" } });
