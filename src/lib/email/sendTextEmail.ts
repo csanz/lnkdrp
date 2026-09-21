@@ -44,6 +44,29 @@ function cleanHeaders(headers: Record<string, string> | undefined): Record<strin
  *
  * Production sending uses Resend's HTTP API (`RESEND_API_KEY`).
  */
+/**
+ * The name a recipient sees in their inbox list, when the configured From is a bare address.
+ *
+ * `INVITE_EMAIL_FROM` is `hi@updates.lnkdrp.com`, and a bare address has no display name — so every
+ * client fell back to showing the local part, and our mail arrived from a sender called **hi**.
+ *
+ * Fixed here rather than only in the environment variable because there are three of them across
+ * two deployments plus every developer's `.env.local`, and a bare address in any one of them brings
+ * "hi" back. A value that already carries a display name is left exactly as configured.
+ */
+const FROM_NAME = (process.env.EMAIL_FROM_NAME ?? "").trim() || "LinkDrop Team";
+
+/** RFC 5322: a display name with anything but letters, digits and spaces has to be quoted. */
+function withDisplayName(from: string): string {
+  const value = from.trim();
+  // Already `Name <addr>` — including a quoted name, which can itself contain angle brackets.
+  if (value.includes("<")) return value;
+  // Not an address we recognise; pass it through rather than build something malformed.
+  if (!value.includes("@") || /[,;]/.test(value)) return value;
+  const name = /^[A-Za-z0-9 ]+$/.test(FROM_NAME) ? FROM_NAME : `"${FROM_NAME.replace(/["\\]/g, "\\$&")}"`;
+  return `${name} <${value}>`;
+}
+
 export async function sendTextEmail(params: SendTextEmailParams): Promise<void> {
   const { to, subject, text } = params;
   const html = typeof params.html === "string" && params.html.length > 0 ? params.html : undefined;
@@ -67,11 +90,12 @@ export async function sendTextEmail(params: SendTextEmailParams): Promise<void> 
   let from: string;
   try {
     apiKey = mustGetEnv("RESEND_API_KEY");
-    from =
+    from = withDisplayName(
       (params.from ?? null)?.trim() ||
-      (process.env.NOTIFICATION_EMAIL_FROM ?? "").trim() ||
-      (process.env.INVITE_EMAIL_FROM ?? "").trim() ||
-      mustGetEnv("INVITE_EMAIL_FROM");
+        (process.env.NOTIFICATION_EMAIL_FROM ?? "").trim() ||
+        (process.env.INVITE_EMAIL_FROM ?? "").trim() ||
+        mustGetEnv("INVITE_EMAIL_FROM"),
+    );
   } catch (err) {
     logSendFailure({ subject, code: "config", detail: err instanceof Error ? err.message : String(err) });
     throw err;
