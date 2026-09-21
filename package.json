@@ -33,6 +33,7 @@
     "test:pdf2txt": "node scripts/pdf-to-text.mjs",
     "test:ai-extract": "tsx scripts/test-ai-extract.ts",
     "test:notification-emails": "tsx scripts/notifications-send-emails.ts",
+    "test:emails": "tsx --env-file=.env.local scripts/send-test-emails.ts",
     "tests:agent": "tsx tests/agent/agent.cli.ts",
     "tests:agent:cli": "tsx tests/agent/agent.cli.ts",
     "tests:agent:vitest": "vitest run --config tests/agent/vitest.config.ts",
