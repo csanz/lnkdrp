@@ -45,8 +45,35 @@ import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 
-/** Public ingest budget per IP per minute (viewer heartbeats are a few per page). */
-const STATS_POST_LIMIT = 120;
+/**
+ * Public ingest budget, per reader per minute.
+ *
+ * This was keyed on the bare IP, and that was wrong in a way that cost real data. A reader posts a
+ * heartbeat every 30 seconds plus one per page turn, so a few per minute at rest and up to forty
+ * when paging quickly. Share one bucket across an address and a data room opened by one deal team
+ * behind one corporate egress exhausts it somewhere around three to twenty-four concurrent
+ * readers, which is the ordinary case for the audience this product exists to serve.
+ *
+ * And a refusal was not a delay. The viewer posted fire-and-forget and `ReadingClock` clears its
+ * ledger on handover, so a 429 destroyed that chunk's reading time, page dwell and exit page with
+ * nothing logged. The owner saw analytics that were quietly wrong for exactly the audiences who
+ * read the deck together.
+ *
+ * Keyed on the reader now, so colleagues cannot starve each other. The client retries a 429 as
+ * well (`src/lib/share/statsBeacon.ts`), which is the half that matters: a limiter should shed
+ * load, never eat data.
+ */
+const STATS_POST_LIMIT = 240;
+
+/**
+ * A wider ceiling on one address, because `botId` is the caller's to choose.
+ *
+ * The per-reader bucket above is the one that protects a legitimate audience; it protects nothing
+ * against a single machine rotating the field. This is the abuse bound, set high enough that a
+ * large office reading together never reaches it: fifty concurrent readers at the fast-paging rate
+ * is about two thousand a minute.
+ */
+const STATS_POST_IP_LIMIT = 3_000;
 
 /**
  * How many *first sightings of a new reader* one link may turn into mail in a day.
@@ -355,16 +382,31 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
         return NextResponse.json({ error: "Missing botId" }, { status: 400 });
       }
 
-      // Public endpoint: bound write volume per IP. The limiter key uses only proxy-set headers
-      // (`x-forwarded-for` first hop / `x-real-ip`): `getClientIp` also honours `cf-connecting-ip` /
-      // `true-client-ip`, which a direct caller could set to rotate buckets. Keep that one for
-      // analytics attribution only.
+      /**
+       * Two buckets, and the order matters.
+       *
+       * The reader's own budget is checked first and is the one an honest recipient can reach, so
+       * it is the one that must not be shared with their colleagues. The address bucket sits behind
+       * it as the abuse bound, wide enough that a floor of people reading the same room never
+       * touches it.
+       *
+       * Both keys use only proxy-set headers (`x-forwarded-for` first hop / `x-real-ip`):
+       * `getClientIp` also honours `cf-connecting-ip` / `true-client-ip`, which a direct caller
+       * could set to rotate buckets. Keep that one for analytics attribution only.
+       */
+      const readerKey = crypto.createHash("sha256").update(botId).digest("hex").slice(0, 32);
       const rl = await rateLimit({
-        key: `sharestats:ip:${clientIpFromRequest(request)}`,
+        key: `sharestats:reader:${readerKey}`,
         limit: STATS_POST_LIMIT,
         windowMs: STATS_POST_WINDOW_MS,
       });
       if (!rl.ok) return rateLimitedResponse(rl);
+      const ipRl = await rateLimit({
+        key: `sharestats:ip:${clientIpFromRequest(request)}`,
+        limit: STATS_POST_IP_LIMIT,
+        windowMs: STATS_POST_WINDOW_MS,
+      });
+      if (!ipRl.ok) return rateLimitedResponse(ipRl);
 
       // Views are recorded against the link that was opened; a refused link records nothing.
       // `slideNodes.pageNumber` used to ride along here as the document's real page count, to narrow
