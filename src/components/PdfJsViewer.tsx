@@ -34,8 +34,11 @@ import {
   normalizeShareViewerEmail,
   normalizeShareViewerName,
   readShareViewerProfile,
+  readShareViewerProfilePrefill,
+  shareBrandOwnerKey,
   writeShareViewerProfile,
   type ShareViewerProfile,
+  type ShareViewerScope,
 } from "@/lib/share/viewerProfile";
 /**
  * Title From Enum (uses join, map, filter).
@@ -60,6 +63,16 @@ type Props = {
    * If true, allow recipients to view a light revision history for the shared doc.
    */
   revisionHistoryEnabled?: boolean;
+  /**
+   * Whether "Request download" may be offered when downloads are off.
+   *
+   * A data room says no. The request route resolves its slug with `resolveShareLink`, which
+   * refuses a project link by design, so inside a room the button opened a modal whose submit
+   * always 404s — and every room starts with downloads off, so that was the default experience.
+   * Until the claim chain can resolve a project slug (see the KNOWN GAP note in
+   * `src/app/api/share/[shareId]/download-requests/route.ts`) the honest thing is not to offer it.
+   */
+  canRequestDownload?: boolean;
   /**
    * Endpoint for fetching revision history JSON (typically `/api/share/:shareId/changes`).
    */
@@ -151,8 +164,110 @@ type PdfPage = {
   render: (opts: {
     canvasContext: CanvasRenderingContext2D;
     viewport: { width: number; height: number };
+    /**
+     * Extra transform applied before the viewport's, as `[a, b, c, d, e, f]`.
+     *
+     * This is how pdf.js is told to paint into a backing store larger than the CSS box: the canvas
+     * is sized in device pixels and the page is scaled up to fill it.
+     */
+    transform?: number[];
   }) => PdfRenderTask;
 };
+
+/**
+ * Device pixels per CSS pixel, clamped to something a phone can afford.
+ *
+ * Every canvas here used to be sized `Math.floor(viewport.width)` — CSS pixels, with no
+ * `devicePixelRatio` — so on a Retina laptop or any modern phone the page was rasterised at half
+ * the screen's resolution and then stretched: soft text in a product whose whole job is showing
+ * someone a document. The clamp is the other half of the trade: the backing store costs the square
+ * of this number in memory, so a 3x phone renders at 2x (4x the pixels of before) rather than 9x.
+ */
+const MAX_CANVAS_PIXEL_RATIO = 2;
+
+/** The tightest canvas area a shipping browser will actually paint (iOS Safari, ~16.7M pixels). */
+const MAX_CANVAS_BACKING_PIXELS = 16 * 1024 * 1024;
+
+function canvasPixelRatio(): number {
+  if (typeof window === "undefined") return 1;
+  const raw = window.devicePixelRatio;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return 1;
+  return Math.min(MAX_CANVAS_PIXEL_RATIO, Math.max(1, raw));
+}
+
+/**
+ * Size a canvas for a viewport at the current pixel ratio: backing store in device pixels, CSS box
+ * in CSS pixels, and the transform pdf.js needs to fill the former.
+ *
+ * The explicit CSS size is load-bearing beyond sharpness. Without it a canvas lays out at its
+ * intrinsic size, so dropping the backing store to 0x0 (which is how a far-offscreen page's memory
+ * is released) would collapse its box and yank the scroll position out from under the reader.
+ */
+function sizeCanvasForViewport(
+  canvas: HTMLCanvasElement,
+  viewport: { width: number; height: number },
+  ratio: number,
+): number[] {
+  const cssWidth = Math.max(1, Math.floor(viewport.width));
+  const cssHeight = Math.max(1, Math.floor(viewport.height));
+  /**
+   * Browsers cap how big a canvas may be, and go blank rather than complain when you exceed it —
+   * iOS Safari at roughly 16.7M device pixels. Zoom already multiplies the page up to 4x, so
+   * doubling it again for the pixel ratio has to give way at the top end: a slightly softer page
+   * at maximum zoom is a page, and an over-budget canvas is a white rectangle.
+   */
+  const budget = Math.sqrt(MAX_CANVAS_BACKING_PIXELS / (cssWidth * cssHeight));
+  const effective = Math.max(0.1, Math.min(ratio, budget));
+  canvas.width = Math.max(1, Math.floor(cssWidth * effective));
+  canvas.height = Math.max(1, Math.floor(cssHeight * effective));
+  canvas.style.width = `${cssWidth}px`;
+  canvas.style.height = `${cssHeight}px`;
+  return [effective, 0, 0, effective, 0, 0];
+}
+
+/**
+ * How far either side of the visible pages a painted bitmap is kept.
+ *
+ * Wider than the one-page-either-side that gets rendered, so a reader nudging the scrollbar back
+ * and forth across a page boundary does not repaint constantly; grid tiles are a fraction of the
+ * size of a full page, and a wide screen shows a lot of them, so that window is much wider.
+ */
+const ALL_PAGES_KEEP_RADIUS = 3;
+const GRID_KEEP_RADIUS = 30;
+
+/**
+ * Release the bitmaps of pages that are nowhere near the viewport.
+ *
+ * "All pages" and "Grid" mount one canvas per page and, until this, never let a painted one go: a
+ * 300-page deck kept 300 full-resolution backing stores alive at once, which is hundreds of
+ * megabytes and a dead tab — and the device-pixel-ratio fix above multiplies exactly that number.
+ * Memory now tracks what is on screen instead of how long the document is. The canvas element and
+ * its CSS box stay exactly where they were, so nothing moves under the reader; scrolling back re-
+ * renders the page, which is what already happens for one never painted.
+ */
+function releaseDistantCanvases(
+  canvases: Map<number, HTMLCanvasElement>,
+  renderedKeys: Map<number, string>,
+  tasks: Map<number, { key: string; task: { cancel?: () => void; promise: Promise<unknown> } }>,
+  keep: (pageNumber: number) => boolean,
+): void {
+  for (const [p, canvas] of canvases) {
+    if (keep(p)) continue;
+    if (canvas.width === 0 && canvas.height === 0) continue;
+    const inFlight = tasks.get(p);
+    if (inFlight) {
+      try {
+        inFlight.task.cancel?.();
+      } catch {
+        // ignore
+      }
+      tasks.delete(p);
+    }
+    canvas.width = 0;
+    canvas.height = 0;
+    renderedKeys.delete(p);
+  }
+}
 
 /** Return whether a pdf.js error is the expected "render was cancelled" rejection. */
 function isRenderingCancelled(e: unknown): boolean {
@@ -329,6 +444,7 @@ export function PdfJsViewer({
   initialPage = 1,
   shareId,
   revisionHistoryEnabled = false,
+  canRequestDownload = true,
   revisionHistoryUrl = null,
   workspace = null,
   backHref = null,
@@ -448,11 +564,49 @@ export function PdfJsViewer({
   }, [shareIdSafe, url]);
   const canDownload = Boolean(allowDownload && downloadUrl);
 
+  /**
+   * Who the recipient's volunteered identity belongs to.
+   *
+   * It used to belong to nobody in particular: one origin-wide localStorage key, replayed onto the
+   * very first stats POST of any link this browser opened, including a sender the recipient had
+   * never introduced themselves to. The dialog below promises the opposite ("Goes to this
+   * document's owner only"), and `/p/`'s LandingBeacon has always behaved — botId and visitId until
+   * somebody presses Save. This scopes the stored identity to the sending workspace so the viewer
+   * behaves the same way.
+   *
+   * `ownerKey` is read off the brand payload defensively: `ShareWorkspaceBrand` does not carry a
+   * workspace id yet (that is a server-side change, outside this component), and until it does the
+   * scope falls back to this link. Falling back costs a recipient one extra introduction across a
+   * sender's links; the global key cost them their name on a stranger's.
+   */
+  const viewerProfileScope: ShareViewerScope = useMemo(
+    () => ({ ownerKey: shareBrandOwnerKey(workspace), shareId: shareIdSafe }),
+    [workspace, shareIdSafe],
+  );
+
   function applyViewerProfileToStatsPayload(payload: Record<string, unknown>) {
-    const p = readShareViewerProfile();
+    // Deliberately the scoped read and never the pre-fill: an identity the recipient typed for
+    // someone else is a convenience for their fingers, not something to send on their behalf.
+    const p = readShareViewerProfile(viewerProfileScope);
     if (p?.email) payload.viewerEmail = p.email;
     if (p?.name) payload.viewerName = p.name;
   }
+
+  /**
+   * Open the introduction modal with the fields filled in as far as we honestly can.
+   *
+   * What this sender has been told wins; failing that, the identity this browser last saved
+   * elsewhere, which fills the inputs and nothing else. Until Save is pressed here, the owner is
+   * told nothing.
+   */
+  const openIntro = useCallback(() => {
+    setIntroError(null);
+    const stored = readShareViewerProfile(viewerProfileScope);
+    const prefill = stored ?? readShareViewerProfilePrefill();
+    setIntroName(prefill?.name ?? "");
+    setIntroEmail(prefill?.email ?? "");
+    setIntroOpen(true);
+  }, [viewerProfileScope]);
 
   /**
    * Set once an introduction is stored, turning the modal into a confirmation instead of closing.
@@ -483,9 +637,10 @@ export function PdfJsViewer({
       setViewerProfile(null);
       return;
     }
-    // Best-effort: hydrate intro state from localStorage.
-    setViewerProfile(readShareViewerProfile());
-  }, [shareIdSafe]);
+    // Best-effort: hydrate intro state from localStorage. Scoped, so "Viewing as …" only ever
+    // claims an identity this sender has actually been given.
+    setViewerProfile(readShareViewerProfile(viewerProfileScope));
+  }, [shareIdSafe, viewerProfileScope]);
 
   useEffect(() => {
     if (!canDownload) return;
@@ -1298,10 +1453,11 @@ export function PdfJsViewer({
         const context = canvas.getContext("2d");
         if (!context) throw new Error("Canvas 2D context not available");
 
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
+        // Backing store in device pixels, CSS box in CSS pixels (see `sizeCanvasForViewport`):
+        // the fit-to-viewport maths above is unchanged, only the resolution it is painted at.
+        const transform = sizeCanvasForViewport(canvas, viewport, canvasPixelRatio());
 
-        const renderTask = page.render({ canvasContext: context, viewport });
+        const renderTask = page.render({ canvasContext: context, viewport, transform });
         singleRenderTaskRef.current = renderTask;
         try {
           await renderTask.promise;
@@ -1436,6 +1592,21 @@ export function PdfJsViewer({
     }
     if (toRender.size === 0) toRender.add(Math.min(Math.max(1, pageNumber), totalPages));
 
+    // Hand back the memory of pages the reader has scrolled well past, before painting the ones
+    // they are looking at. Without this a long PDF accumulates one full-resolution bitmap per page
+    // for as long as the tab is open, and eventually the tab dies mid-read.
+    const keepAnchors = visiblePages.length ? visiblePages : Array.from(toRender);
+    if (keepAnchors.length) {
+      const keepMin = Math.min(...keepAnchors) - ALL_PAGES_KEEP_RADIUS;
+      const keepMax = Math.max(...keepAnchors) + ALL_PAGES_KEEP_RADIUS;
+      releaseDistantCanvases(
+        allCanvasesRef.current,
+        allRenderedKeyRef.current,
+        allRenderTasksRef.current,
+        (p) => p >= keepMin && p <= keepMax,
+      );
+    }
+
     // Fit pages to the actual all-pages column width (not the full viewport),
     // and account for per-page card padding (p-3).
     const targetWidth = Math.max(1, width - 24);
@@ -1451,7 +1622,10 @@ export function PdfJsViewer({
         if (cancelled) return;
 
         const rotation = normalizePdfRotation(page);
-        const key = `${targetWidth}:${zoom}:${pdfVersion}:${rotation}`;
+        // The pixel ratio is part of the key: dragging the window to a screen with a different one
+        // (or a released page coming back) has to repaint, not sit there at the old resolution.
+        const ratio = canvasPixelRatio();
+        const key = `${targetWidth}:${zoom}:${pdfVersion}:${rotation}:${ratio}`;
         const prevKey = allRenderedKeyRef.current.get(p);
         if (prevKey === key) return;
 
@@ -1472,13 +1646,12 @@ export function PdfJsViewer({
         const context = canvas.getContext("2d");
         if (!context) return;
 
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
+        const transform = sizeCanvasForViewport(canvas, viewport, ratio);
         // Make rendering deterministic even if a canvas was previously painted.
         context.setTransform(1, 0, 0, 1, 0, 0);
         context.clearRect(0, 0, canvas.width, canvas.height);
 
-        const renderTask = page.render({ canvasContext: context, viewport }) as unknown as {
+        const renderTask = page.render({ canvasContext: context, viewport, transform }) as unknown as {
           cancel?: () => void;
           promise: Promise<unknown>;
         };
@@ -1603,6 +1776,19 @@ export function PdfJsViewer({
       for (let p = 1; p <= Math.min(12, totalPages); p++) toRender.add(p);
     }
 
+    // Same bound as "All pages": a thumbnail is small, but one per page of a long deck is not.
+    const keepAnchors = gridVisiblePages.length ? gridVisiblePages : Array.from(toRender);
+    if (keepAnchors.length) {
+      const keepMin = Math.min(...keepAnchors) - GRID_KEEP_RADIUS;
+      const keepMax = Math.max(...keepAnchors) + GRID_KEEP_RADIUS;
+      releaseDistantCanvases(
+        gridCanvasesRef.current,
+        gridRenderedKeyRef.current,
+        gridRenderTasksRef.current,
+        (p) => p >= keepMin && p <= keepMax,
+      );
+    }
+
     let cancelled = false;
 
     async function renderThumb(p: number, doc: PdfDoc, pages: number) {
@@ -1614,7 +1800,8 @@ export function PdfJsViewer({
         const page = await doc.getPage(p);
         if (cancelled) return;
         const rotation = normalizePdfRotation(page);
-        const key = `${gridTileWidth}:${zoom}:${pdfVersion}:${rotation}`;
+        const ratio = canvasPixelRatio();
+        const key = `${gridTileWidth}:${zoom}:${pdfVersion}:${rotation}:${ratio}`;
         const prevKey = gridRenderedKeyRef.current.get(p);
         if (prevKey === key) return;
 
@@ -1634,11 +1821,10 @@ export function PdfJsViewer({
         const viewport = page.getViewport({ scale: Math.max(0.1, fitScale * zoom), rotation });
         const context = canvas.getContext("2d");
         if (!context) return;
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
+        const transform = sizeCanvasForViewport(canvas, viewport, ratio);
         context.setTransform(1, 0, 0, 1, 0, 0);
         context.clearRect(0, 0, canvas.width, canvas.height);
-        const renderTask = page.render({ canvasContext: context, viewport }) as unknown as {
+        const renderTask = page.render({ canvasContext: context, viewport, transform }) as unknown as {
           cancel?: () => void;
           promise: Promise<unknown>;
         };
@@ -1888,13 +2074,22 @@ export function PdfJsViewer({
         left={
           <>
             {backHref ? (
+              /* Built like the button groups either side of it — a `p-1.5` shell around an `h-8`
+                 row — rather than as a plain `h-9` pill. Every other control on this bar is 46px
+                 tall by that arithmetic (32 + 12 padding + 2 border) and this one was 36, which
+                 reads as a mistake next to them. Stating the height directly would work until
+                 somebody changes the shell padding; sharing the recipe is what keeps them equal.
+                 The hover fill moves inside the border for the same reason: that is where
+                 Summary's is. */
               <a
                 href={backHref}
-                className="inline-flex h-9 min-w-0 shrink-0 items-center gap-1.5 rounded-2xl border border-white/10 bg-white/5 px-3 text-xs font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                className="inline-flex min-w-0 shrink-0 items-center rounded-2xl border border-white/10 bg-white/5 p-1.5 text-white/80 transition-colors hover:text-white"
                 title={backLabel ? `Back to ${backLabel}` : "Back"}
               >
-                <span aria-hidden="true">←</span>
-                <span className="max-w-[160px] truncate">{backLabel || "Back"}</span>
+                <span className="inline-flex h-8 min-w-0 items-center gap-1.5 rounded-xl px-3 text-xs font-medium hover:bg-white/10">
+                  <span aria-hidden="true">←</span>
+                  <span className="max-w-[160px] truncate">{backLabel || "Back"}</span>
+                </span>
               </a>
             ) : null}
               <div className="inline-flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-1.5">
@@ -2073,12 +2268,7 @@ export function PdfJsViewer({
                     <button
                       type="button"
                       className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
-                      onClick={() => {
-                        setIntroError(null);
-                        setIntroName(viewerProfile?.name ?? "");
-                        setIntroEmail(viewerProfile?.email ?? "");
-                        setIntroOpen(true);
-                      }}
+                      onClick={openIntro}
                       title="Edit how you appear to the document owner"
                     >
                       Viewing as{" "}
@@ -2090,12 +2280,7 @@ export function PdfJsViewer({
                     <button
                       type="button"
                       className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
-                      onClick={() => {
-                        setIntroError(null);
-                        setIntroName("");
-                        setIntroEmail("");
-                        setIntroOpen(true);
-                      }}
+                      onClick={openIntro}
                       title="Tell the owner who you are"
                     >
                       Introduce yourself
@@ -2198,12 +2383,7 @@ export function PdfJsViewer({
                     {shareIdSafe && !shareContext?.isOwner ? (
                       <button
                         type="button"
-                        onClick={() => {
-                          setIntroError(null);
-                          setIntroName(viewerProfile?.name ?? "");
-                          setIntroEmail(viewerProfile?.email ?? "");
-                          setIntroOpen(true);
-                        }}
+                        onClick={openIntro}
                         className="rounded-xl px-2.5 py-2.5 text-left text-sm font-medium text-white/90 hover:bg-white/10"
                       >
                         {viewerProfile?.name || viewerProfile?.email
@@ -2223,7 +2403,7 @@ export function PdfJsViewer({
                   >
                     Download PDF
                   </a>
-                ) : (
+                ) : canRequestDownload ? (
                   <button
                     type="button"
                     className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
@@ -2236,7 +2416,7 @@ export function PdfJsViewer({
                   >
                     Download PDF
                   </button>
-                )
+                ) : null
               ) : null}
             </div>
       </BrandHeader>
@@ -2590,7 +2770,7 @@ export function PdfJsViewer({
                 className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"
                 disabled={introBusy}
                 onClick={() => {
-                  clearShareViewerProfile();
+                  clearShareViewerProfile(viewerProfileScope);
                   setViewerProfile(null);
                   setIntroName("");
                   setIntroEmail("");
@@ -2653,8 +2833,8 @@ export function PdfJsViewer({
                 setIntroError(null);
 
                 // Persist locally immediately (best-effort).
-                writeShareViewerProfile({ name, email });
-                const stored = readShareViewerProfile();
+                writeShareViewerProfile(viewerProfileScope, { name, email });
+                const stored = readShareViewerProfile(viewerProfileScope);
                 setViewerProfile(stored);
 
                 // Best-effort: persist to server so owner metrics show it.
@@ -2959,9 +3139,14 @@ export function PdfJsViewer({
               onError={() => setNativePdfError("Failed to load PDF in native viewer.")}
             />
             <div className="pointer-events-none absolute left-0 right-0 bottom-0 z-20 p-4">
+              {/* This banner is shown to recipients in production, not to us in dev. It used to say
+                  "pdf.js failed in dev" and offer "Try pdf.js again": a stranger who opened a link
+                  was handed the name of a library they have never heard of and a claim about an
+                  environment they are not in. The document is readable, which is the only thing
+                  they need told — plus a way back, because this fallback is often a one-off. */}
               <div className="inline-flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/80 backdrop-blur-sm">
-                <span className="font-semibold text-white/90">Viewer fallback</span>
-                <span>Using the browser’s native PDF viewer (pdf.js failed in dev).</span>
+                <span className="font-semibold text-white/90">Simplified view</span>
+                <span>This document is open in your browser’s own PDF viewer, so some controls are unavailable.</span>
                 <a
                   className="pointer-events-auto ml-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 font-semibold text-white/90 hover:bg-black/30"
                   href={url}
@@ -2978,7 +3163,7 @@ export function PdfJsViewer({
                     setReloadKey((k) => k + 1);
                   }}
                 >
-                  Try pdf.js again
+                  Try the full viewer
                 </button>
               </div>
             </div>
