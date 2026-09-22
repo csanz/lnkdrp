@@ -12,6 +12,7 @@
  *   ... --to=you@example.com --all          # every variant, not one per template
  *   ... --to=you@example.com --only=share_views.immediate,plan_limit
  *   ... --to=you@example.com --raw        # exact subjects, no [TEST] prefix
+ *   ... --to=you@example.com --print      # print the bodies instead of sending
  *   ... --to=you@example.com --dry-run
  *
  * Safety, in the order it matters:
@@ -107,14 +108,20 @@ async function main() {
   // Off by default: the prefix is what stops a stray test looking like a live notification, so
   // dropping it has to be something you asked for.
   const raw = flag("raw") !== null;
-  // Printing is a legitimate way to read the copy, so this does not refuse — but it says so in a
-  // way that cannot be mistaken for a send, and the summary at the end repeats it. A script whose
-  // whole job is sending must never let "printed 17 emails" read as "delivered 17 emails".
-  const transport = (process.env.EMAIL_TRANSPORT ?? "").trim().toLowerCase();
-  const consoleOnly = transport === "console";
+  /**
+   * `.env.local` sets `EMAIL_TRANSPORT=console` so the dev server cannot mail anyone by accident.
+   * This script is the deliberate exception: it has an explicit `--to` and exists to send. Passing
+   * `--print` keeps the console transport when you only want to read the copy.
+   *
+   * Printing does not refuse, but it says so in a way that cannot be mistaken for a send, and the
+   * summary repeats it — a script whose whole job is sending must never let "printed 17 emails"
+   * read as "delivered 17 emails".
+   */
+  const consoleOnly = flag("print") !== null;
+  if (!consoleOnly) delete process.env.EMAIL_TRANSPORT;
   if (consoleOnly && !dryRun) {
-    console.log("EMAIL_TRANSPORT=console — bodies are printed below, NOT delivered.");
-    console.log("Unset EMAIL_TRANSPORT for a real send.\n");
+    process.env.EMAIL_TRANSPORT = "console";
+    console.log("--print — bodies are printed below, NOT delivered.\n");
   }
 
   console.log(`\n${dryRun ? "Would send" : "Sending"} ${chosen.length} email${chosen.length === 1 ? "" : "s"} to ${to}`);
