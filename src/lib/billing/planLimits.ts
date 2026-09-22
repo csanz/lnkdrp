@@ -111,18 +111,32 @@ function isFeatureGate(limit: LimitKey): limit is FeatureGateKey {
 /** Grace window for a workspace over a Free limit (ISO strings), or `null` when none. */
 export type GraceState = { startedAt: string; endsAt: string; blockedAt: string | null } | null;
 
+/**
+ * `used` is what the workspace HOLDS, not what the refused write would have taken it to.
+ *
+ * It used to be `current + adding`, and every caller passes it on under that name: the 402 body,
+ * the `plan.limit_reached` activity row, the web upgrade notice (`planLimitUsageSuffix` renders
+ * "{used} of {max} used.") and the MCP's own planWarning sentence. So a Free workspace holding two
+ * projects was refused a third with `used: 3, max: 2` — a state it had never been in, written into
+ * its permanent history, and shown to the owner as "3 of 2 used." while `GET /api/plan` answered
+ * `used: 2` in the same minute. `CreateProjectModal` even falls back to the plan route's true count
+ * when it has no error to read, so the number on screen moved by one depending on which source
+ * answered.
+ *
+ * `requested` carries what was asked for, which is the part a bulk add needs: 8 of 10 used, 5
+ * requested, is a refusal a caller can act on. `wouldBe` is kept off the type on purpose — it is
+ * `used + requested` and a third number invites a fourth reading.
+ */
+export type LimitOverage = { limit: LimitKey; used: number; requested: number; max: number; grace: GraceState };
+
 export type LimitCheck =
-  | { ok: true; warning: null | { limit: LimitKey; used: number; max: number; grace: GraceState } }
-  | {
+  | { ok: true; warning: null | LimitOverage }
+  | ({
       ok: false;
       code: "plan_limit";
-      limit: LimitKey;
-      used: number;
-      max: number;
-      grace: GraceState;
       upgradeUrl: "/pricing";
       message: string;
-    };
+    } & LimitOverage);
 
 /** Blocked check (the `ok: false` branch of `LimitCheck`). */
 export type PlanLimitBlocked = Extract<LimitCheck, { ok: false }>;
@@ -277,7 +291,8 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
  * that `planLimitResponse()` turns into a 402.
  *
  * Feature gates (`version_history`, `analytics_history`) skip counting entirely: Pro → ok, Free →
- * blocked with `used: 0`, `max: 0`, `grace: null` (grace never applies to a gate).
+ * blocked with `used: 0`, `requested: 0`, `max: 0`, `grace: null` (grace never applies to a gate,
+ * and there is nothing countable to request).
  */
 export async function checkLimit(
   orgId: string | Types.ObjectId,
@@ -294,6 +309,7 @@ export async function checkLimit(
       code: "plan_limit",
       limit,
       used: 0,
+      requested: 0,
       max: 0,
       grace: null,
       upgradeUrl: UPGRADE_URL,
@@ -334,19 +350,20 @@ export async function checkLimit(
       throw new Error("checkLimit: team_workspaces is a per-user limit; see POST /api/orgs");
   }
 
-  const used = current + adding;
-  if (used <= max) return { ok: true, warning: null };
+  // The comparison is still about where the write would land; only the reporting is about now.
+  if (current + adding <= max) return { ok: true, warning: null };
 
   // Grace windows exist only for Free workspaces that were over the caps at launch.
   const grace = plan === "free" ? await getWorkspaceGrace(orgId) : null;
   const inGrace = Boolean(grace && !grace.blockedAt && Date.now() < new Date(grace.endsAt).getTime());
-  if (inGrace) return { ok: true, warning: { limit, used, max, grace } };
+  if (inGrace) return { ok: true, warning: { limit, used: current, requested: adding, max, grace } };
 
   return {
     ok: false,
     code: "plan_limit",
     limit,
-    used,
+    used: current,
+    requested: adding,
     max,
     grace,
     upgradeUrl: UPGRADE_URL,

@@ -70,7 +70,8 @@ export type Whoami = {
   client: string;
 };
 
-export type PlanWarning = { limit: string; used: number; max: number; grace: unknown };
+/** `used` is what the workspace holds now; `requested` is what the call asked to add. */
+export type PlanWarning = { limit: string; used: number; requested: number; max: number; grace: unknown };
 
 export type DocStatus = "draft" | "preparing" | "ready" | "failed";
 
@@ -511,7 +512,7 @@ function asUploadAi(raw: unknown): UploadAi | null {
 function asPlanWarning(raw: unknown): PlanWarning | undefined {
   const w = rec(raw);
   if (typeof w.limit !== "string") return undefined;
-  return { limit: w.limit, used: num(w.used), max: num(w.max), grace: w.grace ?? null };
+  return { limit: w.limit, used: num(w.used), requested: num(w.requested, 1), max: num(w.max), grace: w.grace ?? null };
 }
 
 /** Normalise one share link from `/api/docs/:id/links` (`{ link }` / `{ links }` already unwrapped). */

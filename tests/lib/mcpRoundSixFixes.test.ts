@@ -16,6 +16,7 @@ import { registerUntagTool } from "../../mcp/src/tools/tags";
 import { registerVerifySharePasswordTool } from "../../mcp/src/tools/shareLinkPassword";
 import { registerGetShareStatsTool } from "../../mcp/src/tools/getShareStats";
 import { registerGetActivityTool } from "../../mcp/src/tools/discover";
+import { registerWhoamiTool } from "../../mcp/src/tools/whoami";
 
 const DOC_ID = "6ab0b66dbaad814de0a8d776";
 const LINK_ID = "6ab0b66dbaad814de0a8d777";
@@ -24,6 +25,24 @@ const LINK_ID = "6ab0b66dbaad814de0a8d777";
 async function connect(register: (server: McpServer, ctx: ToolContext) => void, api: unknown) {
   const server = new McpServer({ name: "test", version: "1" });
   register(server, { api, config: {}, whoami: () => ({ orgId: "o1", orgName: "T" }) } as unknown as ToolContext);
+  const client = new Client({ name: "test", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(b), client.connect(a)]);
+  return async (name: string, args: Record<string, unknown>) => {
+    const res = await client.callTool({ name, arguments: args });
+    return res.structuredContent as Record<string, unknown>;
+  };
+}
+
+/** As `connect`, plus the pieces whoami reaches for: setWhoami and the config flag. */
+async function connectWith(register: (server: McpServer, ctx: ToolContext) => void, api: unknown) {
+  const server = new McpServer({ name: "test", version: "1" });
+  register(server, {
+    api,
+    config: { featureRequestsEnabled: false },
+    whoami: () => ({ orgId: "o1", orgName: "Personal" }),
+    setWhoami: () => {},
+  } as unknown as ToolContext);
   const client = new Client({ name: "test", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(b), client.connect(a)]);
@@ -135,6 +154,28 @@ describe("get_share_stats", () => {
     });
     const out = await call("lnkdrp_get_share_stats", { docId: DOC_ID, days: 30 });
     expect(out.downloadsEnabled).toBe(false);
+  });
+});
+
+describe("whoami capabilities.collaborators", () => {
+  it("counts collaborators in the collaborators' own unit", async () => {
+    // `limit` excludes the owner (checkLimit uses members - 1) and `used` used to include them, so
+    // a Free workspace with nobody invited reported { limit: 0, used: 1 } — one over a cap it is
+    // exactly at. Two units in one object.
+    const call = await connectWith(registerWhoamiTool, {
+      whoami: async () => ({ ok: true, orgId: "o1", orgName: "Personal", plan: "free" }),
+      creditsSnapshot: async () => null,
+      planSnapshot: async () => ({
+        plan: "free",
+        limits: { documents: 10, projects: 2, analyticsDays: 7, collaborators: 0 },
+        usage: { documents: 0, projects: 0, members: 1 },
+        graceActive: false,
+        atLimit: { documents: false, projects: false, collaborators: true },
+      }),
+    });
+    const out = await call("lnkdrp_whoami", {});
+    const caps = out.capabilities as Record<string, Record<string, unknown>>;
+    expect(caps.collaborators).toEqual({ limit: 0, used: 0, members: 1, atLimit: true });
   });
 });
 

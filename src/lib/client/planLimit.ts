@@ -127,12 +127,17 @@ export type PlanLimitPrompt = { title: string; message: string; secondaryLabel: 
 
 /**
  * Format a "{used} of {max} used." suffix for counted limits; empty for feature gates (`max` 0).
+ *
+ * `used` is what the workspace holds. It briefly was the count the refused write would have reached,
+ * so someone holding two projects was told "3 of 2 used." — a number they could not reconcile with
+ * anything on screen. A bulk add that asked for several at once says so instead of inflating `used`.
  */
-export function planLimitUsageSuffix(opts: { used?: number; max?: number } = {}): string {
+export function planLimitUsageSuffix(opts: { used?: number; max?: number; requested?: number } = {}): string {
   const max = typeof opts.max === "number" && Number.isFinite(opts.max) ? Math.max(0, Math.floor(opts.max)) : 0;
   const used = typeof opts.used === "number" && Number.isFinite(opts.used) ? Math.max(0, Math.floor(opts.used)) : null;
   if (max <= 0 || used === null) return "";
-  return `${used} of ${max} used.`;
+  const requested = typeof opts.requested === "number" && Number.isFinite(opts.requested) ? Math.floor(opts.requested) : 1;
+  return requested > 1 ? `${used} of ${max} used, ${requested} more requested.` : `${used} of ${max} used.`;
 }
 
 /**

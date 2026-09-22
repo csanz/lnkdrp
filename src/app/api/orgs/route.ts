@@ -252,6 +252,7 @@ export async function POST(request: Request) {
           code: "plan_limit",
           limit: "team_workspaces",
           used: ownedTeamOrgIds.length,
+          requested: 1,
           max: FREE_TEAM_WORKSPACES,
           grace: null,
           upgradeUrl: UPGRADE_URL,

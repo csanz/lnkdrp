@@ -81,7 +81,13 @@ function buildCapabilities(
     projects: plan
       ? { limit: limits.projects, used: usage.projects, remaining: remaining(limits.projects, usage.projects), atLimit: atLimit.projects }
       : null,
-    collaborators: plan ? { limit: limits.collaborators, used: usage.members, atLimit: atLimit.collaborators } : null,
+    // `used` in the collaborators' own unit, which excludes the owner — checkLimit counts them as
+    // `members - 1`. Reporting raw members against a collaborator limit put two different units in
+    // one object: a Free workspace with nobody invited read `{ limit: 0, used: 1 }`, which says the
+    // workspace is one over a cap it is exactly at.
+    collaborators: plan
+      ? { limit: limits.collaborators, used: Math.max(0, usage.members - 1), members: usage.members, atLimit: atLimit.collaborators }
+      : null,
     // Present only while it is true, and worth saying out loud: it is the one state where
     // `remaining: 0` does not mean the next write is refused.
     ...(graceActive ? { graceActive: true as const } : {}),
