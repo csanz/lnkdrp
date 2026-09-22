@@ -24,46 +24,15 @@
  */
 import { NextResponse } from "next/server";
 
-import { isBlobStoreHost } from "@/lib/blob/serverClientUploadRoute";
+import { fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { findProjectDocument, projectLinkPasswordEnabled } from "@/lib/share/projectPublic";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 
 export const runtime = "nodejs";
 
-/**
- * Vercel Blob's public CDN, where the upload pipeline writes every preview
- * (`<storeId>.public.blob.vercel-storage.com`, and the bare host on older rows).
- */
-const VERCEL_BLOB_HOST = "blob.vercel-storage.com";
-
 /** Nothing our pipeline writes comes close; a first-page PNG is tens of kilobytes. */
 const MAX_PREVIEW_BYTES = 8 * 1024 * 1024;
-
-/**
- * Which stored preview value this route is willing to go and *dereference* — the same allowlist
- * `/s/:shareId/og.png` applies, and for the same reason.
- *
- * `previewImageUrl` is owner-supplied text. `PATCH /api/uploads/:uploadId` validates it against the
- * upload's own blob folder, but rows written before that check exist, and this route is reachable
- * by anyone holding a slug. Without an allowlist, `http://169.254.169.254/...` or any hostname
- * inside the deployment's network would turn this into an SSRF probe an outsider can time.
- *
- * Another tenant's blob store is still a public, read-only, credential-free CDN, so pointing at one
- * buys nothing; an internal address or a relative path is what this refuses.
- */
-function previewFetchUrl(candidate: string): URL | null {
-  let url: URL;
-  try {
-    url = new URL(candidate);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "https:") return null;
-  const host = url.hostname.toLowerCase();
-  if (isBlobStoreHost(host)) return url;
-  return host === VERCEL_BLOB_HOST || host.endsWith(`.${VERCEL_BLOB_HOST}`) ? url : null;
-}
 
 /** Minimal cookie read: the share-auth value is opaque hex and needs no decoding. */
 function getCookie(request: Request, name: string): string | null {
@@ -121,10 +90,29 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     "";
   if (!candidate) return NextResponse.json({ error: "No preview" }, { status: 404 });
 
-  const previewUrl = previewFetchUrl(candidate);
-  if (!previewUrl) return NextResponse.json({ error: "No preview" }, { status: 404 });
-
-  const upstream = await fetch(previewUrl, { cache: "no-store" }).catch(() => null);
+  /**
+   * Which stored pointer this route is willing to go and *dereference*, decided by
+   * `fetchStoredBlob` rather than by a predicate of our own.
+   *
+   * `previewImageUrl` is owner-supplied text. `PATCH /api/uploads/:uploadId` checks it against the
+   * upload's own blob folder now, but rows written before that check exist, and this route is
+   * reachable by anyone holding a slug. Without an allowlist, `http://169.254.169.254/...` or any
+   * hostname inside the deployment's network would turn this into an SSRF probe an outsider can
+   * time.
+   *
+   * This file used to carry its own copy of that allowlist and then hand the result to a bare
+   * `fetch`, which follows redirects by default. So the check only ever saw hop zero: an
+   * allowlisted pointer answering `302 Location: http://169.254.169.254/...` was still
+   * dereferenced and its body still came back through this origin. A reader auditing the host
+   * predicate would have found it correct and concluded the route was covered, because what was
+   * missing was not the predicate but the second lock. The other four blob-dereferencing routes
+   * were converted to the shared helper and this one was left behind, which is how the helper's
+   * own docstring came to claim a call site it did not have.
+   *
+   * `fetchStoredBlob` re-applies the same allowlist to every hop and refuses a chain, so there is
+   * no local copy left here to drift out of step with the twin at `/s/:shareId/preview`.
+   */
+  const upstream = await fetchStoredBlob(candidate).catch(() => null);
   if (!upstream || !upstream.ok) return NextResponse.json({ error: "No preview" }, { status: 404 });
 
   const declaredLength = Number(upstream.headers.get("content-length") ?? "");

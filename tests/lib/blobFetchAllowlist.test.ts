@@ -18,6 +18,14 @@
  *    called, not merely a discarded response — the outbound request *is* the vulnerability);
  *  - the refusal must be the document's own 404, not a 500 and not a distinguishable error, and it
  *    must land ahead of the analytics writes so a download that cannot be served is not counted.
+ *
+ * `/api/download/:token/pdf` is here for the same reason, late. It serves the same stored pointer
+ * to a recipient whose download the owner approved, and it was still on a bare `fetch` long after
+ * the public proxies were converted, which made the sentence the other files state out loud (every
+ * route that dereferences a stored pointer checks the host) quietly untrue. It is behind a session,
+ * an approved request, a live link and the link's password, so it is a narrower door than the rest;
+ * the row it reads is the same row, and `/api/download/:token/save` copies that row's `blobUrl`
+ * onto a new document, so it is not a row the poison cannot reach.
  */
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -26,6 +34,8 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 /** What `isBlobStoreHost` is standing in for: one configured store, pinned by id. */
 const STORE_HOST = "store.public.blob.vercel-storage.com";
 const DOC_ID = "68c1f0aa0d2b4e0012abcd34";
+/** A real ObjectId: the claim route refuses an actor whose id is not one. */
+const USER_ID = "68c1f0aa0d2b4e0012abcd99";
 const UPLOAD_ID = "68c1f0aa0d2b4e0012abcdaa";
 const STORE_PDF = `https://${STORE_HOST}/docs/${DOC_ID}/uploads/${UPLOAD_ID}/file.pdf`;
 /** Rows written before the store id was pinned live on the bare host — they must keep serving. */
@@ -68,6 +78,9 @@ const touchShareLink = vi.fn();
 vi.mock("@/lib/share/links", () => ({
   resolveShareLink: (...a: unknown[]) => resolveShareLink(...a),
   touchShareLink: (...a: unknown[]) => touchShareLink(...a),
+  // The claim route asks the link whether this browser is unlocked; open here, like every other
+  // gate in this file.
+  shareLinkUnlocked: () => true,
 }));
 
 const resolveProjectLink = vi.fn();
@@ -122,7 +135,22 @@ vi.mock("@/lib/mongodb", () => ({ connectMongo: async () => undefined }));
 vi.mock("@/lib/models/Org", () => ({ ensurePersonalOrgForUserId: async () => "org" }));
 vi.mock("@/lib/activity/log", () => ({ recordActivity: async () => undefined }));
 vi.mock("@/lib/share/ownerSide", () => ({ isOwnerSideViewer: async () => false }));
-vi.mock("@/lib/gating/actor", () => ({ tryResolveAuthUserId: async () => null }));
+vi.mock("@/lib/gating/actor", () => ({
+  tryResolveAuthUserId: async () => null,
+  resolveActor: async () => ({ kind: "user", userId: USER_ID, orgId: "org", personalOrgId: "org" }),
+}));
+
+/** The approved claim the download route trades for bytes, and the signed-in person it names. */
+vi.mock("@/lib/models/ShareDownloadRequest", () => ({
+  ShareDownloadRequestModel: {
+    findOne: () => ({
+      select: () => ({ lean: async () => ({ requesterEmail: RECIPIENT, docId: DOC_ID, shareId: SHARE_ID }) }),
+    }),
+  },
+}));
+vi.mock("@/lib/models/User", () => ({
+  UserModel: { findOne: () => ({ select: () => ({ lean: async () => ({ email: RECIPIENT }) }) }) },
+}));
 vi.mock("@/lib/http/rateLimit", () => ({
   clientIpFromRequest: () => "203.0.113.7",
   rateLimit: async () => ({ ok: true, allowed: true, remaining: 10 }),
@@ -131,12 +159,15 @@ vi.mock("@/lib/http/rateLimit", () => ({
 import { GET as shareGet } from "@/app/s/[shareId]/pdf/route";
 import { GET as projectGet } from "@/app/p/[shareId]/[docId]/pdf/route";
 import { GET as requestViewGet } from "@/app/api/request-view/[token]/docs/[docId]/pdf/route";
+import { GET as claimGet } from "@/app/api/download/[token]/pdf/route";
 
 // --- harness -----------------------------------------------------------------------------------
 
 const SHARE_ID = "sl_abc123";
 const PROJECT_SHARE_ID = "pl_room01";
 const VIEW_TOKEN = "rv_token01";
+const CLAIM_TOKEN = "dl_token01";
+const RECIPIENT = "bob@example.com";
 
 const PDF_BYTES = "%PDF-1.7\nnot really a pdf, but the proxy never looks\n";
 
@@ -210,7 +241,27 @@ const ROUTES = [
       );
     },
   },
+  {
+    name: "/api/download/:token/pdf",
+    arrange(blobUrl: string) {
+      resolveShareLink.mockResolvedValue({
+        refusal: null,
+        link: { _id: "link", shareId: SHARE_ID, isDefault: true, label: null },
+      });
+      docFindOne.mockResolvedValue({ _id: DOC_ID, blobUrl, title: "Deck", fileName: "deck.pdf", userId: "someone-else" });
+    },
+    call(query = "") {
+      return claimGet(new Request(`http://localhost/api/download/${CLAIM_TOKEN}/pdf${query}`), {
+        params: Promise.resolve({ token: CLAIM_TOKEN }),
+      });
+    },
+  },
 ] as const;
+
+/** The claim route's analytics write is fire and forget, so give it a turn before asserting. */
+async function settle() {
+  for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 0));
+}
 
 // --- the allowlist -----------------------------------------------------------------------------
 
@@ -279,5 +330,33 @@ describe("a refused row is not counted as a download", () => {
     expect(shareViewUpdateOne).not.toHaveBeenCalled();
     expect(projectLinkViewUpdateOne).not.toHaveBeenCalled();
     expect(touchShareLink).not.toHaveBeenCalled();
+  });
+
+  test("/api/download/:token/pdf writes no analytics for a poisoned row", async () => {
+    ROUTES[3].arrange("http://169.254.169.254/latest/meta-data/");
+    const res = await ROUTES[3].call();
+    expect(res.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Settled first: the row this route upserts is keyed on the approved person rather than a
+    // browser, so nothing later corrects it. A refused pointer that still counted would leave the
+    // owner a download that was never served, permanently.
+    await settle();
+    expect(shareViewUpdateOne).not.toHaveBeenCalled();
+    expect(touchShareLink).not.toHaveBeenCalled();
+  });
+});
+
+// --- and the failure the recipient is allowed to see --------------------------------------------
+
+describe("/api/download/:token/pdf tells the recipient nothing about the failure", () => {
+  test("an upstream that cannot be reached is a fixed message, not the thrown one", async () => {
+    ROUTES[3].arrange(STORE_PDF);
+    fetchMock.mockRejectedValue(Object.assign(new Error("fetch failed"), { cause: new Error("connect ECONNREFUSED 169.254.169.254:80") }));
+    const res = await ROUTES[3].call();
+    const body = (await res.json()) as { error?: string };
+    // The handler's only error exit used to answer with `err.message`. Whatever the runtime puts
+    // there is about our infrastructure, and the recipient is the last person who needs it.
+    expect(body.error).toBe("Download failed");
+    expect(JSON.stringify(body)).not.toMatch(/ECONNREFUSED|169\.254/);
   });
 });

@@ -47,7 +47,13 @@ export async function readAiOutcome(
   api: ApiClient,
   uploadId: string | null,
   opts: { credits?: boolean } = {},
-): Promise<{ warnings: string[]; creditsRemaining: number | null; ai: UploadAi | null; failureReason: string | null }> {
+): Promise<{
+  warnings: string[];
+  creditsRemaining: number | null;
+  ai: UploadAi | null;
+  failureReason: string | null;
+  unchangedFromPrevious: boolean;
+}> {
   const [upload, credits] = await Promise.all([
     uploadId ? api.getUpload(uploadId).catch(() => null) : Promise.resolve(null),
     opts.credits ? api.creditsSnapshot().catch(() => null) : Promise.resolve(null),
@@ -62,5 +68,9 @@ export async function readAiOutcome(
       `This version failed to process: ${failureReason}. Its link is live but has no usable file - upload a working PDF with lnkdrp_replace_pdf, or delete the document.`,
     );
   }
-  return { warnings, creditsRemaining: credits?.creditsRemaining ?? null, ai, failureReason };
+  // Carried beside the AI state, never folded into it: the compare against the previous version is
+  // what decides this, and ai.summary only happens to echo it when lnkdrp wrote the summary itself.
+  // `ai.summary === "unchanged"` is kept as a fallback for rows whose best-effort flag write lost.
+  const unchangedFromPrevious = upload?.unchangedFromPrevious === true || ai?.summary === "unchanged";
+  return { warnings, creditsRemaining: credits?.creditsRemaining ?? null, ai, failureReason, unchangedFromPrevious };
 }

@@ -228,4 +228,46 @@ describe("get_activity meta", () => {
     // The slug `who: "agents"` filters on stays usable.
     expect(agent.client).toBe("ignore-previous-instructions");
   });
+
+  it("wraps meta.client, which holds the agent's label rather than its slug", async () => {
+    // agent.connected and agent.key_verified are written by GET /api/agent/whoami, which puts
+    // clientLabelFromRequest(request) under meta.client: the title-cased label, not the slug. It
+    // came back bare while the identical string under agent.label on the same row came back
+    // wrapped, so a model was told to distrust one copy of a stranger-chosen name and handed the
+    // other as plain text.
+    const call = await connect(registerGetActivityTool, {
+      listActivity: async () => ({
+        items: [
+          {
+            id: "a2",
+            type: "agent.connected",
+            createdDate: "2026-09-21T00:00:00.000Z",
+            actor: { kind: "api_key", userId: "u1", name: null, email: null },
+            agent: { client: "ignore-previous-instructions", label: "Ignore Previous Instructions", version: "1" },
+            doc: null,
+            project: null,
+            meta: {
+              keyId: "6ab8c0ddba0d814de0a8d778",
+              prefix: "lnk_S57Q61if",
+              name: "e2e 2026-09-21",
+              client: "Ignore Previous Instructions",
+            },
+          },
+        ],
+        nextCursor: null,
+      }),
+    });
+    const out = await call("lnkdrp_get_activity", { limit: 10 });
+    const row = (out.items as Array<{ meta: Record<string, unknown>; agent: Record<string, unknown> }>)[0];
+    const client = row.meta.client as { _source: string; text: string };
+    expect(client.text).toBe("Ignore Previous Instructions");
+    // Same string as agent.label on this row, so it is described the same way.
+    expect(client._source).toBe("viewer");
+    expect(client._source).toBe((row.agent.label as { _source: string })._source);
+    // The key id and prefix are ours; wrapping them only makes them harder to use.
+    expect(row.meta.keyId).toBe("6ab8c0ddba0d814de0a8d778");
+    expect(row.meta.prefix).toBe("lnk_S57Q61if");
+    // And the slug the who filter narrows by is still a plain string.
+    expect(row.agent.client).toBe("ignore-previous-instructions");
+  });
 });

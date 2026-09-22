@@ -375,11 +375,21 @@ const TEXT_KEYS = new Set([
   "sourceHost",
   // The same agent label, recorded on the row that spent the credits.
   "summaryBy",
+  // And again on the row that recorded the connection. `meta.client` reads like the slug that
+  // `agent.client` holds, which is why it was left raw, but it is not one: `GET /api/agent/whoami`
+  // writes `clientLabelFromRequest(request)` there, the same title-cased label as `agent.label`.
+  // So one row carried the identical string wrapped under agent.label and bare under meta.client,
+  // and a model reading the feed had no reason to distrust the bare copy of a name the connecting
+  // software chose for itself. Nothing filters on this key; the slug `who: "agents"` narrows by is
+  // the top-level agent.client, which stays raw.
+  "client",
   "note",
   "message",
 ]);
 
-const VIEWER_KEYS = new Set(["viewerName", "viewerEmail"]);
+// `client` joins them: it is the same string as agent.label, which is wrapped as "viewer", and one
+// value described two ways on one row is a distinction a reader would try to make sense of.
+const VIEWER_KEYS = new Set(["viewerName", "viewerEmail", "client"]);
 
 /**
  * One level down as well as across.

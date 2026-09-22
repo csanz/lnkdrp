@@ -1230,10 +1230,21 @@ export class ApiClient {
   }
 
   /** `GET /api/uploads/:id` — upload status plus the AI outcome (`ai` is null until processing finishes). */
-  async getUpload(uploadId: string): Promise<{ id: string; status: string | null; ai: UploadAi | null; error: string | null }> {
+  async getUpload(
+    uploadId: string,
+  ): Promise<{ id: string; status: string | null; ai: UploadAi | null; error: string | null; unchangedFromPrevious: boolean }> {
     const body = rec(await this.request("GET", `/api/uploads/${encodeURIComponent(uploadId)}`));
     const u = rec(body.upload);
-    return { id: strOrNull(u.id) ?? uploadId, status: strOrNull(u.status), ai: asUploadAi(u.ai), error: strOrNull(u.error) };
+    return {
+      id: strOrNull(u.id) ?? uploadId,
+      status: strOrNull(u.status),
+      ai: asUploadAi(u.ai),
+      error: strOrNull(u.error),
+      // The row's own verdict on "did this file change anything", set from the text compare and not
+      // from who wrote the summary. It was being dropped here, which left replace_pdf inferring it
+      // from `ai.summary === "unchanged"` — a state an agent-written summary overwrites with "done".
+      unchangedFromPrevious: u.unchangedFromPrevious === true,
+    };
   }
 
   /** `GET /api/credits/snapshot?fast=1` — credits left in the workspace (read defensively). */

@@ -51,11 +51,54 @@ const passwordSchema = z
   );
 
 /** One link plus its public URL; `planWarning` is folded in by the callers that can hit the cap. */
-type ShareLinkResult = ApiShareLink & { shareUrl: string };
+type ShareLinkResult = ApiShareLink & { shareUrl: string; docArchived?: true };
 
 /** Add the `/s/:shareId` URL to a link DTO. */
 function withUrl(api: ApiClient, link: ApiShareLink): ShareLinkResult {
   return { ...link, shareUrl: api.shareUrl(link.shareId) };
+}
+
+/**
+ * One link row, told the truth about the document it hangs off.
+ *
+ * Archive state lives on the document, not the link row: an archived document keeps each link's
+ * own enabled/expiry state so unarchiving restores exactly what was live, so
+ * `src/lib/share/links.ts` derives `status` from the row alone and a link on an archived document
+ * still comes back "active". Every read surface already compensates - `lnkdrp_list_share_links`
+ * below, `withDefaultLinkState` in ./shared, and `lnkdrp_get_share`, which refuses the shareId
+ * outright - but `create`/`update` returned the DTO straight through, so the two tools that hand
+ * an agent a fresh shareUrl were the only ones saying "active" about a URL that resolves for
+ * nobody. One helper, so a fourth caller cannot drift back.
+ */
+function linkRow(api: ApiClient, link: ApiShareLink, docArchived: boolean): ShareLinkResult {
+  const row = withUrl(api, link);
+  if (!docArchived) return row;
+  return { ...row, active: false, status: "archived", docArchived: true };
+}
+
+/** Said in the same response as the shareUrl, because that URL is what the agent is about to send. */
+const ARCHIVED_DOC_WARNING =
+  "This document is archived, so none of its links resolve: anyone opening this shareUrl gets \"not found\". The link's " +
+  "own settings are kept, and lnkdrp_archive_doc { archived: false } brings the document and its links back. Tell the " +
+  "human before they send it.";
+
+/**
+ * Warn when a label is about to be a document's second link with that name.
+ *
+ * The label is how the human finds a link again; two identical ones on a document are
+ * indistinguishable in every list and search. Allowed (a resend can be deliberate), but said.
+ * Shared with `update`, which is the same end state by a quieter route: renaming produces no new
+ * row in the list to prompt a second look, so the silence there was the worse one. `exceptLinkId`
+ * keeps an update from warning a link about itself.
+ */
+function duplicateLabelWarning(label: string, existing: ApiShareLink[], exceptLinkId?: string): string | undefined {
+  const wanted = label.trim().toLowerCase();
+  const same = existing.filter((l) => l.id !== exceptLinkId && l.label.trim().toLowerCase() === wanted);
+  if (!same.length) return undefined;
+  return (
+    `This document already has ${same.length === 1 ? "a link" : `${same.length} links`} labelled "${label.trim()}" ` +
+    `(shareId ${same.map((l) => l.shareId).join(", ")}). Tell the human, and consider a label or audience that tells them apart.`
+  );
 }
 
 /**
@@ -64,10 +107,14 @@ function withUrl(api: ApiClient, link: ApiShareLink): ShareLinkResult {
  * It is a heads-up, never a refusal: links are not plan-capped, so creating one always succeeds.
  * The note exists because an agent that has just made a link is well placed to tell its user the
  * workspace is close to the limit on *documents*, which is the next thing that will stop them.
+ *
+ * The lead sentence follows the link's real state: on an archived document it used to open "This
+ * link is active", contradicting the very row it was attached to.
  */
-function planNote(warning: PlanWarning | undefined, siteUrl: string): string | undefined {
+function planNote(warning: PlanWarning | undefined, siteUrl: string, docArchived = false): string | undefined {
   if (!warning) return undefined;
-  return `This link is active. Note the workspace is using ${warning.used} of ${warning.max} shared documents on Free. Links are unlimited; documents are not. The owner can upgrade at ${siteUrl}/pricing.`;
+  const lead = docArchived ? "This link does not resolve while the document is archived." : "This link is active.";
+  return `${lead} Note the workspace is using ${warning.used} of ${warning.max} shared documents on Free. Links are unlimited; documents are not. The owner can upgrade at ${siteUrl}/pricing.`;
 }
 
 export const createShareLinkInputShape = {
@@ -133,6 +180,8 @@ export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext)
         "Links are never plan-capped: a document may carry one per investor or counterparty on any plan, so a plan never " +
         "forces a new link off; it is enabled unless you pass enabled: false. planWarning only appears when the workspace is near its separate cap on shared " +
         "documents. " +
+        "If the document is archived the link is still created and keeps its settings, but it comes back status 'archived' " +
+        "with a warning: nothing resolves until lnkdrp_archive_doc { archived: false } brings the document back. " +
         SAFETY_TAIL,
       inputSchema: createShareLinkInputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -157,23 +206,24 @@ export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext)
       }
       if (args.password !== undefined) settings.password = args.password;
       if (args.expiresAt !== undefined) settings.expiresAt = args.expiresAt;
-      // The label is how the human finds a link again; two identical ones on a document are
-      // indistinguishable in every list and search. Allowed (a resend can be deliberate), but said.
-      const wantedLabel = args.label.trim().toLowerCase();
-      const sameLabel = (await ctx.api.listShareLinks(args.docId).catch(() => [])).filter(
-        (l) => l.label.trim().toLowerCase() === wantedLabel,
-      );
+      // Two pre-flight reads, both about state this call is going to report on, both taken before
+      // the write so they describe the document as it was asked about. The listing is advisory and
+      // fails soft; the document read is not, because it decides whether the URL we hand back
+      // resolves at all, so a failure there stops the call before anything is created.
+      const [doc, existing] = await Promise.all([
+        ctx.api.getDoc(args.docId),
+        ctx.api.listShareLinks(args.docId).catch(() => []),
+      ]);
       const { link, planWarning } = await ctx.api.createShareLink(args.docId, settings);
-      const note = planNote(planWarning, ctx.api.baseUrl);
-      const warnings = sameLabel.length
-        ? [
-            `This document already has ${sameLabel.length === 1 ? "a link" : `${sameLabel.length} links`} labelled "${args.label.trim()}" ` +
-              `(shareId ${sameLabel.map((l) => l.shareId).join(", ")}). Tell the human, and consider a label or audience that tells them apart.`,
-          ]
-        : [];
+      const note = planNote(planWarning, ctx.api.baseUrl, doc.isArchived);
+      const warnings = [
+        doc.isArchived ? ARCHIVED_DOC_WARNING : undefined,
+        duplicateLabelWarning(args.label, existing),
+      ].filter((w): w is string => Boolean(w));
       return {
-        link: withUrl(ctx.api, link),
+        link: linkRow(ctx.api, link, doc.isArchived),
         shareUrl: ctx.api.shareUrl(link.shareId),
+        ...(doc.isArchived ? { docArchived: true } : {}),
         ...(planWarning ? { planWarning } : {}),
         ...(note ? { planNote: note } : {}),
         ...(warnings.length ? { warnings } : {}),
@@ -209,11 +259,7 @@ export function registerListShareLinksTool(server: McpServer, ctx: ToolContext):
         ctx.api.listShareLinksPage(args.docId, args.query),
         ctx.api.getDoc(args.docId),
       ]);
-      const rows = page.links.map((l) => {
-        const row = withUrl(ctx.api, l);
-        if (!doc.isArchived) return row;
-        return { ...row, active: false, status: "archived" as const, docArchived: true };
-      });
+      const rows = page.links.map((l) => linkRow(ctx.api, l, doc.isArchived));
       return {
         docId: args.docId,
         ...(doc.isArchived ? { docArchived: true } : {}),
@@ -245,6 +291,8 @@ export function registerUpdateShareLinkTool(server: McpServer, ctx: ToolContext)
         "(ISO date or null), allowRevisionHistory. At least one setting is required. Disabling a link revokes that recipient's " +
         "access without touching the document's other links. Links are never plan-capped, so re-enabling always succeeds; " +
         "planWarning only notes when the workspace is near its separate cap on shared documents. " +
+        "warnings also cover the two things the link row cannot show: the document being archived, so none of its links " +
+        "resolve, and a label that another link on this document already carries. " +
         SAFETY_TAIL,
       inputSchema: updateShareLinkInputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -261,17 +309,31 @@ export function registerUpdateShareLinkTool(server: McpServer, ctx: ToolContext)
       if (Object.keys(patch).length === 0) {
         throw new ToolError("validation", "Pass at least one of label, audience, enabled, allowDownload, password, expiresAt, allowRevisionHistory.");
       }
+      // Same two pre-flight reads as create, and for the same reason: this call reports a status
+      // and a shareUrl, and neither is knowable from the link row alone. The label listing has to
+      // be taken before the PATCH or the old label is already gone; it is only fetched when a
+      // rename is actually being asked for.
+      const [doc, existing] = await Promise.all([
+        ctx.api.getDoc(args.docId),
+        args.label === undefined ? Promise.resolve<ApiShareLink[]>([]) : ctx.api.listShareLinks(args.docId).catch(() => []),
+      ]);
       const { link, planWarning, warnings } = await ctx.api.updateShareLink(args.docId, args.linkId, patch);
-      const note = planNote(planWarning, ctx.api.baseUrl);
-      return {
-        link: withUrl(ctx.api, link),
-        shareUrl: ctx.api.shareUrl(link.shareId),
-        ...(planWarning ? { planWarning } : {}),
-        ...(note ? { planNote: note } : {}),
+      const note = planNote(planWarning, ctx.api.baseUrl, doc.isArchived);
+      const allWarnings = [
+        doc.isArchived ? ARCHIVED_DOC_WARNING : undefined,
+        args.label === undefined ? undefined : duplicateLabelWarning(args.label, existing, args.linkId),
         // Enabling one link can re-share the whole document and restore the links its switch had
         // taken down. The agent that made that happen has to be told, in the response to the call
-        // that did it — not left to notice by listing afterwards.
-        ...(warnings.length ? { warnings } : {}),
+        // that did it, not left to notice by listing afterwards.
+        ...warnings,
+      ].filter((w): w is string => Boolean(w));
+      return {
+        link: linkRow(ctx.api, link, doc.isArchived),
+        shareUrl: ctx.api.shareUrl(link.shareId),
+        ...(doc.isArchived ? { docArchived: true } : {}),
+        ...(planWarning ? { planWarning } : {}),
+        ...(note ? { planNote: note } : {}),
+        ...(allWarnings.length ? { warnings: allWarnings } : {}),
       };
     }),
   );

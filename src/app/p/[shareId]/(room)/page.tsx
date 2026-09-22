@@ -24,7 +24,7 @@ import { notFound } from "next/navigation";
 import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "@/components/PasswordGate";
 import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
-import IntroduceYourself from "./IntroduceYourself";
+import IntroduceYourself from "../IntroduceYourself";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
@@ -32,9 +32,9 @@ import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { listProjectDocuments, projectLinkPasswordEnabled, type PublicProjectDoc } from "@/lib/share/projectPublic";
 import { buildShareMetadata } from "@/lib/share/shareMetadata";
 
-import LandingBeacon from "./LandingBeacon";
-import RefusalNotice from "./RefusalNotice";
-import { PROJECT_SHARE_THEME } from "./shareTheme";
+import LandingBeacon from "../LandingBeacon";
+import RefusalNotice from "../RefusalNotice";
+import { PROJECT_SHARE_THEME } from "../shareTheme";
 
 function pickDocTitle(doc: PublicProjectDoc): string {
   const title = typeof doc.title === "string" ? doc.title.trim() : "";

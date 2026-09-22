@@ -267,7 +267,13 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
           const outcome =
             args.waitForReady && !timedOut
               ? await readAiOutcome(api, uploadId, { credits: true })
-              : { warnings: [] as string[], creditsRemaining: null, ai: null as UploadAi | null, failureReason: null as string | null };
+              : {
+                  warnings: [] as string[],
+                  creditsRemaining: null,
+                  ai: null as UploadAi | null,
+                  failureReason: null as string | null,
+                  unchangedFromPrevious: false,
+                };
 
           return {
             ...ids,
@@ -280,13 +286,20 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
             // A failed version says why here, not only inside warnings: an agent that reads status
             // "failed" needs the reason in the same breath to tell the human what to do next.
             ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
-            // The one fact that separates a real update from a no-op. The process route sets
-            // ai.summary = "unchanged" when the replacement's extracted text matches the previous
-            // version, and warningsFromAi rightly says nothing about it — it is not a warning. But
-            // nothing else said it either, so a byte-identical replace returned {status: "ready",
-            // version: N+1, warnings: []}, indistinguishable from a new file, and the agent told
-            // its human the document had been updated.
-            ...(outcome.ai?.summary === "unchanged" ? { unchangedFromPrevious: true as const } : {}),
+            // The one fact that separates a real update from a no-op. A byte-identical replace
+            // otherwise returns {status: "ready", version: N+1, warnings: []}, indistinguishable
+            // from a new file, and the agent tells its human the document had been updated.
+            //
+            // This read ai.summary === "unchanged", which is the summary step's state, not the
+            // compare's verdict, and the two only coincide when lnkdrp writes the summary. Pass
+            // summary + keyPoints — the credit-free path this tool's own description recommends —
+            // and the process route overwrites that state with "done" plus summaryBy, so the flag
+            // could never fire on the recommended path even though the same run recorded "No
+            // changes: this version reads the same as the previous one". The upload row carries its
+            // own unchangedFromPrevious, set from the text compare and independent of who wrote the
+            // summary; that is what is read now, so the answer no longer depends on how the caller
+            // paid for the summary.
+            ...(outcome.unchangedFromPrevious ? { unchangedFromPrevious: true as const } : {}),
             warnings: outcome.warnings,
             ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };

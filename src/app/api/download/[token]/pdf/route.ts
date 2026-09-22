@@ -16,6 +16,7 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { resolveShareLink, shareLinkUnlocked, touchShareLink } from "@/lib/share/links";
 import { recordActivity } from "@/lib/activity/log";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
+import { blobFetchUrl, fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 
 export const runtime = "nodejs";
 
@@ -113,12 +114,27 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     if (typeof blobUrl !== "string" || !blobUrl) {
       return NextResponse.json({ error: "PDF not available" }, { status: 404 });
     }
+    // A stored pointer we are not willing to dereference is the same answer as no pointer at all,
+    // the rule the other five proxies already follow. This route was the sixth one, and the only
+    // one still handing the raw field to a bare `fetch`: `blobUrl` was patchable once by any actor,
+    // and rows written while it was open are still in the database, so a poisoned row turned an
+    // approved download into this server fetching an internal address on the recipient's behalf.
+    // `/api/download/:token/save` copies `blobUrl` verbatim onto a brand new document, which is how
+    // such a row travels. Decided here, next to the empty check and ahead of the counter writes
+    // below, so a download that cannot be served is never counted as one, and so a host that does
+    // not resolve leaves as this document's own 404 rather than falling into the catch.
+    const pdfUrl = blobFetchUrl(blobUrl);
+    if (!pdfUrl) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
 
     const range = request.headers.get("range");
-    const upstream = await fetch(blobUrl, {
+    // `fetchStoredBlob`, not a bare `fetch`: the check above only ever saw the first URL, and
+    // `fetch` follows redirects by default, so an allowlisted pointer answering 302 to somewhere
+    // off the store was still dereferenced. The helper re-applies the allowlist to every hop and
+    // answers null, which is the same "not available" a refused pointer already gets.
+    const upstream = await fetchStoredBlob(pdfUrl.toString(), {
       headers: range ? { range } : undefined,
-      cache: "no-store",
     });
+    if (!upstream) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
 
     const headers = new Headers();
     // Pinned, not copied. These routes serve one thing — the stored PDF — so echoing the upstream
@@ -205,8 +221,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
 
     return new Response(upstream.body, { status: upstream.status, headers });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 400 });
+    // The thrown message used to be the response body. It is a sentence about our infrastructure
+    // (a failed lookup, a refused connection, a Mongo error naming a field) told to whoever holds
+    // the claim link, and told in a way they can tell apart from the document's own 404. One fixed
+    // answer to the recipient, the detail to the server log, where it is the operator's to read.
+    // eslint-disable-next-line no-console
+    console.error("[api/download/:token/pdf] GET failed", {
+      name: err instanceof Error ? err.name : typeof err,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return NextResponse.json({ error: "Download failed" }, { status: 400 });
   }
 }
 
