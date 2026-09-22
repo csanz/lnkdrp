@@ -3085,10 +3085,19 @@ export async function POST(
          * makes it inert in a personal workspace, which has one member and that member is always
          * the uploader.
          *
+         * **`!viaUploadSecret`**, which the first version of this block was missing and which cost
+         * it its honesty. A file dropped into a request inbox by an outside recipient arrives on
+         * the secret-auth path, where the actor is synthesised from the Upload row — and
+         * `POST /api/requests/:token/uploads` creates both Doc and Upload as *the repo owner*. So
+         * the skip dropped the owner (the one person the arrival is addressed to) and told every
+         * other member "<Owner> added contract.pdf" about a file the owner never touched. The
+         * sibling block below already carried the term; this one needed it to be its complement.
+         * A drop-off is a `repo_link_requests` event and nothing else.
+         *
          * Same dedupe shape as `doc_updates`: this route is re-entered for one upload more often
          * than any other in the product, and the upload row is the event's identity.
          */
-        if (!isReplacement && !summaryRerun && docWriteLanded) {
+        if (!isReplacement && !summaryRerun && docWriteLanded && !viaUploadSecret) {
           void (async () => {
             try {
               const uploaderUserId = actor?.userId ? String(actor.userId) : "";

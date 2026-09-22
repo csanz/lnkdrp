@@ -40,31 +40,59 @@ function docUploadBlock(): string {
 
 describe("when a new-document email is queued at all", () => {
   /** The shipped `if (...)` condition, compiled so the real expression decides. */
-  function gate(): (isReplacement: boolean, summaryRerun: boolean, docWriteLanded: boolean) => boolean {
+  function gate(): (
+    isReplacement: boolean,
+    summaryRerun: boolean,
+    docWriteLanded: boolean,
+    viaUploadSecret: boolean,
+  ) => boolean {
     const block = docUploadBlock();
     const expr = /^if \(([^)]*)\) \{/.exec(block)?.[1];
     expect(expr, "the gate is still a single `if (...) {` line").toBeTruthy();
-    return new Function("isReplacement", "summaryRerun", "docWriteLanded", `return Boolean(${expr});`) as (
-      a: boolean,
-      b: boolean,
-      c: boolean,
-    ) => boolean;
+    return new Function(
+      "isReplacement",
+      "summaryRerun",
+      "docWriteLanded",
+      "viaUploadSecret",
+      `return Boolean(${expr});`,
+    ) as (a: boolean, b: boolean, c: boolean, d: boolean) => boolean;
   }
 
   test("a genuinely new document queues", () => {
-    expect(gate()(false, false, true)).toBe(true);
+    expect(gate()(false, false, true, false)).toBe(true);
   });
 
   test("a replacement does not — that is doc_updates' event, and this mail would be a lie about it", () => {
-    expect(gate()(true, false, true)).toBe(false);
+    expect(gate()(true, false, true, false)).toBe(false);
   });
 
   test("a summary rerun does not: nothing arrived, someone pressed a button on a document already there", () => {
-    expect(gate()(false, true, true)).toBe(false);
+    expect(gate()(false, true, true, false)).toBe(false);
   });
 
   test("a write that did not land does not — no email about a document nobody can open", () => {
-    expect(gate()(false, false, false)).toBe(false);
+    expect(gate()(false, false, false, false)).toBe(false);
+  });
+
+  /**
+   * The preamble above named "recipient uploads" as a case the gate must exclude, and nothing
+   * asserted it — so the first version shipped without the term and a pre-merge review found it.
+   *
+   * A file dropped into a request inbox arrives on the secret-auth path, where the actor is
+   * synthesised from the Upload row, and `POST /api/requests/:token/uploads` creates both Doc and
+   * Upload as the *repo owner*. So "skip the uploader" dropped the owner — the one person the
+   * arrival is addressed to — and told every other member "<Owner> added contract.pdf" about a
+   * file the owner never touched. With NEXT_PUBLIC_FEATURE_REQUESTS unset, the correctly
+   * attributed repo_link_requests mail is withheld, so only the wrong one went out.
+   */
+  test("an outside recipient's drop-off does not — that is repo_link_requests' event", () => {
+    expect(gate()(false, false, true, true)).toBe(false);
+  });
+
+  test("the two fan-outs partition on viaUploadSecret rather than overlapping", () => {
+    const src = source;
+    expect(src).toContain("!isReplacement && !summaryRerun && docWriteLanded && !viaUploadSecret");
+    expect(src).toContain("!isReplacement && docWriteLanded && viaUploadSecret");
   });
 });
 
