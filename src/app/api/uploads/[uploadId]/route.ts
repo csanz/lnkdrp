@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
@@ -387,22 +388,47 @@ export async function PATCH(
         secretLen: trimmed.length,
       });
 
-      // Debug-friendly behavior: distinguish between missing upload vs secret mismatch.
-      // (This route is used by capability flows; returning a clearer error helps diagnose issues.)
+      /**
+       * One answer for every refusal, because this caller is anonymous.
+       *
+       * This used to answer 404 for "no such upload", `UPLOAD_SECRET_NOT_ENABLED` for one with no
+       * secret, and `UPLOAD_SECRET_MISMATCH` for a wrong one — a comment described that as
+       * debug-friendly. It is the response-shape oracle `docs/SECURITY.md` section 7 already lists
+       * as a bug class: a holder of any upload id learns whether it exists and whether it is open
+       * to secret-auth, without holding the secret. Nothing consumed the two codes.
+       *
+       * The detail still exists, in the server log, where the person diagnosing can see it and the
+       * person probing cannot.
+       */
       const exists = await UploadModel.findOne({
         _id: new Types.ObjectId(uploadId),
         isDeleted: { $ne: true },
       })
         .select({ _id: 1, uploadSecret: 1, docId: 1, contentType: 1, originalFileName: 1 })
         .lean();
-      if (!exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      const stored =
+        exists && typeof (exists as any).uploadSecret === "string" ? String((exists as any).uploadSecret).trim() : "";
+      /**
+       * Constant-time, because this is a bearer secret compared in the application.
+       *
+       * The GET path above matches it inside the Mongo filter, which never shortcuts on the first
+       * differing byte; this one did `stored !== trimmed`. Length is checked first because
+       * `timingSafeEqual` throws on a mismatch — the same shape as `internalProcess.ts` and
+       * `acceptToken.ts`.
+       */
+      const secretOk = (() => {
+        if (!stored) return false;
+        const a = Buffer.from(stored);
+        const b = Buffer.from(trimmed);
+        return a.length === b.length && crypto.timingSafeEqual(a, b);
+      })();
 
-      const stored = typeof (exists as any).uploadSecret === "string" ? String((exists as any).uploadSecret).trim() : "";
-      if (!stored) {
-        return NextResponse.json({ error: "UPLOAD_SECRET_NOT_ENABLED" }, { status: 403 });
-      }
-      if (stored !== trimmed) {
-        return NextResponse.json({ error: "UPLOAD_SECRET_MISMATCH" }, { status: 403 });
+      if (!exists || !secretOk) {
+        debugLog(1, "[api/uploads/:uploadId] PATCH secret refused", {
+          uploadId,
+          reason: !exists ? "no_such_upload" : !stored ? "secret_not_enabled" : "secret_mismatch",
+        });
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
 
       const built = buildPatchUpdate(body, { docId: exists.docId ? String(exists.docId) : "", uploadId }, "uploadSecret");
