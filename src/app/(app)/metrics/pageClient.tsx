@@ -22,6 +22,7 @@ import Alert from "@/components/ui/Alert";
 import HeadlineStrip from "@/components/workspaceMetrics/HeadlineStrip";
 import HeroChart from "@/components/workspaceMetrics/HeroChart";
 import MetricsSkeleton, { MetricsEmptyWorkspace } from "@/components/workspaceMetrics/MetricsSkeleton";
+import { useSkeletonDelay } from "@/lib/client/useSkeletonDelay";
 import RangeControl from "@/components/workspaceMetrics/RangeControl";
 import {
   ContributorsSection,
@@ -109,6 +110,7 @@ export default function MetricsPageClient() {
   }, []);
 
   const { plan, loading: planLoading } = usePlan();
+  const showSkeleton = useSkeletonDelay(loading || !data);
   // The payload is the authority once it arrives: it is the response that was actually served, and
   // `/api/plan` can fail (`usePlan` then answers `null` with `loading: false`, which read as "Pro"
   // and left a Free workspace with 30d highlighted over a 7-day body). `usePlan` only fills the gap
@@ -252,7 +254,10 @@ export default function MetricsPageClient() {
         ) : null}
 
         {loading || !data ? (
-          error ? null : <MetricsSkeleton />
+          // Nothing for the first fifth of a second. A workspace with no documents was drawing a
+          // full dashboard of tiles and charts and then replacing it with "No shared documents
+          // yet" — a promise of numbers that were never coming. See `useSkeletonDelay`.
+          error || !showSkeleton ? null : <MetricsSkeleton />
         ) : emptyWorkspace ? (
           <MetricsEmptyWorkspace />
         ) : (
