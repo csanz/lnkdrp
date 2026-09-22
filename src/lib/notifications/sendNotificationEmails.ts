@@ -31,6 +31,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { OrgModel } from "@/lib/models/Org";
 import type { EmailWorkspace } from "@/lib/email/layout";
+import { composeDocUpdateEmail } from "@/lib/notifications/docUpdateEmail";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
@@ -58,7 +59,7 @@ import { sendTextEmail } from "@/lib/email/sendTextEmail";
 import { debugError } from "@/lib/debug";
 import { resolveConfiguredSiteUrl } from "@/lib/urls";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
-import { viewEmailsOffUrl } from "@/lib/notifications/viewEmailToken";
+import { emailsOffUrl, viewEmailsOffUrl } from "@/lib/notifications/viewEmailToken";
 import {
   DIGEST_MAX_DOCUMENTS,
   composeDigestEmail,
@@ -74,6 +75,9 @@ import {
   type NewViewerEvent,
   type ViewLinkInfo,
   type WorkspacePlan,
+  buildPreferencesUrl,
+  TURN_OFF_LABEL,
+  CHANGE_HOW_OFTEN_LABEL,
 } from "@/lib/notifications/viewNotifications";
 
 type Mode = "off" | "daily" | "immediate";
@@ -692,6 +696,10 @@ async function buildDocUpdateRound(params: {
   orgIdStr: string;
   rows: ClaimedNotification[];
   mode: SendMode;
+  membershipId: string;
+  appUrl: string;
+  now: Date;
+  workspace: EmailWorkspace | null;
 }): Promise<Round> {
   const skipped: Round["skipped"] = [];
 
@@ -778,27 +786,28 @@ async function buildDocUpdateRound(params: {
   items.sort((a, b) => a.row.occurredAt.getTime() - b.row.occurredAt.getTime());
 
   const daily = params.mode === "daily";
-  const subject = daily
-    ? `Daily digest: ${items.length} doc update${items.length === 1 ? "" : "s"}`
-    : items.length === 1
-      ? `Doc updated: ${items[0]!.title}`
-      : `${items.length} docs updated`;
+  const email = composeDocUpdateEmail({
+    entries: items.map((item) => ({
+      title: item.title,
+      version: item.version,
+      summary: item.summary,
+      url: daily ? buildDocHistoryUrl(item.docId) : buildDocUrl(item.docId),
+    })),
+    daily,
+    workspace: params.workspace,
+    // Scoped to doc-update mail: a token minted for view emails would switch off the wrong thing.
+    offUrl: emailsOffUrl(params.appUrl, "doc_updates", params.membershipId, { now: params.now }),
+    preferencesUrl: buildPreferencesUrl(params.appUrl),
+    turnOffLabel: TURN_OFF_LABEL,
+    changeHowOftenLabel: CHANGE_HOW_OFTEN_LABEL,
+  });
 
-  const lines: string[] = [];
-  lines.push(
-    daily
-      ? `Doc updates in your workspace (${params.orgIdStr})`
-      : `New doc update${items.length === 1 ? "" : "s"} in your workspace (${params.orgIdStr})`,
-    "",
-  );
-  for (const item of items) {
-    lines.push(`- ${item.title}${item.version ? ` (v${item.version})` : ""}`);
-    if (item.summary) lines.push(`  ${item.summary}`);
-    lines.push(`  ${daily ? buildDocHistoryUrl(item.docId) : buildDocUrl(item.docId)}`);
-  }
-  lines.push("", "- LinkDrop");
-
-  return { deliveries: [{ subject, text: lines.join("\n"), rows: items.map((i) => i.row) }], skipped };
+  return {
+    deliveries: [
+      { subject: email.subject, text: email.text, html: email.html, headers: email.headers, rows: items.map((i) => i.row) },
+    ],
+    skipped,
+  };
 }
 
 /** One request upload, resolved back to the request repo it landed in. */
@@ -1383,7 +1392,16 @@ async function renderAndSend(params: {
       workspace: await loadWorkspace(orgId, orgIdStr, params.workspaces),
     });
   } else if (kind === "doc_updates") {
-    round = await buildDocUpdateRound({ orgId, orgIdStr, rows, mode });
+    round = await buildDocUpdateRound({
+      orgId,
+      orgIdStr,
+      rows,
+      mode,
+      membershipId: params.membershipId,
+      appUrl: params.appUrl,
+      now,
+      workspace: await loadWorkspace(orgId, orgIdStr, params.workspaces),
+    });
   } else {
     round = await buildRepoLinkRound({ orgId, orgIdStr, rows, mode });
   }

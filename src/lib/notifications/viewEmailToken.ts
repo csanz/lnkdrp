@@ -23,6 +23,29 @@ import crypto from "node:crypto";
 export const VIEW_EMAILS_OFF_PURPOSE = "view_emails_off";
 
 /**
+ * The kinds of recurring email a member can switch off from the email itself.
+ *
+ * Each has its own purpose string, so a key derived for one can never verify a token for another —
+ * which is the point. Doc-update mail had no unsubscribe at all and the obvious shortcut was to
+ * reuse the view token; that would have made "turn off these emails" on a doc-update email set
+ * `viewEmailMode`, silently switching off a different kind of mail than the one in front of them.
+ *
+ * `view_emails_off` keeps its original string. It is signed into every unsubscribe link already
+ * sitting in somebody's mailbox and changing it would break all of them.
+ */
+export const EMAIL_OFF_KINDS = {
+  views: { purpose: VIEW_EMAILS_OFF_PURPOSE, field: "viewEmailMode" },
+  doc_updates: { purpose: "doc_update_emails_off", field: "docUpdateEmailMode" },
+} as const;
+
+export type EmailOffKind = keyof typeof EMAIL_OFF_KINDS;
+
+/** The route reads the kind off the token rather than a query parameter, which a bearer could edit. */
+export type VerifyAnyResult =
+  | { ok: true; kind: EmailOffKind; membershipId: string }
+  | { ok: false; reason: ViewEmailsOffTokenFailure; membershipId?: string };
+
+/**
  * Default token lifetime: 30 days.
  *
  * This token is a bearer credential in a URL: the payload is `{ v, p, m, e }` and nothing else, so
@@ -146,18 +169,28 @@ function isValidMembershipId(v: unknown): v is string {
   return typeof v === "string" && v.length > 0 && v.length <= MAX_MEMBERSHIP_ID_LENGTH && v.trim() === v;
 }
 
-/** Create a signed token that lets its bearer set this membership's view emails to `off`. */
-export function createViewEmailsOffToken(membershipId: string, opts?: { now?: Date; ttlMs?: number }): string {
+/** Create a signed token that lets its bearer set one of this membership's email modes to `off`. */
+export function createEmailsOffToken(
+  kind: EmailOffKind,
+  membershipId: string,
+  opts?: { now?: Date; ttlMs?: number },
+): string {
+  const purpose = EMAIL_OFF_KINDS[kind].purpose;
   const id = String(membershipId ?? "");
-  if (!isValidMembershipId(id)) throw new Error("createViewEmailsOffToken: invalid membershipId");
+  if (!isValidMembershipId(id)) throw new Error("createEmailsOffToken: invalid membershipId");
   const now = opts?.now ?? new Date();
   const ttlMs =
     typeof opts?.ttlMs === "number" && Number.isFinite(opts.ttlMs) && opts.ttlMs > 0 ? opts.ttlMs : VIEW_EMAILS_OFF_TTL_MS;
-  const payload = { v: TOKEN_VERSION, p: VIEW_EMAILS_OFF_PURPOSE, m: id, e: Math.floor(now.getTime() + ttlMs) };
+  const payload = { v: TOKEN_VERSION, p: purpose, m: id, e: Math.floor(now.getTime() + ttlMs) };
   const payloadSegment = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
   // Minting always uses the current secret; `legacy` is a read-only concession to links already sent.
-  const sig = sign(payloadSegment, VIEW_EMAILS_OFF_PURPOSE, getTokenSecrets().current).toString("base64url");
+  const sig = sign(payloadSegment, purpose, getTokenSecrets().current).toString("base64url");
   return `${payloadSegment}.${sig}`;
+}
+
+/** Back-compat wrapper: the view kind by name, for callers and tests that predate the others. */
+export function createViewEmailsOffToken(membershipId: string, opts?: { now?: Date; ttlMs?: number }): string {
+  return createEmailsOffToken("views", membershipId, opts);
 }
 
 /**
@@ -167,7 +200,7 @@ export function createViewEmailsOffToken(membershipId: string, opts?: { now?: Da
  * (wrong_purpose) -> expiry (expired, with the membership id since the signature was valid).
  * Never throws for untrusted input; only a missing secret in production throws.
  */
-export function verifyViewEmailsOffToken(token: string, opts?: { now?: Date }): VerifyViewEmailsOffTokenResult {
+function verifyForPurpose(purpose: string, token: string, opts?: { now?: Date }): VerifyViewEmailsOffTokenResult {
   if (typeof token !== "string" || token.length === 0 || token.length > MAX_TOKEN_LENGTH) {
     return { ok: false, reason: "malformed" };
   }
@@ -183,8 +216,8 @@ export function verifyViewEmailsOffToken(token: string, opts?: { now?: Date }): 
   // Current secret first; then, only where the key rotated (see `getTokenSecrets`), the secret that
   // signed the links already sitting in people's mailboxes. Both comparisons are constant-time, and
   // the second one runs on failure only, which leaks nothing a forger did not already know.
-  let matched = safeEqual(given, sign(payloadSegment, VIEW_EMAILS_OFF_PURPOSE, current));
-  if (!matched && legacy) matched = safeEqual(given, sign(payloadSegment, VIEW_EMAILS_OFF_PURPOSE, legacy));
+  let matched = safeEqual(given, sign(payloadSegment, purpose, current));
+  if (!matched && legacy) matched = safeEqual(given, sign(payloadSegment, purpose, legacy));
   if (!matched) return { ok: false, reason: "bad_signature" };
 
   let payload: unknown;
@@ -198,7 +231,7 @@ export function verifyViewEmailsOffToken(token: string, opts?: { now?: Date }): 
   if (v !== TOKEN_VERSION || !isValidMembershipId(m) || typeof e !== "number" || !Number.isFinite(e)) {
     return { ok: false, reason: "malformed" };
   }
-  if (p !== VIEW_EMAILS_OFF_PURPOSE) return { ok: false, reason: "wrong_purpose" };
+  if (p !== purpose) return { ok: false, reason: "wrong_purpose" };
 
   const nowMs = (opts?.now ?? new Date()).getTime();
   if (nowMs >= e) return { ok: false, reason: "expired", membershipId: m };
@@ -206,9 +239,54 @@ export function verifyViewEmailsOffToken(token: string, opts?: { now?: Date }): 
   return { ok: true, membershipId: m };
 }
 
+/** Back-compat wrapper: verify strictly as a view-emails token. */
+export function verifyViewEmailsOffToken(token: string, opts?: { now?: Date }): VerifyViewEmailsOffTokenResult {
+  return verifyForPurpose(VIEW_EMAILS_OFF_PURPOSE, token, opts);
+}
+
+/**
+ * Verify against every kind and report which one it was.
+ *
+ * The route needs to know what to switch off, and the token is the only trustworthy place to read
+ * that from — a `?kind=` parameter is editable by whoever holds the link, so an unsubscribe link
+ * for doc-update mail could be turned into one that switches off view emails instead. Each kind
+ * has its own derived key, so exactly one of these can verify a given token.
+ *
+ * The failure reported is the one from the kind the token *claims* to be (its `p`), so a
+ * legitimately expired doc-update token still says "expired" rather than "wrong purpose".
+ */
+export function verifyAnyEmailsOffToken(token: string, opts?: { now?: Date }): VerifyAnyResult {
+  let best: VerifyViewEmailsOffTokenResult | null = null;
+  for (const kind of Object.keys(EMAIL_OFF_KINDS) as EmailOffKind[]) {
+    const res = verifyForPurpose(EMAIL_OFF_KINDS[kind].purpose, token, opts);
+    if (res.ok) return { ok: true, kind, membershipId: res.membershipId };
+    // "wrong_purpose" only means it was not this kind; keep looking, and keep any better reason.
+    if (res.reason !== "wrong_purpose" && (!best || best.ok)) best = res;
+    else if (!best) best = res;
+  }
+  const fallback = best && !best.ok ? best : { ok: false as const, reason: "malformed" as const };
+  return fallback as VerifyAnyResult;
+}
+
 /** Absolute one-click off URL for a membership: `<appUrl>/api/notifications/views/off?t=<token>`. */
 export function viewEmailsOffUrl(appUrl: string, membershipId: string, opts?: { now?: Date }): string {
+  return emailsOffUrl(appUrl, "views", membershipId, opts);
+}
+
+/**
+ * The same URL for any kind.
+ *
+ * One route serves them all: the path still says `views` because it is signed into every
+ * unsubscribe link already sent and renaming it would break those, and the token says which kind
+ * it is anyway. A cosmetic mismatch is a better trade than a migration of links we cannot reach.
+ */
+export function emailsOffUrl(
+  appUrl: string,
+  kind: EmailOffKind,
+  membershipId: string,
+  opts?: { now?: Date },
+): string {
   const base = String(appUrl ?? "").replace(/\/+$/, "");
-  const token = createViewEmailsOffToken(membershipId, { now: opts?.now });
+  const token = createEmailsOffToken(kind, membershipId, { now: opts?.now });
   return `${base}/api/notifications/views/off?t=${encodeURIComponent(token)}`;
 }

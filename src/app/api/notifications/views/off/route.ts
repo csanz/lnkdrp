@@ -40,7 +40,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { OrgModel } from "@/lib/models/Org";
-import { verifyViewEmailsOffToken } from "@/lib/notifications/viewEmailToken";
+import { EMAIL_OFF_KINDS, verifyAnyEmailsOffToken, type EmailOffKind } from "@/lib/notifications/viewEmailToken";
 import { debugError } from "@/lib/debug";
 
 export const runtime = "nodejs";
@@ -56,6 +56,18 @@ export const dynamic = "force-dynamic";
  * setting on it.
  */
 const PREFERENCES_PATH = VIEW_EMAIL_PREFERENCES_PATH;
+
+/** What the confirmation page says, per kind. One route serves both; only the words differ. */
+const OFF_COPY: Record<EmailOffKind, { title: string; line: (workspace: string) => string }> = {
+  views: {
+    title: "View emails are off",
+    line: (w) => `You won't get emails when someone opens a document in ${w}.`,
+  },
+  doc_updates: {
+    title: "Document update emails are off",
+    line: (w) => `You won't get emails when a document is replaced in ${w}.`,
+  },
+};
 
 type ViewEmailMode = "off" | "daily" | "immediate";
 
@@ -199,9 +211,9 @@ async function loadWorkspaceName(orgId: unknown): Promise<unknown> {
 async function handle(request: Request, opts: { write: boolean }): Promise<Response> {
   const token = new URL(request.url).searchParams.get("t") ?? "";
 
-  let verified: ReturnType<typeof verifyViewEmailsOffToken>;
+  let verified: ReturnType<typeof verifyAnyEmailsOffToken>;
   try {
-    verified = verifyViewEmailsOffToken(token);
+    verified = verifyAnyEmailsOffToken(token);
   } catch (e) {
     // Only a missing signing secret in production throws; that is a server problem, not a bad link.
     debugError(1, "[notifications/views/off] token verification failed", e);
@@ -217,9 +229,12 @@ async function handle(request: Request, opts: { write: boolean }): Promise<Respo
     await connectMongo();
 
     if (verified.ok && opts.write) {
+      // The field comes off the token, never off the URL: a `?kind=` parameter is editable by
+      // whoever holds the link, which would let an unsubscribe link for one kind of mail switch
+      // off another.
       const membership = await OrgMembershipModel.findOneAndUpdate(
         notDeleted,
-        { $set: { viewEmailMode: "off" } },
+        { $set: { [EMAIL_OFF_KINDS[verified.kind].field]: "off" } },
         { new: true, runValidators: true },
       )
         .select({ orgId: 1 })
@@ -227,14 +242,12 @@ async function handle(request: Request, opts: { write: boolean }): Promise<Respo
       // Membership removed since the email went out: nothing to turn off, and nothing to reveal.
       if (!membership) return invalidPage();
       const name = await loadWorkspaceName((membership as { orgId?: unknown }).orgId);
+      const done = OFF_COPY[verified.kind];
       return renderPage(
         {
-          title: "View emails are off",
-          heading: "View emails are off",
-          lines: [
-            `You won't get emails when someone opens a document in ${workspaceLabel(name)}.`,
-            "Turned this off by mistake? Change how often below.",
-          ],
+          title: done.title,
+          heading: done.title,
+          lines: [done.line(workspaceLabel(name)), "Turned this off by mistake? Change how often below."],
         },
         200,
       );
@@ -345,9 +358,9 @@ export async function POST(request: Request): Promise<Response> {
   if (fromBrowser) return handle(request, { write: true });
 
   const token = new URL(request.url).searchParams.get("t") ?? "";
-  let verified: ReturnType<typeof verifyViewEmailsOffToken>;
+  let verified: ReturnType<typeof verifyAnyEmailsOffToken>;
   try {
-    verified = verifyViewEmailsOffToken(token);
+    verified = verifyAnyEmailsOffToken(token);
   } catch (e) {
     debugError(1, "[notifications/views/off] token verification failed", e);
     return oneClickStatus(500);
@@ -358,7 +371,7 @@ export async function POST(request: Request): Promise<Response> {
     await connectMongo();
     const res = await OrgMembershipModel.updateOne(
       { _id: new Types.ObjectId(verified.membershipId), isDeleted: { $ne: true } },
-      { $set: { viewEmailMode: "off" } },
+      { $set: { [EMAIL_OFF_KINDS[verified.kind].field]: "off" } },
       { runValidators: true },
     );
     // Membership removed since the email went out: nothing to turn off.

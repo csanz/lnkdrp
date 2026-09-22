@@ -112,6 +112,7 @@ vi.mock("@/lib/billing/planLimits", () => ({ getWorkspacePlan }));
 vi.mock("@/lib/debug", () => ({ debugError: vi.fn(), debugLog: vi.fn(), debugWarn: vi.fn() }));
 
 const { sendNotificationEmails } = await import("@/lib/notifications/sendNotificationEmails");
+const { verifyAnyEmailsOffToken } = await import("@/lib/notifications/viewEmailToken");
 const { DIGEST_MAX_DOCUMENTS } = await import("@/lib/notifications/viewNotifications");
 const { verifyViewEmailsOffToken } = await import("@/lib/notifications/viewEmailToken");
 
@@ -593,25 +594,40 @@ describe("doc update and request emails", () => {
     docFind.mockReturnValue(chain([{ _id: DOC_A, title: "Doc One" }]));
   });
 
-  test("an immediate doc update reads exactly as it always has, and links to the document", async () => {
+  test("an immediate doc update names the document, the version, the diff and the link", async () => {
     setMembership({ docUpdateEmailMode: "immediate" });
     pending = [queueRow("doc_updates", UPLOAD, { event: { uploadId: String(UPLOAD), docId: String(DOC_A), version: 3 } })];
 
     const res = await sendNotificationEmails({ now: NOW });
     const mail = sent()[0]!;
-    expect(mail.subject).toBe("Doc updated: Doc One");
-    expect(mail.text).toBe(
-      [
-        `New doc update in your workspace (${String(ORG)})`,
-        "",
-        "- Doc One (v3)",
-        "  Pricing page rewritten",
-        `  http://localhost:3001/doc/${String(DOC_A)}`,
-        "",
-        "- LinkDrop",
-      ].join("\n"),
-    );
+    expect(mail.subject).toBe("Updated: Doc One");
+    expect(mail.text).toContain("Doc One");
+    expect(mail.text).toContain("Version: v3");
+    expect(mail.text).toContain("Pricing page rewritten");
+    expect(mail.text).toContain(`http://localhost:3001/doc/${String(DOC_A)}`);
+    // It used to open with the workspace's ObjectId, which is not a thing to show a person.
+    expect(mail.text).not.toContain(String(ORG));
+    expect(mail.text).toContain("Workspace: Acme");
     expect(res.docUpdate.immediate).toEqual({ members: 1, emails: 1, events: 1, failed: 0 });
+  });
+
+  test("a doc update can be switched off from the email, and off the right setting", async () => {
+    setMembership({ docUpdateEmailMode: "immediate" });
+    pending = [queueRow("doc_updates", UPLOAD, { event: { uploadId: String(UPLOAD), docId: String(DOC_A), version: 3 } })];
+
+    await sendNotificationEmails({ now: NOW });
+    const mail = sent()[0]!;
+    // These had no unsubscribe at all, which is how a recipient ends up pressing Spam instead.
+    expect(mail.html).toBeTruthy();
+    expect(mail.headers?.["List-Unsubscribe"]).toBeTruthy();
+    expect(mail.headers?.["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+
+    const offUrl = String(mail.headers?.["List-Unsubscribe"]).replace(/^<|>$/g, "");
+    const token = new URL(offUrl).searchParams.get("t") ?? "";
+    const verified = verifyAnyEmailsOffToken(token, { now: NOW });
+    expect(verified.ok).toBe(true);
+    // The whole point of a separate purpose: this must not turn off view emails.
+    expect(verified.ok && verified.kind).toBe("doc_updates");
   });
 
   test("the digest keeps its own wording and links to the history", async () => {
@@ -620,9 +636,9 @@ describe("doc update and request emails", () => {
 
     await sendNotificationEmails({ now: NOW, forceDigest: true });
     const mail = sent()[0]!;
-    expect(mail.subject).toBe("Daily digest: 1 doc update");
-    expect(mail.text).toContain(`Doc updates in your workspace (${String(ORG)})`);
-    expect(mail.text).toContain(`  http://localhost:3001/doc/${String(DOC_A)}/history`);
+    expect(mail.subject).toBe("1 document updated today");
+    expect(mail.text).toContain("Workspace: Acme");
+    expect(mail.text).toContain(`http://localhost:3001/doc/${String(DOC_A)}/history`);
   });
 
   /**
@@ -641,8 +657,9 @@ describe("doc update and request emails", () => {
     const res = await sendNotificationEmails({ now: NOW });
     expect(markSkipped).not.toHaveBeenCalled();
     const mail = sent()[0]!;
-    expect(mail.subject).toBe("Doc updated: Doc One");
-    expect(mail.text).toContain("- Doc One (v4)");
+    expect(mail.subject).toBe("Updated: Doc One");
+    expect(mail.text).toContain("Doc One");
+    expect(mail.text).toContain("Version: v4");
     expect(res.docUpdate.immediate.emails).toBe(1);
   });
 
@@ -654,7 +671,8 @@ describe("doc update and request emails", () => {
     pending = [queueRow("doc_updates", UPLOAD, { event: { uploadId: String(UPLOAD) } })];
 
     await sendNotificationEmails({ now: NOW });
-    expect(sent()[0]!.text).toContain("- Doc One (v2)");
+    expect(sent()[0]!.text).toContain("Doc One");
+    expect(sent()[0]!.text).toContain("Version: v2");
   });
 
   test("a doc update whose document is gone is skipped, not retried forever", async () => {

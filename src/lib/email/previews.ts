@@ -12,6 +12,7 @@
  * builder would otherwise read the clock, so two renders are byte-identical and a diff in the
  * output is a diff in the template.
  */
+import { composeDocUpdateEmail } from "@/lib/notifications/docUpdateEmail";
 import type { EmailContent } from "@/lib/email/templates/compose";
 import {
   EMAIL_CATALOG,
@@ -159,6 +160,48 @@ export function buildPreviews(): PreviewRow[] {
   const rows: PreviewRow[] = [];
 
   // First in the list because it is the first email an account ever gets.
+  // Doc updates: previously invisible here, because they had no builder to call.
+  for (const [key, label, daily, entries] of [
+    [
+      "doc_update.immediate",
+      "A document was replaced",
+      false,
+      [{ title: SAMPLE_TITLE, version: 4, summary: "Pricing page rewritten; two slides added.", url: `${SITE_URL}/doc/${SAMPLE_DOC_ID}` }],
+    ],
+    [
+      "doc_update.daily",
+      "Documents replaced \u2014 daily digest",
+      true,
+      [
+        { title: SAMPLE_TITLE, version: 4, summary: "Pricing page rewritten.", url: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/history` },
+        { title: "Board update Q3", version: 2, summary: "", url: `${SITE_URL}/doc/68c1f0a2b3c4d5e6f7a80002/history` },
+      ],
+    ],
+  ] as const) {
+    const mail = composeDocUpdateEmail({
+      entries: entries as never,
+      daily,
+      workspace: { name: "Acme", avatarUrl: null },
+      offUrl: SAMPLE_OFF_URL,
+      preferencesUrl: `${SITE_URL}/dashboard?tab=notifications#email-preferences`,
+      turnOffLabel: "Turn off these emails",
+      changeHowOftenLabel: "Change how often",
+    });
+    rows.push({
+      key,
+      catalogId: key,
+      label,
+      inputs: [
+        { label: "documents", value: String((entries as readonly unknown[]).length) },
+        { label: "mode", value: daily ? "daily" : "immediate" },
+      ],
+      subject: mail.subject,
+      text: mail.text,
+      html: mail.html,
+      headers: Object.entries(mail.headers).map(([name, value]) => ({ name, value })),
+    });
+  }
+
   rows.push({
     key: "welcome",
     catalogId: "welcome",

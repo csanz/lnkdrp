@@ -165,6 +165,14 @@ export type Block =
   | { kind: "subheading"; text: string; compact?: boolean }
   | { kind: "bullets"; items: string[] }
   /**
+   * A list of named links — a digest of several documents, where one button will not do.
+   *
+   * The alternative was a `rows` block with the URL as its value, which prints the raw address and
+   * wraps a 70-character link across three lines. A name people recognise, carrying the link, is
+   * both shorter and easier to aim at.
+   */
+  | { kind: "links"; items: Array<{ label: string; url: string }> }
+  /**
    * `secondary`: an outlined button, for the action you would rather they did not take by reflex.
    * Approve and Deny were both solid black, identical in weight, one of them irreversible.
    */
@@ -227,6 +235,11 @@ export function renderText(
         for (const item of b.items) out.push(`- ${item}`);
         out.push("");
         break;
+      case "links":
+        // The text part has no anchors, so the address has to be visible here or it is lost.
+        for (const item of b.items) out.push(`${item.label}: ${item.url}`);
+        out.push("");
+        break;
       case "action":
         out.push(`${b.label}: ${b.url}`, "");
         break;
@@ -285,6 +298,19 @@ export function renderHtml(params: {
               k
                 ? `<tr><td style="padding:2px 12px 2px 0;font-family:${FONT};font-size:13px;line-height:1.5;color:#71717a;vertical-align:top;white-space:nowrap;">${escapeHtml(k)}</td><td style="padding:2px 0;font-family:${FONT};font-size:14px;line-height:1.5;color:#18181b;vertical-align:top;${BREAK}">${escapeHtml(v)}</td></tr>`
                 : `<tr><td colspan="2" style="padding:2px 0;font-family:${FONT};font-size:14px;line-height:1.5;color:#18181b;${BREAK}">${escapeHtml(v)}</td></tr>`,
+            )
+            .join("")}</table>`,
+        );
+        break;
+      case "links":
+        if (!b.items.length) break;
+        parts.push(
+          `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px;${gap}border-collapse:collapse;">${b.items
+            .map(
+              (i) =>
+                `<tr><td style="padding:3px 0;font-family:${FONT};font-size:14px;line-height:1.5;${BREAK}">` +
+                `<a href="${escapeHtml(i.url)}" style="color:#18181b;font-weight:600;text-decoration:underline;">${escapeHtml(i.label)}</a>` +
+                `</td></tr>`,
             )
             .join("")}</table>`,
         );
