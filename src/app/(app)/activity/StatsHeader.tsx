@@ -270,6 +270,16 @@ function ActorDonut({ slices, total, days }: { slices: ActorSlice[]; total: numb
         {slices.map((s, i) => (
           <li key={s.key} className="flex items-center gap-2 text-[12px] leading-4">
             <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: sliceColor(s, i) }} />
+            {/* An agent's name says nothing about what it is. The chip does, in the same place the
+                workspace metrics list marks one, so "Northwind Seed" is not read as a colleague. */}
+            {s.kind === "people" ? null : (
+              <span
+                className="shrink-0 rounded px-1 py-px text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)] ring-1 ring-[var(--border)]"
+                title="Worked through the MCP, not in the app"
+              >
+                Agent
+              </span>
+            )}
             <span className="min-w-0 truncate text-[var(--muted)]">{s.label}</span>
             <span className="ml-auto shrink-0 pl-2 tabular-nums font-medium text-[var(--fg)]">{s.count.toLocaleString()}</span>
             <span className="w-9 shrink-0 text-right tabular-nums text-[var(--muted-2)]">{formatShare(s.count / total)}</span>

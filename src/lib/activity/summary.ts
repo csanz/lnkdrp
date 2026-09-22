@@ -169,7 +169,15 @@ export function groupActorSlices(
   const tail = agentsSorted.slice(maxNamed);
 
   const slices: ActorSlice[] = [];
-  if (people > 0) slices.push({ key: "people", kind: "people", client: null, label: "People in the app", count: people });
+  /**
+   * "People" against named agents, which is the split this chart exists to show.
+   *
+   * It said "People in the app", which read as a third participant alongside "Northwind Seed" and
+   * "Lnkdrp E2e" rather than as the other half of the comparison — nothing on the row said those
+   * two were agents working through the MCP, so the legend was three names of unclear kind. The
+   * label is plain now and the legend marks the agents; see `StatsHeader`.
+   */
+  if (people > 0) slices.push({ key: "people", kind: "people", client: null, label: "People", count: people });
   for (const a of named) slices.push({ key: `agent:${a.client}`, kind: "agent", client: a.client, label: a.label, count: a.count });
   if (tail.length === 1) {
     const only = tail[0]!;
