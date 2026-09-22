@@ -2218,6 +2218,8 @@ export async function POST(
             // Best-effort: pages that changed (text or slide image), with both versions' text and
             // thumbnails, so the compare can cite pages. Shared with the manual rerun.
             let changedPages: ChangedPage[] = [];
+            /** Pages that changed in total, before the context cap. See `computeChangedPages`. */
+            let totalChangedPages: number | null = null;
             let previousUploadId: Types.ObjectId | null = null;
             await progress.report("comparing");
             try {
@@ -2239,6 +2241,9 @@ export async function POST(
                 prevUpload,
                 newUpload: { slideNodes: Array.isArray(slideNodes) ? slideNodes : [] },
                 newPages: extractedPages ?? [],
+                onTotal: (n) => {
+                  totalChangedPages = n;
+                },
               });
             } catch (e) {
               warningDetails.historyPages = e instanceof Error ? e.message : String(e);
@@ -2437,6 +2442,7 @@ export async function POST(
                   toVersion: uploadVersion,
                   previousText,
                   newText,
+                  changedPageCount: totalChangedPages,
                   diff: diff ?? { summary: "", changes: [], pagesThatChanged: [] },
                 },
               },

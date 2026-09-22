@@ -31,6 +31,19 @@ const docChangeSchema = new Schema(
     previousText: { type: String, default: "" },
     newText: { type: String, default: "" },
 
+    /**
+     * How many pages changed in total, before the per-compare cap.
+     *
+     * Top-level rather than inside `diff` on purpose: this is a deterministic count from comparing
+     * the two page sets, so it is true whether or not a model ever ran. `diff` is empty when AI is
+     * off, when credits ran out, and whenever the summary is the no-change record.
+     *
+     * `pagesThatChanged` is capped at 30 and the context fed to the model at 12, so without this a
+     * 40-page deck with 34 changed pages produced a record indistinguishable from one where 12 did.
+     * Null on rows written before the field existed.
+     */
+    changedPageCount: { type: Number, min: 0, default: null },
+
     /** AI-generated diff summary payload (best-effort). */
     diff: {
       summary: { type: String, trim: true, maxlength: MAX_SUMMARY_CHARS, default: "" },

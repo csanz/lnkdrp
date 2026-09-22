@@ -205,6 +205,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       toUploadId: 1,
       fromVersion: 1,
       toVersion: 1,
+      changedPageCount: 1,
       diff: 1,
       createdDate: 1,
       createdByUserId: 1,
@@ -246,7 +247,18 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
      * every version the page is about to render (both sides of each change), so a replaced deck can
      * say "1.7 MB · −1.8 MB (−51%)" without a per-row lookup.
      */
-    const uploadFactsByVersion = new Map<number, { sizeBytes: number | null; pages: number | null }>();
+    const uploadFactsByVersion = new Map<
+      number,
+      {
+        sizeBytes: number | null;
+        pages: number | null;
+        /** Why the compare for this version is missing, when it is. See `compareStateFor`. */
+        compare: string | null;
+        compareCode: string | null;
+        compareReason: string | null;
+        unchangedFromPrevious: boolean;
+      }
+    >();
     if (includeChangeList && changesAgg.length) {
       const versions = Array.from(
         new Set(
@@ -264,7 +276,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             status: "completed",
             version: { $in: versions },
           })
-            .select({ _id: 1, version: 1, sizeBytes: 1, createdDate: 1, "metadata.size": 1, "metadata.pages": 1 })
+            .select({
+              _id: 1,
+              version: 1,
+              sizeBytes: 1,
+              createdDate: 1,
+              "metadata.size": 1,
+              "metadata.pages": 1,
+              ai: 1,
+              unchangedFromPrevious: 1,
+            })
             .sort({ version: -1, createdDate: -1 })
             .lean()) as Array<Record<string, any>>;
           for (const r of rows) {
@@ -280,9 +301,20 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   : null;
             const rawPages =
               typeof r?.metadata?.pages === "number" && Number.isFinite(r.metadata.pages) ? r.metadata.pages : null;
+            /**
+             * `ai` is `Schema.Types.Mixed`, so three fields are whitelisted rather than forwarded.
+             * It can hold raw error text from the processing job, which is not something to hand to
+             * a browser.
+             */
+            const ai = (r?.ai ?? null) as Record<string, unknown> | null;
+            const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 300) : null);
             uploadFactsByVersion.set(v, {
               sizeBytes: typeof rawSize === "number" && rawSize > 0 ? Math.floor(rawSize) : null,
               pages: typeof rawPages === "number" && rawPages > 0 ? Math.floor(rawPages) : null,
+              compare: str(ai?.compare),
+              compareCode: str(ai?.code),
+              compareReason: str(ai?.reason),
+              unchangedFromPrevious: r?.unchangedFromPrevious === true,
             });
           }
         } catch {
@@ -361,6 +393,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   fromPages: factsFor(c?.fromVersion)?.pages ?? null,
                   toPages: factsFor(c?.toVersion)?.pages ?? null,
                   changes: Array.isArray(c?.diff?.changes) ? c.diff.changes : [],
+                  /**
+                   * The two page renders, previous and new, for each page that changed.
+                   *
+                   * These have been written on every compare since the field was added - the model
+                   * comment on `DocChange.pagesThatChanged` says "for visual diffs in history UIs"
+                   * - and this projection used to map them away to `{pageNumber, summary}` one line
+                   * before returning, so the owner's own history page showed strictly less than the
+                   * recipient's viewer. Nothing new is computed here; it is the same two URLs the
+                   * compare already paid to look at.
+                   *
+                   * Rows written before `attachPageContext` populated them have nulls, so the UI
+                   * falls back to the page number and its summary rather than a broken frame.
+                   */
                   pagesThatChanged: Array.isArray(c?.diff?.pagesThatChanged)
                     ? c.diff.pagesThatChanged
                         .map((p: any) => ({
@@ -369,9 +414,34 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                               ? Math.floor(p.pageNumber)
                               : null,
                           summary: typeof p?.summary === "string" ? p.summary : "",
+                          previousImageUrl: typeof p?.previousImageUrl === "string" && p.previousImageUrl.trim() ? p.previousImageUrl : null,
+                          newImageUrl: typeof p?.newImageUrl === "string" && p.newImageUrl.trim() ? p.newImageUrl : null,
+                          imageChanged: typeof p?.imageChanged === "boolean" ? p.imageChanged : null,
                         }))
                         .filter((p: any) => typeof p.pageNumber === "number" && p.pageNumber >= 1)
                     : [],
+                  /**
+                   * Why there is no summary, when there is none.
+                   *
+                   * The processing job already records what each AI step did and why on
+                   * `Upload.ai`, and `GET /api/uploads/:id` already returns it - but the history
+                   * page never fetched that, so a version skipped because automatic compares are
+                   * off, or because the workspace ran out of credits, rendered the same
+                   * "Not compared yet" as one nobody has run yet.
+                   */
+                  /**
+                   * Total changed pages against the up-to-30 in `pagesThatChanged`, so a row can
+                   * say "12 of 34 changed pages" instead of quietly implying 12 was all of them.
+                   * Null on rows written before the field existed.
+                   */
+                  changedPageCount:
+                    typeof c?.changedPageCount === "number" && Number.isFinite(c.changedPageCount) && c.changedPageCount >= 0
+                      ? Math.floor(c.changedPageCount)
+                      : null,
+                  compare: factsFor(c?.toVersion)?.compare ?? null,
+                  compareCode: factsFor(c?.toVersion)?.compareCode ?? null,
+                  compareReason: factsFor(c?.toVersion)?.compareReason ?? null,
+                  unchangedFromPrevious: factsFor(c?.toVersion)?.unchangedFromPrevious === true,
                   ...(includeText
                     ? {
                         previousText: typeof c.previousText === "string" ? c.previousText : "",

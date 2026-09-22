@@ -141,6 +141,15 @@ export function computeChangedPages(params: {
   prevSlideNodes: unknown;
   nextSlideNodes: unknown;
   maxPages?: number;
+  /**
+   * Called with how many pages changed in total, before the `maxPages` cap is applied.
+   *
+   * The number is built here and then sliced away, so a 40-page deck with 34 changed pages has
+   * always produced a record indistinguishable from one where 12 changed. Reported through a
+   * callback rather than the return value because four call sites and three test files depend on
+   * this returning a plain `ChangedPage[]`.
+   */
+  onTotal?: (totalChanged: number) => void;
 }): ChangedPage[] {
   const prevByPage = textByPage(params.prevPages);
   const newByPage = textByPage(params.newPages);
@@ -168,6 +177,8 @@ export function computeChangedPages(params: {
     if (textChanged || imgChanged) changed.push(p);
   }
 
+  params.onTotal?.(changed.length);
+
   return changed.slice(0, params.maxPages ?? MAX_PAGE_CONTEXT).map((p) => {
     const prevImg = prevSlides.get(p) ?? null;
     const nextImg = nextSlides.get(p) ?? null;
@@ -176,18 +187,24 @@ export function computeChangedPages(params: {
       previousText: prevByPage.get(p) ?? "",
       newText: newByPage.get(p) ?? "",
       /**
-       * The full page render, not the thumbnail — and it costs nothing to switch.
+       * The full page render, not the thumbnail.
        *
-       * These URLs are handed straight to the vision model. `thumbUrl` is 480px wide at JPEG
-       * quality 65 (`process/route.ts`), which on a 16:9 slide leaves a logo about 24-70px across
-       * and smeared by compression: enough to see that a mark is present, nowhere near enough to
-       * tell that it was replaced with a different one. `imageUrl` is 1200px at quality 78.
+       * These URLs are handed straight to the vision model, and they are also what the history UI
+       * shows side by side. `thumbUrl` is 480px wide at JPEG quality 65 (`process/route.ts`),
+       * which on a 16:9 slide leaves a logo about 24-70px across and smeared by compression:
+       * enough to see that a mark is present, nowhere near enough to tell it was replaced with a
+       * different one. `imageUrl` is 1200px at quality 78.
        *
-       * The reason this is free: for `detail: "high"` the API fits the image inside 2048x2048,
-       * scales the *shortest* side to 768, then counts 512x512 tiles. A 480x270 thumb and a
-       * 1200x675 render both land on 1365x768 and both cost six tiles — the thumb simply arrives
-       * upscaled, paying full price for interpolated pixels. Same tokens, a fraction of the
-       * evidence.
+       * This is not free, and an earlier version of this comment claimed it was. The argument was
+       * that `detail: "high"` scales the shortest side to 768 either way, so a 480x270 thumb and a
+       * 1200x675 render both cost six tiles and the thumb merely arrived upscaled. Measured against
+       * the live API (`npm run measure:image-tokens`), sub-768 images are *not* scaled up: the
+       * thumb is one tile at 8,500 tokens on gpt-4o-mini and the render is six at 36,835. The
+       * switch was 4.3x, and twenty of them do not fit in a 128k window at all.
+       *
+       * What pays for it is `modelForCompare` in `@/lib/ai/docChangeDiff`, which sends anything
+       * carrying images to gpt-4o, where the same render is 1,105 tokens and twenty of them are
+       * 22,100. Change the rendition here and re-run that script before assuming anything.
        *
        * The thumb stays as the fallback for rows written before full-size renders existed.
        */
@@ -207,6 +224,8 @@ export async function loadChangedPages(params: {
   prevUpload: { blobUrl?: unknown; slideNodes?: unknown } | null;
   newUpload: { blobUrl?: unknown; slideNodes?: unknown } | null;
   newPages?: PdfPageText[] | null;
+  /** See `computeChangedPages`: the true changed-page count, before the cap. */
+  onTotal?: (totalChanged: number) => void;
 }): Promise<ChangedPage[]> {
   const prevUrl = typeof params.prevUpload?.blobUrl === "string" ? params.prevUpload.blobUrl : "";
   const newUrl = typeof params.newUpload?.blobUrl === "string" ? params.newUpload.blobUrl : "";
@@ -220,6 +239,7 @@ export async function loadChangedPages(params: {
     newPages,
     prevSlideNodes: params.prevUpload?.slideNodes,
     nextSlideNodes: params.newUpload?.slideNodes,
+    onTotal: params.onTotal,
   });
 }
 

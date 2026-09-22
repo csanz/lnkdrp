@@ -22,6 +22,8 @@ import Modal from "@/components/modals/Modal";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
 import { creditsForRun } from "@/lib/credits/schedule";
+import { isNoChangeSummary } from "@/lib/ai/docChangeSummary";
+import PageDiffStrip, { type PageChange } from "@/components/history/PageDiffStrip";
 
 /** AI compare cost by tier, straight from the credit schedule. */
 const RERUN_COST: Record<"basic" | "standard" | "advanced", number> = {
@@ -50,7 +52,24 @@ type DocChangeItem = {
    * size alone or nothing at all rather than "0 B".
    */
   fileLabel: string | null;
+  /**
+   * The pages that changed, each with both renders.
+   *
+   * These have been stored on every compare since the field was added and shown nowhere: the API
+   * mapped them down to a page number and a summary, and this type had no field for them at all,
+   * so the owner's own history page showed less than the recipient's viewer did.
+   */
+  pagesThatChanged: PageChange[];
+  /** Total pages that changed, against the up-to-30 listed above. Null on older rows. */
+  changedPageCount: number | null;
+  /** Why there is no summary, when there is none. See `compareStateLine`. */
+  compare: string | null;
+  compareCode: string | null;
+  compareReason: string | null;
+  unchangedFromPrevious: boolean;
 };
+
+
 
 type RecipientRow = { userId: string; name: string | null; email: string | null; opened: boolean };
 
@@ -85,10 +104,49 @@ function inferImpactLevel(item: { summary: string; changes: Array<{ title?: stri
 } {
   const n = Array.isArray(item.changes) ? item.changes.length : 0;
   const s = (item.summary ?? "").toLowerCase();
-  if (n === 0 || s.includes("no meaningful changes") || s.includes("no changes")) return { label: "None", tone: "muted" };
+  // A substring test on the summary matched "No changes to the financials, but the logo was
+  // replaced" and labelled the whole version None, which is the opposite of what it says.
+  // `isNoChangeSummary` compares against the exact record the compare emits for an unchanged file.
+  if (n === 0 || isNoChangeSummary(item.summary ?? "")) return { label: "None", tone: "muted" };
   if (n <= 2) return { label: "Minor", tone: "ok" };
   if (n <= 5) return { label: "Medium", tone: "warn" };
   return { label: "Major", tone: "warn" };
+}
+
+/**
+ * Why there is no summary on this row.
+ *
+ * The processing job has always recorded what each AI step did and why on `Upload.ai`, and the
+ * upload endpoint has always returned it - but the history page never asked, so a version skipped
+ * because the workspace turned automatic compares off, or ran out of credits, rendered the exact
+ * same "Not compared yet. Expand to run AI compare on this version." as one nobody has run. The
+ * owner was told to do the thing they had already decided not to pay for.
+ *
+ * Returns null when the generic line is the truthful one: no recorded state, or a compare that
+ * genuinely has not run.
+ */
+function compareStateLine(item: {
+  compare: string | null;
+  compareCode: string | null;
+  compareReason: string | null;
+  unchangedFromPrevious: boolean;
+}): string | null {
+  if (item.unchangedFromPrevious) {
+    return "This version reads exactly like the previous one, so no compare was run.";
+  }
+  const code = (item.compareCode ?? "").trim();
+  if (code === "turned_off" || code === "plan") return "Not compared: automatic compares are off for this workspace.";
+  if (code === "out_of_credits") return "Not compared: the workspace was out of credits. Expand to run it now.";
+  if (code === "daily_cap") return "Not compared: the daily credit cap was reached. Expand to run it now.";
+  if (code === "recipient") return "Not compared: this version was uploaded by a recipient, so it was not billed to you.";
+
+  const compare = (item.compare ?? "").trim();
+  if (compare === "failed") {
+    const why = (item.compareReason ?? "").trim();
+    return why ? `The compare failed: ${why}` : "The compare failed. Expand to run it again.";
+  }
+  if (compare === "not_applicable") return "Nothing to compare against: this is the first version.";
+  return null;
 }
 
 function inferTags(item: { summary: string; changes: Array<{ type?: string; title?: string; detail?: string | null }> }): string[] {
@@ -165,7 +223,26 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   useEffect(() => {
     if (deepLinked.current || !items.length) return;
     const match = /^#v-(\d+)$/.exec(typeof window === "undefined" ? "" : window.location.hash);
-    if (!match) return;
+    if (!match) {
+      /**
+       * No deep link: open the newest row anyway.
+       *
+       * Every row shipped collapsed with its summary clamped to two lines, so the page you open to
+       * read one comparison opened on a list of truncated sentences and asked for a click before
+       * showing a single specific change. The top row of a version history is what the page is
+       * for. Only the first row, and only once, so paging in more history does not expand under
+       * the reader.
+       */
+      deepLinked.current = true;
+      // By highest version rather than by list position, so it stays the newest row under either
+      // sort order without this effect having to know which one is active.
+      const newest = items.reduce<(typeof items)[number] | null>(
+        (best, it) => (best === null || (it.toVersion ?? 0) > (best.toVersion ?? 0) ? it : best),
+        null,
+      );
+      if (newest) setExpandedById((m) => (m[newest.id] === undefined ? { ...m, [newest.id]: true } : m));
+      return;
+    }
     const version = Number(match[1]);
     const target = items.find((it) => it.toVersion === version);
     if (!target) return;
@@ -255,8 +332,14 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
         const fileLabel = (function () {
           const size = formatSizeChangeLine(c?.fromSizeBytes ?? null, c?.toSizeBytes ?? null);
           if (!size) return null;
-          const pages = typeof c?.toPages === "number" && Number.isFinite(c.toPages) && c.toPages > 0 ? Math.floor(c.toPages) : null;
-          return pages ? `${size} \u00b7 ${pages} page${pages === 1 ? "" : "s"}` : size;
+          const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : null);
+          const pages = num(c?.toPages);
+          const from = num(c?.fromPages);
+          if (!pages) return size;
+          // A replacement that went from 9 pages to 11 used to render as "11 pages", which is the
+          // one fact about it a reader already knew. `fromPages` was served all along.
+          const label = from && from !== pages ? `${from} \u2192 ${pages} pages` : `${pages} page${pages === 1 ? "" : "s"}`;
+          return `${size} \u00b7 ${label}`;
         })();
         return {
           id,
@@ -279,6 +362,23 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
           tags,
           timeLabel,
           fileLabel,
+          pagesThatChanged: Array.isArray(c?.pagesThatChanged)
+            ? (c.pagesThatChanged as any[])
+                .map((p) => ({
+                  pageNumber: typeof p?.pageNumber === "number" && Number.isFinite(p.pageNumber) ? Math.floor(p.pageNumber) : 0,
+                  summary: typeof p?.summary === "string" ? p.summary : "",
+                  previousImageUrl: typeof p?.previousImageUrl === "string" && p.previousImageUrl ? p.previousImageUrl : null,
+                  newImageUrl: typeof p?.newImageUrl === "string" && p.newImageUrl ? p.newImageUrl : null,
+                  imageChanged: typeof p?.imageChanged === "boolean" ? p.imageChanged : null,
+                }))
+                .filter((p) => p.pageNumber >= 1)
+            : [],
+          changedPageCount:
+            typeof c?.changedPageCount === "number" && Number.isFinite(c.changedPageCount) ? Math.floor(c.changedPageCount) : null,
+          compare: typeof c?.compare === "string" ? c.compare : null,
+          compareCode: typeof c?.compareCode === "string" ? c.compareCode : null,
+          compareReason: typeof c?.compareReason === "string" ? c.compareReason : null,
+          unchangedFromPrevious: c?.unchangedFromPrevious === true,
         } satisfies DocChangeItem;
       })
       .filter((c) => Boolean(c.id));
@@ -708,7 +808,9 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                 {it.summary?.trim() ? (
                                   it.summary.trim()
                                 ) : (
-                                  <span className="text-[var(--muted)]">Not compared yet. Expand to run AI compare on this version.</span>
+                                  <span className="text-[var(--muted)]">
+                                    {compareStateLine(it) ?? "Not compared yet. Expand to run AI compare on this version."}
+                                  </span>
                                 )}
                               </div>
                               {(uploaderLabel || timeLabel || it.fileLabel || it.id) ? (
@@ -789,6 +891,13 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                               ) : (
                                 <div className="text-sm text-[var(--muted)]">No detailed change list available.</div>
                               )}
+
+                              <PageDiffStrip
+                                pages={it.pagesThatChanged}
+                                changedPageCount={it.changedPageCount}
+                                fromVersion={fromV}
+                                toVersion={toV}
+                              />
 
                               <div className="mt-4 flex flex-wrap items-center gap-2">
                                 <button

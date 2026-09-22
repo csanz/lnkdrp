@@ -107,6 +107,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     // Same page-level context as the automatic compare (changed pages with both versions' text and
     // thumbnails), built before any credits are reserved. Best-effort: full text only on failure.
     let changedPages: ChangedPage[] = [];
+    /** Pages that changed in total, before the context cap. See `computeChangedPages`. */
+    let totalChangedPages: number | null = null;
     try {
       // Resolve the previous version by number: older rows stored the new upload as `fromUploadId`.
       const fromVersion = Number((change as { fromVersion?: unknown }).fromVersion);
@@ -118,7 +120,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
             .lean(),
           UploadModel.findById(String(toUploadId)).select({ blobUrl: 1, slideNodes: 1 }).lean(),
         ]);
-        changedPages = await loadChangedPages({ prevUpload, newUpload });
+        changedPages = await loadChangedPages({
+          prevUpload,
+          newUpload,
+          onTotal: (n) => {
+            totalChangedPages = n;
+          },
+        });
       }
     } catch {
       changedPages = [];
@@ -173,7 +181,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
 
       await DocChangeModel.updateOne(
         { _id: new Types.ObjectId(changeId) },
-        { $set: { diff } },
+        { $set: { diff, ...(totalChangedPages === null ? {} : { changedPageCount: totalChangedPages }) } },
       );
 
       await markLedgerCharged({
