@@ -130,7 +130,20 @@ type ScopeTotals = { views: number; pagesViewed: number; lastSeen: Date | null }
  * link, `{ docId }` for the document, either of them optionally bounded by `createdDate` — so the
  * two scopes are the same arithmetic on different rows and cannot disagree about what a number means.
  */
-async function totalsForMatch(match: Record<string, unknown>): Promise<ScopeTotals> {
+async function totalsForMatch(
+  match: Record<string, unknown>,
+  /**
+   * When the scope is time-bounded, where the *pages* come from.
+   *
+   * `ShareView.pagesSeen` accumulates for the life of a (link, viewer) pair, so unioning it under a
+   * window attributed a viewer's whole history to whichever window their latest open fell in: a
+   * recipient who read all twenty pages in June and reopened the link in September made the
+   * fifteen-day figure say twenty. `ShareVisit` is one row per visit and carries that visit's own
+   * `pagesSeen`, so a windowed caller passes its match here and gets what was actually read in the
+   * window. Lifetime callers pass nothing and keep the union they always had.
+   */
+  windowVisitMatch?: Record<string, unknown>,
+): Promise<ScopeTotals> {
   const rows = (await ShareViewModel.aggregate([
     { $match: match },
     {
@@ -154,9 +167,28 @@ async function totalsForMatch(match: Record<string, unknown>): Promise<ScopeTota
     },
   ])) as Array<{ views?: number; pagesViewed?: number; lastSeen?: Date | null }>;
   const row = rows[0];
+
+  let pagesViewed = typeof row?.pagesViewed === "number" && Number.isFinite(row.pagesViewed) ? row.pagesViewed : 0;
+  if (windowVisitMatch) {
+    const visitRows = (await ShareVisitModel.aggregate([
+      { $match: windowVisitMatch },
+      { $group: { _id: null, pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } } } },
+      {
+        $project: {
+          _id: 0,
+          pagesViewed: {
+            $size: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
+          },
+        },
+      },
+    ])) as Array<{ pagesViewed?: number }>;
+    const n = visitRows[0]?.pagesViewed;
+    pagesViewed = typeof n === "number" && Number.isFinite(n) ? n : 0;
+  }
+
   return {
     views: typeof row?.views === "number" && Number.isFinite(row.views) ? row.views : 0,
-    pagesViewed: typeof row?.pagesViewed === "number" && Number.isFinite(row.pagesViewed) ? row.pagesViewed : 0,
+    pagesViewed,
     lastSeen: row?.lastSeen ? new Date(row.lastSeen) : null,
   };
 }
@@ -366,7 +398,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         ...OWNER_PREVIEW_MATCH,
       };
       const [windowTotals, allTimeTotals, windowOwnerPreviews, allTimeOwnerPreviews] = await Promise.all([
-        totalsForMatch({ ...scopeMatch, ...activityWindowMatch(start) }),
+        totalsForMatch({ ...scopeMatch, ...activityWindowMatch(start) }, {
+          ...scopeMatch,
+          ...RECIPIENT_ONLY_MATCH,
+          lastEventAt: { $gte: start },
+        }),
         totalsForMatch(scopeMatch),
         ShareViewModel.countDocuments({ ...ownerScopeMatch, ...activityWindowMatch(start) }),
         ShareViewModel.countDocuments(ownerScopeMatch),
@@ -871,20 +907,40 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                 ],
               },
             },
-            timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
           },
         },
-        { $group: { _id: "$_id.viewer.kind", viewers: { $sum: 1 }, timeSpentMs: { $sum: "$timeSpentMs" } } },
-      ])) as Array<{ _id: "user" | "anon"; viewers?: number; timeSpentMs?: number }>;
+        { $group: { _id: "$_id.viewer.kind", viewers: { $sum: 1 } } },
+      ])) as Array<{ _id: "user" | "anon"; viewers?: number }>;
       let windowAuthedViewers = 0;
       let windowAnonymousViewers = 0;
-      let windowTimeSpentMs = 0;
       for (const row of windowAgg) {
         const n = typeof row.viewers === "number" && Number.isFinite(row.viewers) ? row.viewers : 0;
         if (row._id === "user") windowAuthedViewers += n;
         else windowAnonymousViewers += n;
-        windowTimeSpentMs += typeof row.timeSpentMs === "number" && Number.isFinite(row.timeSpentMs) ? row.timeSpentMs : 0;
       }
+
+      /**
+       * Reading time for the window comes from the *visits*, not from the viewer row.
+       *
+       * A `ShareView` is one row per (link, viewer) for life: the heartbeat `$inc`s its
+       * `timeSpentMs` and stamps `lastViewedAt` on every open, for ever. Summing it under
+       * `activityWindowMatch` therefore attributed a viewer's **entire history** to the window
+       * their most recent open happened to fall in — somebody who read a deck for two hours in
+       * June and reopened it for five seconds in September made the "last 15 days" tile say two
+       * hours.
+       *
+       * `ShareVisit` is one row per visit and already carries the per-visit time, which is why
+       * `totals.visitTimeMs` on the same response was right while the tile beside it was not. The
+       * window figure now reads from the same place.
+       */
+      const windowTimeAgg = (await ShareVisitModel.aggregate([
+        { $match: { ...scopeMatch, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start } } },
+        { $group: { _id: null, ms: { $sum: { $ifNull: ["$timeSpentMs", 0] } } } },
+      ])) as Array<{ ms?: number }>;
+      const windowTimeSpentMs =
+        typeof windowTimeAgg[0]?.ms === "number" && Number.isFinite(windowTimeAgg[0].ms)
+          ? Math.max(0, Math.floor(windowTimeAgg[0].ms))
+          : 0;
       const viewerCount = windowAuthedViewers + windowAnonymousViewers;
 
       // Both tiers report the *window* counts, on every tier and whether or not viewer rows were

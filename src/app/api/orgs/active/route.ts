@@ -13,6 +13,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
 import { debugError, debugLog } from "@/lib/debug";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { activeOrgChanged } from "@/lib/gating/actor";
@@ -41,6 +42,22 @@ export async function POST(request: Request) {
     debugLog(1, "[api/orgs/active] POST");
     const actor = await resolveActor(request);
     if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+    /**
+     * Keys do document work, not identity work.
+     *
+     * This writes `User.metadata.activeOrgId`, which `activeOrgCandidateOrder` ranks *above* the
+     * JWT claim — so it decides where that person's next document lands on any browser without an
+     * `ld_active_org` cookie. An `lnk_` key resolves to a `kind: "user"` actor carrying its
+     * issuer's memberships, so a key scoped to one workspace could move its owner's stored
+     * workspace to another, silently and with no user action. The next upload from a second laptop
+     * would then create the document — and a live public share link — somewhere the owner never
+     * chose, visible to that workspace's other members.
+     *
+     * `/org/switch` already guards the identical write with `Sec-Fetch-Site`; this is the same
+     * write reachable over the API.
+     */
+    const keyForbidden = forbidApiKey(actor, "change the active workspace");
+    if (keyForbidden) return keyForbidden;
 
     const body = (await request.json().catch(() => ({}))) as Partial<{ orgId: string | null }>;
     const orgId = typeof body.orgId === "string" ? body.orgId.trim() : "";
