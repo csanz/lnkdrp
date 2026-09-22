@@ -38,6 +38,12 @@ import { NotificationEmailCursorModel } from "@/lib/models/NotificationEmailCurs
 import { NotificationQueueModel } from "@/lib/models/NotificationQueue";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
 import { ProjectModel } from "@/lib/models/Project";
+import { AiRunModel } from "@/lib/models/AiRun";
+import { ReviewModel } from "@/lib/models/Review";
+import { DocReportModel } from "@/lib/models/DocReport";
+import { ProjectClickModel } from "@/lib/models/ProjectClick";
+import { ProjectViewModel } from "@/lib/models/ProjectView";
+import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { ShareViewerEmailModel } from "@/lib/models/ShareViewerEmail";
 import { StarredDocModel } from "@/lib/models/StarredDoc";
@@ -209,7 +215,7 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
   let blobErrors = 0;
   let subscriptionsCancelled = 0;
   let stripeErrors = 0;
-  let abortedReason: string | null = null;
+  const abortedReason: string | null = null;
 
   const stop = (reason: string): PurgeResult => ({
     ...plan,
@@ -223,7 +229,18 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
   });
 
   if (soloOrgIds.length) {
-    const uploads = (await UploadModel.find({ orgId: { $in: soloOrgIds } })
+    /**
+     * Also the rows that never got a workspace.
+     *
+     * `orgId` arrived after this product did. A document created before it has `orgId: null` and
+     * only a `userId`, so an org-scoped sweep matched none of them: the PDF, every page image and
+     * every thumbnail stayed in blob storage, `/s/<shareId>` kept serving the document to anyone
+     * with the URL, and the account was reported as fully purged. The legacy read paths still
+     * honour those rows (`buildDocMatch`'s `allowLegacyByUserId`), so the delete path has to as
+     * well or deletion means less than reading does.
+     */
+    const legacyOwned = { userId: id, $or: [{ orgId: { $exists: false } }, { orgId: null }] };
+    const uploads = (await UploadModel.find({ $or: [{ orgId: { $in: soloOrgIds } }, legacyOwned] })
       .select(UPLOAD_BLOB_SELECT)
       .limit(UPLOAD_SCAN_LIMIT)
       .lean()) as Record<string, unknown>[];
@@ -299,10 +316,59 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
        */
       const orgFilter = { orgId: { $in: soloOrgIds } };
       const workspaceFilter = { workspaceId: { $in: soloOrgIds } };
+
+      /**
+       * ...and the collections keyed to a *document* or a *project* rather than a workspace.
+       *
+       * Six more were surviving, and they are not incidental: `AiRun` holds the prompts sent and
+       * the model's replies, and `ShareDownloadRequest` holds the email addresses of the people
+       * who asked to download — other people's personal data, kept after the owner asked to be
+       * forgotten. None of them carries an `orgId`, so the workspace sweep above could never have
+       * matched them however complete its list became.
+       *
+       * The ids have to be read *now*, before the deletes below remove the only rows that link
+       * them to this account. After that the dependents are unreachable by any query: retained for
+       * ever, invisible to the product, and reported as purged.
+       */
+      // Same legacy shape as the blob pass above: rows this account owns that predate `orgId`.
+      const legacyOwned = { userId: id, $or: [{ orgId: { $exists: false } }, { orgId: null }] };
+      const ownedDocFilter = { $or: [orgFilter, legacyOwned] };
+
+      const [docRows, projectRows] = await Promise.all([
+        DocModel.find(ownedDocFilter).select({ _id: 1 }).lean(),
+        ProjectModel.find(orgFilter).select({ _id: 1 }).lean(),
+      ]);
+      const docIds = (docRows as Array<{ _id: Types.ObjectId }>).map((d) => d._id);
+      const projectIds = (projectRows as Array<{ _id: Types.ObjectId }>).map((p) => p._id);
+
       await Promise.all([
-        DocModel.deleteMany(orgFilter),
-        UploadModel.deleteMany(orgFilter),
-        ShareLinkModel.deleteMany(orgFilter),
+        // Keyed to this person directly.
+        AiRunModel.deleteMany({ userId: id }),
+        DocReportModel.deleteMany({ userId: id }),
+        ShareDownloadRequestModel.deleteMany({ ownerUserId: id }),
+        // Keyed to the documents and projects that are about to go.
+        ...(docIds.length
+          ? [
+              ReviewModel.deleteMany({ docId: { $in: docIds } }),
+              AiRunModel.deleteMany({ docId: { $in: docIds } }),
+              DocReportModel.deleteMany({ docId: { $in: docIds } }),
+              ShareDownloadRequestModel.deleteMany({ docId: { $in: docIds } }),
+            ]
+          : []),
+        ...(projectIds.length
+          ? [
+              ProjectClickModel.deleteMany({ projectId: { $in: projectIds } }),
+              ProjectViewModel.deleteMany({ projectId: { $in: projectIds } }),
+            ]
+          : []),
+      ]);
+
+      await Promise.all([
+        DocModel.deleteMany(ownedDocFilter),
+        UploadModel.deleteMany(ownedDocFilter),
+        // Links are keyed by `docId` as well as `orgId`, so a legacy document's link is reachable
+        // that way even though the link row itself always carries an org.
+        ShareLinkModel.deleteMany({ $or: [orgFilter, ...(docIds.length ? [{ docId: { $in: docIds } }] : [])] }),
         ShareViewModel.deleteMany(orgFilter),
         ShareVisitModel.deleteMany(orgFilter),
         ActivityEventModel.deleteMany(orgFilter),
