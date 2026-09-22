@@ -1398,7 +1398,22 @@ export async function POST(
               // Non-request docs: rerun the legacy review agent.
               let ledgerId: string | null = null;
               try {
-                const reserved = await reserveCreditsOrThrow({
+                /**
+                 * `reserveForAttempt`, not `reserveCreditsOrThrow`, and the status is checked.
+                 *
+                 * The rerun button sends no idempotency key, so the key is deterministic:
+                 * `review:manual:<uploadId>:v<n>:<tier>`. A raw reserve looks that row up with no
+                 * status filter and hands back the *finished* one — already `charged`, no new
+                 * reservation, no balance decrement — and the code then ran the model anyway and
+                 * re-marked it charged. Every rerun after the first was a free paid AI run, on a
+                 * button anybody can press twice, while the activity row still reported credits
+                 * that were never deducted.
+                 *
+                 * `refunded` and `failed` rows hold no credits either, which is the other half of
+                 * what `reserveForAttempt` exists for: it reserves again under a retry key rather
+                 * than charging a row whose money has already gone back.
+                 */
+                const reserved = await reserveForAttempt({
                   workspaceId: actor.orgId,
                   userId: actor.userId,
                   docId: String(docId),
@@ -1406,6 +1421,16 @@ export async function POST(
                   qualityTier: reviewTier,
                   idempotencyKey: reviewIdempotencyKey,
                 });
+                // Already paid for and already done: do not run the model again on somebody
+                // else's money, and do not re-mark a charged row.
+                if (reserved.status === "charged") {
+                  debugLog(1, "[process] forceReview=1; this attempt is already charged, skipping the run", {
+                    uploadId,
+                    docId: String(docId),
+                    version: uploadVersion,
+                  });
+                  return;
+                }
                 ledgerId = reserved.ledgerId;
               } catch (e) {
                 debugLog(1, "[process] forceReview=1; insufficient credits (skipping)", {
@@ -1450,7 +1475,22 @@ export async function POST(
               });
               let ledgerId: string | null = null;
               try {
-                const reserved = await reserveCreditsOrThrow({
+                /**
+                 * `reserveForAttempt`, not `reserveCreditsOrThrow`, and the status is checked.
+                 *
+                 * The rerun button sends no idempotency key, so the key is deterministic:
+                 * `review:manual:<uploadId>:v<n>:<tier>`. A raw reserve looks that row up with no
+                 * status filter and hands back the *finished* one — already `charged`, no new
+                 * reservation, no balance decrement — and the code then ran the model anyway and
+                 * re-marked it charged. Every rerun after the first was a free paid AI run, on a
+                 * button anybody can press twice, while the activity row still reported credits
+                 * that were never deducted.
+                 *
+                 * `refunded` and `failed` rows hold no credits either, which is the other half of
+                 * what `reserveForAttempt` exists for: it reserves again under a retry key rather
+                 * than charging a row whose money has already gone back.
+                 */
+                const reserved = await reserveForAttempt({
                   workspaceId: actor.orgId,
                   userId: actor.userId,
                   docId: String(docId),
@@ -1458,6 +1498,16 @@ export async function POST(
                   qualityTier: reviewTier,
                   idempotencyKey: reviewIdempotencyKey,
                 });
+                // Already paid for and already done: do not run the model again on somebody
+                // else's money, and do not re-mark a charged row.
+                if (reserved.status === "charged") {
+                  debugLog(1, "[process] forceReview=1; this attempt is already charged, skipping the run", {
+                    uploadId,
+                    docId: String(docId),
+                    version: uploadVersion,
+                  });
+                  return;
+                }
                 ledgerId = reserved.ledgerId;
               } catch (e) {
                 debugLog(1, "[process] forceReview=1; insufficient credits (skipping)", {
@@ -2245,7 +2295,25 @@ export async function POST(
                   message: e instanceof Error ? e.message : String(e),
                 });
               });
-            } else if (summaryLedgerId || summaryAlreadyPaid || viaUploadSecret) {
+            } else if (
+              summaryLedgerId ||
+              summaryAlreadyPaid ||
+              /**
+               * A recipient upload runs unbilled — but "unbilled" is not "unconditional".
+               *
+               * This branch used to read `|| viaUploadSecret` alone, and the reservation it stands
+               * in for is guarded by `summaryWanted && !viaUploadSecret`, so a recipient upload
+               * never reserved and the condition collapsed to the flag. The workspace's automatic
+               * summaries could be switched off, `aiState` would say so in words — "turned off for
+               * this workspace" — and the model ran anyway on the owner's spend, then overwrote
+               * `summary` to "done" and left the contradiction on the row.
+               *
+               * `summaryWanted` carries the switch *and* the unchanged-file check, which this
+               * branch was also skipping: the same PDF dropped twice on a replace link paid for
+               * two identical summaries.
+               */
+              (viaUploadSecret && summaryWanted)
+            ) {
               try {
                 const analyzed = await analyzePdfText({
                   fullText: extractedText,

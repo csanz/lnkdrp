@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
+import { resolveActor, tryResolveUserActorFast, type Actor } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
@@ -16,6 +16,7 @@ import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { defaultBalanceForWorkspace } from "@/lib/credits/creditService";
 import { parseQualityTier as parseTier, resolveHistoryQualityTier } from "@/lib/credits/qualityDefaults";
 import { parseAutomationFlag, resolveAiAutomation } from "@/lib/credits/aiAutomation";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,14 +26,16 @@ export const dynamic = "force-dynamic";
 const QUALITY_DEFAULTS_CACHE_TTL_MS = 10_000;
 let qualityDefaultsCache: Map<string, { at: number; payload: any }> | null = null;
 
-async function resolveUserAndOrgForWorkspaceRoute(request: Request): Promise<{ ok: true; userId: Types.ObjectId; orgId: Types.ObjectId } | { ok: false; status: number; error: string }> {
+async function resolveUserAndOrgForWorkspaceRoute(request: Request): Promise<{ ok: true; userId: Types.ObjectId; orgId: Types.ObjectId; actor: Actor } | { ok: false; status: number; error: string }> {
   // Membership-validated fast path (cookie / JWT claim + one cached membership check), then the full
   // resolver. Never trust the cookie alone: a stale one pointing at another workspace used to 403 here.
   const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
   if (actor.kind !== "user") return { ok: false, status: 401, error: "Unauthorized" };
   if (!Types.ObjectId.isValid(actor.userId)) return { ok: false, status: 400, error: "Invalid user" };
   if (!Types.ObjectId.isValid(actor.orgId)) return { ok: false, status: 400, error: "Invalid org" };
-  return { ok: true, userId: new Types.ObjectId(actor.userId), orgId: new Types.ObjectId(actor.orgId) };
+  // The actor travels with the ids: a caller that needs to know *how* this request authenticated —
+  // a browser session or an `lnk_` key — cannot ask once the helper has reduced it to two ids.
+  return { ok: true, userId: new Types.ObjectId(actor.userId), orgId: new Types.ObjectId(actor.orgId), actor };
 }
 
 export async function GET(request: Request) {
@@ -90,6 +93,12 @@ export async function POST(request: Request) {
       const membership = await OrgMembershipModel.findOne({ orgId: ctx.orgId, userId: ctx.userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean();
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       if (role !== "owner" && role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+      // The role was checked above, but an `lnk_` key resolves to a `kind: "user"` actor with its
+      // issuer's role — so an agent could switch a workspace's automatic summaries off, or move
+      // every compare to Advanced, from a key that was scoped for uploading documents.
+      const keyForbidden = forbidApiKey(ctx.actor, "change this workspace's AI settings");
+      if (keyForbidden) return keyForbidden;
 
       const body = (await request.json().catch(() => null)) as any;
       const review = parseTier(body?.reviewQualityTier);

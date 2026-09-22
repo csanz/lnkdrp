@@ -18,6 +18,7 @@ import { resolveActor } from "@/lib/gating/actor";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 
@@ -27,6 +28,11 @@ export async function POST(request: Request) {
     try {
       if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+      // Resuming restarts a recurring charge, so it is a billing action like starting or
+      // cancelling one — and an `lnk_` key resolves to a `kind: "user"` actor, so the role check
+      // below would have let an agent do it. Its three siblings all refuse a key here.
+      const keyForbidden = forbidApiKey(actor, "resume a subscription");
+      if (keyForbidden) return keyForbidden;
       const role = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "admin" });
       if (!role.ok) return NextResponse.json({ error: "Only an owner or admin can change this workspace's subscription." }, { status: 403 });
 
