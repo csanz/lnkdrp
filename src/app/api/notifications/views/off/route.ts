@@ -58,14 +58,49 @@ export const dynamic = "force-dynamic";
 const PREFERENCES_PATH = VIEW_EMAIL_PREFERENCES_PATH;
 
 /** What the confirmation page says, per kind. One route serves both; only the words differ. */
-const OFF_COPY: Record<EmailOffKind, { title: string; line: (workspace: string) => string }> = {
+/**
+ * Everything on this page that depends on which kind of email the link came from.
+ *
+ * The write path was made kind-aware when doc-update mail got its own token; the *rendering* path
+ * was not, and kept reading `viewEmailMode` regardless. That produced two wrong pages from a
+ * doc-update link: one that described view emails while its button wrote the doc-update field,
+ * and — when the member happened to have view emails already off — a dead end with no button at
+ * all, so the doc-update mail they were trying to stop kept arriving.
+ */
+const OFF_COPY: Record<
+  EmailOffKind,
+  {
+    title: string;
+    line: (workspace: string) => string;
+    /** The heading on the confirmation page, before anything is written. */
+    confirmTitle: string;
+    /** The button, which must name the thing it will actually switch off. */
+    confirmLabel: string;
+    /** How the current setting reads back, per mode. */
+    sentence: Record<ViewEmailMode, string>;
+  }
+> = {
   views: {
     title: "View emails are off",
     line: (w) => `You won't get emails when someone opens a document in ${w}.`,
+    confirmTitle: "Turn off view emails",
+    confirmLabel: "Turn off view emails",
+    sentence: {
+      off: "View emails are already off",
+      daily: "View emails are set to a daily digest",
+      immediate: "View emails arrive immediately",
+    },
   },
   doc_updates: {
     title: "Document update emails are off",
     line: (w) => `You won't get emails when a document is replaced in ${w}.`,
+    confirmTitle: "Turn off document update emails",
+    confirmLabel: "Turn off document update emails",
+    sentence: {
+      off: "Document update emails are already off",
+      daily: "Document update emails are set to a daily digest",
+      immediate: "Document update emails arrive immediately",
+    },
   },
 };
 
@@ -75,12 +110,6 @@ type ViewEmailMode = "off" | "daily" | "immediate";
 function normalizeMode(v: unknown): ViewEmailMode {
   return v === "off" || v === "immediate" ? v : "daily";
 }
-
-const MODE_SENTENCE: Record<ViewEmailMode, string> = {
-  off: "View emails are off",
-  daily: "View emails are set to a daily digest",
-  immediate: "View emails are set to arrive as views happen",
-};
 
 /** Escape untrusted text for HTML element content and attribute values. */
 function escapeHtml(s: string): string {
@@ -255,31 +284,46 @@ async function handle(request: Request, opts: { write: boolean }): Promise<Respo
 
     // Read-only pass: a GET, or a HEAD probe, or an expired-but-signed link. Report the current
     // state and change nothing.
-    const membership = await OrgMembershipModel.findOne(notDeleted).select({ orgId: 1, viewEmailMode: 1 }).lean();
+    /**
+     * Which preference this link is about.
+     *
+     * An expired-but-signed link still verifies far enough to name its kind, so the page can
+     * describe the right setting even when it can no longer change it. Only a token so malformed
+     * that no kind could be read falls back, and `views` is the safe fallback because it is the
+     * only kind whose links predate the others.
+     */
+    const kind: EmailOffKind = verified.ok ? verified.kind : "views";
+    const copy = OFF_COPY[kind];
+    const field = EMAIL_OFF_KINDS[kind].field;
+
+    const membership = await OrgMembershipModel.findOne(notDeleted).select({ orgId: 1, [field]: 1 }).lean();
     if (!membership) return invalidPage();
-    const mode = normalizeMode((membership as { viewEmailMode?: unknown }).viewEmailMode);
+    const mode = normalizeMode((membership as Record<string, unknown>)[field]);
     const name = await loadWorkspaceName((membership as { orgId?: unknown }).orgId);
-    const stateLine = `${escapeHtml(MODE_SENTENCE[mode])} for ${workspaceLabel(name)}.`;
+    const stateLine = `${escapeHtml(copy.sentence[mode])} for ${workspaceLabel(name)}.`;
 
     if (verified.ok) {
       // A live link opened in a browser: ask. This is the branch that used to write on sight, which
       // is why a link scanner fetching the footer URL could turn a member's notifications off.
       if (mode === "off") {
         return renderPage(
-          {
-            title: "View emails are off",
-            heading: "View emails are off",
-            lines: [`You won't get emails when someone opens a document in ${workspaceLabel(name)}.`],
-          },
+          { title: copy.title, heading: copy.title, lines: [copy.line(workspaceLabel(name))] },
           200,
         );
       }
       return renderPage(
         {
-          title: "Turn off view emails",
+          title: copy.confirmTitle,
           heading: "Turn off these emails?",
-          lines: [stateLine, "Confirm below and you'll stop hearing when someone opens a document there."],
-          confirm: { token, label: "Turn off view emails" },
+          lines: [
+            stateLine,
+            kind === "views"
+              ? "Confirm below and you'll stop hearing when someone opens a document there."
+              : "Confirm below and you'll stop hearing when a document is replaced there.",
+          ],
+          // The button must name what it will actually switch off; it used to say "view emails"
+          // while the POST behind it wrote the doc-update setting.
+          confirm: { token, label: copy.confirmLabel },
         },
         200,
       );

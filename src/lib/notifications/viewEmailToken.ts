@@ -256,16 +256,34 @@ export function verifyViewEmailsOffToken(token: string, opts?: { now?: Date }): 
  * legitimately expired doc-update token still says "expired" rather than "wrong purpose".
  */
 export function verifyAnyEmailsOffToken(token: string, opts?: { now?: Date }): VerifyAnyResult {
-  let best: VerifyViewEmailsOffTokenResult | null = null;
+  /**
+   * Keep the most informative failure, not the first.
+   *
+   * Each kind is tried in turn, and a token for kind B fails kind A's check at the *signature*,
+   * because the keys are derived per purpose. So the first loop iteration on an expired
+   * doc-update token reported `bad_signature`, which the route renders as "this link is not
+   * valid" — when the truthful page is "this link has expired", which says what to do next.
+   *
+   * Ranking fixes it: `expired` outranks `bad_signature`, which outranks `malformed`, which
+   * outranks `wrong_purpose`. `wrong_purpose` is the least informative of all here — it only
+   * means "not this kind", which is the expected answer for every kind but one.
+   */
+  const RANK: Record<ViewEmailsOffTokenFailure, number> = {
+    expired: 3,
+    bad_signature: 2,
+    malformed: 1,
+    wrong_purpose: 0,
+  };
+
+  let best: { reason: ViewEmailsOffTokenFailure; membershipId?: string } | null = null;
   for (const kind of Object.keys(EMAIL_OFF_KINDS) as EmailOffKind[]) {
     const res = verifyForPurpose(EMAIL_OFF_KINDS[kind].purpose, token, opts);
     if (res.ok) return { ok: true, kind, membershipId: res.membershipId };
-    // "wrong_purpose" only means it was not this kind; keep looking, and keep any better reason.
-    if (res.reason !== "wrong_purpose" && (!best || best.ok)) best = res;
-    else if (!best) best = res;
+    if (!best || RANK[res.reason] > RANK[best.reason]) {
+      best = { reason: res.reason, ...(res.membershipId ? { membershipId: res.membershipId } : {}) };
+    }
   }
-  const fallback = best && !best.ok ? best : { ok: false as const, reason: "malformed" as const };
-  return fallback as VerifyAnyResult;
+  return { ok: false, ...(best ?? { reason: "malformed" as const }) };
 }
 
 /** Absolute one-click off URL for a membership: `<appUrl>/api/notifications/views/off?t=<token>`. */

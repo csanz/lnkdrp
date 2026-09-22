@@ -1,6 +1,7 @@
 /**
  * Off route (`/api/notifications/views/off`): RFC 8058 one-click POST and the unchanged GET page.
  */
+import { createEmailsOffToken, verifyAnyEmailsOffToken } from "@/lib/notifications/viewEmailToken";
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
@@ -143,5 +144,49 @@ describe("GET stays a confirmation page", () => {
     expect(res.status).toBe(200);
     expect(membershipFindOneAndUpdate).not.toHaveBeenCalled();
     expect(membershipUpdateOne).not.toHaveBeenCalled();
+  });
+});
+
+describe("a doc-update unsubscribe link is about doc-update emails", () => {
+  /**
+   * The write path was made kind-aware when doc-update mail got its own token; the page that
+   * renders around it was not, and kept reading `viewEmailMode` whatever the token said. Two
+   * wrong pages came out of that: one describing view emails while its button wrote the
+   * doc-update field, and — for a member who already had view emails off — a dead end with no
+   * button at all, so the mail they were trying to stop kept arriving.
+   */
+  test("an expired doc-update token reads as expired, not as a bad signature", () => {
+    const token = createEmailsOffToken("doc_updates", "m1", {
+      now: new Date("2026-01-01T00:00:00Z"),
+      ttlMs: 1000,
+    });
+    const res = verifyAnyEmailsOffToken(token, { now: new Date("2026-02-01T00:00:00Z") });
+    expect(res.ok).toBe(false);
+    // Each kind is tried in turn and a doc-update token fails the view check at the signature,
+    // so the first failure seen is bad_signature — which renders "this link is not valid".
+    expect(!res.ok && res.reason).toBe("expired");
+  });
+
+  test("a live doc-update token names its own kind", () => {
+    const token = createEmailsOffToken("doc_updates", "m1", { now: new Date("2026-01-01T00:00:00Z") });
+    const res = verifyAnyEmailsOffToken(token, { now: new Date("2026-01-02T00:00:00Z") });
+    expect(res.ok && res.kind).toBe("doc_updates");
+  });
+
+  test("a view token still verifies as views, since those links are already in mailboxes", () => {
+    const token = createEmailsOffToken("views", "m1", { now: new Date("2026-01-01T00:00:00Z") });
+    const res = verifyAnyEmailsOffToken(token, { now: new Date("2026-01-02T00:00:00Z") });
+    expect(res.ok && res.kind).toBe("views");
+  });
+
+  test("the page reads the field the token names, and offers a button for it", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../src/app/api/notifications/views/off/route.ts"),
+      "utf8",
+    );
+    // The read-only branch must not hardcode viewEmailMode; that is what made it a dead end.
+    expect(src).not.toMatch(/select\(\{ orgId: 1, viewEmailMode: 1 \}\)/);
+    expect(src).toContain("EMAIL_OFF_KINDS[kind].field");
+    expect(src).toContain("copy.confirmLabel");
   });
 });
