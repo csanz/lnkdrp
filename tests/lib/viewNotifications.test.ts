@@ -1230,7 +1230,7 @@ describe("email design review (headers, preheader, Outlook, copy)", () => {
       /<td align="center" bgcolor="#18181b" style="[^"]*padding:10px 16px;[^"]*"><a href="https:\/\/app\.example\.com\/doc\/d1\/metrics\/viewer\/a_bot1" style="[^"]*color:#ffffff;/,
     );
     expect(email.html).not.toMatch(/<a [^>]*padding:10px 16px/);
-    expect(email.html).toMatch(/<td style="[^"]*font-size:13px;[^"]*color:#71717a;">LinkDrop<\/td>/);
+    expect(email.html).toMatch(/<td style="[^"]*font-size:13px;[^"]*color:#71717a;[^"]*">LinkDrop<\/td>/);
     // No stylesheet, no classes: everything inline.
     expect(email.html).not.toContain("<style");
     expect(email.html).not.toContain("class=");

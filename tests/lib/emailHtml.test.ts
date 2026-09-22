@@ -214,3 +214,48 @@ describe("the test harness cannot leak into real mail", () => {
     }
   });
 });
+
+describe("which workspace an email is about", () => {
+  /**
+   * "2 people opened Series A deck" is ambiguous the moment somebody belongs to two workspaces,
+   * and a workspace can be a different company entirely — so the answer has to be in the email,
+   * not inferred from which link they happen to recognise.
+   */
+  test("the header names the workspace, in both bodies", () => {
+    const blocks: Block[] = [{ kind: "p", text: "body" }];
+    const ws = { name: "Acme", avatarUrl: null };
+    expect(renderHtml({ subject: "s", blocks, workspace: ws })).toContain(">Acme</td>");
+    expect(renderText(blocks, null, ws)).toContain("Workspace: Acme");
+  });
+
+  test("a workspace with no avatar still gets a mark, drawn rather than fetched", () => {
+    const html = renderHtml({ subject: "s", blocks: [], workspace: { name: "Acme Corp", avatarUrl: null } });
+    // An initials disc is a table cell: nothing to host, and nothing a client can block.
+    expect(html).toContain(">AC</td>");
+    expect(html).not.toMatch(/<img[^>]*avatar/i);
+  });
+
+  test("an avatar is used when there is one", () => {
+    const html = renderHtml({
+      subject: "s",
+      blocks: [],
+      workspace: { name: "Acme", avatarUrl: "https://cdn.test/a.png" },
+    });
+    expect(html).toContain('src="https://cdn.test/a.png"');
+  });
+
+  test("a long name is cut, never wrapped", () => {
+    const long = "A Workspace With A Very Long Name Indeed";
+    const html = renderHtml({ subject: "s", blocks: [], workspace: { name: long, avatarUrl: null } });
+    // Wrapping is what broke it first: a squeezed cell stacked "Acme" one letter per line.
+    expect(html).toContain("…");
+    expect(html).not.toContain(long);
+    expect(html).toContain("white-space:nowrap");
+  });
+
+  test("no workspace renders the plain header, not an empty slot", () => {
+    const html = renderHtml({ subject: "s", blocks: [] });
+    expect(html).toContain(">LinkDrop</td>");
+    expect(html).not.toContain("align=\"right\"");
+  });
+});

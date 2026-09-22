@@ -125,7 +125,9 @@ const SAMPLE_OFF_URL = `${SITE_URL}/api/notifications/views/off?t=preview`;
 
 /** The compose context for a share-view email on one plan. */
 function viewCtx(plan: "free" | "pro"): ComposeContext {
-  return { appUrl: SITE_URL, offUrl: SAMPLE_OFF_URL, plan };
+  // A workspace with no avatar, so the previews show the initials disc — the case a real
+  // deployment hits most, since Google gives us no workspace logo and most orgs never upload one.
+  return { appUrl: SITE_URL, offUrl: SAMPLE_OFF_URL, plan, workspace: { name: "Acme", avatarUrl: null } };
 }
 
 /** Mail headers as ordered pairs, so the page can render them without Object.entries. */

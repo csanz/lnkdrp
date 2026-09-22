@@ -29,6 +29,8 @@
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { OrgModel } from "@/lib/models/Org";
+import type { EmailWorkspace } from "@/lib/email/layout";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
@@ -538,6 +540,41 @@ const SKIP_SOURCE_GONE = "source row no longer exists";
  * knows, so each claimed row is rehydrated before anything is composed. A row whose view or
  * document is gone is skipped rather than retried — neither will come back.
  */
+/**
+ * The workspace's name and avatar, once per org per run.
+ *
+ * Memoised into the same kind of map the plan lookup uses: a run can touch many members of one
+ * workspace, and each of those emails needs the same two fields. A failure returns null rather
+ * than throwing — an email whose header cannot name the workspace is worse than one that does,
+ * and far better than no email at all.
+ */
+async function loadWorkspace(
+  orgId: Types.ObjectId,
+  orgIdStr: string,
+  cache: Map<string, EmailWorkspace | null>,
+): Promise<EmailWorkspace | null> {
+  const hit = cache.get(orgIdStr);
+  if (hit !== undefined) return hit;
+  let value: EmailWorkspace | null = null;
+  try {
+    const org = (await OrgModel.findById(orgId).select({ name: 1, avatarUrl: 1 }).lean()) as
+      | { name?: unknown; avatarUrl?: unknown }
+      | null;
+    const name = typeof org?.name === "string" ? org.name.trim() : "";
+    if (name) {
+      const avatar = typeof org?.avatarUrl === "string" ? org.avatarUrl.trim() : "";
+      value = { name, avatarUrl: avatar || null };
+    }
+  } catch (err) {
+    debugError(1, "[notification-emails] workspace lookup failed; header will omit it", {
+      orgId: orgIdStr,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+  cache.set(orgIdStr, value);
+  return value;
+}
+
 async function buildViewRound(params: {
   orgId: Types.ObjectId;
   rows: ClaimedNotification[];
@@ -546,6 +583,7 @@ async function buildViewRound(params: {
   appUrl: string;
   now: Date;
   plan: WorkspacePlan;
+  workspace: EmailWorkspace | null;
 }): Promise<Round> {
   const skipped: Round["skipped"] = [];
   const sourceIds = params.rows.map((row) => sourceIdOf(row)).filter((id): id is string => Boolean(id));
@@ -582,6 +620,7 @@ async function buildViewRound(params: {
     appUrl: params.appUrl,
     offUrl: viewEmailsOffUrl(params.appUrl, params.membershipId, { now: params.now }),
     plan: params.plan,
+    workspace: params.workspace,
   };
   const rowByEvent = new Map(live.map((u) => [u.event.id, u.row]));
   const rowsFor = (group: readonly NewViewerEvent[]): ClaimedNotification[] =>
@@ -1153,6 +1192,8 @@ export async function sendNotificationEmails(
   const appUrl = publicBaseUrl();
   /** One plan lookup per workspace per tick; identity in a view email depends on it. */
   const plans = new Map<string, WorkspacePlan>();
+  /** org id -> name and avatar, resolved once per run; see `loadWorkspace`. */
+  const workspaceIdentities = new Map<string, EmailWorkspace | null>();
   const workspaces = new Set<string>();
   const members = new Set<string>();
 
@@ -1182,7 +1223,7 @@ export async function sendNotificationEmails(
       const group = groups[index];
       if (!group) return;
       try {
-        await runGroup({ group, recipients, plans, appUrl, now, dryRun, allowDaily, limitEventsPerMember, totals });
+        await runGroup({ group, recipients, plans, workspaces: workspaceIdentities, appUrl, now, dryRun, allowDaily, limitEventsPerMember, totals });
       } catch (err) {
         // One member's render failing must not stop the rest of the run. The rows stay where they
         // are — claimed rows are recovered by the stale sweep, unclaimed ones are due next tick.
@@ -1208,6 +1249,7 @@ async function runGroup(params: {
   group: DueGroup;
   recipients: ReadonlyMap<string, Recipient>;
   plans: Map<string, WorkspacePlan>;
+  workspaces: Map<string, EmailWorkspace | null>;
   appUrl: string;
   now: Date;
   dryRun: boolean;
@@ -1304,6 +1346,7 @@ async function renderAndSend(params: {
   membershipId: string;
   to: string;
   plans: Map<string, WorkspacePlan>;
+  workspaces: Map<string, EmailWorkspace | null>;
   appUrl: string;
   now: Date;
   dryRun: boolean;
@@ -1337,6 +1380,7 @@ async function renderAndSend(params: {
       appUrl: params.appUrl,
       now,
       plan,
+      workspace: await loadWorkspace(orgId, orgIdStr, params.workspaces),
     });
   } else if (kind === "doc_updates") {
     round = await buildDocUpdateRound({ orgId, orgIdStr, rows, mode });

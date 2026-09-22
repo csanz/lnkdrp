@@ -91,6 +91,13 @@ vi.mock("@/lib/notifications/queue", () => ({
   skipPending,
 }));
 vi.mock("@/lib/models/OrgMembership", () => ({ OrgMembershipModel: { find: membershipFind } }));
+// The workspace named in every view email's header. Unmocked, `findById` reaches for a real
+// connection and every test in this file times out rather than failing with something readable.
+vi.mock("@/lib/models/Org", () => ({
+  OrgModel: {
+    findById: () => ({ select: () => ({ lean: async () => ({ name: "Acme", avatarUrl: null }) }) }),
+  },
+}));
 vi.mock("@/lib/models/User", () => ({ UserModel: { find: userFind } }));
 vi.mock("@/lib/models/ShareView", () => ({ ShareViewModel: { find: shareViewFind } }));
 vi.mock("@/lib/models/ShareVisit", () => ({ ShareVisitModel: { find: vi.fn(), aggregate: vi.fn(async () => []) } }));

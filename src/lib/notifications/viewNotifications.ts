@@ -50,7 +50,7 @@
  * - Every email carries RFC 8058 one-click unsubscribe headers pointing at the signed off URL, and a
  *   hidden preheader that follows the same identity rule as the body.
  */
-import { renderHtml, renderText, type Block, type EmailFooter } from "@/lib/email/layout";
+import { renderHtml, renderText, type Block, type EmailFooter, type EmailWorkspace } from "@/lib/email/layout";
 import { Types } from "mongoose";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
@@ -584,6 +584,15 @@ export type ComposeContext = {
   /** Signed one-click off link for this member (C4). */
   offUrl: string;
   plan: WorkspacePlan;
+  /**
+   * Which workspace this is about.
+   *
+   * Optional only so a caller that cannot resolve it still sends — an email missing its heading is
+   * far better than no email. Every real send should pass it: "2 people opened Series A deck" is
+   * ambiguous the moment the reader belongs to two workspaces, and a workspace can be a different
+   * company entirely.
+   */
+  workspace?: EmailWorkspace | null;
 };
 
 function peopleCount(n: number): string {
@@ -690,8 +699,13 @@ export function digestPreheader(newViewers: number, returning: number, documents
  * footer implying there is would be worse than none.
  */
 function viewFooter(ctx: ComposeContext): EmailFooter {
+  const name = (ctx.workspace?.name ?? "").trim();
   return {
-    reason: VIEW_EMAIL_FOOTER_REASON,
+    // Naming the workspace here answers "why am I getting this" and "for which company" in the
+    // same breath, which is the question a member of several workspaces actually has.
+    reason: name
+      ? `You get this because someone opened a link to a document in ${name}.`
+      : VIEW_EMAIL_FOOTER_REASON,
     links: [
       { label: TURN_OFF_LABEL, url: ctx.offUrl },
       { label: CHANGE_HOW_OFTEN_LABEL, url: buildPreferencesUrl(ctx.appUrl) },
@@ -701,10 +715,11 @@ function viewFooter(ctx: ComposeContext): EmailFooter {
 
 function composed(subject: string, preheader: string, blocks: readonly Block[], ctx: ComposeContext): ComposedEmail {
   const footer = viewFooter(ctx);
+  const workspace = ctx.workspace ?? null;
   return {
     subject,
-    text: renderText(blocks, footer),
-    html: renderHtml({ subject, preheader, blocks, footer }),
+    text: renderText(blocks, footer, workspace),
+    html: renderHtml({ subject, preheader, blocks, footer, workspace }),
     headers: viewEmailHeaders(ctx.offUrl),
   };
 }

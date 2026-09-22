@@ -57,20 +57,101 @@ const LOGO_URL =
   "https://svmsosyeuyawzaqr.public.blob.vercel-storage.com/brand/email-logo.png";
 
 /**
- * Header: the mark and the wordmark together.
+ * Which workspace an email is about.
+ *
+ * Owner-facing mail needs this and did not have it: "2 people opened Series A deck" is ambiguous
+ * the moment somebody belongs to two workspaces, and a workspace can be an entirely different
+ * company. Reader-facing mail needs it for the opposite reason — the reader has no idea who
+ * LinkDrop is, and the thing they recognise is the sender's own name and mark.
+ */
+export type EmailWorkspace = {
+  name: string;
+  /** `Org.avatarUrl`; when absent an initials disc is drawn instead, so there is always a mark. */
+  avatarUrl?: string | null;
+};
+
+/** The two-letter disc used when a workspace has no avatar, matching the app's initials avatar. */
+function initialsOf(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "?";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+/**
+ * A workspace's mark: its avatar, or an initials disc drawn in a table cell.
+ *
+ * Initials are a `<td>` with a background rather than an `<img>`, because it needs no hosting and
+ * cannot be blocked — the case where a workspace has no avatar is exactly the case where a broken
+ * image would be worst.
+ */
+function workspaceMark(ws: EmailWorkspace): string {
+  const url = (ws.avatarUrl ?? "").trim();
+  if (url) {
+    return (
+      `<img src="${escapeHtml(url)}" width="20" height="20" alt="" ` +
+      `style="display:block;width:20px;height:20px;border-radius:4px;border:0;outline:none;object-fit:cover;" />`
+    );
+  }
+  return (
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>` +
+    `<td width="20" height="20" align="center" bgcolor="#e4e4e7" ` +
+    `style="width:20px;height:20px;border-radius:4px;background:#e4e4e7;font-family:${FONT};font-size:9px;` +
+    `line-height:20px;font-weight:700;letter-spacing:0.02em;color:#52525b;">${escapeHtml(initialsOf(ws.name))}</td>` +
+    `</tr></table>`
+  );
+}
+
+/**
+ * Header: our mark on the left, the workspace on the right.
  *
  * The wordmark stays as text on purpose. Most clients block remote images until the reader allows
  * them, so a header that is only an image is a blank space on first open — for a welcome email,
  * the first thing a new account ever sees from us. The `alt` is empty because the name is already
  * sitting next to it; giving the image the same alt text prints "LinkDrop LinkDrop" when blocked.
+ *
+ * The workspace sits opposite rather than underneath so it reads as provenance — who this is
+ * about — instead of as a subtitle to our own name.
  */
-function header(): string {
-  return (
+function header(workspace?: EmailWorkspace | null): string {
+  /** Our mark and name, as one shrink-to-fit unit. */
+  const ours =
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>` +
     `<td style="padding:0 8px 0 0;vertical-align:middle;line-height:0;">` +
     `<img src="${escapeHtml(LOGO_URL)}" width="22" height="22" alt="" style="display:block;width:22px;height:22px;border:0;outline:none;text-decoration:none;" />` +
     `</td>` +
-    `<td style="vertical-align:middle;font-family:${FONT};font-size:13px;line-height:1.4;font-weight:600;letter-spacing:0.02em;color:#71717a;">LinkDrop</td>` +
+    `<td style="vertical-align:middle;font-family:${FONT};font-size:13px;line-height:1.4;font-weight:600;letter-spacing:0.02em;color:#71717a;white-space:nowrap;">LinkDrop</td>` +
+    `</tr></table>`;
+
+  if (!workspace || !workspace.name.trim()) return ours;
+
+  /**
+   * Long names are cut rather than wrapped.
+   *
+   * The first version let the name wrap, and a squeezed right-hand cell broke "Acme" into four
+   * stacked letters. A header is one line by definition; a name too long for it is a name to
+   * shorten, not a reason to grow the header.
+   */
+  const name = workspace.name.trim();
+  const shown = name.length > 28 ? `${name.slice(0, 27).trimEnd()}\u2026` : name;
+
+  /**
+   * The workspace rides in its own nested table inside a single right-aligned cell.
+   *
+   * Two sibling cells with a percentage spacer between them is what caused the wrapping: the
+   * spacer claimed the width and the text cell got whatever was left. One cell that shrinks to
+   * its content, with `nowrap` on the text, cannot be squeezed by anything beside it.
+   */
+  const theirs =
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>` +
+    `<td style="vertical-align:middle;line-height:0;padding:0 6px 0 0;">${workspaceMark(workspace)}</td>` +
+    `<td style="vertical-align:middle;font-family:${FONT};font-size:13px;line-height:1.4;font-weight:600;color:#3f3f46;white-space:nowrap;">${escapeHtml(shown)}</td>` +
+    `</tr></table>`;
+
+  return (
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;"><tr>` +
+    `<td align="left" style="vertical-align:middle;">${ours}</td>` +
+    `<td align="right" style="vertical-align:middle;">${theirs}</td>` +
     `</tr></table>`
   );
 }
@@ -111,8 +192,18 @@ function hasNotice(footer: EmailFooter | null | undefined): boolean {
   return Boolean(footer && (footer.reason || (footer.links && footer.links.length)));
 }
 
-export function renderText(blocks: readonly Block[], footer?: EmailFooter | null): string {
+export function renderText(
+  blocks: readonly Block[],
+  footer?: EmailFooter | null,
+  workspace?: EmailWorkspace | null,
+): string {
   const out: string[] = [];
+  /**
+   * Named rather than just printed, because a bare "Acme" on the first line of a plain-text email
+   * is not self-explanatory. The HTML shows it beside a mark in a header, which carries its own
+   * meaning; text has no such affordance and has to say what the word is.
+   */
+  if (workspace?.name.trim()) out.push(`Workspace: ${workspace.name.trim()}`, "");
   let afterCompact = false;
   for (const b of blocks) {
     const compact = b.kind === "subheading" && Boolean(b.compact);
@@ -160,8 +251,10 @@ export function renderHtml(params: {
   preheader?: string;
   blocks: readonly Block[];
   footer?: EmailFooter | null;
+  /** Shown top-right, so an owner in several workspaces can tell which one this is about. */
+  workspace?: EmailWorkspace | null;
 }): string {
-  const { subject, preheader = "", blocks, footer } = params;
+  const { subject, preheader = "", blocks, footer, workspace } = params;
   const parts: string[] = [];
   // Text blocks that follow a compact list get their own top spacing back.
   let afterCompact = false;
@@ -254,7 +347,7 @@ export function renderHtml(params: {
     // Outlook desktop ignores max-width; a fixed-width table only it can see holds the card at 560px.
     `<!--[if mso]><table role="presentation" width="560" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->` +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #e4e4e7;border-radius:12px;font-family:${FONT};">` +
-    `<tr><td style="padding:22px 28px 0;">${header()}</td></tr>` +
+    `<tr><td style="padding:22px 28px 0;">${header(workspace)}</td></tr>` +
     `<tr><td style="padding:14px 28px 8px;">${parts.join("")}</td></tr>` +
     (footerHtml ? `<tr><td style="padding:16px 28px 22px;border-top:1px solid #f0f0f2;">${footerHtml}</td></tr>` : "") +
     `</table>` +
