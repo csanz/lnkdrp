@@ -91,6 +91,17 @@ const OFF_COPY: Record<
       immediate: "View emails arrive immediately",
     },
   },
+  doc_uploads: {
+    title: "New document emails are off",
+    line: (w) => `You won't get emails when a teammate adds a document to ${w}.`,
+    confirmTitle: "Turn off new document emails",
+    confirmLabel: "Turn off new document emails",
+    sentence: {
+      off: "New document emails are already off",
+      daily: "New document emails are set to a daily digest",
+      immediate: "New document emails arrive immediately",
+    },
+  },
   doc_updates: {
     title: "Document update emails are off",
     line: (w) => `You won't get emails when a document is replaced in ${w}.`,

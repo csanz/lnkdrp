@@ -36,6 +36,7 @@ export const VIEW_EMAILS_OFF_PURPOSE = "view_emails_off";
 export const EMAIL_OFF_KINDS = {
   views: { purpose: VIEW_EMAILS_OFF_PURPOSE, field: "viewEmailMode" },
   doc_updates: { purpose: "doc_update_emails_off", field: "docUpdateEmailMode" },
+  doc_uploads: { purpose: "doc_upload_emails_off", field: "docUploadEmailMode" },
 } as const;
 
 export type EmailOffKind = keyof typeof EMAIL_OFF_KINDS;

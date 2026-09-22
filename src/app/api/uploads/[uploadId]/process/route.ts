@@ -3032,6 +3032,56 @@ export async function POST(
         }
 
         /**
+         * A teammate added a *new* document to the workspace.
+         *
+         * The symmetric case to the block above, and until now the silent one: `isReplacement`
+         * guarded the only enqueue, so replacing a document told everybody and adding one told
+         * nobody. In a shared workspace a new document is the thing colleagues most want to hear
+         * about — it is the only event that puts something in front of them they have never seen.
+         *
+         * **The uploader is skipped.** Everyone else in the workspace learns something they did not
+         * know; the person who just pressed upload learns nothing, and an email confirming your own
+         * action is the fastest way to teach somebody to filter this whole class of mail. That also
+         * makes it inert in a personal workspace, which has one member and that member is always
+         * the uploader.
+         *
+         * Same dedupe shape as `doc_updates`: this route is re-entered for one upload more often
+         * than any other in the product, and the upload row is the event's identity.
+         */
+        if (!isReplacement && !summaryRerun && docWriteLanded) {
+          void (async () => {
+            try {
+              const uploaderUserId = actor?.userId ? String(actor.userId) : "";
+              const members = (await OrgMembershipModel.find({
+                orgId: existingDocOrgId,
+                isDeleted: { $ne: true },
+              })
+                .select({ userId: 1 })
+                .lean()) as Array<{ userId?: unknown }>;
+              await Promise.all(
+                members.map(async (m) => {
+                  const memberUserId = m?.userId ? String(m.userId) : "";
+                  if (!Types.ObjectId.isValid(memberUserId)) return;
+                  if (memberUserId === uploaderUserId) return;
+                  await enqueueNotification({
+                    orgId: existingDocOrgId,
+                    userId: memberUserId,
+                    kind: "doc_uploads",
+                    dedupeKey: notificationDedupeKey("doc_uploads", memberUserId, uploadId),
+                    event: { docId, uploadId, version: uploadVersion },
+                  });
+                }),
+              );
+            } catch (e) {
+              debugError(1, "[process] doc_uploads enqueue failed", {
+                uploadId,
+                message: e instanceof Error ? e.message : String(e),
+              });
+            }
+          })();
+        }
+
+        /**
          * The first version of a file a recipient dropped into a request inbox.
          *
          * Enqueued here rather than in `POST /api/requests/:token/uploads`, which is where it used

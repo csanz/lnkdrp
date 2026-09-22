@@ -7,6 +7,7 @@
  * Three email modes live on the membership, each `off | daily | immediate`:
  * - `viewEmailMode`: someone opened one of the workspace's share links
  * - `docUpdateEmailMode`: a doc was replaced and changes were introduced
+ * - `docUploadEmailMode`: a teammate added a new document to this workspace
  * - `repoLinkRequestEmailMode`: a repository link was requested / needs review
  *
  * A missing value reads as `daily` (the schema default). Updates are accepted on both POST
@@ -24,7 +25,7 @@ export const dynamic = "force-dynamic";
 type Mode = "off" | "daily" | "immediate";
 
 /** The per-member email mode fields this route reads and writes. */
-const MODE_KEYS = ["viewEmailMode", "docUpdateEmailMode", "repoLinkRequestEmailMode"] as const;
+const MODE_KEYS = ["viewEmailMode", "docUpdateEmailMode", "docUploadEmailMode", "repoLinkRequestEmailMode"] as const;
 type ModeKey = (typeof MODE_KEYS)[number];
 
 function isMode(v: unknown): v is Mode | "immediately" {
@@ -56,6 +57,7 @@ export async function GET(request: Request) {
     .select({
       viewEmailMode: 1,
       docUpdateEmailMode: 1,
+      docUploadEmailMode: 1,
       repoLinkRequestEmailMode: 1,
       docUpdateDigestTimezone: 1,
       docUpdateDigestTimeLocal: 1,
@@ -71,6 +73,7 @@ export async function GET(request: Request) {
       userId: actor.userId,
       viewEmailMode: readMode(m.viewEmailMode),
       docUpdateEmailMode: readMode(m.docUpdateEmailMode),
+      docUploadEmailMode: readMode(m.docUploadEmailMode),
       repoLinkRequestEmailMode: readMode(m.repoLinkRequestEmailMode),
       docUpdateDigestTimezone: typeof m.docUpdateDigestTimezone === "string" ? m.docUpdateDigestTimezone : null,
       docUpdateDigestTimeLocal: typeof m.docUpdateDigestTimeLocal === "string" ? m.docUpdateDigestTimeLocal : null,

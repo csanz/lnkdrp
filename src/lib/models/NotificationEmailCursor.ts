@@ -23,9 +23,9 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 import type { Types } from "mongoose";
 
-export type NotificationEmailCursorKey = "doc_updates" | "repo_link_requests" | "share_views";
+export type NotificationEmailCursorKey = "doc_updates" | "doc_uploads" | "repo_link_requests" | "share_views";
 
-const NOTIFICATION_EMAIL_CURSOR_KEYS: NotificationEmailCursorKey[] = ["doc_updates", "repo_link_requests", "share_views"];
+const NOTIFICATION_EMAIL_CURSOR_KEYS: NotificationEmailCursorKey[] = ["doc_updates", "doc_uploads", "repo_link_requests", "share_views"];
 
 const notificationEmailCursorSchema = new Schema(
   {

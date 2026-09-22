@@ -27,6 +27,22 @@ const orgMembershipSchema = new Schema(
     /**
      * Notification preferences (workspace-scoped).
      *
+     * Used for "a teammate added a document" emails (daily digest vs immediate vs off).
+     *
+     * Defaults to `daily` like its siblings. A personal workspace has one member and the sender
+     * skips the uploader, so this is inert there and only costs anything in a shared workspace —
+     * which is the only place the event means anything.
+     */
+    docUploadEmailMode: {
+      type: String,
+      trim: true,
+      enum: ["off", "daily", "immediate"],
+      default: "daily",
+      index: true,
+    },
+    /**
+     * Notification preferences (workspace-scoped).
+     *
      * Used for "repo link request" notification emails (daily digest vs immediate vs off).
      */
     repoLinkRequestEmailMode: {
@@ -88,6 +104,22 @@ export const OrgMembershipModel: Model<OrgMembership> =
 // additions made during development would not take effect until a server restart. Patch
 // newer fields into the cached schema (same pattern as Upload.ts). With strict mode on, a
 // missing path would otherwise silently drop `viewEmailMode` on PATCH.
+// Same reason as `viewEmailMode` below: a dev server that hot-reloaded holds the model compiled
+// before this field existed, and a missing path is silently dropped on PATCH rather than rejected.
+if (ExistingOrgMembershipModel && !ExistingOrgMembershipModel.schema.path("docUploadEmailMode")) {
+  ExistingOrgMembershipModel.schema.add({
+    docUploadEmailMode: {
+      type: String,
+      trim: true,
+      enum: ["off", "daily", "immediate"],
+      // Must match the schema above, or a hot-reloaded process hands new memberships a different
+      // default from the one a fresh process gives them.
+      default: "daily",
+      index: true,
+    },
+  } as any);
+}
+
 if (ExistingOrgMembershipModel && !ExistingOrgMembershipModel.schema.path("viewEmailMode")) {
   ExistingOrgMembershipModel.schema.add({
     viewEmailMode: {

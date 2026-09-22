@@ -14,9 +14,14 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 import type { Types } from "mongoose";
 
-export type NotificationQueueKind = "share_views" | "doc_updates" | "repo_link_requests";
+/**
+ * `doc_uploads` is a *new* document appearing, which is a different event from `doc_updates` —
+ * that one is an existing document being replaced. Nothing fired when a teammate added something
+ * new, which in a shared workspace is the thing colleagues most want to hear about.
+ */
+export type NotificationQueueKind = "share_views" | "doc_updates" | "doc_uploads" | "repo_link_requests";
 
-export const NOTIFICATION_QUEUE_KINDS: NotificationQueueKind[] = ["share_views", "doc_updates", "repo_link_requests"];
+export const NOTIFICATION_QUEUE_KINDS: NotificationQueueKind[] = ["share_views", "doc_updates", "doc_uploads", "repo_link_requests"];
 
 export type NotificationQueueStatus = "pending" | "sending" | "sent" | "skipped" | "dead";
 

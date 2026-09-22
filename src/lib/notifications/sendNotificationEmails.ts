@@ -32,6 +32,7 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { OrgModel } from "@/lib/models/Org";
 import type { EmailWorkspace } from "@/lib/email/layout";
 import { composeDocUpdateEmail } from "@/lib/notifications/docUpdateEmail";
+import { composeDocUploadEmail } from "@/lib/notifications/docUploadEmail";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
@@ -193,6 +194,7 @@ export type SendNotificationEmailsResult = {
   /** Total messages that threw. Each leaves its rows on the backoff schedule, never dropped. */
   sendFailures: number;
   docUpdate: { immediate: NotificationBucketTotals; daily: NotificationDigestTotals };
+  docUpload: { immediate: NotificationBucketTotals; daily: NotificationDigestTotals };
   repoLinkRequests: { immediate: NotificationBucketTotals; daily: NotificationDigestTotals };
   views: {
     immediate: NotificationBucketTotals;
@@ -472,7 +474,7 @@ async function loadRecipients(groups: readonly DueGroup[]): Promise<Map<string, 
     orgId: { $in: orgIds },
     userId: { $in: userIds },
   })
-    .select({ _id: 1, orgId: 1, userId: 1, docUpdateEmailMode: 1, repoLinkRequestEmailMode: 1, viewEmailMode: 1 })
+    .select({ _id: 1, orgId: 1, userId: 1, docUpdateEmailMode: 1, docUploadEmailMode: 1, repoLinkRequestEmailMode: 1, viewEmailMode: 1 })
     .lean();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -484,8 +486,9 @@ async function loadRecipients(groups: readonly DueGroup[]): Promise<Map<string, 
       membershipId: m?._id ? String(m._id) : "",
       email: null,
       modes: {
-        // A stored row with no value means "daily" for all three, as the preferences UI does.
+        // A stored row with no value means "daily" for all of them, as the preferences UI does.
         doc_updates: (m?.docUpdateEmailMode ?? "daily") as Mode,
+        doc_uploads: (m?.docUploadEmailMode ?? "daily") as Mode,
         repo_link_requests: (m?.repoLinkRequestEmailMode ?? "daily") as Mode,
         share_views: normalizeViewEmailMode(m?.viewEmailMode),
       },
@@ -701,6 +704,124 @@ type DocUpdateItem = {
  * rather than trusted from the event snapshot, because a rename between the upload and the send
  * should show the name the recipient will see when they click through.
  */
+/** One newly added document, resolved from its queue rows. */
+type DocUploadItem = {
+  row: ClaimedNotification;
+  docId: string;
+  title: string;
+  uploadedBy: string | null;
+  pages: number | null;
+};
+
+/**
+ * The round for "a teammate added a document".
+ *
+ * Simpler than the doc-update round because there is nothing to compare: no DocChange, no diff, no
+ * version worth printing. What it does need that the others do not is a *name* — the email's whole
+ * point is who added the thing — so it resolves uploader ids to display names in one query, and
+ * falls back to "Someone" rather than printing an empty phrase.
+ */
+async function buildDocUploadRound(params: {
+  orgId: Types.ObjectId;
+  orgIdStr: string;
+  rows: ClaimedNotification[];
+  mode: SendMode;
+  membershipId: string;
+  appUrl: string;
+  now: Date;
+  workspace: EmailWorkspace | null;
+}): Promise<Round> {
+  const skipped: Round["skipped"] = [];
+
+  const byDoc = new Map<string, { docId: string; uploadId: string }>();
+  for (const row of params.rows) {
+    const docId = String(toObjectIdOrNull(row.event.docId) ?? "");
+    if (!Types.ObjectId.isValid(docId)) {
+      skipped.push({ id: row.id, reason: SKIP_SOURCE_GONE });
+      continue;
+    }
+    byDoc.set(row.id, { docId, uploadId: String(toObjectIdOrNull(row.event.uploadId ?? sourceIdOf(row)) ?? "") });
+  }
+
+  const docIds = Array.from(new Set(Array.from(byDoc.values()).map((d) => d.docId)));
+  const docTitles = await loadDocTitles(params.orgId, docIds);
+
+  /** Page count and owner, per document — the two facts this email carries beyond the title. */
+  const meta = new Map<string, { pages: number | null; userId: string }>();
+  if (docIds.length) {
+    const docs = (await DocModel.find({ _id: { $in: docIds.map((d) => new Types.ObjectId(d)) }, orgId: params.orgId })
+      .select({ _id: 1, pageCount: 1, userId: 1 })
+      .lean()) as Array<{ _id?: unknown; pageCount?: unknown; userId?: unknown }>;
+    for (const d of docs) {
+      const id = d?._id ? String(d._id) : "";
+      if (!id) continue;
+      meta.set(id, {
+        pages: Number.isFinite(Number(d?.pageCount)) ? Number(d.pageCount) : null,
+        userId: d?.userId ? String(d.userId) : "",
+      });
+    }
+  }
+
+  const uploaderIds = Array.from(new Set(Array.from(meta.values()).map((m) => m.userId).filter(Boolean)));
+  const names = new Map<string, string>();
+  if (uploaderIds.length) {
+    const users = (await UserModel.find({ _id: { $in: uploaderIds.map((u) => new Types.ObjectId(u)) } })
+      .select({ _id: 1, name: 1, email: 1 })
+      .lean()) as Array<{ _id?: unknown; name?: unknown; email?: unknown }>;
+    for (const u of users) {
+      const id = u?._id ? String(u._id) : "";
+      if (!id) continue;
+      const name = typeof u?.name === "string" ? u.name.trim() : "";
+      const email = typeof u?.email === "string" ? u.email.trim() : "";
+      // A name if they set one, otherwise the address — both beat "Someone", which is the floor.
+      if (name || email) names.set(id, name || email);
+    }
+  }
+
+  const items: DocUploadItem[] = [];
+  for (const row of params.rows) {
+    const about = byDoc.get(row.id);
+    if (!about) continue;
+    const title = docTitles.get(about.docId);
+    if (!title) {
+      skipped.push({ id: row.id, reason: SKIP_DOCUMENT_GONE });
+      continue;
+    }
+    const m = meta.get(about.docId);
+    items.push({
+      row,
+      docId: about.docId,
+      title,
+      uploadedBy: m?.userId ? names.get(m.userId) ?? null : null,
+      pages: m?.pages ?? null,
+    });
+  }
+  if (!items.length) return { deliveries: [], skipped };
+  items.sort((a, b) => a.row.occurredAt.getTime() - b.row.occurredAt.getTime());
+
+  const email = composeDocUploadEmail({
+    entries: items.map((i) => ({
+      title: i.title,
+      uploadedBy: i.uploadedBy,
+      pages: i.pages,
+      url: buildDocUrl(i.docId),
+    })),
+    daily: params.mode === "daily",
+    workspace: params.workspace,
+    offUrl: emailsOffUrl(params.appUrl, "doc_uploads", params.membershipId, { now: params.now }),
+    preferencesUrl: buildPreferencesUrl(params.appUrl),
+    turnOffLabel: TURN_OFF_LABEL,
+    changeHowOftenLabel: CHANGE_HOW_OFTEN_LABEL,
+  });
+
+  return {
+    deliveries: [
+      { subject: email.subject, text: email.text, html: email.html, headers: email.headers, rows: items.map((i) => i.row) },
+    ],
+    skipped,
+  };
+}
+
 async function buildDocUpdateRound(params: {
   orgId: Types.ObjectId;
   orgIdStr: string;
@@ -1078,8 +1199,21 @@ function bucketFor(
   kind: NotificationQueueKind,
   mode: SendMode,
 ): NotificationBucketTotals {
-  const group =
-    kind === "share_views" ? totals.views : kind === "doc_updates" ? totals.docUpdate : totals.repoLinkRequests;
+  /**
+   * Keyed, not a ternary chain.
+   *
+   * It read `share_views ? views : doc_updates ? docUpdate : repoLinkRequests`, so any kind added
+   * later landed in the final branch by default — `doc_uploads` counted every one of its emails as
+   * a repo-link-request, in the run result and in cron health, and nothing failed. A Record over
+   * `NotificationQueueKind` makes the next one a compile error instead of a wrong number.
+   */
+  const groups: Record<NotificationQueueKind, { immediate: NotificationBucketTotals; daily: NotificationDigestTotals }> = {
+    share_views: totals.views,
+    doc_updates: totals.docUpdate,
+    doc_uploads: totals.docUpload,
+    repo_link_requests: totals.repoLinkRequests,
+  };
+  const group = groups[kind];
   return mode === "immediate" ? group.immediate : group.daily;
 }
 
@@ -1196,6 +1330,7 @@ function emptyTotals(now: Date, dryRun: boolean, allowDaily: boolean): SendNotif
     membersTruncated: false,
     sendFailures: 0,
     docUpdate: { immediate: bucket(), daily: digest() },
+    docUpload: { immediate: bucket(), daily: digest() },
     repoLinkRequests: { immediate: bucket(), daily: digest() },
     views: { immediate: bucket(), daily: { ...digest(), returns: 0 }, off: { members: 0 }, errors: 0 },
     queue: { recovered: 0, claimed: 0, sent: 0, skipped: 0, retried: 0, dead: 0, deferred: 0 },
@@ -1452,6 +1587,17 @@ async function renderAndSend(params: {
       appUrl: params.appUrl,
       now,
       plan,
+      workspace: await loadWorkspace(orgId, orgIdStr, params.workspaces),
+    });
+  } else if (kind === "doc_uploads") {
+    round = await buildDocUploadRound({
+      orgId,
+      orgIdStr,
+      rows,
+      mode,
+      membershipId: params.membershipId,
+      appUrl: params.appUrl,
+      now,
       workspace: await loadWorkspace(orgId, orgIdStr, params.workspaces),
     });
   } else if (kind === "doc_updates") {
