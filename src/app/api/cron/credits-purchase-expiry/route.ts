@@ -8,6 +8,7 @@
  * Vercel Cron invokes this with `GET` + `Authorization: Bearer $CRON_SECRET`; `POST` is for manual
  * runs. Auth: `requireCronAuth`.
  */
+import { refuseUnsupportedDryRun } from "@/lib/cron/dryRun";
 import { NextResponse } from "next/server";
 
 import { connectMongo } from "@/lib/mongodb";
@@ -33,6 +34,10 @@ async function recordHealth(set: Record<string, unknown>) {
 async function handle(request: Request) {
   const unauthorized = requireCronAuth(request);
   if (unauthorized) return unauthorized;
+
+  // This route has no dry-run mode; refuse the flag rather than do the real work.
+  const noDryRun = refuseUnsupportedDryRun(request, "credits-purchase-expiry");
+  if (noDryRun) return noDryRun;
   const limitRaw = Number(new URL(request.url).searchParams.get("limit"));
   const limit = Number.isFinite(limitRaw) && limitRaw >= 1 ? Math.floor(limitRaw) : undefined;
   const startedAt = new Date();

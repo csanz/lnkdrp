@@ -16,6 +16,7 @@
  * Overlap protection: holds a `CronHealth` lease for the duration of the run and
  * returns `{ skipped: "locked" }` (200) when another run is in progress.
  */
+import { refuseUnsupportedDryRun } from "@/lib/cron/dryRun";
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 
@@ -52,6 +53,10 @@ function asPositiveInt(v: unknown): number | null {
 async function handle(request: Request) {
   const unauthorized = requireCronAuth(request);
   if (unauthorized) return unauthorized;
+
+  // This route has no dry-run mode; refuse the flag rather than do the real work.
+  const noDryRun = refuseUnsupportedDryRun(request, "stripe-credits-reconcile");
+  if (noDryRun) return noDryRun;
 
   const url = new URL(request.url);
   const startedAt = new Date();

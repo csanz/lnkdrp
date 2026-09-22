@@ -7,6 +7,7 @@
  * Vercel Cron invokes this with `GET` + `Authorization: Bearer $CRON_SECRET`;
  * `POST` is kept for manual/dev invocation. Auth: `requireCronAuth`.
  */
+import { refuseUnsupportedDryRun } from "@/lib/cron/dryRun";
 import { NextResponse } from "next/server";
 import { rollupDocMetrics } from "@/lib/metrics/rollupDocMetrics";
 import { connectMongo } from "@/lib/mongodb";
@@ -33,6 +34,10 @@ function asPositiveInt(v: unknown): number | null {
 async function handle(request: Request) {
   const unauthorized = requireCronAuth(request);
   if (unauthorized) return unauthorized;
+
+  // This route has no dry-run mode; refuse the flag rather than do the real work.
+  const noDryRun = refuseUnsupportedDryRun(request, "doc-metrics");
+  if (noDryRun) return noDryRun;
 
   const url = new URL(request.url);
   const docId = url.searchParams.get("docId") ?? undefined;
