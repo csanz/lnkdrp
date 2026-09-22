@@ -15,7 +15,9 @@
  */
 "use client";
 
-import { EMAIL_CATALOG } from "@/lib/email/templates";
+// From the data module, never the template barrel: the barrel drags mongoose models
+// into the browser and this component is client-side.
+import { EMAIL_CATALOG } from "@/lib/email/catalog";
 import { EMAIL_COPY, type EmailAudience } from "@/lib/email/catalogCopy";
 
 /** Rows with a preference are already represented by the controls above; these are the others. */

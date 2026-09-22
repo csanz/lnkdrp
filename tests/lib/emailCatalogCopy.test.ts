@@ -7,6 +7,10 @@
  * without a description here and the page silently goes back to being a fragment that claims to be
  * whole.
  */
+import fs from "node:fs";
+import path from "node:path";
+import { execSync } from "node:child_process";
+
 import { describe, expect, test } from "vitest";
 
 import { EMAIL_CATALOG } from "@/lib/email/templates";
@@ -52,5 +56,40 @@ describe("every email we send is described", () => {
     for (const [id, c] of Object.entries(EMAIL_COPY)) {
       expect(offered.has(c.setting), `${id} names a setting that does not exist`).toBe(true);
     }
+  });
+});
+
+describe("the catalogue is safe to read from a browser component", () => {
+  /**
+   * This failed in production-shaped code, not in theory.
+   *
+   * `templates/index.ts` re-exports every builder, and those reach `planLimits` for the plan
+   * numbers, which reaches `Org`, which reaches `OrgMembership` — a mongoose model. A client
+   * component importing the catalogue from the barrel therefore evaluated the whole server-side
+   * model layer in the browser and threw `Cannot read properties of undefined (reading
+   * 'OrgMembership')`, taking the dashboard down behind an error boundary.
+   *
+   * A list of ids and one-line descriptions depends on none of that, so the data lives in its own
+   * import-free file. An import added there is the bug coming back.
+   */
+  test("catalog.ts imports nothing", () => {
+    const root = path.resolve(__dirname, "../..");
+    const src = fs.readFileSync(path.join(root, "src/lib/email/catalog.ts"), "utf8");
+    const imports = src.match(/^\s*import\s/gm) ?? [];
+    expect(imports, "keep this file free of imports so any component can read it").toEqual([]);
+  });
+
+  test("no client component imports the template barrel", () => {
+    const root = path.resolve(__dirname, "../..");
+    const files = execSync("git ls-files 'src/**/*.tsx' 'src/**/*.ts'", { cwd: root, encoding: "utf8" })
+      .split("\n")
+      .filter(Boolean);
+    const offenders: string[] = [];
+    for (const rel of files) {
+      const src = fs.readFileSync(path.join(root, rel), "utf8");
+      if (!/^\s*["']use client["']/m.test(src)) continue;
+      if (/from\s+["']@\/lib\/email\/templates["']/.test(src)) offenders.push(rel);
+    }
+    expect(offenders, "import @/lib/email/catalog instead — the barrel pulls in mongoose models").toEqual([]);
   });
 });
