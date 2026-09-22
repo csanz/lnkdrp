@@ -182,16 +182,42 @@ async function handle(request: Request) {
       }
     };
 
-    // 0) REPLAY stale claims under their stored batch id (see module docs).
-    const stale = await CreditLedgerModel.find({
-      ...baseFilter,
-      reportBatchId: { $ne: null },
-      $or: [{ reportClaimedAt: null }, { reportClaimedAt: { $lt: staleClaimBefore } }],
-    })
-      .select({ _id: 1, workspaceId: 1, creditsFromOnDemand: 1, reportBatchId: 1 })
-      .sort({ reportClaimedAt: 1 })
-      .limit(limit)
-      .lean();
+    /**
+     * 0) REPLAY stale claims under their stored batch id (see module docs).
+     *
+     * **Whole batches only.** This used to be one `.find().limit(limit)` over rows, which could cut
+     * a batch in half: a stale batch of 60 rows fetched under a budget of 20 grouped into a batch
+     * of 20, and the truncation guard below compares the reclaimed count against *that* group, so
+     * 20 === 20 passed. Stripe then received the batch's meter identifier carrying a fifth of its
+     * value — under-billing the rest — and the next run tried to send the same identifier with a
+     * different value, which Stripe refuses as an `idempotency_error` that
+     * `isDuplicateMeterIdentifierError` does not recognise. The remaining rows were stranded
+     * permanently: unreported, unreportable, and never billed.
+     *
+     * So the budget is spent on *batches*, not rows. Each batch is at most `limit` rows by
+     * construction — it was claimed in one run — so loading every row of the batches we pick is
+     * bounded by the same order of work, and a batch is always sent complete or not at all.
+     */
+    const staleBatchIds = (
+      await CreditLedgerModel.distinct("reportBatchId", {
+        ...baseFilter,
+        reportBatchId: { $ne: null },
+        $or: [{ reportClaimedAt: null }, { reportClaimedAt: { $lt: staleClaimBefore } }],
+      })
+    )
+      .map((id) => String(id ?? ""))
+      .filter(Boolean)
+      .slice(0, Math.max(1, Math.ceil(limit / 10)));
+
+    const stale = staleBatchIds.length
+      ? await CreditLedgerModel.find({
+          ...baseFilter,
+          reportBatchId: { $in: staleBatchIds },
+        })
+          .select({ _id: 1, workspaceId: 1, creditsFromOnDemand: 1, reportBatchId: 1 })
+          .sort({ reportClaimedAt: 1 })
+          .lean()
+      : [];
 
     if (stale.length) {
       const staleGroups = groupClaimedLedgersByBatch({
