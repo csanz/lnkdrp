@@ -16,17 +16,28 @@
  * forgetting this again; the defence is that there is now one function to forget rather than two
  * copies to keep in step.
  *
- * Order matters: the queue comes first, because somebody who cannot get in yet has nothing to set
- * up. `redirect()` throws, so this must never be called inside a `try` that swallows it.
+ * Order matters, and it is the order of the sentence somebody would say: you cannot get in yet,
+ * then you have not agreed to the terms, then you have not set anything up. Nobody sets preferences
+ * before agreeing, and nobody agrees before being let in. `redirect()` throws, so this must never
+ * be called inside a `try` that swallows it.
+ *
+ * The terms step was added after the invitation flow shipped without it: approving an account let
+ * it in immediately, so anyone who ignored the email in favour of signing in directly never saw
+ * `/accept` and the record simply said "never accepted". `/accept` therefore has to work for a
+ * signed-in visitor carrying no token at all, or this redirect is a lockout rather than a gate.
  */
 import { redirect } from "next/navigation";
 
 import { readAccessStatus } from "@/lib/gating/waitlist";
 import { FIRST_RUN_PATH, userNeedsFirstRun } from "@/lib/onboarding/firstRun";
+import { TERMS_ACCEPT_PATH, userNeedsTermsAcceptance } from "@/lib/onboarding/termsGate";
 
 export async function enforceEntryGates(userId: string | null | undefined): Promise<void> {
   if (typeof userId !== "string" || !userId) return;
   if ((await readAccessStatus(userId)) === "waitlisted") redirect("/waitlist");
+  // Accounts predating the field are treated as accepted; see `termsGate.ts` for why that cutoff
+  // exists rather than a backfill.
+  if (await userNeedsTermsAcceptance(userId)) redirect(TERMS_ACCEPT_PATH);
   // `userNeedsFirstRun` answers false for every account that existed before the screen did, so
   // this is one indexed read that says no for everyone but a genuinely new sign-in.
   if (await userNeedsFirstRun(userId)) redirect(FIRST_RUN_PATH);

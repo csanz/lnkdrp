@@ -13,6 +13,10 @@ import PublicHeader from "@/components/PublicHeader";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
 import { CREDIT_PACKS, PURCHASED_CREDITS_EXPIRY_MONTHS } from "@/lib/credits/packs";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
+import { getServerSession } from "next-auth";
+
+import { authOptions } from "@/lib/auth";
+import { enforceEntryGates } from "@/lib/gating/entryGate";
 import CreditsPurchaseClient from "./CreditsPurchaseClient";
 
 export const runtime = "nodejs";
@@ -33,6 +37,12 @@ async function readProPriceLabel(): Promise<string | null> {
 }
 
 export default async function CreditsPage() {
+  // Outside the `(app)` route group, so the entry gates are called here or not at all. This page
+  // sells credits, which makes it the worst of the three to leave open: a queued visitor reaching
+  // it is refused by `POST /api/credits/purchase` but only after being shown a price list.
+  const session = await getServerSession(authOptions);
+  await enforceEntryGates(session?.user?.id);
+
   const proPriceLabel = await readProPriceLabel();
 
   return (
