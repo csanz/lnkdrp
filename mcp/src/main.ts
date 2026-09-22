@@ -34,7 +34,7 @@ import { agentHeaderFrom } from "./agent";
 import { ApiClient, type Whoami } from "./api";
 import { DEFAULT_AGENT_HEADER, MCP_SERVER_VERSION, SESSION_IDLE_MS, SESSION_SWEEP_MS, loadConfig, log, type Config } from "./config";
 import type { ToolContext } from "./context";
-import { isToolError } from "./errors";
+import { isToolError, initializeFailureResponse } from "./errors";
 import { IdempotencyStore } from "./idempotency";
 import { createMcpServer } from "./server";
 
@@ -178,8 +178,9 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
       unauthorized(res, err.code);
       return;
     }
-    log("initialize failed: whoami unreachable", err instanceof Error ? err.message : err);
-    res.status(502).json({ error: "upstream", message: "Could not reach the lnkdrp API to verify the key." });
+    const answer = initializeFailureResponse(err);
+    log(answer.log, answer.status === 429 ? { agent: agentHeader } : err instanceof Error ? err.message : err);
+    res.status(answer.status).json(answer.body);
     return;
   }
   state.whoami = whoami;

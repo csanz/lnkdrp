@@ -1040,6 +1040,115 @@ async function main(): Promise<void> {
       info("preview", `${d.preview?.headline} · severity ${String(d.preview?.severity)}`);
     });
 
+    /**
+     * The eleven tools the 2026-09-21 coverage audit found in no harness at all, two of which
+     * (`update_project`, `remove_doc_from_project`) had never been invoked by anything anywhere.
+     * Both are writes that change what a recipient can open, so they are exercised here against the
+     * throwaway project before it is deleted.
+     */
+    await step("lnkdrp_update_project renames without moving the slug or any URL", async () => {
+      const renamed = `${String((proj as { slug?: string }).slug ?? "room")} renamed ${Date.now()}`;
+      const res = await callTool<CreateProjectResult["project"] & { slug: string; publicUrl?: string | null }>(
+        live,
+        "lnkdrp_update_project",
+        { projectId: proj.projectId, name: renamed },
+      );
+      assert(res.slug === proj.slug, `rename moved the slug: ${proj.slug} -> ${res.slug}`);
+      info("renamed", `${proj.slug} keeps its slug and URLs`);
+    });
+
+    await step("lnkdrp_update_project public page off and on again keeps the same shareId", async () => {
+      // The one that would hurt: a recipient holds /p/<shareId>. If the toggle minted a new id,
+      // every link already sent would be dead and nothing in the response would say so.
+      const before = await callTool<{ publicUrl?: string | null }>(live, "lnkdrp_get_project", { projectId: proj.projectId });
+      const original = before.publicUrl ?? (before as { project?: { publicUrl?: string | null } }).project?.publicUrl ?? null;
+      assert(typeof original === "string" && original.length > 0, "the project has no public URL to begin with");
+      const off = await callTool<{ publicPageEnabled?: boolean; publicUrl?: string | null }>(live, "lnkdrp_update_project", {
+        projectId: proj.projectId,
+        publicPageEnabled: false,
+      });
+      const offUrl = off.publicUrl ?? (off as { project?: { publicUrl?: string | null } }).project?.publicUrl ?? null;
+      assert(offUrl === null, `public page off should null the URL, got ${String(offUrl)}`);
+      const on = await callTool<{ publicUrl?: string | null }>(live, "lnkdrp_update_project", {
+        projectId: proj.projectId,
+        publicPageEnabled: true,
+      });
+      const onUrl = on.publicUrl ?? (on as { project?: { publicUrl?: string | null } }).project?.publicUrl ?? null;
+      assert(onUrl === original, `the public URL changed across an off/on cycle: ${String(original)} -> ${String(onUrl)}`);
+      info("public page", "off and on, same shareId");
+    });
+
+    await step("lnkdrp_update_project with no fields is refused rather than silently doing nothing", async () => {
+      let thrown: unknown = null;
+      try {
+        await callTool(live, "lnkdrp_update_project", { projectId: proj.projectId });
+      } catch (err) {
+        thrown = err;
+      }
+      assert(thrown instanceof ToolCallError, "update_project with no fields should be refused");
+      assert(
+        (thrown as ToolCallError).code === "validation",
+        `expected code validation, got ${(thrown as ToolCallError).code}`,
+      );
+    });
+
+    await step("lnkdrp_remove_doc_from_project takes the document out and says so once", async () => {
+      const out = await callTool<{ removed: boolean; wasInProject: boolean }>(live, "lnkdrp_remove_doc_from_project", {
+        projectId: proj.projectId,
+        docId: shared.docId,
+      });
+      assert(out.removed === true && out.wasInProject === true, `first removal should report both true: ${JSON.stringify(out)}`);
+      const again = await callTool<{ removed: boolean; wasInProject: boolean }>(live, "lnkdrp_remove_doc_from_project", {
+        projectId: proj.projectId,
+        docId: shared.docId,
+      });
+      assert(again.removed === false && again.wasInProject === false, `repeat removal should be a no-op: ${JSON.stringify(again)}`);
+      // The document keeps its own links: removal is a membership change, not a delete.
+      const doc = await callTool<GetShareResult>(live, "lnkdrp_get_share", { docId: shared.docId });
+      assert(doc.docId === shared.docId, "removing from a project lost the document");
+      // Put it back so the delete_project step below still has one document to detach.
+      await callTool(live, "lnkdrp_add_docs_to_project", { projectId: proj.projectId, docIds: [shared.docId] });
+    });
+
+    await step("lnkdrp_tag, lnkdrp_list_tags and lnkdrp_untag file the document and unfile it", async () => {
+      const name = `E2E ${Date.now()}`;
+      const tagged = await callTool<{ tags: Array<{ name: string; slug: string }>; createdTags: string[] }>(live, "lnkdrp_tag", {
+        docId: shared.docId,
+        // The same name three ways: folding means one tag, not three.
+        tags: [name, name.toUpperCase(), `  ${name}  `],
+      });
+      assert(tagged.createdTags.length === 1, `case and spacing should fold to one tag, got ${JSON.stringify(tagged.createdTags)}`);
+      const listed = await callTool<{ tags: Array<{ name: string }> }>(live, "lnkdrp_list_tags", {});
+      assert(listed.tags.some((t) => t.name === name), "list_tags does not show the tag just created");
+      const filtered = await callTool<DocsPage & { tagMatched?: boolean }>(live, "lnkdrp_list_docs", { tag: name.toLowerCase() });
+      assert(filtered.tagMatched === true, "the tag filter did not match the tag by a different casing");
+      const off = await callTool<{ removed: string[]; notTagged: string[] }>(live, "lnkdrp_untag", {
+        docId: shared.docId,
+        tags: [name.toLowerCase(), "a tag that was never applied"],
+      });
+      assert(off.removed.includes(name), `untag should report the stored name, got ${JSON.stringify(off.removed)}`);
+      // notTagged echoes what the caller typed, not the fold it matched on.
+      assert(off.notTagged.includes("a tag that was never applied"), `notTagged should echo the caller: ${JSON.stringify(off.notTagged)}`);
+    });
+
+    await step("lnkdrp_star_docs and lnkdrp_list_starred agree, including on a mixed-case id", async () => {
+      const upper = shared.docId.toUpperCase();
+      const on = await callTool<{ changed: string[]; unchanged: string[] }>(live, "lnkdrp_star_docs", { docIds: [upper], starred: true });
+      assert(on.changed.includes(shared.docId), `starring by an upper-case id reported no change: ${JSON.stringify(on)}`);
+      const again = await callTool<{ changed: string[]; unchanged: string[] }>(live, "lnkdrp_star_docs", { docIds: [upper], starred: true });
+      assert(again.unchanged.includes(shared.docId), `re-starring should be a no-op: ${JSON.stringify(again)}`);
+      const list = await callTool<{ starredDocs: Array<{ docId: string }> }>(live, "lnkdrp_list_starred", {});
+      assert(list.starredDocs.some((d) => d.docId === shared.docId), "list_starred does not show the document just starred");
+      await callTool(live, "lnkdrp_star_docs", { docIds: [upper], starred: false });
+    });
+
+    await step("lnkdrp_list_projects and lnkdrp_get_project find the room by id and by slug", async () => {
+      const all = await callTool<{ total: number; projects: Array<{ projectId: string }> }>(live, "lnkdrp_list_projects", { limit: 50 });
+      assert(all.projects.some((p) => p.projectId === proj.projectId), "list_projects does not include the project just created");
+      const bySlug = await callTool<{ project?: { projectId?: string }; total?: number }>(live, "lnkdrp_get_project", { projectSlug: proj.slug });
+      assert(bySlug.project?.projectId === proj.projectId, "get_project by slug resolved a different project");
+    });
+
     await step("lnkdrp_delete_project removes the throwaway project and leaves the document alone", async () => {
       const res = await callTool<{ ok: boolean; deleted?: { documentsDetached?: number } }>(live, "lnkdrp_delete_project", {
         projectId: proj.projectId,

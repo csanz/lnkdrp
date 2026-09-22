@@ -375,3 +375,32 @@ export function handleTool<A, E>(
     }
   };
 }
+
+/**
+ * How a failed `initialize` should answer, when the failure is not an auth one.
+ *
+ * Over quota is not unreachable. Every non-auth failure used to answer 502 "Could not reach the
+ * lnkdrp API to verify the key." A key over its own request limit gets a clear, correct answer from
+ * the API - it is the caller that has to slow down - and telling them the service is unreachable
+ * sends them looking at our availability instead of at their own call rate. Found by a volume run
+ * on 2026-09-22: 300 requests in one minute turned every later connection into a 502 with nothing
+ * in it naming the real cause, while the message the API had actually sent said exactly what was
+ * wrong.
+ *
+ * Lives here rather than in main.ts because classifying a failure is this module's job, and
+ * because importing main.ts to test it would boot the HTTP server.
+ */
+export function initializeFailureResponse(err: unknown): {
+  status: number;
+  body: { error: string; message: string };
+  log: string;
+} {
+  if (isToolError(err) && err.code === "rate_limited") {
+    return { status: 429, body: { error: "rate_limited", message: err.message }, log: "initialize refused: rate limited" };
+  }
+  return {
+    status: 502,
+    body: { error: "upstream", message: "Could not reach the lnkdrp API to verify the key." },
+    log: "initialize failed: whoami unreachable",
+  };
+}
