@@ -13,7 +13,7 @@
  *   `x-lnkdrp-agent: <client>/<version>` header from `clientInfo`. That call registers the
  *   connection (the key records the client name, which the realtime channel pushes to the
  *   dashboard). 401 from whoami → the session is refused with 401.
- * - `GET /healthz` → `{ ok, sessions, version, apiUrl }`.
+ * - `GET /healthz` → `{ ok, sessions, version, apiUrl, confirmations }`.
  * - `GET /.well-known/oauth-protected-resource` → placeholder resource metadata (bearer keys only).
  *
  * The server never touches Mongo: every tool maps to REST calls made with the caller's own key,
@@ -24,7 +24,7 @@ import type { Server as HttpServer } from "node:http";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { confirmationsSkipRequestedButUnsafe } from "./confirm";
+import { confirmationsSkipRequestedButUnsafe, confirmationsEnforced } from "./confirm";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import express, { type Request, type Response } from "express";
@@ -246,7 +246,14 @@ function createApp() {
   app.use(express.json({ limit: UPLOAD_MAX_BASE64_CHARS + 2 * 1024 * 1024 }));
 
   app.get("/healthz", (_req, res) => {
-    res.json({ ok: true, sessions: sessions.size, version: MCP_SERVER_VERSION, apiUrl: config.apiUrl });
+    res.json({
+      ok: true,
+      sessions: sessions.size,
+      version: MCP_SERVER_VERSION,
+      apiUrl: config.apiUrl,
+      // "enforced" or "skipped": whether a destructive tool will stop and ask a human.
+      confirmations: confirmationsEnforced() ? "enforced" : "skipped",
+    });
   });
 
   /**

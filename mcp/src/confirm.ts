@@ -61,6 +61,16 @@ import { isLocalApiUrl } from "./tools/sharePdf";
  * silently disregarded safety switch is worse than one that never existed, because the operator
  * believes something about the system that is not true.
  */
+/**
+ * Whether destructive tools will actually stop and ask. Reported on `/healthz` so the posture of a
+ * running server is visible without reading its startup log - it is the one thing about this
+ * process an operator most needs to be able to check, and a test harness needs it to know whether
+ * the confirmation gate is even in play.
+ */
+export function confirmationsEnforced(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !skipConfirmations(env);
+}
+
 function skipConfirmations(env: NodeJS.ProcessEnv = process.env): boolean {
   const flag = (env.LNKDRP_SKIP_CONFIRMATIONS || "").trim().toLowerCase();
   if (!(flag === "1" || flag === "true" || flag === "yes")) return false;

@@ -94,7 +94,18 @@ const EXPECTED_TOOLS = [
   "lnkdrp_delete_project_link",
   "lnkdrp_star_docs",
   "lnkdrp_list_starred",
+  // The tag tools shipped in 31b296b and were never added here, so the harness reported "30 tools"
+  // against a server exposing 33 and passed - the assertion below only ran one way.
+  "lnkdrp_list_tags",
+  "lnkdrp_tag",
+  "lnkdrp_untag",
 ] as const;
+
+/**
+ * Set from `/healthz`: false when the server runs with LNKDRP_SKIP_CONFIRMATIONS against a dev
+ * database, in which case the confirmation-gate steps are skipped rather than failed.
+ */
+let confirmationsEnforced = true;
 
 /** A syntactically valid key (`lnk_` + 32 base62 chars) that was never minted. */
 const BAD_KEY = `lnk_${"0".repeat(32)}`;
@@ -255,8 +266,20 @@ type ProjectRefResult = { projectId: string; slug: string; name: unknown };
 type CreateProjectLinkResult = { project: ProjectRefResult; link: ProjectLinkDTO; shareUrl: string; warnings?: string[] };
 type ListProjectLinksResult = { project: ProjectRefResult; publicPageEnabled: boolean | null; links: ProjectLinkDTO[] };
 type CreateProjectResult = { project: { projectId: string; slug: string; name: unknown; publicUrl?: string | null } };
+
+/** Project tools answer with the project nested under `project`; `get_project` also carries docs. */
+type ProjectEnvelope = { project?: ProjectFields } & Partial<ProjectFields>;
+type ProjectFields = { projectId?: string; slug?: string; publicUrl?: string | null; publicPageEnabled?: boolean };
+
+/** The project from either shape, so an assertion never silently reads `undefined`. */
+function projectOf(res: ProjectEnvelope): ProjectFields {
+  return res.project ?? res;
+}
 type ListShareLinksResult = { docId: string; links: ShareLinkDTO[] };
-type FindShareLinkHit = { docId: string; docTitle: string | null; docShareId: string | null; linkId: string; shareId: string; shareUrl: string; label: string; audience: string | null; isDefault: boolean };
+// `docTitle` is wrapped as untrusted content like every other document title (c20c4bb); this type
+// said `string` and the assertion below compared the wrapper object to one, so it read
+// "[object Object]" !== "MCP e2e" long after the tool started doing the right thing.
+type FindShareLinkHit = { docId: string; docTitle: Untrusted | null; docShareId: string | null; linkId: string; shareId: string; shareUrl: string; label: string; audience: string | null; isDefault: boolean };
 type FindShareLinkResult = { query: string; links: FindShareLinkHit[] };
 
 /** Credit/AI fields added to whoami and share_pdf (agent-written summaries, warnings). */
@@ -341,8 +364,17 @@ async function main(): Promise<void> {
         throw new AssertionError(`cannot reach ${healthz} (${err instanceof Error ? err.message : String(err)}); start it with \`npm run mcp\` or set MCP_URL`);
       }
       assert(res.ok, `GET ${healthz} returned HTTP ${res.status}`);
-      const body = (await res.json().catch(() => null)) as { ok?: boolean; sessions?: number } | null;
+      const body = (await res.json().catch(() => null)) as { ok?: boolean; sessions?: number; confirmations?: string } | null;
       assert(body?.ok === true, `healthz body is not { ok: true }: ${JSON.stringify(body)}`);
+      /**
+       * Whether this server will stop and ask before a destructive call.
+       *
+       * LNKDRP_SKIP_CONFIRMATIONS turns the gate off against a dev database, which is the right
+       * setting for a testing machine and the wrong one for asserting that the gate works. Without
+       * reading it here, the two confirmation steps below fail with "the confirmation gate is not
+       * enforced" - which is true, and says nothing about the code under test.
+       */
+      confirmationsEnforced = body?.confirmations !== "skipped";
       info("healthz", body);
     });
 
@@ -412,8 +444,20 @@ async function main(): Promise<void> {
       const { tools } = await live.listTools();
       const names = tools.map((t) => t.name);
       for (const expected of EXPECTED_TOOLS) assert(names.includes(expected), `missing tool ${expected}; got ${names.join(", ")}`);
+      /**
+       * Both directions, which is the half that was missing.
+       *
+       * The old check only asked whether every expected tool was present, so three tag tools
+       * shipped, the list stayed at thirty, and this step passed while announcing the wrong count -
+       * and skipped the description and schema assertions for exactly the tools nobody had listed.
+       * A new tool with no description now fails here instead of arriving unnoticed.
+       */
+      const unexpected = names.filter((n) => !EXPECTED_TOOLS.includes(n as (typeof EXPECTED_TOOLS)[number]));
+      assert(
+        unexpected.length === 0,
+        `the server exposes ${names.length} tools but EXPECTED_TOOLS lists ${EXPECTED_TOOLS.length}; add these: ${unexpected.join(", ")}`,
+      );
       for (const t of tools) {
-        if (!EXPECTED_TOOLS.includes(t.name as (typeof EXPECTED_TOOLS)[number])) continue;
         assert(t.description && t.description.length > 0, `${t.name} has no description`);
         assert(t.inputSchema, `${t.name} has no inputSchema`);
       }
@@ -761,9 +805,10 @@ async function main(): Promise<void> {
       const hit = res.links.find((l) => l.linkId === extra.link.id);
       assert(hit, `"Sequoia" did not surface the link just created (got ${res.links.map((l) => l.label).join(", ")})`);
       assert(hit.docId === shared.docId, `find_share_link matched the right link on the wrong doc: ${hit.docId} !== ${shared.docId}`);
-      assert(hit.docTitle === "MCP e2e", `find_share_link.docTitle "${hit.docTitle}" !== "MCP e2e"`);
+      assert(isUntrusted(hit.docTitle), "find_share_link.docTitle is not wrapped as untrusted content");
+      assert(hit.docTitle.text === "MCP e2e", `find_share_link.docTitle.text "${hit.docTitle.text}" !== "MCP e2e"`);
       assert(hit.shareUrl.endsWith(`/s/${hit.shareId}`), `find_share_link.shareUrl "${hit.shareUrl}" does not end with /s/${hit.shareId}`);
-      info("hit", `${hit.docTitle} / ${hit.label} (${hit.audience})`);
+      info("hit", `${hit.docTitle?.text ?? "null"} / ${hit.label} (${hit.audience})`);
     });
 
     // 13d. A word that matches nothing returns [], never an error.
@@ -778,12 +823,23 @@ async function main(): Promise<void> {
     await step("lnkdrp_verify_share_password and lnkdrp_get_share_link_password confirm a password", async () => {
       await callTool(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: extra.link.id, password: "jeff" });
 
-      const read = await callTool<{ passwordEnabled: boolean; password: string | null }>(live, "lnkdrp_get_share_link_password", {
-        docId: shared.docId,
-        linkId: extra.link.id,
-      });
-      assert(read.passwordEnabled === true, "get_share_link_password.passwordEnabled is not true after setting one");
-      assert(read.password === "jeff", `get_share_link_password returned ${JSON.stringify(read.password)}, expected "jeff"`);
+      /**
+       * Reading a password back is forbidden to an API key since the security pass in fccecc3, and
+       * every MCP connection is an API key - so this is the refusal, not the plaintext. The step
+       * asserted the old contract long after the tool stopped honouring it, which is what a harness
+       * nobody runs to completion looks like.
+       */
+      let refused: unknown = null;
+      try {
+        await callTool(live, "lnkdrp_get_share_link_password", { docId: shared.docId, linkId: extra.link.id });
+      } catch (err) {
+        refused = err;
+      }
+      assert(refused instanceof ToolCallError, "get_share_link_password should be forbidden to an API key");
+      assert(
+        (refused as ToolCallError).code === "forbidden",
+        `expected code forbidden, got ${(refused as ToolCallError).code}`,
+      );
 
       const ok = await callTool<{ matches: boolean }>(live, "lnkdrp_verify_share_password", {
         docId: shared.docId,
@@ -801,11 +857,14 @@ async function main(): Promise<void> {
 
       // Leave the link open: later steps fetch it publicly and a password would 401 them.
       await callTool(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: extra.link.id, password: null });
-      const cleared = await callTool<{ passwordEnabled: boolean; password: string | null }>(live, "lnkdrp_get_share_link_password", {
+      // Confirmed through verify, which an API key may call, rather than through the read-back it may not.
+      const after = await callTool<{ passwordEnabled: boolean; opensLink: boolean }>(live, "lnkdrp_verify_share_password", {
         docId: shared.docId,
         linkId: extra.link.id,
+        password: "jeff",
       });
-      assert(cleared.passwordEnabled === false && cleared.password === null, "clearing the password did not take");
+      assert(after.passwordEnabled === false, "clearing the password did not take");
+      assert(after.opensLink === true, "an open link should open for anyone once the password is cleared");
     });
 
     // 14. The new link resolves publicly, straight away.
@@ -860,6 +919,10 @@ async function main(): Promise<void> {
     // agent can show the user — and must delete nothing. This is the property that stops an agent
     // deleting a link with 30 views because it thought that was what "clean up" meant.
     await step("lnkdrp_delete_share_link without confirm is refused with a preview and deletes nothing", async () => {
+      if (!confirmationsEnforced) {
+        info("skipped", "this server runs with LNKDRP_SKIP_CONFIRMATIONS; the gate cannot be asserted here");
+        return;
+      }
       let refused: ToolCallError | null = null;
       try {
         await callTool(live, "lnkdrp_delete_share_link", { docId: shared.docId, linkId: extra.link.id });
@@ -1008,6 +1071,10 @@ async function main(): Promise<void> {
     });
 
     await step("lnkdrp_delete_project_link without confirm is refused with a preview, then proceeds with it", async () => {
+      if (!confirmationsEnforced) {
+        info("skipped", "this server runs with LNKDRP_SKIP_CONFIRMATIONS; the gate cannot be asserted here");
+        return;
+      }
       let refused: ToolCallError | null = null;
       try {
         await callTool(live, "lnkdrp_delete_project_link", { projectId: proj.projectId, linkId: projLink.id });
@@ -1047,33 +1114,28 @@ async function main(): Promise<void> {
      * throwaway project before it is deleted.
      */
     await step("lnkdrp_update_project renames without moving the slug or any URL", async () => {
-      const renamed = `${String((proj as { slug?: string }).slug ?? "room")} renamed ${Date.now()}`;
-      const res = await callTool<CreateProjectResult["project"] & { slug: string; publicUrl?: string | null }>(
-        live,
-        "lnkdrp_update_project",
-        { projectId: proj.projectId, name: renamed },
-      );
-      assert(res.slug === proj.slug, `rename moved the slug: ${proj.slug} -> ${res.slug}`);
+      const renamed = `MCP e2e renamed ${Date.now()}`;
+      const res = await callTool<ProjectEnvelope>(live, "lnkdrp_update_project", {
+        projectId: proj.projectId,
+        name: renamed,
+      });
+      const after = projectOf(res);
+      assert(after.slug === proj.slug, `rename moved the slug: ${proj.slug} -> ${String(after.slug)}`);
       info("renamed", `${proj.slug} keeps its slug and URLs`);
     });
 
     await step("lnkdrp_update_project public page off and on again keeps the same shareId", async () => {
       // The one that would hurt: a recipient holds /p/<shareId>. If the toggle minted a new id,
       // every link already sent would be dead and nothing in the response would say so.
-      const before = await callTool<{ publicUrl?: string | null }>(live, "lnkdrp_get_project", { projectId: proj.projectId });
-      const original = before.publicUrl ?? (before as { project?: { publicUrl?: string | null } }).project?.publicUrl ?? null;
+      const original = projectOf(await callTool<ProjectEnvelope>(live, "lnkdrp_get_project", { projectId: proj.projectId })).publicUrl;
       assert(typeof original === "string" && original.length > 0, "the project has no public URL to begin with");
-      const off = await callTool<{ publicPageEnabled?: boolean; publicUrl?: string | null }>(live, "lnkdrp_update_project", {
-        projectId: proj.projectId,
-        publicPageEnabled: false,
-      });
-      const offUrl = off.publicUrl ?? (off as { project?: { publicUrl?: string | null } }).project?.publicUrl ?? null;
+      const offUrl = projectOf(
+        await callTool<ProjectEnvelope>(live, "lnkdrp_update_project", { projectId: proj.projectId, publicPageEnabled: false }),
+      ).publicUrl;
       assert(offUrl === null, `public page off should null the URL, got ${String(offUrl)}`);
-      const on = await callTool<{ publicUrl?: string | null }>(live, "lnkdrp_update_project", {
-        projectId: proj.projectId,
-        publicPageEnabled: true,
-      });
-      const onUrl = on.publicUrl ?? (on as { project?: { publicUrl?: string | null } }).project?.publicUrl ?? null;
+      const onUrl = projectOf(
+        await callTool<ProjectEnvelope>(live, "lnkdrp_update_project", { projectId: proj.projectId, publicPageEnabled: true }),
+      ).publicUrl;
       assert(onUrl === original, `the public URL changed across an off/on cycle: ${String(original)} -> ${String(onUrl)}`);
       info("public page", "off and on, same shareId");
     });
@@ -1145,8 +1207,8 @@ async function main(): Promise<void> {
     await step("lnkdrp_list_projects and lnkdrp_get_project find the room by id and by slug", async () => {
       const all = await callTool<{ total: number; projects: Array<{ projectId: string }> }>(live, "lnkdrp_list_projects", { limit: 50 });
       assert(all.projects.some((p) => p.projectId === proj.projectId), "list_projects does not include the project just created");
-      const bySlug = await callTool<{ project?: { projectId?: string }; total?: number }>(live, "lnkdrp_get_project", { projectSlug: proj.slug });
-      assert(bySlug.project?.projectId === proj.projectId, "get_project by slug resolved a different project");
+      const bySlug = await callTool<ProjectEnvelope>(live, "lnkdrp_get_project", { projectSlug: proj.slug });
+      assert(projectOf(bySlug).projectId === proj.projectId, "get_project by slug resolved a different project");
     });
 
     await step("lnkdrp_delete_project removes the throwaway project and leaves the document alone", async () => {

@@ -13,8 +13,23 @@ import { ToolError } from "./errors";
 type Entry = { promise: Promise<unknown>; expiresAt: number; fingerprint?: string | undefined };
 
 /**
- * A stable hash of a call's arguments, without the idempotency key itself. Large fields (a PDF's
- * base64) are hashed like everything else, so the fingerprint stays small.
+ * Arguments that say how long the caller will wait, not what they are asking for.
+ *
+ * These are deliberately outside the fingerprint. The retry this whole mechanism exists for is
+ * "the first call timed out waiting, ask again" — and the natural second call drops `waitForReady`
+ * so it returns at once. Hashing them made that the one retry the store refuses: same key, same
+ * document, same file, `idempotency_key_reused`. A caller who did exactly the right thing was told
+ * they had asked for something different.
+ */
+const WAIT_ARGS = new Set(["waitForReady", "timeoutSeconds"]);
+
+/**
+ * A stable hash of a call's arguments: the idempotency key itself and the wait options are left
+ * out, everything else is in. Large fields (a PDF's base64) are hashed like anything else, so the
+ * fingerprint stays small.
+ *
+ * `optimize` stays in on purpose - it changes the bytes that get uploaded, so two calls that
+ * disagree about it are asking for different things.
  */
 export function fingerprintArgs(args: Record<string, unknown>): string {
   const stable = (v: unknown): unknown =>
@@ -23,8 +38,9 @@ export function fingerprintArgs(args: Record<string, unknown>): string {
       : v && typeof v === "object"
         ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, stable((v as Record<string, unknown>)[k])]))
         : v;
-  const { idempotencyKey: _key, ...rest } = args;
-  void _key;
+  const rest = Object.fromEntries(
+    Object.entries(args).filter(([k]) => k !== "idempotencyKey" && !WAIT_ARGS.has(k)),
+  );
   return createHash("sha256").update(JSON.stringify(stable(rest))).digest("hex");
 }
 

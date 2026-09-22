@@ -93,3 +93,31 @@ describe("idempotency: replays of deleted objects", () => {
     expect(created).toBe(1);
   });
 });
+
+
+describe("fingerprintArgs and the wait options", () => {
+  it("treats a retry that stops waiting as the same request", () => {
+    // The retry the store exists for: the first call blocked and timed out, so the second asks
+    // again without waiting. Hashing waitForReady/timeoutSeconds made that the one retry it
+    // refused - same key, same document, same file, idempotency_key_reused.
+    const first = { idempotencyKey: "k", title: "Deck", sourceUrl: "https://x/a.pdf", waitForReady: true, timeoutSeconds: 60 };
+    const retry = { idempotencyKey: "k", title: "Deck", sourceUrl: "https://x/a.pdf", waitForReady: false };
+    expect(fingerprintArgs(retry)).toBe(fingerprintArgs(first));
+  });
+
+  it("still refuses a key reused for a genuinely different request", () => {
+    const a = { idempotencyKey: "k", title: "Deck", sourceUrl: "https://x/a.pdf" };
+    const b = { idempotencyKey: "k", title: "Deck", sourceUrl: "https://x/b.pdf" };
+    expect(fingerprintArgs(b)).not.toBe(fingerprintArgs(a));
+  });
+
+  it("keeps optimize inside the fingerprint, because it changes the bytes uploaded", () => {
+    const on = { idempotencyKey: "k", filePath: "/tmp/a.pdf", optimize: true };
+    const off = { idempotencyKey: "k", filePath: "/tmp/a.pdf", optimize: false };
+    expect(fingerprintArgs(off)).not.toBe(fingerprintArgs(on));
+  });
+
+  it("ignores the key itself, so two keys on the same request agree", () => {
+    expect(fingerprintArgs({ idempotencyKey: "one", docId: "d" })).toBe(fingerprintArgs({ idempotencyKey: "two", docId: "d" }));
+  });
+});
