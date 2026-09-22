@@ -17,6 +17,7 @@ import { MagnifyingGlassIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { rememberEntityTitles } from "@/lib/client/entityTitles";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { DocResultRow, ProjectResultRow, SearchSkeleton, type SearchDoc, type SearchProject } from "./SearchResultRow";
+import { useSkeletonDelay } from "@/lib/client/useSkeletonDelay";
 import { SCOPES, SORTS, buildSearch, parseSort, readUrlState, type UrlState } from "./searchUrl";
 
 const PAGE_SIZE = 20;
@@ -60,6 +61,7 @@ export default function SearchPageClient() {
   const [docsTotal, setDocsTotal] = useState(0);
   const [projects, setProjects] = useState<SearchProject[]>([]);
   const [loading, setLoading] = useState(true);
+  const showSkeleton = useSkeletonDelay(loading);
   const [docsPending, setDocsPending] = useState(false);
   const [projectsPending, setProjectsPending] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -377,7 +379,9 @@ export default function SearchPageClient() {
         ) : null}
 
         {loading ? (
-          <SearchSkeleton />
+          // Search re-runs on every debounced keystroke, so a skeleton with no delay flashes
+          // continuously while somebody types. See `useSkeletonDelay`.
+          showSkeleton ? <SearchSkeleton /> : null
         ) : noResults ? (
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-10 text-center text-sm text-[var(--muted)]">
             Nothing matches “{q}”. Try a shorter word or a different spelling.

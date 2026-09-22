@@ -36,6 +36,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
+import { useSkeletonDelay } from "@/lib/client/useSkeletonDelay";
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import AgentMark from "@/components/AgentMark";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -552,6 +553,7 @@ export default function ActivityPageClient() {
   const [cursors, setCursors] = useState<Array<string | null>>([null]);
   const [pageIndex, setPageIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const showSkeleton = useSkeletonDelay(loading);
   const [pending, setPending] = useState(false);
   const [leaving, setLeaving] = useState(false);
   // Changes on every page swap so rows remount and replay their enter animation.
@@ -952,8 +954,10 @@ export default function ActivityPageClient() {
           </section>
         ) : null}
 
+        {/* Nothing for the first fifth of a second: six pulsing rows that resolve into "no
+            activity yet" promise a feed that was never coming. See `useSkeletonDelay`. */}
         {loading ? (
-          <div className="grid gap-6" aria-hidden="true">
+          !showSkeleton ? null : <div className="grid gap-6" aria-hidden="true">
             <div className="mb-2 h-3 w-16 rounded bg-[var(--panel-hover)]" />
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
               <ul className="divide-y divide-[var(--border)]">

@@ -9,6 +9,7 @@ import { InboxArrowDownIcon } from "@heroicons/react/24/outline";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { useSkeletonDelay } from "@/lib/client/useSkeletonDelay";
 
 type RequestRepoListItem = {
   id: string;
@@ -40,6 +41,7 @@ export default function RequestsPageClient() {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
+  const showSkeleton = useSkeletonDelay(loading);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<Paged<RequestRepoListItem>>({ items: [], total: 0, page: 1, limit: 25 });
 
@@ -150,9 +152,13 @@ export default function RequestsPageClient() {
               })}
 
               {loading ? (
-                <li>
-                  <div className="px-4 py-6 text-sm text-[var(--muted)]">Loading…</div>
-                </li>
+                // A "Loading…" line that becomes "No request inboxes yet." is the same flash in
+                // text form. See `useSkeletonDelay`.
+                showSkeleton ? (
+                  <li>
+                    <div className="px-4 py-6 text-sm text-[var(--muted)]">Loading…</div>
+                  </li>
+                ) : null
               ) : !data.items.length ? (
                 <li>
                   <div className="px-4 py-6 text-sm text-[var(--muted)]">No request inboxes yet.</div>
