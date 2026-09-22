@@ -61,7 +61,7 @@ describe("error visibility without DEBUG_LEVEL", () => {
       vi.fn(async () => new Response(JSON.stringify({ statusCode: 422, name: "validation_error", message: "Invalid `to` carol@example.com" }), { status: 422 })),
     );
     await expect(
-      sendTextEmail({ to: "carol@example.com", subject: "Download request: Secret Deck", text: "private body" }),
+      sendTextEmail({ to: "carol@lnkdrp.com", subject: "Download request: Secret Deck", text: "private body" }),
     ).rejects.toThrow(/422/);
     expect(errSpy).toHaveBeenCalledTimes(1);
     const [ctx, fields] = errSpy.mock.calls[0]!;

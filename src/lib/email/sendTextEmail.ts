@@ -1,4 +1,5 @@
 import { redactLogText } from "@/lib/errors/logger";
+import { recipientDomain, unroutableRecipientReason } from "@/lib/email/unroutableRecipient";
 
 type SendTextEmailParams = {
   to: string;
@@ -83,6 +84,24 @@ export async function sendTextEmail(params: SendTextEmailParams): Promise<void> 
       // eslint-disable-next-line no-console
       console.log(`[email:console] html:\n${html}`);
     }
+    return;
+  }
+
+  /**
+   * Addresses that cannot receive, refused before the provider can accept and then bounce them.
+   *
+   * After the console branch on purpose: a developer reviewing copy still wants to see the mail a
+   * seeded reader would have got. It is the Resend path that costs the sending domain something.
+   */
+  const unroutable = unroutableRecipientReason(to);
+  if (unroutable) {
+    // The domain, never the address: it is the actionable half and it names no one.
+    // eslint-disable-next-line no-console
+    console.warn("[email] not sent", {
+      reason: unroutable,
+      domain: redactLogText(recipientDomain(to) ?? "", 60),
+      kind: subjectKind(subject),
+    });
     return;
   }
 

@@ -36,14 +36,14 @@ describe("from name", () => {
   test("a bare address gains the team name", async () => {
     vi.stubEnv("INVITE_EMAIL_FROM", "hi@updates.lnkdrp.com");
     const { sendTextEmail } = await import("@/lib/email/sendTextEmail");
-    await sendTextEmail({ to: "a@b.test", subject: "s", text: "t" });
+    await sendTextEmail({ to: "a@b.lnkdrp.com", subject: "s", text: "t" });
     expect(sentFrom()).toBe("LinkDrop Team <hi@updates.lnkdrp.com>");
   });
 
   test("an address already carrying a name is left exactly as configured", async () => {
     vi.stubEnv("INVITE_EMAIL_FROM", "Support <help@lnkdrp.com>");
     const { sendTextEmail } = await import("@/lib/email/sendTextEmail");
-    await sendTextEmail({ to: "a@b.test", subject: "s", text: "t" });
+    await sendTextEmail({ to: "a@b.lnkdrp.com", subject: "s", text: "t" });
     expect(sentFrom()).toBe("Support <help@lnkdrp.com>");
   });
 
@@ -51,7 +51,7 @@ describe("from name", () => {
     vi.stubEnv("INVITE_EMAIL_FROM", "hi@updates.lnkdrp.com");
     vi.stubEnv("EMAIL_FROM_NAME", "Acme Docs");
     const { sendTextEmail } = await import("@/lib/email/sendTextEmail");
-    await sendTextEmail({ to: "a@b.test", subject: "s", text: "t" });
+    await sendTextEmail({ to: "a@b.lnkdrp.com", subject: "s", text: "t" });
     expect(sentFrom()).toBe("Acme Docs <hi@updates.lnkdrp.com>");
   });
 
@@ -59,7 +59,7 @@ describe("from name", () => {
     vi.stubEnv("INVITE_EMAIL_FROM", "hi@updates.lnkdrp.com");
     vi.stubEnv("EMAIL_FROM_NAME", "LinkDrop, Inc.");
     const { sendTextEmail } = await import("@/lib/email/sendTextEmail");
-    await sendTextEmail({ to: "a@b.test", subject: "s", text: "t" });
+    await sendTextEmail({ to: "a@b.lnkdrp.com", subject: "s", text: "t" });
     // Unquoted, the comma would read as a second recipient.
     expect(sentFrom()).toBe('"LinkDrop, Inc." <hi@updates.lnkdrp.com>');
   });
@@ -67,7 +67,7 @@ describe("from name", () => {
   test("an explicit per-send from is named too", async () => {
     vi.stubEnv("INVITE_EMAIL_FROM", "hi@updates.lnkdrp.com");
     const { sendTextEmail } = await import("@/lib/email/sendTextEmail");
-    await sendTextEmail({ to: "a@b.test", subject: "s", text: "t", from: "invites@lnkdrp.com" });
+    await sendTextEmail({ to: "a@b.lnkdrp.com", subject: "s", text: "t", from: "invites@lnkdrp.com" });
     expect(sentFrom()).toBe("LinkDrop Team <invites@lnkdrp.com>");
   });
 });
