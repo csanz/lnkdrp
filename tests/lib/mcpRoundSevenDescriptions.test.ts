@@ -214,3 +214,36 @@ describe("replayed is named by every tool that emits it", () => {
     expect([...takesKey].sort()).toEqual(EMITTERS.map((e) => e.tool).sort());
   });
 });
+
+describe("lnkdrp_whoami: costs is a price list, not a prediction", () => {
+  const PROCESS = read("src/app/api/uploads/[uploadId]/process/route.ts");
+
+  /**
+   * The automatic summary is pinned to basic in the route, whatever the workspace's review tier
+   * says. `costs` presents three tiers per action, so an agent budgeting a replacement against a
+   * workspace on `review: standard` predicts 2 for the summary and is charged 1. Measured live on
+   * 2026-09-22: seven replacements, six credits each, which is 1 + compare-at-standard(5).
+   */
+  const summaryPinnedToBasic = /const summaryTier = "basic" as const;/.test(PROCESS);
+
+  it("still pins the automatic summary to basic", () => {
+    expect(summaryPinnedToBasic, "the route no longer hardcodes the summary tier").toBe(true);
+  });
+
+  it("says so, rather than leaving costs.summary to be read as a choice", () => {
+    const description = tools.get("lnkdrp_whoami")!.description;
+    expect(
+      /always billed at basic/.test(description),
+      "whoami must say the automatic summary ignores the review tier",
+    ).toBe(summaryPinnedToBasic);
+  });
+
+  it("names the identical-replacement case, which costs nothing at all", () => {
+    // The other half of the same question: an owner watching credits not move after a replacement
+    // is usually looking at a re-send, not a broken counter.
+    const description = tools.get("lnkdrp_whoami")!.description;
+    expect(/identical costs nothing|unchangedFromPrevious/.test(description)).toBe(true);
+    // And the route really does skip it, so the claim is not aspirational.
+    expect(/const nothingChanged =/.test(PROCESS)).toBe(true);
+  });
+});

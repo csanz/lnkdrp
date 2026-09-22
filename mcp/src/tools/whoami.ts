@@ -147,7 +147,12 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
         "Verify the lnkdrp API key and return the workspace it acts on: userId, email, orgId, orgName, plan, key prefix, " +
         "scopes and the client name lnkdrp recorded for this connection, plus the credit cost table (credits per tier " +
         "basic/standard/advanced), creditsRemaining and creditsResetAt when readable, onDemand, capabilities, and the " +
-        "MCP server version. creditsRemaining is credits the workspace holds (included, starter and purchased). " +
+        "MCP server version. costs is a price list, not a prediction: the summary that runs automatically on every " +
+        "upload and replacement is always billed at basic (1 credit) whatever the workspace's review tier says, while " +
+        "a replacement's compare follows the workspace's history tier. So a replacement whose text changed costs " +
+        "1 + costs.compare[history tier], and one whose text is identical costs nothing at all - the compare is " +
+        "skipped and the previous summary kept, which is what unchangedFromPrevious reports. " +
+        "creditsRemaining is credits the workspace holds (included, starter and purchased). " +
         "onDemand: true (Pro only) means AI runs keep going after creditsRemaining reaches 0, billed per credit up to " +
         "the workspace's spend limit, so 0 credits on Pro with onDemand is not a wall. Free workspaces add credits by " +
         "buying packs, which only a person can do. capabilities answers 'what can I do here' in one call, " +
