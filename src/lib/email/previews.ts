@@ -265,7 +265,7 @@ export function buildPreviews(): PreviewRow[] {
             "Traction — ARR chart updated through August",
           ],
           pagesChanged: [4, 9, 10, 12],
-          historyUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/history`,
+          historyUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/history#v-4`,
           docUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}`,
         },
       ],
@@ -281,7 +281,7 @@ export function buildPreviews(): PreviewRow[] {
           summary: "Pricing page rewritten.",
           changes: [],
           pagesChanged: [4, 9],
-          historyUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/history`,
+          historyUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/history#v-4`,
           docUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}`,
         },
         {

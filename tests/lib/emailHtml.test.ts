@@ -259,3 +259,30 @@ describe("which workspace an email is about", () => {
     expect(html).not.toContain("align=\"right\"");
   });
 });
+
+describe("a document-update email links the comparison, not the list", () => {
+  /**
+   * "See what changed" used to land on `/history`, which opens with every row collapsed — so the
+   * reader arrived at the same summary sentence the email had already quoted them. The history
+   * page anchors each row `v-<n>` and expands the one the fragment names, which is the difference
+   * between linking the page and linking the diff.
+   */
+  test("the button carries the version fragment", () => {
+    const row = rows.find((r) => r.key === "doc_update.immediate");
+    expect(row, "doc_update.immediate preview is missing").toBeTruthy();
+    expect(row!.html).toMatch(/href="[^"]*\/history#v-\d+"/);
+    expect(row!.text).toMatch(/\/history#v-\d+/);
+  });
+
+  test("the history page expands the row the fragment names", () => {
+    const root = path.resolve(__dirname, "../..");
+    const src = fs.readFileSync(
+      path.join(root, "src/app/(app)/doc/[docId]/history/pageClient.tsx"),
+      "utf8",
+    );
+    // Anchoring alone only scrolls to a collapsed row; the expand is the point.
+    expect(src).toMatch(/#v-\(\\d\+\)|\^#v-/);
+    expect(src).toContain("setExpandedById");
+    expect(src).toContain("scrollIntoView");
+  });
+});

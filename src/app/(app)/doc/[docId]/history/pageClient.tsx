@@ -10,7 +10,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { formatSizeChangeLine } from "@/lib/format/bytes";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
@@ -149,6 +149,34 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [loading, setLoading] = useState<boolean>(true);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
   const [expandedById, setExpandedById] = useState<Record<string, boolean>>({});
+  /**
+   * Arriving from a document-update email, which links `#v-<version>`.
+   *
+   * Every row already carries `id="v-<n>"`, so the browser scrolls to it on its own — but it
+   * scrolled to a *collapsed* row, which is the summary line the email had already quoted. The
+   * reader followed "See what changed" and landed on the sentence they came from. Expanding the
+   * row is the whole difference between a link to the page and a link to the comparison.
+   *
+   * Runs once per set of items rather than once on mount: the list loads after the first paint,
+   * so an effect keyed on mount alone would look for a row that does not exist yet. The ref makes
+   * it idempotent, so paging in more history does not re-expand and re-scroll under the reader.
+   */
+  const deepLinked = useRef(false);
+  useEffect(() => {
+    if (deepLinked.current || !items.length) return;
+    const match = /^#v-(\d+)$/.exec(typeof window === "undefined" ? "" : window.location.hash);
+    if (!match) return;
+    const version = Number(match[1]);
+    const target = items.find((it) => it.toVersion === version);
+    if (!target) return;
+    deepLinked.current = true;
+    setExpandedById((m) => ({ ...m, [target.id]: true }));
+    // After the expand has painted, or the browser measures the collapsed height and stops short.
+    window.requestAnimationFrame(() => {
+      document.getElementById(`v-${version}`)?.scrollIntoView({ block: "center" });
+    });
+  }, [items]);
+
   const [impactFilter, setImpactFilter] = useState<"all" | "none" | "minor" | "medium" | "major">("all");
   const [sort, setSort] = useState<"version_desc" | "version_asc">("version_desc");
   const [nextCursor, setNextCursor] = useState<string | null>(null);

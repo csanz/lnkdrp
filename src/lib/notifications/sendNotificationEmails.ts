@@ -974,8 +974,16 @@ async function buildDocUpdateRound(params: {
       summary: item.summary,
       changes: item.changes,
       pagesChanged: item.pagesChanged,
-      // The comparison, always: it is what the email is about. The document is offered beside it.
-      historyUrl: buildDocHistoryUrl(item.docId),
+      /**
+       * The comparison itself, not the list of them.
+       *
+       * The history page anchors every row as `v-<n>` and now expands the one the fragment names,
+       * so a reader who follows "See what changed" lands on the diff rather than on the summary
+       * sentence the email had already quoted. Without a version we can only offer the list.
+       */
+      historyUrl: item.version
+        ? `${buildDocHistoryUrl(item.docId)}#v-${item.version}`
+        : buildDocHistoryUrl(item.docId),
       docUrl: buildDocUrl(item.docId),
     })),
     daily,
