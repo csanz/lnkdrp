@@ -119,6 +119,21 @@ const userSchema = new Schema(
     approvedAt: { type: Date, default: null },
     approvedByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
 
+    /**
+     * When this person accepted the Terms and the Privacy Policy, and which version they saw.
+     *
+     * Written by `POST /api/waitlist/accept`, from the `/accept` page an invitation links to. It is
+     * the *signed-in* account that is recorded, never merely whoever opened the email: invitation
+     * mail is forwarded and archived, and "somebody with this link agreed" is not a record worth
+     * keeping.
+     *
+     * `termsVersion` is stored rather than implied so a later change to the Terms can tell who has
+     * seen which, instead of a date that has to be compared against a changelog nobody updated.
+     * `null` means never accepted, which is every account that predates this field.
+     */
+    termsAcceptedAt: { type: Date, default: null },
+    termsVersion: { type: String, default: null, trim: true },
+
     onboardingCompleted: { type: Boolean, default: false },
     metadata: { type: Schema.Types.Mixed, default: {} },
   },

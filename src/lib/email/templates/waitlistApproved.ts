@@ -18,9 +18,19 @@ export function waitlistApprovedEmail(params: {
   name?: string | null;
   /** Overrides the configured site URL, for tests and callers that already resolved it. */
   appUrl?: string | null;
+  /**
+   * The one-time `/accept` link, when the invitation carries one.
+   *
+   * Optional because the admin Approve button still opens an account without asking for anything
+   * back, and that path should keep sending the same short mail rather than a screen full of
+   * agreement somebody has to click past. When it is present it *replaces* the plain link: two
+   * buttons, one of which quietly skips the Terms, would make accepting them optional.
+   */
+  acceptUrl?: string | null;
 }): EmailContent {
   const first = (params.name ?? "").trim().split(/\s+/)[0] ?? "";
   const base = (params.appUrl ?? getPublicSiteBase() ?? "").trim().replace(/\/+$/, "");
+  const accept = (params.acceptUrl ?? "").trim();
 
   return transactional({
     subject: "You're in: your LinkDrop account is open",
@@ -31,7 +41,17 @@ export function waitlistApprovedEmail(params: {
         kind: "p",
         text: "Your LinkDrop account is open. Sign in with the same Google account you signed up with and upload something.",
       },
-      base ? { kind: "action", label: "Start here", url: base } : null,
+      accept
+        ? { kind: "action", label: "Accept your invitation", url: accept }
+        : base
+          ? { kind: "action", label: "Start here", url: base }
+          : null,
+      accept
+        ? {
+            kind: "muted",
+            text: "The link opens a page where you accept the Terms and get started. It works for two weeks, and only for the account this was sent to.",
+          }
+        : null,
       {
         kind: "p",
         text: `You're on the free plan: ${FREE_DOCUMENTS} shared documents with view and download tracking, as many links as you like on each, and ${FREE_STARTER_CREDITS} credits for the AI summaries and compares. No card needed.`,
