@@ -256,6 +256,32 @@ async function main() {
             "updateDescription.updatedFields.status": { $exists: true },
           },
         },
+        /**
+         * Four scalars, not the document.
+         *
+         * The handler below reads `_id`, `orgId`, `status` and `shareId` and nothing else, but
+         * `updateLookup` was shipping the whole row — and a `docs` row carries the PDF's extracted
+         * text twice (`extractedText` and `pdfText`), the AI output, and a `slideNodes` array with
+         * an entry per page. `process/route.ts` writes `status: "ready"` in the same update as the
+         * text, so the event carried that text in `fullDocument` *and* again in
+         * `updateDescription.updatedFields`.
+         *
+         * A long report is megabytes of it, pushed over the change stream to deliver three
+         * strings. Past 16MB the event exceeds the BSON limit, the stream closes fatally,
+         * `watchHealth("docs")` flips the health flag and the process exits — dropping every
+         * workspace's socket on that instance because one document was text-heavy.
+         *
+         * The `$match` above runs first, so dropping `updateDescription` here costs nothing.
+         */
+        {
+          $project: {
+            operationType: 1,
+            "fullDocument._id": 1,
+            "fullDocument.orgId": 1,
+            "fullDocument.status": 1,
+            "fullDocument.shareId": 1,
+          },
+        },
       ],
       {
         fullDocument: "updateLookup",

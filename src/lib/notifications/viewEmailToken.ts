@@ -43,7 +43,16 @@ export type EmailOffKind = keyof typeof EMAIL_OFF_KINDS;
 /** The route reads the kind off the token rather than a query parameter, which a bearer could edit. */
 export type VerifyAnyResult =
   | { ok: true; kind: EmailOffKind; membershipId: string }
-  | { ok: false; reason: ViewEmailsOffTokenFailure; membershipId?: string };
+  /**
+   * `kind` on the failure arm too, because the caller still has a page to render.
+   *
+   * The ranking below already knows which kind produced the best failure — an expired doc-update
+   * token fails its own purpose with `expired` and every other purpose at the signature — it just
+   * did not say so. The route then fell back to `"views"` and read `viewEmailMode` for somebody
+   * whose expired link was about document updates, so the page announced the state of a setting
+   * they had not asked about.
+   */
+  | { ok: false; reason: ViewEmailsOffTokenFailure; membershipId?: string; kind?: EmailOffKind };
 
 /**
  * Default token lifetime: 30 days.
@@ -275,12 +284,12 @@ export function verifyAnyEmailsOffToken(token: string, opts?: { now?: Date }): V
     wrong_purpose: 0,
   };
 
-  let best: { reason: ViewEmailsOffTokenFailure; membershipId?: string } | null = null;
+  let best: { reason: ViewEmailsOffTokenFailure; membershipId?: string; kind: EmailOffKind } | null = null;
   for (const kind of Object.keys(EMAIL_OFF_KINDS) as EmailOffKind[]) {
     const res = verifyForPurpose(EMAIL_OFF_KINDS[kind].purpose, token, opts);
     if (res.ok) return { ok: true, kind, membershipId: res.membershipId };
     if (!best || RANK[res.reason] > RANK[best.reason]) {
-      best = { reason: res.reason, ...(res.membershipId ? { membershipId: res.membershipId } : {}) };
+      best = { reason: res.reason, kind, ...(res.membershipId ? { membershipId: res.membershipId } : {}) };
     }
   }
   return { ok: false, ...(best ?? { reason: "malformed" as const }) };

@@ -6,7 +6,7 @@
 import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { Types } from "mongoose";
-import { put } from "@vercel/blob";
+import { del, put } from "@vercel/blob";
 import pdfParse from "pdf-parse";
 import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
@@ -1682,6 +1682,15 @@ export async function POST(
                 slug: asString(p.slug),
               }))
           : null;
+      /**
+       * Every page blob this run writes, so the failure path can delete them.
+       *
+       * Declared out here because `nodes` lives inside the render's `try` and is only assigned to
+       * `slideNodes` once the whole loop finishes — so a throw on page k loses the record of
+       * everything written before it. See the cleanup in that catch.
+       */
+      const renderedBlobUrls: string[] = [];
+
       let slideNodes: SlideNode[] | null = Array.isArray((uploadObj as any).slideNodes)
         ? ((uploadObj as any).slideNodes as unknown[])
             .map((p) => (isRecord(p) ? p : null))
@@ -1884,6 +1893,9 @@ export async function POST(
               }),
             ]);
 
+            // Tracked outside the loop's `try` so the failure path can still reach them: see the
+            // cleanup in the catch below.
+            renderedBlobUrls.push(imageBlob.url, thumbBlob.url);
             nodes.push({
               pageNumber,
               imageUrl: imageBlob.url,
@@ -1910,6 +1922,36 @@ export async function POST(
           uploadId,
           message: e instanceof Error ? e.message : String(e),
         });
+        /**
+         * Delete what this run already uploaded, or it is unreachable for ever.
+         *
+         * `nodes` is only assigned to `slideNodes` after the whole per-page loop completes, so a
+         * throw on page k discards the record of the 2*(k-1) blobs already written — and the upload
+         * row then stores `slideNodes: []`. Nothing else knows those URLs: `blobUrlsOf` in
+         * `accounts/purge.ts` collects them from the row, so the account purge cannot find them
+         * either. Page images of a private document, public, surviving their owner's deletion.
+         *
+         * This was survivable when paths were deterministic — the next run overwrote the same
+         * keys. Random suffixes (B0) made every retry write somewhere new, so the leak is per
+         * attempt.
+         *
+         * Best-effort and deliberately quiet: the upload has already failed, and a cleanup that
+         * throws would replace a partial render with a 500.
+         */
+        const stranded = renderedBlobUrls.slice();
+        if (stranded.length) {
+          try {
+            await del(stranded);
+            debugLog(1, "[process] cleaned up page images from the failed render", { uploadId, count: stranded.length });
+          } catch (delErr) {
+            // Nothing else can reach them now, so say so loudly enough to be greppable.
+            debugError(1, "[process] could not clean up page images from a failed render", {
+              uploadId,
+              count: stranded.length,
+              message: delErr instanceof Error ? delErr.message : String(delErr),
+            });
+          }
+        }
       }
 
       /**

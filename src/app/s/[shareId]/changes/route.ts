@@ -8,6 +8,7 @@
  * to `/s/:shareId`) is sent by the browser.
  */
 import { NextResponse } from "next/server";
+import { debugError } from "@/lib/debug";
 import { resolveShareLink } from "@/lib/share/links";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
@@ -48,6 +49,11 @@ function decodeCursor(raw: string | null): Cursor | null {
     if (!Number.isFinite(toVersion) || toVersion < 1) return null;
     if (!createdDate || !id) return null;
     if (!Types.ObjectId.isValid(id)) return null;
+    // Parseable as a date, because it goes straight into a Mongo filter as `new Date(...)`. An
+    // unparseable string became an Invalid Date, Mongoose's cast asserted, and the catch at the
+    // bottom of this route handed the CastError's text to an anonymous recipient — naming the
+    // model, the path and the type.
+    if (!Number.isFinite(Date.parse(createdDate))) return null;
     return { toVersion: Math.floor(toVersion), createdDate, id };
   } catch {
     return null;
@@ -203,8 +209,18 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         { headers: { "cache-control": cacheControl } },
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 400 });
+      /**
+       * Nothing from the exception reaches the caller.
+       *
+       * This is a public route: whoever holds the link is anonymous, and every other refusal here
+       * is deliberately shapeless so the endpoint cannot be used to learn what exists. Returning
+       * `err.message` undid that for any error a crafted request could provoke — a Mongoose
+       * CastError spells out the model name, the field and its type.
+       */
+      debugError(1, "[share/changes] request failed", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return NextResponse.json({ error: "Bad request" }, { status: 400 });
     }
   });
 }

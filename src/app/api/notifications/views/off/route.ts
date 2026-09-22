@@ -292,7 +292,10 @@ async function handle(request: Request, opts: { write: boolean }): Promise<Respo
      * that no kind could be read falls back, and `views` is the safe fallback because it is the
      * only kind whose links predate the others.
      */
-    const kind: EmailOffKind = verified.ok ? verified.kind : "views";
+    // The failure arm carries the kind too now. An expired doc-update link used to fall back to
+    // "views", so the page read `viewEmailMode` and told somebody the state of a setting their
+    // link was not about — "View emails are off" on a link they opened about document updates.
+    const kind: EmailOffKind = verified.ok ? verified.kind : (verified.kind ?? "views");
     const copy = OFF_COPY[kind];
     const field = EMAIL_OFF_KINDS[kind].field;
 
