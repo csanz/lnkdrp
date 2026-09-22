@@ -83,6 +83,19 @@ vi.mock("@/lib/share/links", () => ({
   shareLinkUnlocked: () => true,
 }));
 
+/**
+ * The claim routes resolve through `resolveClaimLink` now, which understands both a document link
+ * and a data-room link. This suite is about which hosts the route will dereference, so the gate is
+ * delegated to the same `resolveShareLink` each test already drives; `resolveClaimLink`'s own rules
+ * (the document must belong to the link) are covered in tests/lib/claimLinkResolver.test.ts.
+ */
+vi.mock("@/lib/share/claimLink", () => ({
+  resolveClaimLink: async (...a: unknown[]) => {
+    const r = (await resolveShareLink(...(a.slice(0, 1) as [unknown]))) as { link?: unknown; refusal?: unknown } | null;
+    return r ? { link: r.link, refusal: r.refusal ?? null } : null;
+  },
+}));
+
 const resolveProjectLink = vi.fn();
 vi.mock("@/lib/share/projectLinks", () => ({
   resolveProjectLink: (...a: unknown[]) => resolveProjectLink(...a),

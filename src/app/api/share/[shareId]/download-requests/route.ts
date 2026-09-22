@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { resolveShareLink, shareLinkUnlocked } from "@/lib/share/links";
+import { resolveProjectStatsTarget } from "@/lib/share/projectPublic";
 import { UserModel } from "@/lib/models/User";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendEmailContent } from "@/lib/email/sendTextEmail";
@@ -69,7 +70,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     const { shareId } = await ctx.params;
     if (!shareId) return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
 
-    const body = (await request.json().catch(() => ({}))) as { email?: unknown };
+    const body = (await request.json().catch(() => ({}))) as { email?: unknown; docId?: unknown };
     const rawEmail = typeof body.email === "string" ? body.email : "";
     const email = normalizeEmail(rawEmail);
     if (!email || !looksLikeEmail(email)) {
@@ -87,27 +88,34 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     // The request is about one link: a refused link answers 404, and the download permission that
     // decides whether a request is needed is the link's (docs/prds/lnkdrp-multi-links.md).
     //
-    // KNOWN GAP — a project link's slug lands in the 404 below, so "Request download" never works
-    // inside a data room. `resolveShareLink` returns null for a project slug by design, and this
-    // route could resolve one: `resolveProjectStatsTarget({ shareId, request, bodyDocId })` in
-    // `src/lib/share/projectPublic.ts` names the document from the body or the `/p/:slug/:docId`
-    // referer and re-proves its membership, `shareLinkUnlocked` already works on a project row
-    // (same cookie, same HMAC — `/p/**` uses it), and `link.allowDownload` carries the same meaning
-    // there (project-links PRD decision 3). Approval would stay per-document, because a claim token
-    // is minted against this row's `docId` and never touches `allowDownload`.
-    //
-    // It is not done here because the *rest of the chain* refuses the same slug, and half a chain
-    // is worse than an honest failure: the owner would be emailed, they would approve, and the
-    // requester's claim link would 404. All three claim routes gate on
-    // `resolveShareLink(reqDoc.shareId)` and bail on null — `api/download/[token]/route.ts:61`,
-    // `api/download/[token]/pdf/route.ts:81`, `api/download/[token]/save/route.ts:82` — which is
-    // the right gate (an approval is permission *through that link*) applied by a resolver that
-    // cannot see project links. Storing the document's own default-link slug on the row instead is
-    // not a fix: it would answer with a different link's enable/expiry/password state than the one
-    // the recipient actually used. The fix is one shared resolver those three routes call, falling
-    // back to `resolveProjectLink` + `findProjectDocument` for a project slug; then delete this
-    // note and take the branch above.
-    const resolved = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
+    /**
+     * A request can come from a document link or from inside a data room, and the two name their
+     * document differently: a document link *is* the document, while a project link fronts many, so
+     * the room's slug plus the document being read is what identifies one.
+     *
+     * `resolveProjectStatsTarget` takes the document from the body, or from the `/p/:slug/:docId`
+     * page that made the request, and re-proves it is a live member of that room — the same
+     * membership check the room's own pages make.
+     *
+     * This used to refuse a project slug outright, because the rest of the chain did too: the owner
+     * would be emailed, they would approve, and the requester's claim link would 404. That is fixed
+     * in `resolveClaimLink`, which the three claim routes now share, so both ends understand a room.
+     */
+    const directLink = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
+    const roomTarget = directLink
+      ? null
+      : await resolveProjectStatsTarget({
+          shareId,
+          request,
+          bodyDocId: body.docId,
+          // `userId` is not in `PROJECT_DOC_LIST_FIELDS` — a room's public listing has no reason to
+          // carry the owner — but `ownerUserId` below is read off this document and decides who is
+          // emailed for approval. Without it the request is created and nobody is ever asked,
+          // which is the same half-a-chain failure this route used to refuse project slugs to
+          // avoid. The document path gets it for free from `DOC_SHARE_FIELDS`.
+          select: { title: 1, userId: 1 } as Record<string, 1>,
+        });
+    const resolved = directLink ?? roomTarget;
     if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     // A protected link says nothing to a browser that never typed the password — and "I would like

@@ -98,16 +98,6 @@ type Props = {
    */
   revisionHistoryEnabled?: boolean;
   /**
-   * Whether "Request download" may be offered when downloads are off.
-   *
-   * A data room says no. The request route resolves its slug with `resolveShareLink`, which
-   * refuses a project link by design, so inside a room the button opened a modal whose submit
-   * always 404s — and every room starts with downloads off, so that was the default experience.
-   * Until the claim chain can resolve a project slug (see the KNOWN GAP note in
-   * `src/app/api/share/[shareId]/download-requests/route.ts`) the honest thing is not to offer it.
-   */
-  canRequestDownload?: boolean;
-  /**
    * Endpoint for fetching revision history JSON (typically `/api/share/:shareId/changes`).
    */
   revisionHistoryUrl?: string | null;
@@ -478,7 +468,6 @@ export function PdfJsViewer({
   initialPage = 1,
   shareId,
   revisionHistoryEnabled = false,
-  canRequestDownload = true,
   revisionHistoryUrl = null,
   workspace = null,
   backHref = null,
@@ -2460,7 +2449,7 @@ export function PdfJsViewer({
                   >
                     Download PDF
                   </a>
-                ) : canRequestDownload ? (
+                ) : (
                   <button
                     type="button"
                     className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
@@ -2473,7 +2462,7 @@ export function PdfJsViewer({
                   >
                     Download PDF
                   </button>
-                ) : null
+                )
               ) : null}
             </div>
       </BrandHeader>
@@ -3265,7 +3254,7 @@ export function PdfJsViewer({
                       >
                         Open PDF directly
                       </a>
-                    ) : shareIdSafe && canRequestDownload ? (
+                    ) : shareIdSafe ? (
                       <button
                         type="button"
                         className="inline-flex items-center justify-center rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15"

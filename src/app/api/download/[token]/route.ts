@@ -12,7 +12,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
-import { resolveShareLink, shareLinkUnlocked } from "@/lib/share/links";
+import { shareLinkUnlocked } from "@/lib/share/links";
+import { resolveClaimLink } from "@/lib/share/claimLink";
 import { debugError } from "@/lib/debug";
 
 export const runtime = "nodejs";
@@ -58,7 +59,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     // password-protected link still wants the password. Answering "ready to download" and then
     // refusing at the click is how a recipient learns to distrust the product instead of the link.
     const shareIdOfRequest = typeof (reqDoc as { shareId?: unknown }).shareId === "string" ? String((reqDoc as { shareId: string }).shareId) : "";
-    const resolved = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
+    const resolved = shareIdOfRequest ? await resolveClaimLink(shareIdOfRequest, (reqDoc as { docId?: unknown }).docId as string | undefined ?? "") : null;
     if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
     // The cookie is named for the slug the recipient visited — the one stored on the request row.
     if (!shareLinkUnlocked(request, shareIdOfRequest, resolved.link)) {

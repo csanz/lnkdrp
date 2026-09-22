@@ -76,6 +76,14 @@ vi.mock("@/lib/share/links", () => ({
   ensureDefaultLink: vi.fn(async () => ({ _id: new Types.ObjectId(), orgId: ORG })),
   updateShareLink: vi.fn(async () => undefined),
 }));
+// Same seam move as the allowlist suite: the claim routes go through `resolveClaimLink`, and this
+// file is about a deleted document and the owner's own download, not about claim resolution.
+vi.mock("@/lib/share/claimLink", () => ({
+  resolveClaimLink: vi.fn(async () => ({
+    refusal: null,
+    link: { _id: new Types.ObjectId(), shareId: "abc123", label: null, isDefault: true },
+  })),
+}));
 vi.mock("@/lib/activity/log", () => ({ recordActivity: (...a: any[]) => (recordActivity as any)(...a) }));
 vi.mock("@/lib/share/ownerSide", () => ({ isOwnerSideViewer: (...a: any[]) => (isOwnerSideViewer as any)(...a) }));
 vi.mock("@/lib/orgs/requireOrgEditor", () => ({ forbidUnlessOrgRole: vi.fn(async () => null) }));

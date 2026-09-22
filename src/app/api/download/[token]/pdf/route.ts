@@ -13,7 +13,8 @@ import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
-import { resolveShareLink, shareLinkUnlocked, touchShareLink } from "@/lib/share/links";
+import { shareLinkUnlocked, touchShareLink } from "@/lib/share/links";
+import { resolveClaimLink } from "@/lib/share/claimLink";
 import { recordActivity } from "@/lib/activity/log";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { blobFetchUrl, fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
@@ -79,7 +80,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     // would keep downloading: the claim token went straight to the document and never consulted
     // the link. Same gate the public `/s/:shareId/pdf` route applies.
     const shareIdOfRequest = typeof (reqDoc as { shareId?: unknown }).shareId === "string" ? String((reqDoc as { shareId: string }).shareId) : "";
-    const resolved = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
+    const resolved = shareIdOfRequest ? await resolveClaimLink(shareIdOfRequest, (reqDoc as { docId?: unknown }).docId as string | undefined ?? "") : null;
     if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     // ...and to the link's password, which the approval does not stand in for. The owner approved a

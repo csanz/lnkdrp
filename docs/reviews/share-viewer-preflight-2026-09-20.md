@@ -15,8 +15,9 @@ download approval becomes a confirmation page plus a POST.
 **Status key:** ✅ fixed · ⬜ open
 
 **Update, same day:** a ten-agent fix pass ran straight after this review (one agent per disjoint
-file set), plus follow-up work. All but one finding are fixed. Verified: tsc clean, 1740 lib tests +
-167 credits + 38 upload passing, `next build` exit 0.
+file set), plus follow-up work. The one finding it left open — download requests inside a data room — was closed
+on 2026-09-22 by the shared claim resolver described below, so every finding here is fixed.
+Verified: tsc clean, 2313 lib tests + 177 credits passing, `next build` exit 0.
 
 **Still open — "Request download" inside a data room.** The create route was made to work, but the
 three claim routes (`/api/download/[token]`, `/pdf`, `/save`) all gate on `resolveShareLink`, which
@@ -108,7 +109,7 @@ Until then the "Request download" button should be hidden inside a data room
 **Fix:** Bound it the way the sibling fields already are — `const pageNumber = parsePageBound((body as {pageNumber?: unknown})?.pageNumber)` — and, where `numPages`/`ShareVisit.pageCount` is known, drop a pageNumber above it rather than storing it.
 
 
-### ⬜ [correctness] In a data room, "Request download" always fails — the route refuses project slugs
+### ✅ [correctness] In a data room, "Request download" always fails — the route refuses project slugs
 
 **Where:** `src/app/api/share/[shareId]/download-requests/route.ts:88`
 
@@ -117,6 +118,23 @@ Until then the "Request download" button should be hidden inside a data room
 **How it fails:** Owner shares a project link (downloads off, the default). A recipient opens `/p/<slug>` → a document → clicks "Download PDF" → the modal says downloads are disabled and asks for their email → they type it and press Request → the panel shows a red error reading "Not found". No request row is created, no mail reaches the owner, and the recipient is left believing the product is broken. It fails on every document in every data room, every time.
 
 **Fix:** Either suppress the affordance or support it. Smallest correct fix that keeps the button honest: give `ShareViewerClient`/`PdfJsViewer` a `downloadRequestsEnabled` prop (false from /p/[shareId]/[docId]/page.tsx) so the button is hidden when downloads are off on a project link. If the flow should work, `download-requests/route.ts` needs the project branch the stats and landing routes already have — `resolveProjectDocument(shareId, docIdFromReferer/body)`, the project-link password check, `link.allowDownload` for the `download_already_enabled` answer, and the doc it resolved for `docId`/`ownerUserId` — plus a decision about what approval means, since flipping `allowDownload` on a project link opens downloads for every document in the room.
+
+**Fixed (2026-09-22):** supported, not suppressed — the button was the honest part. The four routes
+that made up the claim chain (`download-requests`, and the three under `/api/download/[token]`) all
+called `resolveShareLink`, which refuses a project slug by design, so a request raised inside a data
+room could be created and approved and then 404 at the claim. They now share
+`src/lib/share/claimLink.ts`, one resolver that answers both link shapes, so the three cannot drift
+apart again.
+
+The decision about what approval means is the interesting half, and it is *per document*, not per
+link: a room link is not flipped to `allowDownload`, so an approval for one document is not a key to
+the rest of the room. The resolver re-proves membership through `findProjectDocument` — the same
+proof `/p/:slug/:docId` uses — which also means a document taken out of the room after approval
+stops claiming with it. The room path additionally had to select `userId`, which
+`PROJECT_DOC_LIST_FIELDS` omits, or `ownerUserId` came back undefined and the owner was never
+emailed to approve. `tests/lib/claimLinkResolver.test.ts` holds the nine cases, the room-is-not-a-key
+one among them. The dead `canRequestDownload` prop that the suppress-it approach had left behind is
+gone from all three files.
 
 
 ### ✅ [correctness] Every PDF page is rasterised at 1x, so the document is soft on every Retina and mobile screen

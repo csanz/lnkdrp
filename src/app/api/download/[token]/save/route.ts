@@ -12,7 +12,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
-import { resolveShareLink, shareLinkUnlocked } from "@/lib/share/links";
+import { shareLinkUnlocked } from "@/lib/share/links";
+import { resolveClaimLink } from "@/lib/share/claimLink";
 import { newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
@@ -79,7 +80,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ token: str
     // Saving a copy is a download by another name, so it answers to the same link gate: a disabled,
     // expired or archived link must not keep handing out the file to an approved requester.
     const shareIdOfRequest = typeof (reqDoc as { shareId?: unknown }).shareId === "string" ? String((reqDoc as { shareId: string }).shareId) : "";
-    const resolvedLink = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
+    const resolvedLink = shareIdOfRequest ? await resolveClaimLink(shareIdOfRequest, (reqDoc as { docId?: unknown }).docId as string | undefined ?? "") : null;
     if (!resolvedLink || resolvedLink.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     // ...and to the same password gate as the download, for the stronger reason: this one leaves a

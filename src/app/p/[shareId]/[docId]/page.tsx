@@ -216,11 +216,6 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
           // exist on the model and must not appear here.
           revisionHistoryEnabled={false}
           revisionHistoryUrl={null}
-          // The request route cannot resolve a project slug, so the button it would show here
-          // opens a modal whose submit always fails. A room with downloads off — which is every
-          // room by default — offered exactly that. Hidden until the claim chain can follow a
-          // project link.
-          canRequestDownload={false}
           workspace={workspace}
           backHref={backHref}
           backLabel={projectName || null}
