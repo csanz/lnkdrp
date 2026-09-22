@@ -48,7 +48,7 @@ export default function PrivacyPolicyPage() {
           <section>
             <h2 className="mb-3 font-serif text-2xl tracking-tight text-white">1. Introduction</h2>
             <p className="mb-4 leading-6">
-              LinkDrop ("we", "us", or "our") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard information when you use our document sharing platform and related services (collectively, the "Service").
+              LinkDrop is a service of LNKDRP Technologies LLC, a California limited liability company ("we", "us", or "our"), which is the controller of the information described here. We are committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard information when you use our document sharing platform and related services (collectively, the "Service").
             </p>
             <p className="mb-4 leading-6">
               It applies to two kinds of people: <strong>account holders</strong> who upload and share documents, and <strong>viewers</strong> who open a link someone shared with them. Section 5 is written for viewers.

@@ -14,7 +14,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 ## Public pages (logged-out)
 
-- **Home page**: `/` — Marketing landing page with paperplane animation, a shared public header (About / Pricing / Log In), a “Get Started” button that goes straight to Google sign-in, and a shared public footer (`© YEAR LinkDrop Group · Terms · Privacy`) pinned to the bottom of the first viewport.
+- **Home page**: `/` — Marketing landing page with paperplane animation, a shared public header (About / Pricing / Log In), a “Get Started” button that goes straight to Google sign-in, and a shared public footer (`© YEAR LNKDRP Technologies LLC · MCP · Terms · Privacy`) pinned to the bottom of the first viewport.
 - **About page**: `/about` — Static page explaining what LinkDrop is and how it works.
 - **Pricing page**: `/pricing` — Free vs Pro comparison (Pro price label read from `BillingConfig`; Free = 3 shared documents (unlimited links each) / 1 project / 7 days of analytics / no collaborators, Pro = unlimited + 1 collaborator included, more seats on request; plus a credit table (AI summary 1/2/5 by tier, automatic at basic; AI compare 2/5/12 by tier), a note that agent-written summaries and recipient uploads cost 0 credits, and a dated pricing change note (2026-09-13: the automatic summary now costs 1 credit, previously included; starter credits already granted are kept)) with sign-in CTAs; for signed-in users the CTAs act on the active workspace directly (Stripe Checkout / billing portal / "Current plan"). The FAQ covers the launch grace period for workspaces already over the Free limits (see **Plans and limits**).
 - **Terms of Service**: `/tos` — Terms of Service page linked from the shared public footer.

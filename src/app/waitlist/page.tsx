@@ -108,7 +108,7 @@ export default async function WaitlistPage({
       />
 
       <div className="relative z-10 flex min-h-[100svh] w-full flex-col">
-        <PublicHeader />
+        <PublicHeader admitted={false} />
 
         <section className="mx-auto w-full max-w-6xl flex-1 px-8 pb-20 pt-12 sm:px-10 md:pt-16 lg:px-12">
           <div className="grid gap-10 md:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] md:gap-14">

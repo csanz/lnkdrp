@@ -50,7 +50,7 @@ export default function TermsOfServicePage() {
               By accessing or using LinkDrop ("the Service"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, you may not access or use the Service.
             </p>
             <p className="leading-6">
-              LinkDrop is a document sharing platform for uploading PDF documents, sharing them through trackable links, and summarizing and comparing them with AI. The Service is provided by LinkDrop ("we," "us," or "our").
+              LinkDrop is a document sharing platform for uploading PDF documents, sharing them through trackable links, and summarizing and comparing them with AI. The Service is provided by LNKDRP Technologies LLC, a California limited liability company ("we," "us," or "our"). "LinkDrop" is the name of the Service; these Terms are an agreement between you and LNKDRP Technologies LLC.
             </p>
           </section>
 

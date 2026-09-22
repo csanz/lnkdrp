@@ -3,16 +3,29 @@
  * Legal links (Terms, Privacy) live in `PublicFooter`, not here.
  *
  * Markup and class names intentionally match the logged-out homepage header so the header
- * renders identically everywhere. The only prop, `containerClassName`, lets a page align the
- * header's inner container with its own content column (the homepage uses it; other pages
- * keep the full-bleed default).
+ * renders identically everywhere. `containerClassName` lets a page align the header's inner
+ * container with its own content column (the homepage uses it; other pages keep the full-bleed
+ * default).
+ *
+ * **`admitted` is the other prop, and it exists because "signed in" and "allowed in" are not the
+ * same thing.** The header used to branch on the session alone, which is right on a marketing page
+ * and wrong on the two screens where somebody has an account they cannot yet use: on `/waitlist`
+ * and `/accept`, "Open app" and the Connect pill both pointed inside the entry gate, which
+ * immediately redirected back to the page they were already on. Two of the four nav items were
+ * loops, and a link that returns you to where you are reads as a broken product at exactly the
+ * moment you are being asked to trust one.
+ *
+ * Passed `false`, the pill goes to the public guide and "Open app" becomes "Sign out" — the one
+ * control that is genuinely useful there, and the fix for the case both pages name in their own
+ * copy: the wrong Google account of two in the same browser.
  */
 "use client";
 
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
-import { signIn, useSession } from "next-auth/react";
+import { signIn, signOut, useSession } from "next-auth/react";
+import { forgetSignedIn } from "@/lib/client/sessionMemory";
 import { useAuthEnabled } from "@/app/providers";
 import Spinner from "@/components/ui/Spinner";
 
@@ -54,9 +67,11 @@ function LoginButton({ enabled }: { enabled: boolean }) {
  * Session-aware login control: "Open app" link when authenticated, otherwise the Log in button.
  * Only rendered when auth is enabled (a `SessionProvider` is guaranteed to be mounted then).
  */
-function SessionLoginControl() {
+function SessionLoginControl({ admitted }: { admitted: boolean }) {
   const { status } = useSession();
   if (status === "authenticated") {
+    // Signed in but not through the gate: "Open app" would bounce straight back here.
+    if (!admitted) return <SignOutControl />;
     return (
       <Link href="/" className={NAV_LINK_CLASS}>
         Open app
@@ -64,6 +79,22 @@ function SessionLoginControl() {
     );
   }
   return <LoginButton enabled />;
+}
+
+/** Sign out, for somebody holding an account they cannot use yet. */
+function SignOutControl() {
+  return (
+    <button
+      type="button"
+      className={NAV_LINK_CLASS}
+      onClick={() => {
+        forgetSignedIn();
+        void signOut({ callbackUrl: "/" });
+      }}
+    >
+      Sign out
+    </button>
+  );
 }
 
 const CONNECT_AGENT_CLASS =
@@ -84,15 +115,22 @@ function ConnectAgentLink({ href }: { href: string }) {
  * the public guide. It renders the public href until the session resolves, the same on server and
  * client, so there is no hydration mismatch.
  */
-function SessionConnectAgentLink() {
+function SessionConnectAgentLink({ admitted }: { admitted: boolean }) {
   const { status } = useSession();
-  return <ConnectAgentLink href={status === "authenticated" ? "/connect" : "/mcp"} />;
+  // `/connect` lives inside the app shell, so an un-admitted visitor is redirected out of it. The
+  // public guide is also the more useful page for them: it is what their agent will be able to do.
+  const inApp = status === "authenticated" && admitted;
+  return <ConnectAgentLink href={inApp ? "/connect" : "/mcp"} />;
 }
 
 /**
  * Render the PublicHeader UI (static, transparent, logo left + About/Connect your agent/Pricing/Log in right).
  */
-export default function PublicHeader({ containerClassName }: { containerClassName?: string } = {}) {
+export default function PublicHeader({
+  containerClassName,
+  /** False on the screens where an account exists but the app is not open to it yet. */
+  admitted = true,
+}: { containerClassName?: string; admitted?: boolean } = {}) {
   const authEnabled = useAuthEnabled();
   return (
     // Same geometry as `BrandHeader` (transparent border included, 46px row) so the logo sits at the
@@ -115,11 +153,11 @@ export default function PublicHeader({ containerClassName }: { containerClassNam
             {/* A quiet outlined pill: the one nav item that is about the product itself, so it shouldn't
                 read as part of a sentence with About / Pricing / Log in. Not filled, so it never competes
                 with the hero's white Get started button. */}
-            {authEnabled ? <SessionConnectAgentLink /> : <ConnectAgentLink href="/mcp" />}
+            {authEnabled ? <SessionConnectAgentLink admitted={admitted} /> : <ConnectAgentLink href="/mcp" />}
             <Link href="/pricing" className={NAV_LINK_CLASS}>
               Pricing
             </Link>
-            {authEnabled ? <SessionLoginControl /> : <LoginButton enabled={false} />}
+            {authEnabled ? <SessionLoginControl admitted={admitted} /> : <LoginButton enabled={false} />}
           </div>
         </div>
       </div>

@@ -82,7 +82,7 @@ export default function ConnectPageClient() {
             screens the reference material (tool catalog, troubleshooting) moves into a side column so
             the page uses the width instead of leaving a narrow strip in the middle. */}
         {connected && status ? (
-          <div className="mb-6 flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-3.5">
+          <div className="mb-6 flex w-full flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-3.5">
             <div className="flex min-w-0 items-center gap-3 text-[13px] text-[var(--fg)]">
               <span aria-hidden="true" className="inline-block h-2 w-2 shrink-0 rounded-full bg-[var(--chart-views)]" />
               <span className="min-w-0">
@@ -100,7 +100,7 @@ export default function ConnectPageClient() {
             </Link>
           </div>
         ) : null}
-        <div className="grid w-full max-w-7xl grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:items-start">
+        <div className="grid w-full grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:items-start">
           <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
             <KeysPanel status={status} loading={loading} plaintextKey={plaintextKey} onCreated={onCreated} onUse={onUse} onRevoked={onRevoked} />
 

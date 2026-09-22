@@ -25,7 +25,11 @@ export default function PublicFooter({
     <footer className={cn("z-10 text-[11px] font-medium text-white/35", className)}>
       <div className={containerClassName ?? "mx-auto w-full max-w-6xl px-8 sm:px-10 lg:px-12"}>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <span>© {year} LinkDrop Group</span>
+          {/* The legal entity, not the product name and not "LinkDrop Group", which was neither:
+              a copyright line names whoever owns the copyright, and that is the LLC. It is also the
+              name on the Stripe account, so the site footer and a customer's card statement agree.
+              Everywhere else — headings, emails, the product itself — stays LinkDrop. */}
+          <span>© {year} LNKDRP Technologies LLC</span>
           <span aria-hidden="true" className="text-white/20">·</span>
           <nav aria-label="Footer" className="flex items-center gap-4">
             <Link href="/mcp" className={FOOTER_LINK_CLASS}>
