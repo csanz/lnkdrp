@@ -566,10 +566,18 @@ filter — this was found the hard way, with every test send landing in spam whi
 records were green. Add it on the organisational domain, where receivers look it up:
 
 ```
-name:  _dmarc.lnkdrp.com
+name:  _dmarc                 <- relative, NOT _dmarc.lnkdrp.com
 type:  TXT
 value: v=DMARC1; p=none; rua=mailto:dmarc@lnkdrp.com; fo=1
 ```
+
+**Enter the name relative to the zone.** Squarespace (and most registrar UIs) append the domain
+for you, so typing the fully-qualified `_dmarc.lnkdrp.com` creates
+`_dmarc.lnkdrp.com.lnkdrp.com` — a record that resolves perfectly if you query that exact name,
+and is invisible to every receiver, which look up `_dmarc.lnkdrp.com`. This happened on the first
+attempt. The existing rows are the pattern to copy: `send.updates`, `resend._domainkey.updates`
+and `_vercel` are all relative. Verify with `dig +short TXT _dmarc.lnkdrp.com` and accept nothing
+but the policy string coming back.
 
 `p=none` is deliberate for the first weeks: it asks receivers to report, not to reject, so a
 misconfiguration cannot silently destroy real mail. Read the `rua` reports, confirm everything
