@@ -253,7 +253,10 @@ export function registerCreateProjectTool(server: McpServer, ctx: ToolContext): 
           .string()
           .min(1)
           .max(128)
-          .describe("Caller-chosen key (1-128 chars). Reusing it within 24h returns the same project instead of creating another."),
+          .describe(
+            "Caller-chosen key (1-128 chars). Reusing it within 24h returns the same project instead of creating another, " +
+              "marked replayed: true so you can tell a retry from a second project; the same key with different arguments is refused.",
+          ),
         name: projectNameSchema,
         description: projectDescriptionSchema.optional(),
       },

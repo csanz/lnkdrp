@@ -164,7 +164,17 @@ export const deleteShareLinkInputShape = {
   docId: docIdSchema,
 };
 
-/** Register `lnkdrp_create_share_link`. */
+/**
+ * Register `lnkdrp_create_share_link`.
+ *
+ * The description names the 50-link ceiling (`SHARE_LINKS_PER_DOC_MAX`) because the sentence beside
+ * it, "links are never plan-capped ... one per investor or counterparty", is the one an agent plans
+ * against, and on its own it reads as "no ceiling at all". There is one, it is not a plan decision,
+ * and `mapApiError` already goes to the trouble of returning it as `validation` + `too_many_links`
+ * so an agent stops retrying. It stops sooner still if it knew the number before it started.
+ * tests/lib/mcpRoundSevenDescriptions.test.ts reads the constant out of src/lib/share/links.ts, so
+ * moving the cap fails the suite rather than leaving a wrong number here.
+ */
 export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     "lnkdrp_create_share_link",
@@ -180,6 +190,10 @@ export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext)
         "Links are never plan-capped: a document may carry one per investor or counterparty on any plan, so a plan never " +
         "forces a new link off; it is enabled unless you pass enabled: false. planWarning only appears when the workspace is near its separate cap on shared " +
         "documents. " +
+        "There is one ceiling, and no plan lifts it: a document holds at most 50 links. The 51st fails with a validation " +
+        "error carrying code too_many_links, which is permanent for that document until you delete a link you no longer " +
+        "need (lnkdrp_delete_share_link), reuse one it already has (lnkdrp_list_share_links), or send that audience a " +
+        "project link instead (lnkdrp_create_project_link), which carries several documents on one URL. " +
         "If the document is archived the link is still created and keeps its settings, but it comes back status 'archived' " +
         "with a warning: nothing resolves until lnkdrp_archive_doc { archived: false } brings the document back. " +
         SAFETY_TAIL,

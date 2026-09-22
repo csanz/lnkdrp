@@ -644,10 +644,15 @@ Views, downloads and viewers for a link over a window of days.
   zeroes beside a missing `lastViewedAt` as "no data", not as "no readers". Check these two before
   concluding anything from `views: 0`.
 - **`downloadsEnabled` is the other reading of `downloads: 0`.** Nobody downloaded it, or nobody
-  could: the figure alone does not say which, and only this field does. It is "any live link allows
-  it", the same answer the owner's own metrics page uses — deliberately not `lnkdrp_get_share`'s
-  `shareAllowPdfDownload`, which is the default link's setting and says nothing about the other
-  nine.
+  could: the figure alone does not say which, and only this field does. Its scope follows the call,
+  like every other figure in this response. Without `shareId` the route answers
+  `Boolean(await ShareLinkModel.exists({ enabled, allowDownload, not archived, not expired })) ||
+  Boolean(doc.shareAllowPdfDownload)` - "any live link allows it, **or** the document carries the
+  legacy flag". That second half is a fallback for rows written before links carried the setting,
+  and it means a `true` does not on its own prove a live link allows a download today; read
+  `lnkdrp_list_share_links` when the difference matters. With `shareId` the route answers
+  `Boolean(link.allowDownload)` for that one link, so a `false` on a `perLink: true` response is
+  not a statement about the document.
 - **`isArchived: true` means every figure here is history.** An archived document's links resolve
   for nobody, so the numbers describe readers who are no longer able to come back, and
   `downloadsEnabled` describes the links' kept settings rather than what a recipient can do today.

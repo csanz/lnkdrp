@@ -160,7 +160,14 @@ export const deleteProjectLinkInputShape = {
   projectSlug: projectSlugSchema,
 };
 
-/** Register `lnkdrp_create_project_link`. */
+/**
+ * Register `lnkdrp_create_project_link`.
+ *
+ * The description carries `SHARE_LINKS_PER_PROJECT_MAX` for the same reason its document sibling
+ * does: everything else it says about being refused is a plan decision, so "Pro" read as "no
+ * ceiling", and the one refusal a Pro workspace can actually meet went unmentioned. The header
+ * above names the guard for a maintainer; an agent only ever reads this string.
+ */
 export function registerCreateProjectLinkTool(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     "lnkdrp_create_project_link",
@@ -181,6 +188,9 @@ export function registerCreateProjectLinkTool(server: McpServer, ctx: ToolContex
         "nothing is created, while the project's existing default link keeps working. Creating an enabled link also turns " +
         "the project's public page back on if it was off, since the page is on whenever any link is live - the result says " +
         "so in warnings. " +
+        "Pro is not unlimited: a project holds at most 50 links, and the 51st fails with a validation error carrying code " +
+        "too_many_links. That one is permanent for this project until a link is deleted (lnkdrp_delete_project_link) or " +
+        "one it already has is reused (lnkdrp_list_project_links), so it is not a call to retry. " +
         SAFETY_TAIL,
       inputSchema: createProjectLinkInputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

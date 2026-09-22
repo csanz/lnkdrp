@@ -288,8 +288,21 @@ summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }` plus *
 `currentUploadId` at it and flips `status` to `preparing`, same as the web app's own replace button)
 → `import-url` or `import-bytes` → `process` → optional `PATCH { title }` → wait for `ready|failed`. Out `{ docId,
 shareId, shareUrl, status, version, uploadId, title, timedOut?, optimized?, optimizeNote?, failureReason?,
-warnings, creditsRemaining?, unchangedFromPrevious?, replayed? }` — no
-`replaceUrl`, this tool is the replacement path. Never `plan_limit` (replacing creates no document),
+warnings, creditsRemaining?, unchangedFromPrevious?, docArchived?, supersededBy?, replayed? }` — no
+`replaceUrl`, this tool is the replacement path.
+`docArchived: true` and `supersededBy` are the two ways the `shareUrl` in this same reply serves something other than
+what this call just stored, and neither is visible in `status`, which is the *processing* status. Archived: the
+replace succeeds by design (`POST /api/uploads` guards only `isDeleted`, and preparing a version before bringing a
+document back is legitimate), but it used to answer `status: "ready"`, a shareUrl and `warnings: []`, so the agent's
+next sentence was "updated, here is the link" about a URL that 404s for every recipient, while
+`lnkdrp_create_share_link` on the same document a moment later said `docArchived: true`. `lnkdrp_archive_doc
+{ archived: false }` brings the document and its links back on this new version.
+Superseded: two replacements can overlap on one document, both succeed and both keep their version, and the server
+settles which upload the document lands on; `supersededBy: { uploadId, version }` is the losing call saying the link
+now serves the other file. Nothing was lost, since this call's version is in the history; only the report was wrong.
+Both carry a matching sentence first in `warnings`, and both are recomputed on a replay rather than replayed from the
+cache, so a key retried after the document came back does not repeat a stale warning.
+Never `plan_limit` (replacing creates no document),
 so it works on a Free workspace at its shared-document cap — the gap `share_pdf`'s own `plan_limit`
 error points at. A failed import no longer strands the document: the import routes abandon the
 empty upload, hand its version number back, and point the document at its newest completed upload
@@ -347,11 +360,28 @@ describes access as it stands now rather than as it stood at the first call (doc
 was missing from this shape while `share_pdf`, `replace_pdf` and `create_project` all carry it a few sections up,
 which reads as this tool having no such flag, the inverse of the truth, and telling a retry from a first call is
 the whole reason the flag exists.
-The switch only restores links it turned off itself, so asking for `shareEnabled: true` has two failure modes and
-they get different warnings: the default link stays off because it was revoked on its own (other links are live), or
-*every* link was revoked on its own and nothing opened at all. The second is the dangerous one — an agent told
-"sharing is on" reports a live document that opens for nobody — so it names the fix, a specific link through
-`lnkdrp_update_share_link`.
+The switch only restores links it turned off itself, so `shareEnabled: true` can be applied and still open nothing,
+and the warning has to name which thing is shut and why. It cannot be read off `anyLinkActive`/`defaultLinkActive`:
+those are `!isArchived && enabled && active`, so an archived document and an expired link collapse into the same
+`false`, and a warning that knows only about revocation prescribes `lnkdrp_update_share_link { enabled: true }` on a
+link that is already enabled, which changes nothing, reports success, and leaves the agent telling its human the
+document is live. So the ladder asks the link rows, and there are five answers, each naming a remedy that moves the
+thing it just blamed:
+
+1. The document is archived, so no link resolves whatever the switch says. `lnkdrp_archive_doc { archived: false }`
+   brings back exactly what was live; `lnkdrp_update_share_link` is named as *not* the fix, because it will call a
+   link enabled and active while that link still opens for nobody.
+2. Nothing opened at all, and the rows say why: every link `expired` (a later date, or `expiresAt: null`), every link
+   revoked on its own (`lnkdrp_update_share_link`, which the switch never does for them), some of each (read
+   `lnkdrp_list_share_links` and reopen one either way), or none of those, which sends the agent to
+   `lnkdrp_list_share_links` rather than guessing a cause.
+3. Other links are live and the default link is `expired`. The date is quoted, because the link is still enabled and
+   turning it on again does nothing.
+4. Other links are live and the default link is `disabled`, revoked on its own.
+5. Other links are live and the default link is shut for some other reason, or the document has no default link row
+   at all. Read `lnkdrp_list_share_links` before telling the human this document's own link works.
+
+Case 2 is the dangerous one: an agent told "sharing is on" reports a live document that opens for nobody.
 
 ### `lnkdrp_get_share_stats`
 In `{ docId?, shareId?, days? 1–60 = 15, includeViewers? = false }` (at least one id). A `shareId` scopes every number to that
@@ -360,10 +390,21 @@ both for a non-default link: a bare `shareId` goes through `GET /api/docs?q=`, w
 Out `{ docId, shareId, perLink, days, analyticsDaysLimit, analyticsTier, viewerCount, totals: { views, ownerPreviews,
 opens, opensPartial, downloads, pagesViewed, timeSpentMs, authenticatedViewers, anonymousViewers },
 totalsAllTime?, lastViewedAt?, downloadsEnabled, series: [{ date, views, opens, downloads }], viewers?,
-anonymousViewers?, projectLinkTraffic? }`.
-`downloadsEnabled` answers the question `downloads: 0` cannot: nobody downloaded it, or nobody could. It means
-"any live link allows it", deliberately not `get_share`'s `shareAllowPdfDownload`, which is the *default* link's
-setting and says nothing about the other nine — the same divergence the route computes it for.
+anonymousViewers?, projectLinkTraffic?, isArchived?, warnings? }`.
+`isArchived: true` and the `warnings` line beside it appear on an archived document, and only there. The numbers
+stay as they are, because they are true: they are what happened while the document was live. But every one of them
+is history: no link resolves while it is archived, so nobody can open or download it now, and
+`lnkdrp_archive_doc { archived: false }` is what brings it back. Archive state lives on the document and the
+shareviews route reads link rows only, so without this the response came back byte-identical to a live one and an
+agent reported "three investors have opened it, downloads are enabled" in the present tense about a document that
+had been dark since it was archived. Every sibling already compensated; this was the last read that said nothing.
+`downloadsEnabled` answers the question `downloads: 0` cannot: nobody downloaded it, or nobody could. Its scope
+follows the call, like every other figure here. With a `docId` it is "any live link allows it **or** the document's
+own `shareAllowPdfDownload` is set" - the route ORs the legacy flag in as a fallback for rows written before links
+carried the setting, so a `true` here does not by itself prove a live link allows it. Read `lnkdrp_list_share_links`
+when that distinction matters. With a `shareId` it is that one link's `allowDownload` alone, so a `false` on a
+`perLink` call is not a fact about the document. On an archived document it still describes the links' kept
+settings rather than what a recipient can do today, which is what the warning says rather than flipping it.
 `totals` and `series` cover the window `days` sets, which defaults to a fortnight, so on their own they answer
 "has anyone read this lately" while reading as "has anyone read this": a deck shared last quarter reports
 `views: 0`. `totalsAllTime` (`views, ownerPreviews, opens, opensPartial, downloads, pagesViewed`) and
@@ -391,13 +432,21 @@ this?" from both, or answer it wrongly.
 A document owns many links, one per recipient (docs/prds/lnkdrp-multi-links.md); each has its own `/s/<shareId>`, label,
 audience, password, download/revision switches, expiry and counts. Link DTO: `{ id, docId, shareId, shareUrl, label, audience,
 isDefault, enabled, allowDownload, allowRevisionHistory, passwordEnabled, expiresAt, active, status, createdVia, createdAt,
-lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the sender and never shown to a viewer.
+lastViewedAt, viewCount, downloadCount, docArchived? }`. `label`/`audience` are private to the sender and never shown to a viewer.
+`status` is `active|disabled|expired|archived`, and the last of those is not a state of the link at all: archiving is a
+property of the *document*, which keeps every row's own `enabled` and expiry so unarchiving restores exactly what was
+live. So the row is overridden on the way out (`active: false`, `status: "archived"`, `docArchived: true`) rather
+than reported raw, which had create and update handing an agent a fresh `shareUrl` described as active while it
+resolved for nobody. The same `docArchived: true` sits at the top level of those replies; see each one below.
 Deleting a link is a soft archive, and every link lookup in the app filters archived rows out, so a deleted link is
 `not_found` to update, delete, verify and password-read alike — there is no tool here that will quietly act on a
 link nobody can open.
 
 - create — In `{ docId, label (1–80), audience?, allowDownload? = false, password? (1–128) | null, expiresAt? ISO | null,
-  allowRevisionHistory? = false, enabled? = true }` → `POST /api/docs/:id/links` → `{ link, shareUrl, planWarning?, planNote?, warnings? }`.
+  allowRevisionHistory? = false, enabled? = true }` → `POST /api/docs/:id/links` → `{ link, shareUrl, docArchived?,
+  planWarning?, planNote?, warnings? }`. `docArchived: true` says the document is archived, so the `shareUrl` this
+  call just handed back resolves for nobody until `lnkdrp_archive_doc { archived: false }`; the link is still created
+  and keeps its settings, and a matching sentence leads `warnings`, because that URL is what the agent is about to send.
   Links are never plan-capped, so the link always comes back enabled unless `enabled: false` was asked for;
   `planWarning` only flags that the workspace is near its separate cap on shared documents. `password: null` is
   refused rather than accepted quietly — there is no password to remove on a link that does not exist yet, so it is
@@ -405,11 +454,14 @@ link nobody can open.
   `warnings` names an existing
   link on the document carrying the same label: allowed, since a resend can be deliberate, but the two are
   indistinguishable in every list afterwards, so the human is told rather than left to find out.
-- list — In `{ docId, query? }` → `GET /api/docs/:id/links?q=` → `{ docId, docArchived?, links }`, default link first, or —
+- list — In `{ docId, query? }` → `GET /api/docs/:id/links?q=` → `{ docId, docArchived?, total, links, warnings? }`,
+  default link first, or —
   with `query` — only the links matching by label/audience, ranked by relevance (mt_9ceLy7DqEr). The document's
   archive state is read alongside and folded into every row (`active: false`, `status: "archived"`, `docArchived: true`):
   the link rows keep their own `enabled` and expiry so unarchiving restores what was live, and reading them raw
   reported "active" about a link that opens for nobody — which is the one question this tool is asked.
+  `total` is how many links the document has and is always there: the route pages at 100, so a short `links` array
+  read as all of them, and `warnings` appears when it was in fact cut, naming both figures and pointing at `query`.
 - find — `lnkdrp_find_share_link`, the workspace-wide version of `query` above, for when the document isn't known
   yet. In `{ query (1–120), limit? = 20 (≤50) }` → `GET /api/share-links?q=&limit=` → `{ query, warnings?, links: [{ kind,
   docId, docTitle*, docShareId, projectId?, projectName?*, linkId, shareId, shareUrl, label, audience, isDefault, enabled,
@@ -439,7 +491,8 @@ link nobody can open.
   `forbidden` and tells the human to sign in to the app. Reading a secret back out is deliberately not something a
   bearer credential may do. Verify is unaffected and is what answers the question people actually ask.
 - update — In `{ linkId, docId, label?, audience?, enabled?, allowDownload?, password?, expiresAt?, allowRevisionHistory? }`
-  (≥1 setting) → `PATCH /api/docs/:id/links/:linkId` → `{ link, shareUrl, planWarning?, planNote?, warnings? }`.
+  (≥1 setting) → `PATCH /api/docs/:id/links/:linkId` → `{ link, shareUrl, docArchived?, planWarning?, planNote?,
+  warnings? }`. `docArchived: true` means the same here as on create, about the same `shareUrl`.
   `warnings` is the route's, forwarded rather than dropped: enabling one link can re-share the document and bring
   back the links the document-wide switch had taken down, which is a change to who can reach the file and belongs in
   the answer to the call that caused it, not in a listing afterwards. Links revoked individually stay revoked and are
@@ -526,10 +579,22 @@ downloadCount }` — no `allowRevisionHistory`, and `shareUrl` is `/p/<shareId>`
   label (allowed — a resend can be deliberate — but they are indistinguishable in every list afterwards), and the
   project's public page was off and this link turned it back on, because the page is live whenever any link is.
 - list_project_links — In `{ projectId | projectSlug, query? (≤120) }` → `GET /api/projects/:id/links?q=&limit=100` →
-  `{ project, publicPageEnabled, links, note? }`, default link first, or ranked by label/audience relevance with
-  `query`. Archived links are not listed. `viewCount` is recipients who opened *something* through the link, not
-  landings on the project page. While `publicPageEnabled` is false every link reads disabled;
-  `lnkdrp_update_project { publicPageEnabled: true }` brings them back.
+  `{ project, publicPageEnabled, links, warnings?, note? }`, default link first, or ranked by label/audience relevance
+  with `query`. Archived links are not listed. `viewCount` is recipients who opened *something* through the link, not
+  landings on the project page.
+  **`publicPageEnabled` here is derived from the rows, not read off `Project.shareEnabled`.** That stored field is a
+  denormalised "at least one link is live" and it is recomputed only when a link is *written*
+  (`syncProjectShareState`). Expiry is the passage of time and not a write, so a room whose every link has expired
+  keeps reporting the page on for ever while `/p/:shareId` 404s for everyone holding it, and an agent asked "is the
+  data room still reachable?" answered yes about a dead page. Each row's `active` is evaluated live, so the rows
+  already knew. Two cases cannot be derived and pass the stored flag through: a `query`, which returns a subset and
+  says nothing about the links it filtered out, and the unmaterialised default below. `warnings` appears only when
+  the derived answer and the stored one disagree, and says which way: a switch reading off while links serve, or,
+  the one that matters, a page that resolves for nobody while the app and `lnkdrp_get_project` still say it is on.
+  That line is also the only place saying an expired link cannot be revived by
+  `lnkdrp_update_project { publicPageEnabled: true }`; it needs a new `expiresAt` through
+  `lnkdrp_update_project_link`. The write direction is unchanged: `publicPageEnabled: false` disables every link and
+  `true` restores the ones it disabled.
   **An empty `links` list does not mean the project is private.** A project's default link is materialised lazily and
   listing is deliberately a read that writes nothing, so a brand-new project answers `links: []` while its
   `/p/:shareId` is already serving anyone holding the URL. When that is the case the tool says so in `note`, and says

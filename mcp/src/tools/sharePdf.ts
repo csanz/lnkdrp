@@ -255,7 +255,10 @@ export const sharePdfInputShape = {
     .string()
     .min(1)
     .max(128)
-    .describe("Caller-chosen key (1-128 chars). Reusing it within 24h returns the same document instead of creating another."),
+    .describe(
+      "Caller-chosen key (1-128 chars). Reusing it within 24h returns the same document instead of creating another, " +
+        "marked replayed: true so you can tell a retry from a second upload; the same key with different arguments is refused.",
+    ),
   title: z.string().max(200).optional().describe("Document title shown on the share page (default: Untitled document)."),
   sourceUrl: z
     .string()
@@ -595,7 +598,10 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
       // A replay returns the same document; refresh the status so a retry after a timeout is useful.
       // `replayed: true` is on the result for the same reason lnkdrp_create_project carries it: the
       // description promises a retry returns the same document rather than a second one, and that
-      // promise is only actionable if the caller can tell which of the two just happened.
+      // promise is only actionable if the caller can tell which of the two just happened. The field
+      // is named in `idempotencyKey`'s own description too, because for four rounds it was emitted
+      // and documented nowhere: an agent had no reason to look for it, and the flag that exists
+      // precisely to stop it reporting two uploads went unread.
       const fresh = await api.getDoc(value.docId).catch(() => null);
       return fresh
         ? {

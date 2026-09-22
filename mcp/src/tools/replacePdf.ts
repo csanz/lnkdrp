@@ -42,7 +42,10 @@ export const replacePdfInputShape = {
     .string()
     .min(1)
     .max(128)
-    .describe("Caller-chosen key (1-128 chars). Reusing it within 24h returns the same result instead of replacing again."),
+    .describe(
+      "Caller-chosen key (1-128 chars). Reusing it within 24h returns the same result instead of replacing again, marked " +
+        "replayed: true so you can tell a retry from a second version; the same key with different arguments is refused.",
+    ),
   docId: docIdSchema.describe(
     "The existing document to update. Every one of its share links keeps working and keeps its analytics history " +
       "(an archived document's links stay dead until it is brought back; the reply says docArchived: true).",
