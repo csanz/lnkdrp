@@ -172,7 +172,7 @@ describe("mode and text helpers", () => {
   test("urls encode ids", () => {
     expect(vn.buildMetricsUrl(APP, "d 1", "a&b")).toBe(`${APP}/doc/d%201/metrics?shareId=a%26b`);
     expect(vn.buildMetricsUrl(APP, "d1")).toBe(`${APP}/doc/d1/metrics`);
-    expect(vn.buildPreferencesUrl(APP)).toBe(`${APP}/dashboard?tab=account#email-preferences`);
+    expect(vn.buildPreferencesUrl(APP)).toBe(`${APP}/dashboard?tab=notifications#email-preferences`);
   });
 });
 
@@ -340,7 +340,7 @@ describe("email composition", () => {
     expect(email.text).toContain(`See what this reader read: ${APP}/doc/d1/metrics/viewer/a_bot1`);
     expect(email.text).toContain(vn.VIEW_EMAIL_FOOTER_REASON);
     expect(email.text).toContain(`Turn off these emails: ${ctxPro.offUrl}`);
-    expect(email.text).toContain(`Change how often: ${APP}/dashboard?tab=account#email-preferences`);
+    expect(email.text).toContain(`Change how often: ${APP}/dashboard?tab=notifications#email-preferences`);
     expect(email.text).not.toContain(vn.PRO_IDENTITY_LINE);
     expect(email.html).toContain("Jane Doe");
     expect(email.html).toContain(`href="${APP}/doc/d1/metrics/viewer/a_bot1"`);
@@ -1250,7 +1250,7 @@ describe("email design review (headers, preheader, Outlook, copy)", () => {
     const email = vn.composeImmediateEmail({ ctx: ctxFree, doc: DOC, events: [view()], links });
     expect(vn.VIEW_EMAIL_FOOTER_REASON).toBe("You get this because someone opened a link to a document in your workspace.");
     expect(email.text).toContain(vn.VIEW_EMAIL_FOOTER_REASON);
-    expect(email.html).toContain(`href="${APP}/dashboard?tab=account#email-preferences" style="display:inline-block;padding:4px 0;`);
+    expect(email.html).toContain(`href="${APP}/dashboard?tab=notifications#email-preferences" style="display:inline-block;padding:4px 0;`);
     expect(email.html).toContain(`href="${ctxFree.offUrl}" style="display:inline-block;padding:4px 0;`);
     expect(email.html).not.toContain("font-size:12px");
   });
@@ -1258,8 +1258,11 @@ describe("email design review (headers, preheader, Outlook, copy)", () => {
   test("the preferences anchor exists on the email preferences block", () => {
     const src = readFileSync(path.resolve(__dirname, "../../src/components/notifications/NotificationPreferences.tsx"), "utf8");
     expect(src).toContain(`id="${vn.VIEW_EMAIL_PREFERENCES_ANCHOR}"`);
+    // The route used to repeat the path as a literal, and the two drifted the moment the settings
+    // moved tabs. It imports the constant now, so agreement is structural rather than asserted.
     const route = readFileSync(path.resolve(__dirname, "../../src/app/api/notifications/views/off/route.ts"), "utf8");
-    expect(route).toContain(`"${vn.VIEW_EMAIL_PREFERENCES_PATH}"`);
+    expect(route).toContain("VIEW_EMAIL_PREFERENCES_PATH");
+    expect(route).not.toMatch(/const PREFERENCES_PATH = "/);
   });
 
   test("the default link reads the same as in the links UI", () => {

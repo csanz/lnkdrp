@@ -6,6 +6,7 @@
  */
 "use client";
 
+import PreferenceExplainer from "@/components/notifications/PreferenceExplainer";
 import { useEffect, useState } from "react";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { ORGS_CACHE_UPDATED_EVENT } from "@/lib/orgsCache";
@@ -94,7 +95,10 @@ export default function NotificationPreferences() {
       <div className="grid gap-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-[var(--fg)]">When someone opens a link</div>
+            <div className="flex items-center gap-1.5">
+              <div className="text-[13px] font-semibold text-[var(--fg)]">When someone opens a link</div>
+              <PreferenceExplainer topic="views" />
+            </div>
             <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
               Get notified when a recipient opens one of this workspace&apos;s share links.
             </div>
@@ -120,7 +124,10 @@ export default function NotificationPreferences() {
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-[var(--fg)]">Doc update emails</div>
+            <div className="flex items-center gap-1.5">
+              <div className="text-[13px] font-semibold text-[var(--fg)]">Doc update emails</div>
+              <PreferenceExplainer topic="docUpdates" />
+            </div>
             <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
               Get notified when a doc is replaced and changes were introduced.
             </div>

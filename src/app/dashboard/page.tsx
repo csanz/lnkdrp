@@ -25,6 +25,7 @@ import {
   PencilSquareIcon,
   UserCircleIcon,
   UsersIcon,
+  BellIcon,
 } from "@heroicons/react/24/outline";
 
 // Perf: keep the dashboard Overview bundle lean.
@@ -68,7 +69,7 @@ function Section({
   );
 }
 
-type DashTab = "overview" | "account" | "workspace" | "teams" | "usage" | "limits" | "billing";
+type DashTab = "overview" | "account" | "notifications" | "workspace" | "teams" | "usage" | "limits" | "billing";
 type DashTabParam = DashTab | "spending";
 
 const TAB_GROUPS: Array<{ items: Array<{ id: DashTab; label: string }> }> = [
@@ -76,6 +77,7 @@ const TAB_GROUPS: Array<{ items: Array<{ id: DashTab; label: string }> }> = [
     items: [
       { id: "overview", label: "Overview" },
       { id: "account", label: "Account" },
+      { id: "notifications", label: "Notifications" },
     ],
   },
   {
@@ -96,6 +98,7 @@ const TAB_GROUPS: Array<{ items: Array<{ id: DashTab; label: string }> }> = [
 const TAB_ICON: Record<DashTab, React.ReactNode> = {
   overview: <ChartPieIcon className="h-4 w-4" />,
   account: <UserCircleIcon className="h-4 w-4" />,
+  notifications: <BellIcon className="h-4 w-4" />,
   workspace: <Cog6ToothIcon className="h-4 w-4" />,
   teams: <UsersIcon className="h-4 w-4" />,
   usage: <ChartBarIcon className="h-4 w-4" />,
@@ -107,6 +110,7 @@ function isDashTab(v: unknown): v is DashTabParam {
   return (
     v === "overview" ||
     v === "account" ||
+    v === "notifications" ||
     v === "workspace" ||
     v === "teams" ||
     v === "usage" ||
@@ -506,11 +510,27 @@ function DashboardPageInner() {
         {tab === "account" ? (
           <Section title="Account" description="Account-level settings and actions.">
             <div className="grid grid-cols-1 gap-3">
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
-                <div className="text-[13px] font-semibold text-[var(--fg)]">Email preferences</div>
-                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Applies to the currently selected workspace.</div>
-                <div className="mt-4">
-                  <NotificationPreferences />
+              {/* The anchor every view email ever sent points at (`?tab=account#email-preferences`).
+                  The settings moved to their own tab, so this stays behind as a signpost rather
+                  than letting those links land on a page with nothing of the sort on it. */}
+              <div
+                id="email-preferences"
+                className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6"
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-semibold text-[var(--fg)]">Email preferences</div>
+                    <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
+                      These moved to Notifications, where each workspace is set separately.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                    onClick={() => setTab("notifications")}
+                  >
+                    Open Notifications
+                  </button>
                 </div>
               </div>
 
@@ -536,6 +556,25 @@ function DashboardPageInner() {
                 Deleting signs you out and stops your agent keys and share links straight away. Your data is kept for 30
                 days in case you change your mind, then removed for good. Workspaces you share with other people carry on
                 without you.
+              </div>
+            </div>
+          </Section>
+        ) : null}
+
+        {tab === "notifications" ? (
+          <Section
+            title="Notifications"
+            description="Which emails this workspace sends you, and how often."
+          >
+            <div className="grid grid-cols-1 gap-3">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
+                <NotificationPreferences />
+              </div>
+
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-4 sm:px-6 text-[12px] text-[var(--muted-2)]">
+                Everything here is set per workspace, because a workspace can be an entirely different company. Turning
+                something off in one leaves the others alone — including the one-click link at the bottom of the emails
+                themselves, which only ever affects the workspace that email came from.
               </div>
             </div>
           </Section>

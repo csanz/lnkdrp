@@ -105,7 +105,7 @@ describe("GET the unsubscribe link", () => {
     expect(html).toContain(`action="?t=${new URL(url).searchParams.get("t")!}"`);
     expect(html).toContain("Turn off view emails");
     // Still offers the signed-in route out, and still says nothing about any other member.
-    expect(html).toContain("/dashboard?tab=account#email-preferences");
+    expect(html).toContain("/dashboard?tab=notifications#email-preferences");
   });
 
   test("the confirm form is allowed by the page's own CSP", async () => {

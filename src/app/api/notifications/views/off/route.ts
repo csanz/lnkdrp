@@ -35,6 +35,7 @@
  * that same one-click body, so the human path and the provider path share one write; a submission
  * that arrives from a browser (it accepts HTML) gets the confirmation page instead of a blank one.
  */
+import { VIEW_EMAIL_PREFERENCES_PATH } from "@/lib/notifications/viewNotifications";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
@@ -46,7 +47,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Where the notification preferences live (Dashboard -> Account -> Email preferences). */
-const PREFERENCES_PATH = "/dashboard?tab=account#email-preferences";
+/**
+ * Where "Change how often" lands — the same constant the emails use, never a second copy.
+ *
+ * It moved with the settings. The old `?tab=account#email-preferences` is baked into every view
+ * email already sent and cannot be changed retroactively, so that anchor still exists on the
+ * Account tab as a signpost pointing here, rather than those links landing on a page with no such
+ * setting on it.
+ */
+const PREFERENCES_PATH = VIEW_EMAIL_PREFERENCES_PATH;
 
 type ViewEmailMode = "off" | "daily" | "immediate";
 

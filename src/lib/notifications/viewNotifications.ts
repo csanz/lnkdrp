@@ -77,7 +77,7 @@ export const VIEW_EMAIL_CURSOR_KEY = "share_views" as const;
 export const VIEW_EMAIL_PREFERENCES_ANCHOR = "email-preferences";
 
 /** Where the notification preferences live (Dashboard -> Account -> Email preferences). */
-export const VIEW_EMAIL_PREFERENCES_PATH = `/dashboard?tab=account#${VIEW_EMAIL_PREFERENCES_ANCHOR}`;
+export const VIEW_EMAIL_PREFERENCES_PATH = `/dashboard?tab=notifications#${VIEW_EMAIL_PREFERENCES_ANCHOR}`;
 
 /** An anonymous open this soon after the link was created may be the owner testing it. */
 export const FIRST_VIEW_HONESTY_WINDOW_MS = 10 * 60 * 1000;

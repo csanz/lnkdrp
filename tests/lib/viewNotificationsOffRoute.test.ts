@@ -1,6 +1,8 @@
 /**
  * Off route (`/api/notifications/views/off`): RFC 8058 one-click POST and the unchanged GET page.
  */
+import fs from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { Types } from "mongoose";
 
@@ -106,7 +108,11 @@ describe("GET stays a confirmation page", () => {
     const html = await res.text();
     expect(html).toContain("<form method=\"post\"");
     expect(html).toContain(`href="${VIEW_EMAIL_PREFERENCES_PATH}"`);
-    expect(VIEW_EMAIL_PREFERENCES_PATH).toBe("/dashboard?tab=account#email-preferences");
+    expect(VIEW_EMAIL_PREFERENCES_PATH).toBe("/dashboard?tab=notifications#email-preferences");
+    // The old path is baked into every email already sent, so the anchor it points at has to keep
+    // existing on the Account tab — as a signpost, not as the settings themselves.
+    const dash = fs.readFileSync(path.resolve(__dirname, "../../src/app/dashboard/page.tsx"), "utf8");
+    expect(dash).toContain('id="email-preferences"');
 
     /**
      * This test used to assert the opposite — that a GET wrote `viewEmailMode: "off"` on sight of
