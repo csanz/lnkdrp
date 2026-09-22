@@ -1772,8 +1772,24 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       debugLog(2, "[lnkdrp][review] calling /process?forceReview=1", {
         uploadId: doc.currentUploadId,
       });
+      /**
+       * A fresh key per press, like the review page's own rerun button.
+       *
+       * Without one the server falls back to a deterministic key
+       * (`review:manual:<uploadId>:v<n>:<tier>`), which is the same string every time. That was a
+       * money leak while the reserve ignored the row's status — every press after the first ran the
+       * model for free — and it became a dead button the moment the reserve started honouring it,
+       * because the key is *always* already charged after the first success.
+       *
+       * The key is what distinguishes "the user asked again" from "the same request arrived
+       * twice". A new one per click says the first thing; the server's idempotency still says the
+       * second for a double-submit or a retry.
+       */
+      const rerunKey =
+        typeof crypto !== "undefined" && "randomUUID" in crypto ? (crypto as { randomUUID(): string }).randomUUID() : String(Date.now());
       await fetchJson(`/api/uploads/${encodeURIComponent(doc.currentUploadId)}/process?forceReview=1`, {
         method: "POST",
+        headers: { "x-idempotency-key": rerunKey },
       });
 
       debugLog(2, "[lnkdrp][review] forceReview POST complete; polling /reviews?latest=1", { docId: doc.id });

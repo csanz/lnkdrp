@@ -1456,8 +1456,23 @@ export async function POST(
                     projectIds: existingProjectIds,
                   },
                 });
-                await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
-                creditsUsedThisRun += reviewCredits;
+                // Same as the request-review path below: `ensureReviewForUpload` swallows its own
+                // failures, so "it returned" is not "it worked".
+                const outcome = await ReviewModel.findOne({ docId, version: uploadVersion })
+                  .select({ status: 1 })
+                  .lean();
+                if (String((outcome as { status?: unknown } | null)?.status ?? "") === "failed") {
+                  await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
+                  debugLog(1, "[process] forceReview=1; legacy review failed, credits refunded", {
+                    uploadId,
+                    docId: String(docId),
+                    version: uploadVersion,
+                    credits: reviewCredits,
+                  });
+                } else {
+                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
+                  creditsUsedThisRun += reviewCredits;
+                }
               } catch (e) {
                 await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
                 throw e;
@@ -1536,8 +1551,31 @@ export async function POST(
                     projectIds: existingProjectIds,
                   },
                 });
-                await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
-                creditsUsedThisRun += reviewCredits;
+                /**
+                 * Charge on the outcome, not on getting this far.
+                 *
+                 * `ensureReviewForUpload` catches its own failures: a model timeout, an OpenAI 5xx
+                 * or malformed output all end with `Review.status = "failed"` and a normal return,
+                 * so the catch below never fires and this line finalised a 5-credit charge (12 on
+                 * Advanced) for a review that produced nothing. The page then said "Review failed.
+                 * Try Rerun review" over a button the owner had already paid for.
+                 */
+                const outcome = await ReviewModel.findOne({ docId, version: uploadVersion })
+                  .select({ status: 1 })
+                  .lean();
+                const reviewFailed = String((outcome as { status?: unknown } | null)?.status ?? "") === "failed";
+                if (reviewFailed) {
+                  await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
+                  debugLog(1, "[process] forceReview=1; review failed, credits refunded", {
+                    uploadId,
+                    docId: String(docId),
+                    version: uploadVersion,
+                    credits: reviewCredits,
+                  });
+                } else {
+                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
+                  creditsUsedThisRun += reviewCredits;
+                }
               } catch (e) {
                 await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
                 throw e;
