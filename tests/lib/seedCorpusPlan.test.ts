@@ -148,11 +148,18 @@ describe("seed corpus plan (seed 42)", () => {
   it("keeps first visits, intros and link picks where the single-script planner put them", () => {
     // Return visits draw from their own stream; this digest was taken before they did, so a change
     // that shifts the person stream (and so every existing seed's first visits) fails here.
+    //
+    // Moved once, from da0338546192540c, when the investor link pool was renamed off the real funds
+    // it used to name. That is a content change, not a drift: `pickIntro` draws a first and a last
+    // name and only then asks `firmFromLabel(linkLabel)` for the email's domain, so the same draws
+    // happen in the same order and the same people read the same pages at the same times — the
+    // addresses they introduce themselves with are what differ. Anything else moving this digest
+    // is the failure it was written for.
     const digest = createHash("sha256")
       .update(JSON.stringify(plan.people.map((p) => [p.n, p.shareId, p.archetype, p.intro, p.visits[0]!.startAt, p.visits[0]!.endAt, p.visits[0]!.stops, !!p.download])))
       .digest("hex")
       .slice(0, 16);
-    expect(digest).toBe("da0338546192540c");
+    expect(digest).toBe("b7de098acc2273ed");
   });
 
   it("produces valid timing payloads: durations >= 1, enteredAtMs < leftAtMs, page time <= visit time", () => {

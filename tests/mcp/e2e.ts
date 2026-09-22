@@ -736,16 +736,20 @@ async function main(): Promise<void> {
     });
 
     // 11. A second link on the same document, labelled for one recipient, with downloads on.
-    const extra = await step('lnkdrp_create_share_link { label: "Sequoia", allowDownload: true }', async () => {
+    // An invented firm, like the seeds use: this harness writes into a real workspace and its
+    // labels surface in the activity feed, which is what the product screenshots photograph.
+    // It is also deliberately not one of the seed corpus's firms, so the workspace-wide
+    // `find_share_link` query below has exactly one thing it can match.
+    const extra = await step('lnkdrp_create_share_link { label: "Vantridge", allowDownload: true }', async () => {
       const res = await callTool<CreateShareLinkResult>(live, "lnkdrp_create_share_link", {
         docId: shared.docId,
-        label: "Sequoia",
-        audience: "Sequoia · Roelof",
+        label: "Vantridge",
+        audience: "Vantridge · Pike",
         allowDownload: true,
       });
       assert(res.link && typeof res.link.id === "string", "create_share_link returned no link");
       assert(res.link.shareId !== shared.shareId, "create_share_link reused the default link's shareId");
-      assert(res.link.label === "Sequoia", `create_share_link.label "${res.link.label}" !== "Sequoia"`);
+      assert(res.link.label === "Vantridge", `create_share_link.label "${res.link.label}" !== "Vantridge"`);
       assert(res.link.allowDownload === true, "create_share_link ignored allowDownload");
       assert(res.link.isDefault === false, "create_share_link marked the new link as the default one");
       assert(res.shareUrl.endsWith(`/s/${res.link.shareId}`), `create_share_link.shareUrl "${res.shareUrl}" does not end with /s/${res.link.shareId}`);
@@ -790,20 +794,20 @@ async function main(): Promise<void> {
     });
 
     // 13b. lnkdrp_list_share_links's query scopes the search to this document — mt_9ceLy7DqEr.
-    await step('lnkdrp_list_share_links { query: "Sequoia" } returns only that link', async () => {
-      const res = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId, query: "Sequoia" });
-      assert(res.links.length === 1, `expected exactly 1 match for "Sequoia", got ${res.links.length}`);
+    await step('lnkdrp_list_share_links { query: "Vantridge" } returns only that link', async () => {
+      const res = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId, query: "Vantridge" });
+      assert(res.links.length === 1, `expected exactly 1 match for "Vantridge", got ${res.links.length}`);
       assert(res.links[0]?.id === extra.link.id, "the scoped search matched the wrong link");
     });
 
     // 13c. lnkdrp_find_share_link: the actual gap this closes — find the link without already
     // knowing which document it is on. Full-text, so this only works after the write above is
     // visible to the sharelinks text index, which Mongo updates synchronously with the write.
-    await step('lnkdrp_find_share_link { query: "Sequoia" } finds it without a docId', async () => {
-      const res = await callTool<FindShareLinkResult>(live, "lnkdrp_find_share_link", { query: "Sequoia" });
+    await step('lnkdrp_find_share_link { query: "Vantridge" } finds it without a docId', async () => {
+      const res = await callTool<FindShareLinkResult>(live, "lnkdrp_find_share_link", { query: "Vantridge" });
       assert(Array.isArray(res.links), "find_share_link.links is not an array");
       const hit = res.links.find((l) => l.linkId === extra.link.id);
-      assert(hit, `"Sequoia" did not surface the link just created (got ${res.links.map((l) => l.label).join(", ")})`);
+      assert(hit, `"Vantridge" did not surface the link just created (got ${res.links.map((l) => l.label).join(", ")})`);
       assert(hit.docId === shared.docId, `find_share_link matched the right link on the wrong doc: ${hit.docId} !== ${shared.docId}`);
       assert(isUntrusted(hit.docTitle), "find_share_link.docTitle is not wrapped as untrusted content");
       assert(hit.docTitle.text === "MCP e2e", `find_share_link.docTitle.text "${hit.docTitle.text}" !== "MCP e2e"`);
@@ -992,11 +996,11 @@ async function main(): Promise<void> {
       info("default link", `${def.id} ${def.shareId} status=${def.status}`);
     });
 
-    const projLink = await step('lnkdrp_create_project_link { label: "Sequoia", allowDownload: true, password }', async () => {
+    const projLink = await step('lnkdrp_create_project_link { label: "Vantridge", allowDownload: true, password }', async () => {
       const res = await callTool<CreateProjectLinkResult>(live, "lnkdrp_create_project_link", {
         projectId: proj.projectId,
-        label: "Sequoia",
-        audience: "Sequoia · Roelof",
+        label: "Vantridge",
+        audience: "Vantridge · Pike",
         allowDownload: true,
         password: "x",
       });
@@ -1015,7 +1019,7 @@ async function main(): Promise<void> {
     await step("a duplicate label warns instead of refusing, and projectSlug resolves the same project", async () => {
       const res = await callTool<CreateProjectLinkResult>(live, "lnkdrp_create_project_link", {
         projectSlug: proj.slug,
-        label: "Sequoia",
+        label: "Vantridge",
       });
       assert(res.project.projectId === proj.projectId, "projectSlug resolved to a different project than projectId did");
       assert(res.link.shareId !== projLink.shareId, "the second link reused the first one's shareId");
@@ -1032,11 +1036,11 @@ async function main(): Promise<void> {
       const res = await callTool<CreateProjectLinkResult>(live, "lnkdrp_update_project_link", {
         projectId: proj.projectId,
         linkId: projLink.id,
-        label: "Sequoia · diligence",
+        label: "Vantridge · diligence",
         password: null,
         enabled: false,
       });
-      assert(res.link.label === "Sequoia · diligence", `update_project_link.label is "${res.link.label}"`);
+      assert(res.link.label === "Vantridge · diligence", `update_project_link.label is "${res.link.label}"`);
       assert(res.link.passwordEnabled === false, "password: null did not clear the password");
       assert(res.link.status === "disabled", `update_project_link.status is "${res.link.status}", expected "disabled"`);
       // The project's other links are untouched: the default link still resolves.
@@ -1085,7 +1089,7 @@ async function main(): Promise<void> {
       assert(refused, "an unconfirmed project-link delete went through — the confirmation gate is not enforced");
       const d = (refused.details ?? {}) as { requiresConfirmation?: unknown; preview?: { headline?: unknown; facts?: unknown; severity?: unknown }; reversible?: unknown };
       assert(d.requiresConfirmation === true, "refusal did not carry requiresConfirmation: true");
-      assert(typeof d.preview?.headline === "string" && d.preview.headline.includes("Sequoia · diligence"), "preview does not name the link");
+      assert(typeof d.preview?.headline === "string" && d.preview.headline.includes("Vantridge · diligence"), "preview does not name the link");
       // The preview has to say the recipient loses the *project*, not one document.
       assert(
         Array.isArray(d.preview?.facts) && d.preview.facts.some((f) => typeof f === "string" && f.includes("the whole project")),
@@ -1101,7 +1105,7 @@ async function main(): Promise<void> {
         confirm: true,
       });
       assert(done.ok === true, "delete_project_link did not return ok");
-      assert(done.deleted?.label === "Sequoia · diligence", "response does not echo what was deleted");
+      assert(done.deleted?.label === "Vantridge · diligence", "response does not echo what was deleted");
       const after = await callTool<ListProjectLinksResult>(live, "lnkdrp_list_project_links", { projectId: proj.projectId });
       assert(after.links.length === 1 && after.links[0]?.isDefault === true, `expected only the default link left, got ${after.links.length}`);
       info("preview", `${d.preview?.headline} · severity ${String(d.preview?.severity)}`);

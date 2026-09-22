@@ -342,21 +342,34 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 
 type LinkPool = Array<[string, string]>;
 
+/**
+ * The firms are invented, and have to stay that way.
+ *
+ * This pool named real ones — Sequoia, Accel, Index, Benchmark — and the corpus it seeds is the
+ * workspace the product screenshots are taken from, so the homepage ended up showing an activity
+ * feed in which several of the best-known funds in the world had apparently read someone's deck.
+ * A label is private to the sender in the product, but a screenshot of one is a public claim about
+ * a relationship that does not exist.
+ *
+ * The customer pool below had the right instinct from the start (Acme, Initech, Cyberdyne): names
+ * everyone can see are made up. These are coined in the same spirit but in a register that survives
+ * being photographed for a marketing page, which "Vandelay Ventures" would not.
+ */
 const INVESTOR_LINKS: LinkPool = [
-  ["Sequoia — Jordan Pike", "Sequoia Capital, growth team"],
-  ["Benchmark — Dana Whitfield", "Benchmark, partner intro"],
-  ["Index Ventures — Marco Lindqvist", "Index Ventures, Series A diligence"],
-  ["Accel — Priya Haddad", "Accel London"],
-  ["Greylock — Tomas Moreau", "Greylock, first meeting follow-up"],
-  ["Lightspeed — Amara Castellanos", "Lightspeed, sector specialist"],
-  ["First Round — Noor Okafor", "First Round, seed partner"],
-  ["Kleiner Perkins — Felix Whitaker", "Kleiner Perkins, partnership meeting"],
-  ["General Catalyst — Ines Park", "General Catalyst, pre-read"],
-  ["Bessemer — Owen Achebe", "Bessemer, cloud index team"],
+  ["Northwind — Jordan Pike", "Northwind Ventures, growth team"],
+  ["Harbourline — Dana Whitfield", "Harbourline Capital, partner intro"],
+  ["Kestrel Row — Marco Lindqvist", "Kestrel Row, Series A diligence"],
+  ["Fathom Point — Priya Haddad", "Fathom Point, London"],
+  ["Alderway — Tomas Moreau", "Alderway Partners, first meeting follow-up"],
+  ["Stonemoor — Amara Castellanos", "Stonemoor Capital, sector specialist"],
+  ["Brightfall — Noor Okafor", "Brightfall Ventures, seed partner"],
+  ["Tidewell — Felix Whitaker", "Tidewell Partners, partnership meeting"],
+  ["Coppergate — Ines Park", "Coppergate Capital, pre-read"],
+  ["Larkspur — Owen Achebe", "Larkspur Growth, infrastructure team"],
   ["Existing investors", "Current cap table, quarterly update"],
   ["Angel syndicate", "Operator angels, allocation call"],
   ["Hartwell family office", "Family office, co-invest review"],
-  ["Insight Partners — Lena Brandt", "Insight Partners, later stage"],
+  ["Evermoor — Lena Brandt", "Evermoor Partners, later stage"],
 ];
 
 const BOARD_LINKS: LinkPool = [

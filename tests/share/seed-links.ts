@@ -32,17 +32,23 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 
 const MCP_URL = process.env.MCP_URL ?? "http://localhost:8787/mcp";
 
-/** Audiences a memo like this actually goes to, so the labels exercise realistic widths. */
+/**
+ * Audiences a memo like this actually goes to, so the labels exercise realistic widths.
+ *
+ * Invented firms, deliberately: this seed fills the workspace the product screenshots are taken
+ * from, and it named real funds, so a homepage shot ended up reading "viewed Cap Table via Sequoia".
+ * Same list as `seed-corpus/content.ts`, which explains the rule at more length.
+ */
 const AUDIENCES = [
-  { label: "Sequoia", audience: "Sequoia Capital — growth team" },
-  { label: "Benchmark", audience: "Benchmark — partner intro" },
-  { label: "Index Ventures", audience: "Index — Series B diligence" },
-  { label: "a16z", audience: "Andreessen Horowitz" },
-  { label: "Accel", audience: "Accel — London" },
+  { label: "Northwind", audience: "Northwind Ventures — growth team" },
+  { label: "Harbourline", audience: "Harbourline Capital — partner intro" },
+  { label: "Kestrel Row", audience: "Kestrel Row — Series B diligence" },
+  { label: "Quillfield", audience: "Quillfield Capital" },
+  { label: "Fathom Point", audience: "Fathom Point — London" },
   { label: "Board pre-read", audience: "Board, ahead of the Q4 meeting" },
-  { label: "Lightspeed", audience: "Lightspeed — first call" },
+  { label: "Stonemoor", audience: "Stonemoor Capital — first call" },
   { label: "Counsel", audience: "Outside counsel, diligence room" },
-  { label: "Insight Partners", audience: "Insight — later stage" },
+  { label: "Evermoor", audience: "Evermoor Partners — later stage" },
   { label: "Data room mirror", audience: "Shared data room copy" },
 ] as const;
 

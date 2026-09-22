@@ -92,7 +92,9 @@ type Reader = {
 
 const FIRST = ["Dana", "Priya", "Marcus", "Ines", "Tomas", "Amara", "Noor", "Felix"] as const;
 const LAST = ["Whitfield", "Okafor", "Lindqvist", "Haddad", "Moreau", "Castellanos"] as const;
-const DOMAIN = ["sequoia.test", "benchmark.test", "indexvc.test", "gmail.test"] as const;
+// Invented, like the firms in `seed-corpus/content.ts`: these addresses show up in the activity
+// feed and on viewer profiles, which is what the product screenshots photograph.
+const DOMAIN = ["northwind.test", "harbourline.test", "kestrelrow.test", "mailbox.test"] as const;
 
 /**
  * Build a cast of readers whose behaviour differs in the ways the metrics screens are meant to
