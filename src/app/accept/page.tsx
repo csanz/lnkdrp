@@ -38,6 +38,7 @@ import { initialsFromNameOrEmail } from "@/lib/format/initials";
 import { connectMongo } from "@/lib/mongodb";
 import { UserModel } from "@/lib/models/User";
 import { verifyAcceptToken } from "@/lib/waitlist/acceptToken";
+import { readAccessStatus } from "@/lib/gating/waitlist";
 import AcceptClient from "./AcceptClient";
 
 export const runtime = "nodejs";
@@ -147,6 +148,18 @@ export default async function AcceptPage({
         }
       />,
     );
+  }
+
+  /**
+   * A queued account with no invitation does not get told it is in.
+   *
+   * The tokenless path exists so the entry gate is not a lockout, and the gate only ever sends
+   * *approved* people here — it checks the queue first. So somebody still waitlisted arriving with
+   * no token typed the URL, and rendering "You're in, {name}. Your account is open." to them is
+   * false. The route refuses the same case; this is the screen agreeing with it.
+   */
+  if (!token && (await readAccessStatus(verified.userId)) === "waitlisted") {
+    redirect("/waitlist");
   }
 
   if (invited.termsAcceptedAt) {

@@ -31,7 +31,7 @@ import { UserModel } from "@/lib/models/User";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { verifyAcceptToken } from "@/lib/waitlist/acceptToken";
 import { approveUser } from "@/lib/waitlist/waitlist";
-import { accessStatusChanged } from "@/lib/gating/waitlist";
+import { accessStatusChanged, readAccessStatus } from "@/lib/gating/waitlist";
 import { CURRENT_TERMS_VERSION } from "@/lib/legal/terms";
 
 export const runtime = "nodejs";
@@ -47,6 +47,18 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => null)) as { token?: unknown } | null;
     const rawToken = typeof body?.token === "string" ? body.token.trim() : "";
 
+    /**
+     * Whether an invitation was actually presented, which is a different question from who is
+     * asking — and the distinction this route originally got wrong.
+     *
+     * Two things happen below: the Terms are recorded, and the account is let out of the queue.
+     * Only the first is something a person may do for themselves. The second is an admission
+     * decision that belongs to an invitation or an admin, and running it on the session alone made
+     * `POST /api/waitlist/accept` with an empty body a self-service way off the waitlist for
+     * anyone who could sign in with Google.
+     */
+    let invited = false;
+
     if (rawToken) {
       const verified = verifyAcceptToken(rawToken);
       if (!verified.ok) {
@@ -60,6 +72,7 @@ export async function POST(request: Request) {
       if (verified.userId !== session.userId) {
         return NextResponse.json({ error: "WRONG_ACCOUNT" }, { status: 403 });
       }
+      invited = true;
     }
     if (!Types.ObjectId.isValid(session.userId)) {
       return NextResponse.json({ error: "INVALID_TOKEN", reason: "malformed" }, { status: 400 });
@@ -68,12 +81,30 @@ export async function POST(request: Request) {
     await connectMongo();
     const _id = new Types.ObjectId(session.userId);
 
-    // Accepting is also how someone leaves the queue, for anyone invited while still in it. The
-    // condition lives in `approveUser`'s filter, so this is a no-op for an account already approved
-    // rather than a second approval.
-    const approval = await approveUser({ userId: session.userId });
-    if (!approval.ok) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
-    if (approval.changed) accessStatusChanged(session.userId);
+    /**
+     * Accepting is also how somebody invited while still queued leaves the queue — but *only* on
+     * the strength of the invitation. Without a verified token this route records the Terms and
+     * nothing else.
+     *
+     * A still-queued account with no token has no business here at all: the entry gate checks the
+     * queue before the Terms (`entryGate.ts`), so it sends a waitlisted person to `/waitlist`, never
+     * here. Reaching this line in that state means the request came from somewhere other than the
+     * flow, and the honest answer is the one the gate would have given.
+     */
+    if (!invited && (await readAccessStatus(session.userId)) === "waitlisted") {
+      return NextResponse.json(
+        { error: "WAITLISTED", redirectTo: "/waitlist", message: "Your account is still on the early-access waitlist." },
+        { status: 403 },
+      );
+    }
+
+    if (invited) {
+      // `approveUser`'s filter carries the condition, so this is a no-op for an account already
+      // approved rather than a second approval.
+      const approval = await approveUser({ userId: session.userId });
+      if (!approval.ok) return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+      if (approval.changed) accessStatusChanged(session.userId);
+    }
 
     // `termsAcceptedAt: null` in the filter is what makes this idempotent: the second POST matches
     // nothing and the original timestamp stands.

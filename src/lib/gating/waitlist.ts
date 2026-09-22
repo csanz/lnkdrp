@@ -67,7 +67,27 @@ export async function readAccessStatus(userId: string): Promise<AccessStatus> {
       .select({ accessStatus: 1, role: 1 })
       .lean()) as { accessStatus?: unknown; role?: unknown } | null;
     const status = accessStatusOf(user);
-    accessStatusCache.set(userId, { at: now, status });
+    /**
+     * Only the permissive answer is cached.
+     *
+     * Caching "approved" is free: the worst case is somebody keeps access for fifteen seconds after
+     * being un-approved, and nothing un-approves people. Caching "waitlisted" is what hurt, in two
+     * ways that both land on the person the moment they are finally let in:
+     *
+     * - An admin clicks Approve and the account stays locked out for the rest of the TTL, on the
+     *   one screen where "let me in" working is the entire product.
+     * - Worse, it loops. `/waitlist` reads Mongo directly, sees "approved" and redirects to `/`,
+     *   which still has "waitlisted" cached and redirects back. `accessStatusChanged` cannot save
+     *   it: the cache is per process, and a dev server or a multi-instance deploy answers the two
+     *   requests from different ones. The browser gives up with ERR_TOO_MANY_REDIRECTS.
+     *
+     * A queued account is, by definition, barely using the product — every mutation it attempts is
+     * refused anyway — so re-reading one `_id`-keyed row per request is a cost nobody pays at
+     * volume. The cache exists to spare a page's burst of API calls, and an approved account is
+     * what generates those.
+     */
+    if (status === "approved") accessStatusCache.set(userId, { at: now, status });
+    else accessStatusCache.delete(userId);
     if (accessStatusCache.size > ACCESS_STATUS_CACHE_MAX) {
       const oldest = [...accessStatusCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]?.[0];
       if (oldest) accessStatusCache.delete(oldest);

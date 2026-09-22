@@ -125,19 +125,58 @@ describe("the gate a mutating route calls", () => {
 });
 
 describe("the read behind it", () => {
-  test("a burst of API calls costs one lookup, and approving clears it", async () => {
+  test("an approved account's burst of API calls costs one lookup", async () => {
+    // The case the cache exists for. An approved account is the one that generates a page's worth
+    // of parallel API calls, and they should cost a single `_id` read between them.
+    const userId = newUserId();
+    rows.set(userId, { accessStatus: "approved" });
+
+    expect(await isWaitlistedActor(userActor(userId))).toBe(false);
+    expect(await isWaitlistedActor(userActor(userId))).toBe(false);
+    expect(findOneCalls, "the second call in the same page load should be cached").toBe(1);
+  });
+
+  test("a queued account is re-read every time, on purpose", async () => {
+    /**
+     * The permissive answer is cached; the restrictive one is not, and this is the test that says
+     * so deliberately rather than by accident.
+     *
+     * Caching "waitlisted" spared nothing worth sparing — `forbidWaitlisted` guards only mutating
+     * endpoints, so a queued account's "burst" is a burst of refusals — and it cost two things on
+     * the one screen where being let in is the whole product:
+     *
+     *   1. An admin clicks Approve and the account stays locked out for the rest of the TTL.
+     *   2. Worse, it looped. `/waitlist` reads Mongo directly, saw "approved" and redirected to
+     *      `/`, which still had "waitlisted" cached and redirected back, until the browser gave up
+     *      with ERR_TOO_MANY_REDIRECTS. `accessStatusChanged` could not fix that: the cache is per
+     *      process, and a dev server or a multi-instance deploy answers the two requests from
+     *      different ones.
+     */
     const userId = newUserId();
     rows.set(userId, { accessStatus: "waitlisted" });
 
     expect(await isWaitlistedActor(userActor(userId))).toBe(true);
     expect(await isWaitlistedActor(userActor(userId))).toBe(true);
-    expect(findOneCalls, "the second call in the same page load should be cached").toBe(1);
+    expect(findOneCalls, "a queued account must not be answered from a stale cache").toBe(2);
 
-    // An admin approves. Without the invalidation the person waits out the TTL staring at a screen
-    // that says they are in.
+    // So approval is visible on the very next request, with no invalidation call and no TTL to
+    // wait out — which is what makes it work across processes too.
     rows.set(userId, { accessStatus: "approved" });
-    accessStatusChanged(userId);
     expect(await isWaitlistedActor(userActor(userId))).toBe(false);
+  });
+
+  test("approving still drops the cached permissive answer", async () => {
+    // `accessStatusChanged` is now only load-bearing in the other direction, but it is still the
+    // right call to make after any status write.
+    const userId = newUserId();
+    rows.set(userId, { accessStatus: "approved" });
+
+    expect(await isWaitlistedActor(userActor(userId))).toBe(false);
+    expect(findOneCalls).toBe(1);
+
+    rows.set(userId, { accessStatus: "waitlisted" });
+    accessStatusChanged(userId);
+    expect(await isWaitlistedActor(userActor(userId))).toBe(true);
     expect(findOneCalls).toBe(2);
   });
 

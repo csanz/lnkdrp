@@ -23,6 +23,7 @@ import PublicHeader from "@/components/PublicHeader";
 import { authOptions } from "@/lib/auth";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
 import { readWaitlistState, waitlistBlockedNotice } from "@/lib/waitlist/waitlist";
+import { accessStatusChanged } from "@/lib/gating/waitlist";
 import SignOutLink from "./SignOutLink";
 
 export const runtime = "nodejs";
@@ -84,7 +85,23 @@ export default async function WaitlistPage({
   const state = await readWaitlistState(userId);
   // Let in since the last page load, or never queued at all: the app is theirs, so take them to it
   // rather than showing a queue they are not in.
-  if (state.status === "approved") redirect("/");
+  if (state.status === "approved") {
+    /**
+     * Drop the gate's cached answer before handing them over, or the two disagree and the browser
+     * ping-pongs.
+     *
+     * This page reads Mongo directly; `enforceEntryGates` reads `readAccessStatus`, which caches
+     * for 15 seconds. When the approval happens in another process — `npm run waitlist:invite`, the
+     * admin route on another instance — this page sees "approved" and redirects to `/`, which still
+     * has "waitlisted" cached and redirects straight back. The loop ends in
+     * ERR_TOO_MANY_REDIRECTS, so the moment somebody is finally let in is the moment the product
+     * shows them a browser error instead of the app.
+     *
+     * One line, and it only has to run on the page that has just proved the cache is stale.
+     */
+    accessStatusChanged(userId);
+    redirect("/");
+  }
 
   const name = (session?.user?.name ?? "").trim();
   const email = (session?.user?.email ?? "").trim();
