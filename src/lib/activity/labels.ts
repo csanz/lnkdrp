@@ -98,16 +98,23 @@ export function actorDisplayName(actor: ActivityItem["actor"]): string | null {
 }
 
 /**
- * Suffix for a processing run: "N credits" / "1 credit" when it charged credits, and "summary by
- * <agent>" when the uploading agent wrote the summary itself (0 credits). Null when neither applies.
+ * Suffix for a processing run: "summary by <agent>" when the uploading agent wrote the summary
+ * itself rather than the model. Null otherwise.
+ *
+ * It used to lead with the price - "6 credits" on every replacement and every processed upload.
+ * That was the wrong surface for it. The feed answers "what happened to my documents", and those
+ * two events fire automatically on work somebody did for an entirely different reason, so the cost
+ * appeared on the rows that repeat most and attached a number the reader cannot act on from here.
+ * A feed that prices every line reads like a meter rather than a record. Credits have their own
+ * surfaces - the dashboard card, the sidebar, /credits - and `credits.exhausted` still speaks up
+ * in the feed, because running out is an event rather than a price tag.
+ *
+ * `meta.credits` is still written and still read by the admin and usage views; only the sentence
+ * changed.
  */
-function creditsSuffix(meta: Record<string, unknown> | null | undefined): string | null {
-  const parts: string[] = [];
-  const v = meta?.credits;
-  if (typeof v === "number" && Number.isFinite(v) && v > 0) parts.push(`${v} credit${v === 1 ? "" : "s"}`);
+function agentSummarySuffix(meta: Record<string, unknown> | null | undefined): string | null {
   const by = meta?.summaryBy;
-  if (typeof by === "string" && by.trim()) parts.push(`summary by ${by.trim()}`);
-  return parts.length ? parts.join(" · ") : null;
+  return typeof by === "string" && by.trim() ? `summary by ${by.trim()}` : null;
 }
 
 /** Read a non-empty string from `meta[key]`, or null. */
@@ -248,19 +255,19 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
     case "upload.completed":
       return { subject, verb: "uploaded", object: docTitle, suffix: null };
     case "doc.processed": {
-      const cost = creditsSuffix(item.meta);
-      return { subject: "Processing", verb: "finished for", object: docTitle, suffix: cost ? `· ${cost}` : null };
+      const by = agentSummarySuffix(item.meta);
+      return { subject: "Processing", verb: "finished for", object: docTitle, suffix: by ? `· ${by}` : null };
     }
     case "doc.replaced": {
       const v = item.meta?.version;
       const version = typeof v === "number" && Number.isFinite(v) ? ` (v${v})` : "";
       const base = user ? version || null : `via update link${version}`;
-      const cost = creditsSuffix(item.meta);
+      const by = agentSummarySuffix(item.meta);
       return {
         subject: user || item.agent?.label || "Someone",
         verb: "replaced",
         object: docTitle,
-        suffix: base && cost ? `${base} · ${cost}` : base ?? cost,
+        suffix: base && by ? `${base} · ${by}` : base ?? by,
       };
     }
     case "doc.deleted":
@@ -422,9 +429,9 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "upgraded", object: "this workspace", suffix: "to Pro" };
     case "summary.generated": {
       // A skipped summary written later (doc page action or the monthly re-queue).
-      const cost = creditsSuffix(item.meta);
+      const by = agentSummarySuffix(item.meta);
       const failed = metaString(item.meta, "summary") !== "done";
-      return { subject, verb: failed ? "could not write the AI summary for" : "wrote the AI summary for", object: docTitle, suffix: cost };
+      return { subject, verb: failed ? "could not write the AI summary for" : "wrote the AI summary for", object: docTitle, suffix: by };
     }
     case "credits.exhausted": {
       // The upload completed but the AI summary was skipped for want of credits.
