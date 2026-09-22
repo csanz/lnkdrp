@@ -12,6 +12,7 @@ import { UserModel } from "@/lib/models/User";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { debugError, debugLog } from "@/lib/debug";
 import { activeOrgCandidateOrder, resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { errorJson } from "@/lib/http/errorResponse";
 import {
@@ -214,6 +215,25 @@ export async function POST(request: Request) {
   try {
     debugLog(1, "[api/orgs] POST");
     const actor = await resolveActor(request);
+    /**
+     * Identity-grade: a key may not bring a workspace into existence — see forbidApiKey.
+     *
+     * The pass that split "document work" from "identity work" guarded everything that edits a
+     * workspace — PATCH and DELETE on `/api/orgs/:orgId` both call this — and never touched the
+     * handler that makes one. `resolveActor` resolves an `lnk_` bearer first and hands back a
+     * `kind: "user"` actor, so the check below reads as an authentication gate and is not one: a
+     * key sailed through it and the next thing the route did was create a team Org with an `owner`
+     * membership for the key's creator. `viaApiKey` is the only thing that tells the two apart,
+     * which is why this guard exists rather than a `kind` comparison.
+     *
+     * The asymmetry was the sharp edge. A key that created a workspace could then neither rename
+     * it nor delete it (both 403 here), so an agent loop or a leaked key left tenancies behind that
+     * only a signed-in human could clear — after spending the account's one Free `team_workspaces`
+     * slot, which made the person's own New workspace button answer 402 for something they never
+     * made.
+     */
+    const keyRefusal = forbidApiKey(actor, "create a workspace");
+    if (keyRefusal) return keyRefusal;
     if (actor.kind !== "user") {
       return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
     }

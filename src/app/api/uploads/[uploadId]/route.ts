@@ -25,6 +25,48 @@ function header(request: Request, name: string) {
 }
 
 /**
+ * "Which upload may this actor reach?" — the workspace bound, written once for this file.
+ *
+ * Uploads are owned by a **workspace**: `POST /api/uploads` resolves the document with
+ * `buildDocMatch` and then stamps `orgId: doc.orgId` on the row while `userId` records only who
+ * pushed the bytes. "I uploaded this" and "I may still reach that workspace" are therefore two
+ * different facts, and a filter of `{ _id, userId }` answers the first while pretending to answer
+ * the second. Two callers whose access had already been taken away walk through it: an `lnk_` key
+ * is attributed to the member who minted it but scoped to *its own* workspace, and a removed
+ * member's session falls back to their personal one.
+ *
+ * The bound arrived on the GET in this file and on `import-url` / `import-bytes` next door, but
+ * PATCH kept the pre-workspace rule in both of its filters — the pre-read and the write itself —
+ * which made it the one handler in the directory still deciding access by uploader alone. That is
+ * also the handler with the most to lose: `buildPatchUpdate(..., "owner")` is the only caller
+ * allowed to set `rawExtractedText`, and the processor skips `pdfParse` entirely when a value is
+ * already on the row, so what lands here is read downstream *as the contents of the PDF*.
+ *
+ * A reader comparing the two handlers thirty lines apart would have concluded the comment on GET
+ * covered both. Building the filter in one function is what makes that true: there is no second
+ * copy left to fall behind. `allowLegacyByUserId` is `docMatch.ts`'s concession for rows that
+ * predate workspaces — those belong to a person, so they resolve only while that person is in
+ * their own personal workspace. The tenancy clause goes inside `$and` so that a caller adding an
+ * `$or` of their own later cannot silently replace it.
+ */
+function buildUploadMatch(
+  uploadId: string,
+  actor: { userId: string; orgId: string; personalOrgId: string },
+): Record<string, unknown> {
+  const orgId = new Types.ObjectId(actor.orgId);
+  const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+  const tenancy = allowLegacyByUserId
+    ? { $or: [{ orgId }, { orgId: { $exists: false } }, { orgId: null }] }
+    : { orgId };
+  return {
+    _id: new Types.ObjectId(uploadId),
+    userId: new Types.ObjectId(actor.userId),
+    isDeleted: { $ne: true },
+    $and: [tenancy],
+  };
+}
+
+/**
  * Upload status + metadata.
  *
  * Route: GET /api/uploads/:uploadId
@@ -88,25 +130,13 @@ export async function GET(
 
     const actor = await resolveActor(request);
     /**
-     * The same workspace bound the listing beside this one carries.
+     * The same workspace bound the listing beside this one carries — see `buildUploadMatch`.
      *
      * It was owner-scoped alone (`userId`), which is the gap that was closed on `GET /api/uploads`
-     * and left standing here — the detail endpoint one directory over, reachable by anyone holding
-     * an upload id. An `lnk_` key is attributed to the member who minted it but scoped to its own
-     * workspace, and a removed member's session falls back to their personal one; both still read
-     * rows from workspaces whose access had been taken away. `allowLegacyByUserId` is the same
-     * concession `docMatch` makes for rows that predate workspaces.
+     * and left standing here: the detail endpoint one directory over, reachable by anyone holding
+     * an upload id.
      */
-    const uploadOrgId = new Types.ObjectId(actor.orgId);
-    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-    const upload = await UploadModel.findOne({
-      _id: new Types.ObjectId(uploadId),
-      userId: new Types.ObjectId(actor.userId),
-      isDeleted: { $ne: true },
-      ...(allowLegacyByUserId
-        ? { $or: [{ orgId: uploadOrgId }, { orgId: { $exists: false } }, { orgId: null }] }
-        : { orgId: uploadOrgId }),
-    }).lean();
+    const upload = await UploadModel.findOne(buildUploadMatch(uploadId, actor)).lean();
     if (!upload) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const doc = upload.docId
@@ -415,11 +445,16 @@ export async function PATCH(
     }
 
     const actor = await resolveActor(request);
-    const owned = await UploadModel.findOne({
-      _id: new Types.ObjectId(uploadId),
-      userId: new Types.ObjectId(actor.userId),
-      isDeleted: { $ne: true },
-    })
+    /**
+     * The workspace bound, not just the uploader — the write side of what the GET above already
+     * does. This branch may set `rawExtractedText`, which the processor treats as the document's
+     * contents in place of the real file, so matching on `userId` alone let a removed member or an
+     * `lnk_` key from another workspace rewrite what this workspace then reads and pays a model to
+     * summarise. Both filters below use the same match: the write is not authorised by the fact
+     * that the pre-read succeeded.
+     */
+    const uploadMatch = buildUploadMatch(uploadId, actor);
+    const owned = await UploadModel.findOne(uploadMatch)
       .select({ _id: 1, docId: 1, contentType: 1, originalFileName: 1 })
       .lean();
     if (!owned) {
@@ -444,11 +479,7 @@ export async function PATCH(
         hasPreview: Boolean(update.previewImageUrl),
       });
     }
-    const upload = await UploadModel.findOneAndUpdate(
-      { _id: new Types.ObjectId(uploadId), userId: new Types.ObjectId(actor.userId), isDeleted: { $ne: true } },
-      update,
-      { new: true },
-    ).lean();
+    const upload = await UploadModel.findOneAndUpdate(uploadMatch, update, { new: true }).lean();
     if (!upload) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     if (update.status === "uploaded") {

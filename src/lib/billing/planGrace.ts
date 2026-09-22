@@ -65,7 +65,11 @@ export type PlanLimitsGraceSweepOptions = {
   now?: Date;
   /** When true, compute transitions and counts but write nothing and send nothing. */
   dryRun?: boolean;
-  /** Max workspaces scanned per run (default 500). Workspaces already in grace are visited first. */
+  /**
+   * Max workspaces scanned per run (default 500). Workspaces already in grace are visited first,
+   * then the least recently scanned of the rest: the budget is a rotation through the collection,
+   * not a window onto one end of it.
+   */
   limit?: number;
 };
 
@@ -146,7 +150,23 @@ async function loadOwners(orgId: Types.ObjectId): Promise<Array<{ userId: Types.
 
 /**
  * Load the workspaces to scan this run: every org already in grace first (they need timely
- * transitions), then newest-first orgs without grace to fill the remaining budget.
+ * transitions), then the least recently scanned orgs without grace to fill the remaining budget.
+ *
+ * The second half used to sort `{ _id: -1 }`. ObjectIds are creation-ordered, so that was a fixed
+ * newest-first prefix: once the collection held more workspaces than the run budget (500 by
+ * default), the same newest 500 were re-read every hour and nothing older was ever looked at.
+ * Nothing in a run mutates a workspace it skipped, so the next run picked the identical set, for
+ * ever. That is backwards for this job in particular: a Free workspace can only be *over* a limit
+ * by having dropped from Pro (or gained a member), because `checkLimit` refuses the create that
+ * would take it over in the first place, so the cohort that needs the window skews old. Those
+ * owners got no `plan.grace_started`, no email and no 14 days, just a bare 402 on their next
+ * upload, since `checkLimit` treats grace purely as an unblocker and `planGrace: null` falls
+ * through to the block.
+ *
+ * `planLimitsScannedAt` (stamped by `markScanned` below) turns the budget back into a rotation:
+ * null/missing sorts first ascending, so never-scanned workspaces lead and the window then walks
+ * the whole collection run by run. Same shape as the doc-metrics rollup's stalest-snapshot-first
+ * sort (`src/lib/metrics/rollupDocMetrics.ts`), for the same reason.
  */
 async function loadCandidates(limit: number): Promise<OrgGraceRow[]> {
   const inGrace = await OrgModel.find({ isDeleted: { $ne: true }, planGrace: { $ne: null } })
@@ -158,10 +178,32 @@ async function loadCandidates(limit: number): Promise<OrgGraceRow[]> {
   if (remaining <= 0) return inGrace;
   const fresh = await OrgModel.find({ isDeleted: { $ne: true }, planGrace: null })
     .select({ _id: 1, name: 1, planGrace: 1 })
-    .sort({ _id: -1 })
+    .sort({ planLimitsScannedAt: 1, _id: 1 })
     .limit(remaining)
     .lean<OrgGraceRow[]>();
   return [...inGrace, ...fresh];
+}
+
+/**
+ * Stamp the workspaces this run looked at so the next run takes the ones behind them.
+ *
+ * Every scanned org is stamped, including one whose usage lookup threw: a workspace that fails
+ * every time would otherwise sit at the head of the queue and starve everything behind it. One
+ * bulk write per run, not one per workspace. A failed stamp only costs a repeated page next run,
+ * but it is counted in `errors` all the same, because a stamp that fails *every* run is the
+ * original bug back again and silent.
+ */
+async function markScanned(ids: Types.ObjectId[], now: Date, result: PlanLimitsGraceSweepResult): Promise<void> {
+  if (!ids.length) return;
+  try {
+    await OrgModel.updateMany({ _id: { $in: ids } }, { $set: { planLimitsScannedAt: now } });
+  } catch (err) {
+    result.errors += 1;
+    debugError(1, "[plan-limits] scan marker failed", {
+      count: ids.length,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 type WorkspaceContext = {
@@ -328,6 +370,10 @@ export async function runPlanLimitsGraceSweep(
       });
     }
   }
+
+  // After the loop, so a workspace that threw is still moved to the back of the queue. A dry run
+  // writes nothing, including this: it must not advance the rotation for the real run.
+  if (!dryRun) await markScanned(orgs.map((o) => o._id), now, result);
 
   debugLog(1, "[plan-limits] sweep done", result);
   return result;

@@ -84,10 +84,31 @@ export async function GET(request: Request) {
   ] = await Promise.all([
     // A purged account leaves an anonymised tombstone row. It is not an account any more and it is
     // not a signup: counting it put five of my own test accounts in "signups" on this page.
-    UserModel.countDocuments({ isActive: { $ne: false }, deletionPurgedAt: null }),
-    UserModel.countDocuments({ createdAt: { $gte: since }, deletionPurgedAt: null }),
-    UserModel.countDocuments({ createdAt: { $gte: prevSince, $lt: since }, deletionPurgedAt: null }),
-    OrgModel.countDocuments({ isDeleted: { $ne: true } }),
+    //
+    // `isTemp` is the same rule applied at the other end. `resolveActor` mints a temp user (and a
+    // personal org, and a membership) for every anonymous visitor who touches an upload, so a row
+    // with `isTemp: true` is a cookie, not a person: it was never an account and it never signed
+    // up. Counting them made this page report 42 accounts and 45 workspaces for a deployment with
+    // two accounts, and turned the Signups tile, its trend percentage and the signups series into a
+    // count of anonymous traffic. Every other surface that answers "how many real people" already
+    // filters them out (`/api/admin/waitlist`, the plan-limit cron); `/a/data/users` keeps them but
+    // renders a "Temp" pill, which is a row browser being honest, not a headline metric.
+    UserModel.countDocuments({ isTemp: { $ne: true }, isActive: { $ne: false }, deletionPurgedAt: null }),
+    UserModel.countDocuments({ isTemp: { $ne: true }, createdAt: { $gte: since }, deletionPurgedAt: null }),
+    UserModel.countDocuments({ isTemp: { $ne: true }, createdAt: { $gte: prevSince, $lt: since }, deletionPurgedAt: null }),
+    // Workspaces, for the same reason, minus the personal org minted alongside each temp user. The
+    // org row says nothing about temp, so the owner has to be joined. A team org keeps counting: it
+    // has no `personalForUserId` at all (the schema leaves the field missing, and `null` here
+    // matches missing too). A personal org counts only when its owner row is there and is not a
+    // temp: `claim-temp` deletes the temp user and leaves its personal org behind, so an ownerless
+    // personal org is the same anonymous-session residue, and a real deletion takes the org with it
+    // (`purge.ts` deletes solo orgs outright), so nothing real is lost by requiring the owner.
+    OrgModel.aggregate<{ n: number }>([
+      { $match: { isDeleted: { $ne: true } } },
+      { $lookup: { from: UserModel.collection.name, localField: "personalForUserId", foreignField: "_id", as: "owner" } },
+      { $match: { $or: [{ personalForUserId: null }, { $and: [{ "owner.0": { $exists: true } }, { "owner.isTemp": { $ne: true } }] }] } },
+      { $count: "n" },
+    ]),
     DocModel.countDocuments({ isDeleted: { $ne: true }, isArchived: { $ne: true } }),
     DocModel.countDocuments({ createdDate: { $gte: since } }),
     DocModel.countDocuments({ createdDate: { $gte: prevSince, $lt: since } }),
@@ -102,7 +123,8 @@ export async function GET(request: Request) {
     ]),
     ShareViewModel.aggregate<DayRow>([{ $match: { createdDate: { $gte: since }, isOwnerPreview: { $ne: true } } }, ...byDay("createdDate")]),
     DocModel.aggregate<DayRow>([{ $match: { createdDate: { $gte: since } } }, ...byDay("createdDate")]),
-    UserModel.aggregate<DayRow>([{ $match: { createdAt: { $gte: since }, deletionPurgedAt: null } }, ...byDay("createdAt")]),
+    // Same filter as `newUsers` above, or the chart would disagree with the tile it sits under.
+    UserModel.aggregate<DayRow>([{ $match: { isTemp: { $ne: true }, createdAt: { $gte: since }, deletionPurgedAt: null } }, ...byDay("createdAt")]),
     AiRunModel.aggregate<DayRow>([{ $match: { createdDate: { $gte: since } } }, ...byDay("createdDate")]),
     CronHealthModel.find({}).select({ jobKey: 1, status: 1, lastRunAt: 1, lastError: 1 }).limit(50).lean(),
     UserModel.countDocuments({ deletionRequestedAt: { $ne: null }, deletionPurgedAt: null }),
@@ -128,7 +150,7 @@ export async function GET(request: Request) {
     days,
     totals: {
       users,
-      orgs,
+      orgs: Number(orgs?.[0]?.n ?? 0),
       docs,
       liveLinks,
       views,

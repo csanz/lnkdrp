@@ -879,6 +879,12 @@ export async function POST(
    * upload id. Acts as the upload's owner in the document's workspace, billed as an owner upload.
    */
   const viaInternal = !viaUploadSecret && verifyInternalProcessToken(uploadId, header(request, INTERNAL_PROCESS_HEADER));
+  /**
+   * A signed-in session or an `lnk_` key: the only branch that arrives with a workspace of its own.
+   * The two above synthesize their actor from the upload's document, so their workspace is the
+   * document's by construction and the tenancy checks below have nothing left to ask them.
+   */
+  const viaSessionOrKey = !viaUploadSecret && !viaInternal;
 
   let actor: Actor;
   if (viaInternal) {
@@ -928,11 +934,34 @@ export async function POST(
     const queued = await forbidWaitlisted(actor, "process a document");
     if (queued) return queued;
 
-    // Authorization: upload must belong to the actor.
+    /**
+     * Authorization: the upload must belong to the actor *and* sit in the workspace the actor is
+     * acting in.
+     *
+     * It matched `{ _id, userId }` alone, under a comment ("upload must belong to the actor") that
+     * read as if that settled it. The only other gate is `forbidUnlessOrgRole` above, and that one
+     * grades the caller's role in `actor.orgId`, the workspace they are in *now*, not the upload's.
+     * Between them the two gates never asked whether those were the same workspace, while the run
+     * itself is billed to the *document's* workspace further down (`existingDocOrgId`). So a member
+     * removed from a team workspace (their upload rows there are still theirs by `userId`), a member
+     * demoted to `viewer` there, and an `lnk_` key minted in some other workspace all still reached
+     * that document and spent its credits, which is the one thing the key's org pinning and "remove
+     * member" are supposed to make impossible.
+     *
+     * Same rule and same shape as the siblings in this directory: `GET /api/uploads/:uploadId`,
+     * import-bytes and import-url. `orgId` is stamped on the upload row at creation from the
+     * document, and `allowLegacyByUserId` is `docMatch.ts`'s concession for rows that predate
+     * workspaces, which carry no `orgId` and belong to a person.
+     */
+    const uploadOrgId = new Types.ObjectId(actor.orgId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const allowed = await UploadModel.exists({
       _id: new Types.ObjectId(uploadId),
       userId: new Types.ObjectId(actor.userId),
       isDeleted: { $ne: true },
+      ...(allowLegacyByUserId
+        ? { $or: [{ orgId: uploadOrgId }, { orgId: { $exists: false } }, { orgId: null }] }
+        : { orgId: uploadOrgId }),
     });
     if (!allowed) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -960,6 +989,25 @@ export async function POST(
   const initialUpload = await UploadModel.findOne({ _id: new Types.ObjectId(uploadId), isDeleted: { $ne: true } });
   if (!initialUpload) {
     return applyTempUserHeaders(NextResponse.json({ error: "Not found", traceId }, { status: 404 }), actor);
+  }
+  /**
+   * The second lock: the workspace that gets the bill has to be the caller's too.
+   *
+   * The bound on the upload row above settles who owns the row, but the money follows the
+   * *document*: the job reserves and charges against `existingDocOrgId` while the credits preflight
+   * just below reads `actor.orgId`, so the two are read from different places and one run could
+   * check one workspace's balance and spend another's. The row is stamped from its document, so
+   * after the bound they agree; if they ever do not, the honest answer is that this upload is not
+   * the caller's to process. A document carrying no `orgId` predates workspaces and falls back to
+   * `actor.orgId` in the job, so it is left alone here.
+   */
+  if (viaSessionOrKey && initialUpload.docId) {
+    const docOrg = await DocModel.findById(initialUpload.docId).select({ orgId: 1 }).lean();
+    const docOrgId = (docOrg as { orgId?: unknown } | null)?.orgId ?? null;
+    if (docOrgId && String(docOrgId) !== actor.orgId) {
+      debugLog(1, "[process] document is outside the caller's workspace", { traceId, uploadId });
+      return applyTempUserHeaders(NextResponse.json({ error: "Not found", traceId }, { status: 404 }), actor);
+    }
   }
   // The client PATCHes `status: "uploaded"` (+ blobUrl) before triggering processing. If the
   // POST races ahead of that, do not fail the upload/doc; tell the client to retry instead.

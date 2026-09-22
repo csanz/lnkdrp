@@ -332,10 +332,16 @@ async function handle(request: Request, opts: { write: boolean }): Promise<Respo
       );
     }
 
+    // Headed by `copy.title`, not a literal, for the same reason the field read above is kind-aware:
+    // this branch renders expired doc-update links too. It used to say "View emails are off" over a
+    // body line reading "Document update emails are already off for <workspace>" — two settings named
+    // on one page, so the reader either believed their view notifications had just been switched off
+    // (they had not: nothing is written on this path) or that the unsubscribe had hit the wrong
+    // setting. The "Link expired" arm stays kind-neutral because it names no setting at all.
     return renderPage(
       {
-        title: mode === "off" ? "View emails are off" : "Link expired",
-        heading: mode === "off" ? "View emails are off" : "This link has expired",
+        title: mode === "off" ? copy.title : "Link expired",
+        heading: mode === "off" ? copy.title : "This link has expired",
         lines: [
           stateLine,
           mode === "off"

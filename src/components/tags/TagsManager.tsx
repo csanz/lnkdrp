@@ -34,6 +34,23 @@ const PAGE_SIZE = 24;
 /** How many merge targets the dialog lists before asking you to search instead. */
 const MERGE_LIST_CAP = 50;
 
+/**
+ * What a `POST /api/tags` reply actually said.
+ *
+ * The route is find-or-create on purpose (typing "fundraising" where "Fundraising" lives must
+ * attach the existing tag rather than make a twin), so a duplicate comes back `200 { created:
+ * false, tag }`, not an error. The dialog read `res.ok` alone, which made that answer
+ * indistinguishable from a new tag: it closed, refetched the same page, and nothing changed. Three
+ * named outcomes instead of one boolean, so the caller has to say what it does with each.
+ */
+export function readCreateResult(
+  json: { tag?: { id?: unknown; name?: unknown } | null; created?: unknown } | null,
+): { kind: "created" | "exists"; name: string } | { kind: "unknown" } {
+  const name = typeof json?.tag?.name === "string" ? json.tag.name.trim() : "";
+  if (!name) return { kind: "unknown" };
+  return { kind: json?.created === false ? "exists" : "created", name };
+}
+
 export default function TagsManager() {
   const [tags, setTags] = useState<Tag[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,25 +86,66 @@ export default function TagsManager() {
    */
   const seq = useRef(0);
 
+  /**
+   * How many tags the workspace has, asked separately because `total` cannot answer it while a
+   * search is on: filtered, `total` counts matches, and reading the merge gate off it would claim
+   * there is nothing to merge into the moment a search narrowed the table to one row. Unfiltered
+   * the page response already carries the number, so only a filtered load pays for this, and
+   * `limit=1` is the cheapest way to ask a count question.
+   */
+  const countWorkspace = useCallback(async (mine: number) => {
+    try {
+      const res = await fetchWithTempUser(`/api/tags?page=1&limit=1`, { cache: "no-store" });
+      if (!res.ok || mine !== seq.current) return;
+      const json = (await res.json()) as { total?: number };
+      if (mine !== seq.current) return;
+      if (typeof json.total === "number") setWorkspaceTotal(json.total);
+    } catch {
+      // Keep the last known count. A failed count is not evidence that the workspace has one tag,
+      // and treating it as such would disable merge on a workspace full of things to merge.
+    }
+  }, []);
+
   const load = useCallback(async () => {
     const mine = ++seq.current;
+    const q = query.trim();
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
-      if (query.trim()) params.set("q", query.trim());
+      if (q) params.set("q", q);
       const res = await fetchWithTempUser(`/api/tags?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) {
+        if (mine !== seq.current) return;
         setTags([]);
         setTotal(0);
         return;
       }
       const json = (await res.json()) as { tags?: Tag[]; total?: number };
+      /**
+       * The comparison the `seq` ref above exists for. It was taken (`mine` was assigned) and
+       * then never read, so the ref bought nothing: the response that landed last still won, which
+       * is exactly the overwrite the ref was added to stop. Every write below is behind it,
+       * including the failure paths, because an error from a superseded request is no more
+       * current than its results.
+       */
+      if (mine !== seq.current) return;
       setTags(Array.isArray(json.tags) ? json.tags : []);
-      setTotal(typeof json.total === "number" ? json.total : 0);
+      const totalNow = typeof json.total === "number" ? json.total : 0;
+      setTotal(totalNow);
+      /**
+       * Merge is gated on `workspaceTotal` and nothing ever set it, so it stayed 0 and every row's
+       * Merge button rendered disabled under "Nothing to merge into yet", in every workspace and
+       * at any number of tags, with the merge dialog unreachable and `/tags` the only place that
+       * offers merge at all. Unfiltered, this very response answers the question; filtered, it
+       * counts matches instead, so that case asks.
+       */
+      if (!q) setWorkspaceTotal(totalNow);
+      else void countWorkspace(mine);
     } catch {
+      if (mine !== seq.current) return;
       setTags([]);
       setTotal(0);
     }
-  }, [page, query]);
+  }, [page, query, countWorkspace]);
 
   useEffect(() => {
     void load();
@@ -212,13 +270,37 @@ export default function TagsManager() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name }),
       });
-      const json = (await res.json().catch(() => null)) as { error?: string } | null;
+      const json = (await res.json().catch(() => null)) as
+        | { error?: string; created?: unknown; tag?: { id?: unknown; name?: unknown } | null }
+        | null;
       if (!res.ok) throw new Error(json?.error || "Could not create the tag");
+      const outcome = readCreateResult(json);
+      if (outcome.kind === "exists") {
+        // The one outcome the comment below was written to prevent, and the one the server
+        // actually sends. It is not a refusal: the tag the person asked for exists and they are
+        // now looking at a list that did not change, so the dialog stays open, names the tag that
+        // already had the name, and points the table at it so closing lands on the row.
+        setError(`“${outcome.name}” already exists.`);
+        setFilter(outcome.name);
+        setPage(1);
+        return;
+      }
       setNewName("");
-      // Only on success: a name the server refused (a duplicate, most likely) stays in the dialog
-      // with the error beside it, rather than closing and leaving the person to work out what
-      // happened from a list that did not change.
+      // Only on success: a name the server refused (bad input, or a workspace that cannot take
+      // another tag) stays in the dialog with the error beside it, rather than closing and leaving
+      // the person to work out what happened from a list that did not change.
       setAdding(false);
+      /**
+       * Show the tag that was just made. The table is one alphabetical page of the workspace, so a
+       * tag created from page 2, or while a filter it does not match is on, was created and then
+       * invisible, which makes "Add tag" look equally broken when it worked. Filtering to its own
+       * name is the only refresh guaranteed to contain it, since the server matches the search
+       * against the slug and a tag's slug contains itself.
+       */
+      if (outcome.kind === "created") {
+        setFilter(outcome.name);
+        setPage(1);
+      }
       await load();
       window.dispatchEvent(new Event("lnkdrp:tags-changed"));
     } catch (e) {

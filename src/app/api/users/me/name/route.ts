@@ -6,6 +6,7 @@ import { errorJson } from "@/lib/http/errorResponse";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor } from "@/lib/gating/actor";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { UserModel } from "@/lib/models/User";
 
 export const runtime = "nodejs";
@@ -30,6 +31,18 @@ export async function POST(request: Request) {
     if (actor.kind !== "user") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // Identity-grade, and the sweep that closed account delete, member removal, invites and key
+    // minting missed this route. `resolveActor` accepts an `lnk_` bearer, so a key minted for one
+    // workspace was rewriting `User.name`, which is the account row and not a workspace row. A
+    // reader would have assumed the name is workspace-local because the key is pinned to one
+    // orgId; it is not. It is what every workspace the person belongs to renders in its member
+    // list, what the member.joined and member.removed activity rows copy in, and what outgoing
+    // email signs. The workspace avatar already makes the same call for the narrower case:
+    // branding is identity work, not document work. Refusing here, before the body is parsed, is
+    // deliberate: an empty POST from a key used to answer 400 "Missing firstName", which reads as
+    // a rejection but means the key authenticated and the write was one field away.
+    const keyRefusal = forbidApiKey(actor, "change your account name");
+    if (keyRefusal) return keyRefusal;
     if (!Types.ObjectId.isValid(actor.userId)) {
       return NextResponse.json({ error: "Invalid actor" }, { status: 400 });
     }

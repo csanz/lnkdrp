@@ -64,6 +64,16 @@ const orgSchema = new Schema(
       default: null,
     },
 
+    /**
+     * Rotation marker for the plan-limit grace sweep (`src/lib/billing/planGrace.ts`).
+     *
+     * The sweep is budgeted (`?limit=`, 500 per hourly run) and stamps every workspace it looked
+     * at, so the next run can take the least recently scanned ones first. Missing/null sorts first
+     * ascending, which is what we want: a workspace nobody has ever scanned goes to the front.
+     * Only the sweep writes it, and it is not part of any workspace's user-facing state.
+     */
+    planLimitsScannedAt: { type: Date, default: null, index: true },
+
     isDeleted: { type: Boolean, default: false, index: true },
   },
   {
@@ -93,6 +103,9 @@ if (ExistingOrgModel && !ExistingOrgModel.schema.path("planGrace")) {
   ExistingOrgModel.schema.add({
     planGrace: { type: orgSchema.path("planGrace").schema, default: null },
   } as any);
+}
+if (ExistingOrgModel && !ExistingOrgModel.schema.path("planLimitsScannedAt")) {
+  ExistingOrgModel.schema.add({ planLimitsScannedAt: { type: Date, default: null } } as any);
 }
 
 /**

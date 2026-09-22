@@ -12,7 +12,7 @@
  * own (Vercel Cron only runs against a deployment), which is why a fresh database shows most jobs
  * in that state.
  */
-import { CRON_JOBS, LATE_AFTER_INTERVALS, RUNNING_STUCK_AFTER_MS, type CronJobSpec } from "@/lib/cron/jobs";
+import { CRON_JOBS, LATE_AFTER_INTERVALS, stuckAfterMs, type CronJobSpec } from "@/lib/cron/jobs";
 import type { AdminTone } from "./ui";
 
 export type CronState = "running" | "stuck" | "ok" | "late" | "error" | "never";
@@ -160,7 +160,14 @@ export function buildCronRows(heartbeats: HeartbeatLike[], now: Date = new Date(
       detail = "No run recorded on this deployment";
     } else if (hb.status === "running") {
       const runningFor = startedAt ? now.getTime() - startedAt.getTime() : 0;
-      if (runningFor > RUNNING_STUCK_AFTER_MS) {
+      // The window is the job's own, not the flat ten minutes. This board used the flat constant
+      // while /api/monitor/crons already used `stuckAfterMs`, and the two disagreed about the only
+      // job that matters here: notification-emails fires every five minutes, so its row is rewritten
+      // by the tick that takes the expired six-minute lease before `runningFor` can ever pass ten
+      // minutes. An operator reading this board saw a permanently dying email sender sitting in a
+      // calm blue "Running" and concluded it was working, while the monitor was calling it stuck.
+      // Asking the registry for the window keeps the two surfaces in step when a schedule changes.
+      if (runningFor > stuckAfterMs(spec)) {
         state = "stuck";
         detail = `Claimed running for ${since(runningFor)} — the function was probably killed mid-run`;
       } else {

@@ -83,8 +83,8 @@ Frequencies below are from `vercel.json` `"crons"` (production source of truth).
   - **Schedule**: `40 * * * *` (hourly)
   - **Purpose**: advance the 14-day grace period (`LIMIT_GRACE_DAYS`) for Free workspaces that are over a Free limit (shared documents, projects, collaborators), email the workspace owners at each step, and clear grace when a workspace fixes it or upgrades. See "Plan limits grace sweep" below.
   - **Reads**: `Org` (`planGrace`), `Subscription` (active/trialing → Pro), `Doc` / `Project` / `OrgMembership` (usage via `getWorkspaceUsage`), `User` (owner emails)
-  - **Writes**: `Org.planGrace`, `ActivityEvent` (`plan.grace_started` / `plan.grace_reminder` / `plan.grace_blocked` / `plan.upgraded`), `CronHealth(jobKey="plan-limits")`
-  - **Bounds**: `?limit=` (default `500`, max `5000`) workspaces per run; workspaces already in grace are visited first. `?dryRun=1` computes and counts without writing or sending.
+  - **Writes**: `Org.planGrace`, `Org.planLimitsScannedAt` (rotation marker, stamped for every workspace the run scanned), `ActivityEvent` (`plan.grace_started` / `plan.grace_reminder` / `plan.grace_blocked` / `plan.upgraded`), `CronHealth(jobKey="plan-limits")`
+  - **Bounds**: `?limit=` (default `500`, max `5000`) workspaces per run; workspaces already in grace are visited first, then the least recently scanned of the rest (`planLimitsScannedAt` ascending, null first), so the budget rotates through the whole collection instead of re-reading the newest N. `?dryRun=1` computes and counts without writing or sending, and does not advance the rotation.
   - **Overlap**: holds a `CronHealth` lease (see "Overlap lease" below); returns `200 { skipped: "locked" }` if a run is already in progress.
   - **Idempotency**: every transition is guarded by the persisted `Org.planGrace` (start only when `null`, block only once via `blockedAt`, reminders deduped by day bucket in `remindersSent`), so re-runs and overlapping ticks cannot double-email.
 

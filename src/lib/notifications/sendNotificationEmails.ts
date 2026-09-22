@@ -797,9 +797,20 @@ async function buildDocUpdateRound(params: {
       skipped.push({ id: row.id, reason: SKIP_SOURCE_GONE });
       continue;
     }
+    /**
+     * Ask whether the event *has* a version, not what it coerces to. `Number(null)` is `0` and
+     * `Number.isFinite(0)` is true, so the obvious `Number.isFinite(Number(x)) ? Number(x) : null`
+     * answered `0` for a row that carried no version at all, and `0 ?? fallback` is `0`. Every
+     * fallback below it was unreachable: the version this function just read out of `DocChange`
+     * and `Upload` two blocks up was thrown away, and the email dropped "Version: v7" and the
+     * `(v7)` suffix, because the composer tests truthiness and `0` is falsy. It read as working
+     * code, which is the part worth guarding against. `claimBatch` normalises a missing version to
+     * `null` (queue.ts `toClaimed`), so `null` is the shape this actually sees.
+     */
+    const eventVersion =
+      typeof row.event.version === "number" && Number.isFinite(row.event.version) ? row.event.version : null;
     const version =
-      (Number.isFinite(Number(row.event.version)) ? Number(row.event.version) : null) ??
-      (uploadId ? versionByUpload.get(uploadId) ?? fromUpload?.version ?? null : null);
+      eventVersion ?? (uploadId ? versionByUpload.get(uploadId) ?? fromUpload?.version ?? null : null);
     resolved.set(row.id, {
       docId,
       version,

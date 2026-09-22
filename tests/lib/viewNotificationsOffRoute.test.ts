@@ -179,6 +179,48 @@ describe("a doc-update unsubscribe link is about doc-update emails", () => {
     expect(res.ok && res.kind).toBe("views");
   });
 
+  /**
+   * The expired branch was the last render site still holding a literal. The field read was made
+   * kind-aware; the heading over it was not, so a month-old doc-update link whose mail was already
+   * off rendered "View emails are off" above "Document update emails are already off for Personal" —
+   * the reader is told a setting they never touched is off, on the one page in the product where
+   * somebody is asking us to stop emailing them.
+   */
+  test("an expired doc-update link is headed by the doc-update setting, never by view emails", async () => {
+    membershipFindOne.mockReturnValue(lean({ orgId: ORG, docUpdateEmailMode: "off" }));
+    const expired = createEmailsOffToken("doc_updates", MEMBERSHIP, { now: new Date(Date.now() - 40 * 24 * 3600_000) });
+
+    const res = await GET(new Request(url(expired)));
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(html).toContain("Document update emails are off");
+    expect(html).toContain("Document update emails are already off for");
+    expect(html).not.toContain("View emails");
+    // Reporting a state is all this branch does; nothing is written on an expired link.
+    expect(membershipFindOneAndUpdate).not.toHaveBeenCalled();
+    expect(membershipUpdateOne).not.toHaveBeenCalled();
+  });
+
+  test("an expired view link still says view emails, since that copy was right all along", async () => {
+    membershipFindOne.mockReturnValue(lean({ orgId: ORG, viewEmailMode: "off" }));
+    const expired = createViewEmailsOffToken(MEMBERSHIP, { now: new Date(Date.now() - 40 * 24 * 3600_000) });
+
+    const html = await (await GET(new Request(url(expired)))).text();
+    expect(html).toContain("View emails are off");
+    expect(html).not.toContain("Document update emails");
+  });
+
+  test("an expired link for mail that is still arriving names no setting in its heading", async () => {
+    membershipFindOne.mockReturnValue(lean({ orgId: ORG, docUpdateEmailMode: "immediate" }));
+    const expired = createEmailsOffToken("doc_updates", MEMBERSHIP, { now: new Date(Date.now() - 40 * 24 * 3600_000) });
+
+    const html = await (await GET(new Request(url(expired)))).text();
+    expect(html).toContain("This link has expired");
+    expect(html).toContain("Document update emails arrive immediately");
+    expect(html).not.toContain("View emails");
+  });
+
   test("the page reads the field the token names, and offers a button for it", () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, "../../src/app/api/notifications/views/off/route.ts"),

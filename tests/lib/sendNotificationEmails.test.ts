@@ -663,16 +663,36 @@ describe("doc update and request emails", () => {
     expect(res.docUpdate.immediate.emails).toBe(1);
   });
 
-  /** An older row that names only its upload still resolves, through the upload itself. */
+  /**
+   * An older row that names only its upload still resolves, through the upload itself.
+   *
+   * `version: null` rather than an absent key on purpose: `claimBatch` normalises a missing version
+   * to `null`, so `null` is the only shape this code ever meets. Written with the key left off, the
+   * event version was `undefined`, `Number(undefined)` is `NaN`, and the fallback ran — the test
+   * passed while the production shape (`null`, which `Number()` turns into a perfectly finite `0`)
+   * short-circuited the fallback and sent the email with no version on it.
+   */
   test("a row with no document on it resolves the document through the upload", async () => {
     setMembership({ docUpdateEmailMode: "immediate" });
     docChangeFind.mockReturnValue(chain([]));
     uploadFind.mockReturnValue(chain([{ _id: UPLOAD, docId: DOC_A, version: 2 }]));
-    pending = [queueRow("doc_updates", UPLOAD, { event: { uploadId: String(UPLOAD) } })];
+    pending = [queueRow("doc_updates", UPLOAD, { event: { uploadId: String(UPLOAD), version: null } })];
 
     await sendNotificationEmails({ now: NOW });
     expect(sent()[0]!.text).toContain("Doc One");
     expect(sent()[0]!.text).toContain("Version: v2");
+  });
+
+  /** The other half of the same fallback: the version comes off the change row, not the upload. */
+  test("a row that carries no version takes it from the change row", async () => {
+    setMembership({ docUpdateEmailMode: "immediate" });
+    pending = [queueRow("doc_updates", UPLOAD, { event: { uploadId: String(UPLOAD), docId: String(DOC_A), version: null } })];
+
+    await sendNotificationEmails({ now: NOW });
+    const mail = sent()[0]!;
+    expect(mail.text).toContain("Version: v3");
+    // Not "v0", and not silently nothing: both are what a numeric coercion of `null` would produce.
+    expect(mail.text).not.toContain("v0");
   });
 
   test("a doc update whose document is gone is skipped, not retried forever", async () => {

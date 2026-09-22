@@ -376,8 +376,6 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
         CreditLedgerModel.deleteMany(workspaceFilter),
         WorkspaceCreditBalanceModel.deleteMany(workspaceFilter),
         SubscriptionModel.deleteMany(orgFilter),
-        OrgMembershipModel.deleteMany(orgFilter),
-        OrgModel.deleteMany({ _id: { $in: soloOrgIds } }),
         // The fifteen that used to survive.
         CreditPurchaseModel.deleteMany(orgFilter),
         DocChangeModel.deleteMany(orgFilter),
@@ -395,6 +393,30 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
         UsageAggCycleModel.deleteMany(workspaceFilter),
         UsageAggDailyModel.deleteMany(workspaceFilter),
       ]);
+
+      /**
+       * The memberships and the workspaces themselves go **last**, on their own.
+       *
+       * They are not just more rows: they are the index this whole function is derived from.
+       * `planPurge` learns `soloOrgIds` from `OrgMembershipModel.find({ userId })` and nothing
+       * else, and every block above is gated on `soloOrgIds.length`. While they sat inside the
+       * batch above, `Promise.all` was free to finish them while a `deleteMany` over a large
+       * analytics collection was still in flight, and one sibling rejecting was enough: the org
+       * and membership deletes had already been dispatched and committed, the run threw before
+       * `deletionPurgedAt` was stamped, and the retry then found no memberships, resolved
+       * `soloOrgIds` to `[]`, skipped every gated block and returned `abortedReason: null`. The
+       * route stamped the account done, the summary said `purged: 1` and the health row said `ok`
+       * while every row the interrupted batch had not reached was unreachable by any query for
+       * ever: retained, invisible to the product, and reported as deleted.
+       *
+       * Deleting them after the batch resolves makes an interruption converge instead. The
+       * memberships survive it, the next run re-derives the same `soloOrgIds`, and `deleteMany`
+       * over rows that are already gone is a no-op, so a resumed purge finishes the job rather
+       * than declaring a half-finished one complete. Same rule as the `docIds`/`projectIds` read
+       * above, applied across a crash boundary instead of within one batch.
+       */
+      await OrgMembershipModel.deleteMany(orgFilter);
+      await OrgModel.deleteMany({ _id: { $in: soloOrgIds } });
     }
     // Memberships in workspaces that survive: the team keeps its documents, the leaver goes.
     await OrgMembershipModel.deleteMany({ userId: id });

@@ -45,6 +45,41 @@ describe("tags/slug", () => {
     expect(normalizeTagName(long).length).toBe(TAG_NAME_MAX);
     expect(tagSlug(long).length).toBe(TAG_NAME_MAX);
   });
+
+  test("a name written in another script is a name, not an empty fold", () => {
+    // The class used to be [^a-z0-9], so each of these folded to "" and every caller answered
+    // "A tag needs at least one letter or number" to a field the UI had just accepted.
+    expect(tagSlug("\u0424\u0430\u043d\u0434\u0440\u0430\u0438\u0437\u0438\u043d\u0433")).toBe("\u0444\u0430\u043d\u0434\u0440\u0430\u0438\u0437\u0438\u043d\u0433");
+    expect(tagSlug("\u6295\u8cc7\u5bb6\u5411\u3051")).toBe("\u6295\u8cc7\u5bb6\u5411\u3051");
+    expect(tagSlug("\u05d4\u05e0\u05e4\u05e7\u05d4")).toBe("\u05d4\u05e0\u05e4\u05e7\u05d4");
+    for (const name of ["\u0424\u0430\u043d\u0434\u0440\u0430\u0438\u0437\u0438\u043d\u0433", "\u6295\u8cc7\u5bb6\u5411\u3051", "\u03a7\u03c1\u03b7\u03bc\u03b1\u03c4\u03bf\u03b4\u03cc\u03c4\u03b7\u03c3\u03b7", "\u062a\u0645\u0648\u064a\u0644", "\u05d4\u05e0\u05e4\u05e7\u05d4"]) {
+      expect(isUsableTagName(name)).toBe(true);
+    }
+    // Marks that carry the word survive: dashing Devanagari matras out would merge unlike names.
+    expect(tagSlug("\u092b\u0902\u0921\u0930\u0947\u091c\u093f\u0902\u0917")).toBe("\u092b\u0902\u0921\u0930\u0947\u091c\u093f\u0902\u0917");
+    // Nothing matchable is still nothing matchable.
+    expect(tagSlug("\ud83c\udf89")).toBe("");
+    expect(isUsableTagName("###")).toBe(false);
+  });
+
+  test("the two spellings of Stra\u00dfe are one tag", () => {
+    expect(tagSlug("Stra\u00dfe")).toBe("strasse");
+    expect(tagSlug("Strasse")).toBe(tagSlug("Stra\u00dfe"));
+  });
+
+  test("the fold is stable, so a stored slug still finds its own tag", () => {
+    // /api/tags/by-slug re-folds the segment it is handed. A slug that folds to something else
+    // 404s on its own page: NFKD turns each \ufb01 into "fi", so a 60-character name can fold past
+    // the cap and the cut can re-expose a separator that was already stripped.
+    const ligature = "\ufb01!".repeat(30);
+    expect(ligature.length).toBe(TAG_NAME_MAX);
+    expect(tagSlug(ligature).endsWith("-")).toBe(false);
+    for (const name of [ligature, "\ufb01x!".repeat(20), "a" + "\ud801\udc00".repeat(40), "  --Board // Q3--  ", "S\u00e9rie A", "\u6295\u8cc7\u5bb6\u5411\u3051"]) {
+      const slug = tagSlug(name);
+      expect(tagSlug(slug)).toBe(slug);
+      expect(slug.length).toBeLessThanOrEqual(TAG_NAME_MAX);
+    }
+  });
 });
 
 describe("tags/palette", () => {

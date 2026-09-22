@@ -9,6 +9,7 @@
  * right shape for a list that may contain a row the sidebar cached before it was deleted.
  */
 import { NextResponse } from "next/server";
+import { Types } from "mongoose";
 
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { TAG_TARGET_KINDS, type TagTargetKind } from "@/lib/models/TagAssignment";
@@ -31,10 +32,17 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const kindRaw = url.searchParams.get("targetKind") ?? "";
     const targetKind = (TAG_TARGET_KINDS as readonly string[]).includes(kindRaw) ? (kindRaw as TagTargetKind) : null;
+    // Junk in the list is skipped, not fatal. `tagsForTargets` hands every id straight to
+    // `new Types.ObjectId(...)`, which throws on anything that is not an id, so a single bad entry
+    // used to take the whole request down with a 500 and a stack trace and lose the dots for the
+    // valid ids beside it; `useTargetTags` swallows the failed response, so the rows just went bare
+    // with nothing to retry. The header above promises the opposite, and /api/docs already filters
+    // the same comma-separated shape this way, so the check belongs here at the boundary. It runs
+    // before the cap so junk cannot spend the 200 slots a real sidebar needs.
     const ids = (url.searchParams.get("ids") ?? "")
       .split(",")
       .map((v) => v.trim())
-      .filter(Boolean)
+      .filter((v) => Types.ObjectId.isValid(v))
       .slice(0, MAX_IDS);
 
     if (!targetKind) {
