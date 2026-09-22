@@ -39,6 +39,7 @@ const AiQualityDefaultsCard = dynamic(() => import("./AiQualityDefaultsCard"));
 const BillingInvoicesTab = dynamic(() => import("./BillingInvoicesTab"));
 const DailyUsageChart = dynamic(() => import("./DailyUsageChart"));
 const NotificationPreferences = dynamic(() => import("@/components/notifications/NotificationPreferences"));
+const EmailCatalogList = dynamic(() => import("@/components/notifications/EmailCatalogList"));
 const MultiLineChart30d = dynamic(() => import("./MultiLineChart30d"), {
   loading: () => <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />,
 });
@@ -527,7 +528,10 @@ function DashboardPageInner() {
                   <button
                     type="button"
                     className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
-                    onClick={() => setTab("notifications")}
+                    // `navigateToTab`, not `setTab`: the bare setter is overwritten a moment
+                    // later by the effect that syncs the tab back from the URL, so the button
+                    // appeared to do nothing at all.
+                    onClick={() => navigateToTab("notifications")}
                   >
                     Open Notifications
                   </button>
@@ -568,7 +572,25 @@ function DashboardPageInner() {
           >
             <div className="grid grid-cols-1 gap-3">
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
-                <NotificationPreferences />
+                <div className="text-[13px] font-semibold text-[var(--fg)]">Emails you control</div>
+                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
+                  These repeat, so they are yours to turn down or off.
+                </div>
+                <div className="mt-4">
+                  <NotificationPreferences />
+                </div>
+              </div>
+
+              {/* The other ten. Two dropdowns described two of the dozen emails we send, which is
+                  precisely the part somebody goes looking for when an unexpected one arrives. */}
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
+                <div className="text-[13px] font-semibold text-[var(--fg)]">Everything else we send</div>
+                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
+                  The complete list, so nothing arrives unexplained.
+                </div>
+                <div className="mt-4">
+                  <EmailCatalogList />
+                </div>
               </div>
 
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-4 sm:px-6 text-[12px] text-[var(--muted-2)]">
