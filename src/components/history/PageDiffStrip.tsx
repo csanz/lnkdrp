@@ -1,17 +1,19 @@
 "use client";
 
 /**
- * The pages that changed, previous beside new, with a way into the full-size comparison.
+ * Which pages changed, and the way in to comparing one.
  *
- * Every compare has stored these two URLs per changed page since the field was added - the schema
- * comment on `DocChange.pagesThatChanged` literally says "for visual diffs in history UIs" - and
- * nothing ever rendered them. The list API mapped them away one line before returning, and the
- * history page had no field for them, so the owner's own history showed less than the recipient's
- * viewer did. Nothing here is computed: these are the same images the compare already paid to look
- * at, which is why this answers "what changed" at no per-compare cost.
+ * Every compare has stored both page renders per changed page since the field was added - the
+ * schema comment on `DocChange.pagesThatChanged` says "for visual diffs in history UIs" - and
+ * nothing rendered them: the list API mapped them away one line before returning and the history
+ * client had no field for them. So the owner's own history showed less about a change than the
+ * recipient's viewer did.
  *
- * The strip's job is only to say *which* pages and let you get to one fast. Deciding what actually
- * changed on a page needs it large, which is `PageCompareViewer`.
+ * This strip deliberately loads **no images**. An expanded row can list up to thirty changed pages,
+ * and showing each as a pair meant sixty full-size renders pulled into a list somebody is scrolling
+ * past - a page of thumbnails too small to decide anything by, paid for in bandwidth on every
+ * expand. The pages themselves belong in `PageCompareViewer`, which loads the two renders for the
+ * one page you asked to see.
  */
 import { useState } from "react";
 
@@ -26,20 +28,12 @@ export type PageChange = {
   imageChanged: boolean | null;
 };
 
-/**
- * Pairs past this many load only when scrolled to.
- *
- * A compare can list up to thirty pages and each is two full-size renders, so an expanded row could
- * otherwise pull sixty images at once on a page nobody has scrolled yet.
- */
-const EAGER_PAGES = 4;
-
 /** "v4" for a real version number, otherwise the caller's word for that side. */
 function versionLabel(v: number | null, fallback: string): string {
   return typeof v === "number" && Number.isFinite(v) && v >= 1 ? `v${Math.floor(v)}` : fallback;
 }
 
-/** The changed pages for one version, each rendered previous beside new. */
+/** The changed pages for one version, as a light list that opens the full-size comparison. */
 export default function PageDiffStrip({
   pages,
   changedPageCount,
@@ -54,8 +48,7 @@ export default function PageDiffStrip({
 }) {
   const [openAt, setOpenAt] = useState<number | null>(null);
 
-  // Nothing to show rather than an empty frame: a compare that listed no pages, or a row old
-  // enough that `attachPageContext` never populated the URLs.
+  // Rows old enough that `attachPageContext` never populated the URLs have nothing to open.
   const withImages = pages.filter((p) => p.previousImageUrl || p.newImageUrl);
   if (!withImages.length) return null;
 
@@ -63,86 +56,50 @@ export default function PageDiffStrip({
   const toLabel = versionLabel(toVersion, "new");
 
   /**
-   * "3 of 34 pages changed", when the two differ.
+   * "7 of 18 pages changed", when the two differ.
    *
    * The compare caps how many pages it looks at, so a heavily edited deck lists a handful and used
-   * to give no sign the rest existed. Saying only "3 pages changed" there is wrong.
+   * to give no sign the rest existed. Saying only "7 pages changed" there is wrong.
    */
   const shown = withImages.length;
   const total = typeof changedPageCount === "number" && changedPageCount > shown ? changedPageCount : null;
 
   return (
     <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--panel)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-3 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
         <div className="min-w-0">
           <div className="text-xs font-semibold text-[var(--fg)]">
             {total ? `${shown} of ${total} pages changed` : `${shown} page${shown === 1 ? "" : "s"} changed`}
           </div>
           <div className="mt-0.5 text-[11px] text-[var(--muted)]">
-            {fromLabel} on the left, {toLabel} on the right. Click any page to compare it full size.
+            {fromLabel} against {toLabel}, with the changed areas marked.
           </div>
         </div>
-        {/*
-          The primary way in. The thumbnails below are small by necessity - a 16:9 slide at strip
-          width is about 250px across, which answers "did this page change" and nothing else.
-        */}
         <button
           type="button"
           onClick={() => setOpenAt(0)}
-          className="rounded-md bg-[var(--fg)] px-3 py-1.5 text-[11px] font-semibold text-[var(--bg)] transition-opacity hover:opacity-85"
+          className="shrink-0 rounded-md bg-[var(--fg)] px-3 py-1.5 text-[11px] font-semibold text-[var(--bg)] transition-opacity hover:opacity-85"
         >
           Compare full size
         </button>
       </div>
 
-      <div className="space-y-3 p-3">
+      {/* One chip per changed page. Cheap, scannable, and each one opens the viewer on that page. */}
+      <div className="flex flex-wrap gap-1.5 border-t border-[var(--border)] px-3 py-2.5">
         {withImages.map((p, idx) => (
           <button
             key={p.pageNumber}
             type="button"
             onClick={() => setOpenAt(idx)}
-            aria-label={`Compare page ${p.pageNumber} full size`}
-            className="block w-full rounded-lg border border-transparent p-2 text-left transition-colors hover:border-[var(--border)] hover:bg-[var(--panel-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--fg)]"
+            title={p.summary?.trim() || `Compare page ${p.pageNumber}`}
+            className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px] font-medium tabular-nums text-[var(--muted)] transition-colors hover:border-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
           >
-            <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="text-xs font-semibold text-[var(--fg)]">Page {p.pageNumber}</span>
-              {/*
-                Only worth saying when it is true. `imageChanged` is null on uploads predating the
-                perceptual fingerprint, and "no" there would be a claim the data cannot support.
-              */}
-              {p.imageChanged === true ? (
-                <span className="rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] text-[var(--muted-2)]">Artwork changed</span>
-              ) : null}
-              {p.summary?.trim() ? <span className="text-[11px] text-[var(--muted)]">{p.summary.trim()}</span> : null}
-            </div>
-
-            <div className="flex items-stretch gap-2">
-              {[
-                { url: p.previousImageUrl, label: fromLabel },
-                { url: p.newImageUrl, label: toLabel },
-              ].map((side) => (
-                <figure key={side.label} className="m-0 min-w-0 flex-1">
-                  <figcaption className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">{side.label}</figcaption>
-                  {side.url ? (
-                    <div className="overflow-hidden rounded-md border border-[var(--border)] bg-[var(--bg)]">
-                      {/* Plain img: these are Blob URLs outside the next/image remote allowlist. */}
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={side.url}
-                        alt={`Page ${p.pageNumber}, ${side.label}`}
-                        loading={idx < EAGER_PAGES ? "eager" : "lazy"}
-                        decoding="async"
-                        className="block h-auto w-full"
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex aspect-[4/3] items-center justify-center rounded-md border border-dashed border-[var(--border)] bg-[var(--bg)] text-[10px] text-[var(--muted)]">
-                      Not rendered
-                    </div>
-                  )}
-                </figure>
-              ))}
-            </div>
+            Page {p.pageNumber}
+            {/*
+              Only stated when true. `imageChanged` is null on uploads predating the perceptual
+              fingerprint, and "no" there would be a claim the data cannot support.
+            */}
+            {p.imageChanged === true ? <span className="ml-1 text-[var(--muted-2)]">· artwork</span> : null}
           </button>
         ))}
       </div>
