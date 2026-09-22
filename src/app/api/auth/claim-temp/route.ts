@@ -6,6 +6,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { UserModel, verifyTempUserSecret } from "@/lib/models/User";
+import { ShareLinkModel } from "@/lib/models/ShareLink";
+import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 
 export const runtime = "nodejs";
 /**
@@ -55,10 +57,45 @@ export async function POST(request: Request) {
     const realUserId = new Types.ObjectId(userId);
     const tmpUserId = new Types.ObjectId(tempUserId);
 
+    /**
+     * The workspace moves with the owner, or the document is lost and its link cannot be revoked.
+     *
+     * This used to set `userId` alone. But a temp visitor's document is stamped with the *temp
+     * user's personal org* (`POST /api/docs`), and `ensureDefaultLink` publishes its share link in
+     * that same org — so after signing in, every owner-side query missed it. `buildDocMatch` and
+     * the share-link helpers are all org-scoped, with a legacy fallback that only matches rows
+     * whose `orgId` is absent or null; a row carrying a *non-null temp* org matched none of them.
+     *
+     * The document vanished from the dashboard and could not be opened, edited, deleted or
+     * un-shared — while `resolveShareLink` matches on the slug alone and kept serving the PDF to
+     * anyone holding the URL. The temp user row is deleted two lines below, so nothing could ever
+     * reach those rows again: a permanent public link to a private document, with no owner.
+     *
+     * Scoped to the temp org on purpose. `{ userId: tmpUserId }` alone would also catch rows the
+     * visitor somehow has in another workspace, and moving those would be a second bug.
+     */
+    const personal = await ensurePersonalOrgForUserId({ userId: realUserId });
+    const realOrgId = personal.orgId;
+
+    // Which documents are moving, read before the update so the links can follow them.
+    // `ShareLink` has no `userId` — it is keyed by `orgId` and `docId` — so matching links by the
+    // temp user would have been a silent no-op.
+    const movingDocs = (await DocModel.find({ userId: tmpUserId }).select({ _id: 1 }).lean()) as Array<{
+      _id: Types.ObjectId;
+    }>;
+    const movingDocIds = movingDocs.map((d) => d._id);
+
     const [docsRes, uploadsRes] = await Promise.all([
-      DocModel.updateMany({ userId: tmpUserId }, { $set: { userId: realUserId } }),
-      UploadModel.updateMany({ userId: tmpUserId }, { $set: { userId: realUserId } }),
+      DocModel.updateMany({ userId: tmpUserId }, { $set: { userId: realUserId, orgId: realOrgId } }),
+      UploadModel.updateMany({ userId: tmpUserId }, { $set: { userId: realUserId, orgId: realOrgId } }),
     ]);
+
+    // The links follow their documents. `archiveShareLink`, `setDefaultShareLink` and
+    // `listShareLinks` all take an orgId, so a link left in the temp org is one the new owner can
+    // watch being served and never turn off.
+    const linksRes = movingDocIds.length
+      ? await ShareLinkModel.updateMany({ docId: { $in: movingDocIds } }, { $set: { orgId: realOrgId } })
+      : { modifiedCount: 0 };
 
     // Best-effort: remove the temp user record after claiming.
     await UserModel.deleteOne({ _id: tmpUserId, isTemp: true }).catch(() => void 0);
@@ -68,6 +105,7 @@ export async function POST(request: Request) {
       migrated: {
         docs: (docsRes as { modifiedCount?: unknown }).modifiedCount ?? null,
         uploads: (uploadsRes as { modifiedCount?: unknown }).modifiedCount ?? null,
+        shareLinks: (linksRes as { modifiedCount?: unknown }).modifiedCount ?? null,
       },
     });
   } catch (err) {

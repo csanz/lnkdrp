@@ -32,17 +32,36 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
     return NextResponse.json({ error: "Invalid plan (expected 'free' or 'pro')" }, { status: 400 });
   }
 
+  /**
+   * This route answered `{ ok: true, plan: "pro" }` and changed nothing a customer can feel.
+   *
+   * `User.plan` is a pre-workspaces field. Entitlement moved to the workspace: `getWorkspacePlan`
+   * reads the org's `Subscription` row, and `/api/plan`, `/api/billing/status`, every
+   * `checkLimit` and every credit gate follow it. So an admin asked to comp somebody clicked Pro,
+   * saw the row flip to "pro", and left a customer sitting on Free limits — while the next admin
+   * to open that screen read "pro" and concluded the grant had been applied. Clicking Free on a
+   * paying customer was equally empty.
+   *
+   * Refusing is the honest state until there is a real mechanism. A comp needs to be something
+   * `getWorkspacePlan` reads — an override on the workspace, auditable, and understood by the
+   * billing crons that reconcile against Stripe — not a fabricated `Subscription` row and not a
+   * legacy field with no readers. That is a decision about billing policy, not a patch.
+   *
+   * `plan` is still validated above so the refusal is about the mechanism, not the request.
+   */
   await connectMongo();
-  const updated = await UserModel.findOneAndUpdate(
-    { _id: new Types.ObjectId(userId) },
-    { $set: { plan } },
-    { new: true, projection: { plan: 1 } },
-  ).lean();
+  const exists = await UserModel.exists({ _id: new Types.ObjectId(userId) });
+  if (!exists) return NextResponse.json({ error: "User not found" }, { status: 404 });
 
-  if (!updated) return NextResponse.json({ error: "User not found" }, { status: 404 });
-  const updatedPlan = typeof (updated as any)?.plan === "string" ? String((updated as any).plan).trim() : "free";
-
-  return NextResponse.json({ ok: true, plan: updatedPlan });
+  return NextResponse.json(
+    {
+      error: "Plan overrides are not supported",
+      detail:
+        "A workspace's plan comes from its Stripe subscription (getWorkspacePlan). Writing User.plan changes nothing the customer can see, so this route no longer pretends to. Change the subscription in Stripe, or add a workspace-level override the plan resolver reads.",
+      requested: plan,
+    },
+    { status: 501 },
+  );
 }
 
 
