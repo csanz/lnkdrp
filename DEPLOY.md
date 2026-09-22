@@ -68,7 +68,8 @@ off before announcing (G); section 11 is for after launch.
       production**, or only test users can sign in (4.3).
 - [ ] Blob: **public** store in `iad1`, connected to Production only (4.4).
 - [ ] OpenAI project key that allows `gpt-4o-mini` on the Responses API (4.5).
-- [ ] Resend: `lnkdrp.com` shows **Verified** (SPF, DKIM, DMARC), API key, From addresses (4.6).
+- [ ] Resend: `lnkdrp.com` shows **Verified** (SPF, DKIM), API key, From addresses (4.6).
+- [ ] DMARC: `_dmarc.lnkdrp.com` resolves. Resend never creates this one — see 4.6 (4.6).
 
 **C. Realtime on Fly (6)**
 
@@ -553,8 +554,40 @@ it before deploying, not after:
   these emails are on by default; they ship in the same release, so never deploy the pipeline
   without them.
 
+**DMARC is not one of Resend's records, and its absence sends mail to spam.**
+
+Resend's three records cover DKIM and SPF. Note where SPF lands: on `send.updates.lnkdrp.com`,
+the Return-Path subdomain SES bounces to, *not* on the From domain. That is correct and it is why
+`dig TXT updates.lnkdrp.com` looks empty — SPF is checked against the envelope sender, so it
+aligns there. Both show **verified** in Resend.
+
+DMARC is the one nobody creates for you, and Gmail treats a missing DMARC policy as a reason to
+filter — this was found the hard way, with every test send landing in spam while all three Resend
+records were green. Add it on the organisational domain, where receivers look it up:
+
+```
+name:  _dmarc.lnkdrp.com
+type:  TXT
+value: v=DMARC1; p=none; rua=mailto:dmarc@lnkdrp.com; fo=1
+```
+
+`p=none` is deliberate for the first weeks: it asks receivers to report, not to reject, so a
+misconfiguration cannot silently destroy real mail. Read the `rua` reports, confirm everything
+legitimate passes, then tighten to `p=quarantine` and later `p=reject`. DNS for `lnkdrp.com` is
+Google Cloud DNS (`ns-cloud-c*.googledomains.com`).
+
+Two more things that decide whether mail lands, neither of them DNS:
+
+- **Do not judge deliverability by sending to an address on your own domain.** Google Workspace
+  applies extra scrutiny to inbound mail that claims to be from a domain it hosts, so
+  `c@lnkdrp.com` is the harshest possible test inbox and not a representative one. Send to a
+  gmail.com address and somewhere else entirely before concluding anything.
+- **`scripts/send-test-emails.ts` prefixes `[TEST]` by default**, and a subject beginning with a
+  bracketed word in capitals is itself a mild spam signal. Pass `--raw` when what you are testing
+  is deliverability rather than copy.
+
 1. Add the sending domain `lnkdrp.com` in Resend and create the DNS records it asks for (SPF and
-   DKIM, plus a DMARC record if the domain has none). Wait for "Verified"; unverified domains
+   DKIM). Wait for "Verified"; unverified domains
    silently drop to spam or fail.
 2. Create an API key with send access. Env on the web app: `RESEND_API_KEY`,
    `NOTIFICATION_EMAIL_FROM` (`LinkDrop <hi@lnkdrp.com>`), `INVITE_EMAIL_FROM` (same, or a
