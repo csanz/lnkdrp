@@ -199,15 +199,15 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
   "repo_link_request.immediate": {
     trace: "run_totals",
     traceNote: REPO_RUN_NOTE,
-    previewable: false,
-    previewNote: INLINE_NOTE,
+    previewable: true,
+    previewNote: null,
     flagGated: "NEXT_PUBLIC_FEATURE_REQUESTS",
   },
   "repo_link_request.daily": {
     trace: "run_totals",
     traceNote: REPO_RUN_NOTE,
-    previewable: false,
-    previewNote: INLINE_NOTE,
+    previewable: true,
+    previewNote: null,
     flagGated: "NEXT_PUBLIC_FEATURE_REQUESTS",
   },
 };

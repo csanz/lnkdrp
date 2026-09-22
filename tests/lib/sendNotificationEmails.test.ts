@@ -720,8 +720,18 @@ describe("doc update and request emails", () => {
       const mod = await import("@/lib/notifications/sendNotificationEmails");
       const res = await mod.sendNotificationEmails({ now: NOW });
       const mail = sent()[0]!;
-      expect(mail.subject).toBe("Repo link request: Diligence");
-      expect(mail.text).toContain("- Diligence: Signed NDA");
+      expect(mail.subject).toBe("New in Diligence: Signed NDA");
+      expect(mail.text).toContain("Diligence");
+      expect(mail.text).toContain("Signed NDA");
+      // It used to open with the workspace's ObjectId, which is not a thing to show a person.
+      expect(mail.text).not.toContain(String(ORG));
+      expect(mail.text).toContain("Workspace: Acme");
+      // The last of the four notification emails to gain HTML and a way out.
+      expect(mail.html).toBeTruthy();
+      expect(mail.headers?.["List-Unsubscribe"]).toBeTruthy();
+      const offUrl = String(mail.headers?.["List-Unsubscribe"]).replace(/^<|>$/g, "");
+      const verified = verifyAnyEmailsOffToken(new URL(offUrl).searchParams.get("t") ?? "", { now: NOW });
+      expect(verified.ok && verified.kind).toBe("repo_link_requests");
       expect(res.repoLinkRequests.immediate.emails).toBe(1);
     } finally {
       vi.unstubAllEnvs();

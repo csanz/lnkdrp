@@ -33,6 +33,7 @@ import { OrgModel } from "@/lib/models/Org";
 import type { EmailWorkspace } from "@/lib/email/layout";
 import { composeDocUpdateEmail } from "@/lib/notifications/docUpdateEmail";
 import { composeDocUploadEmail } from "@/lib/notifications/docUploadEmail";
+import { composeRepoLinkRequestEmail } from "@/lib/notifications/repoLinkRequestEmail";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
@@ -1009,6 +1010,10 @@ async function buildRepoLinkRound(params: {
   orgIdStr: string;
   rows: ClaimedNotification[];
   mode: SendMode;
+  membershipId: string;
+  appUrl: string;
+  now: Date;
+  workspace: EmailWorkspace | null;
 }): Promise<Round> {
   const skipped: Round["skipped"] = [];
 
@@ -1061,27 +1066,27 @@ async function buildRepoLinkRound(params: {
   if (!items.length) return { deliveries: [], skipped };
   items.sort((a, b) => a.row.occurredAt.getTime() - b.row.occurredAt.getTime());
 
-  const daily = params.mode === "daily";
-  const subject = daily
-    ? `Daily digest: ${items.length} repo link request${items.length === 1 ? "" : "s"}`
-    : items.length === 1
-      ? `Repo link request: ${items[0]!.requestName}`
-      : `${items.length} repo link requests`;
+  const email = composeRepoLinkRequestEmail({
+    entries: items.map((i) => ({
+      requestName: i.requestName,
+      docTitle: i.docTitle,
+      docUrl: buildDocUrl(i.docId),
+    })),
+    daily: params.mode === "daily",
+    workspace: params.workspace,
+    requestsUrl: buildRequestsUrl(),
+    offUrl: emailsOffUrl(params.appUrl, "repo_link_requests", params.membershipId, { now: params.now }),
+    preferencesUrl: buildPreferencesUrl(params.appUrl),
+    turnOffLabel: TURN_OFF_LABEL,
+    changeHowOftenLabel: CHANGE_HOW_OFTEN_LABEL,
+  });
 
-  const lines: string[] = [];
-  lines.push(
-    daily
-      ? `New request uploads in your workspace (${params.orgIdStr})`
-      : `New request upload${items.length === 1 ? "" : "s"} in your workspace (${params.orgIdStr})`,
-    "",
-  );
-  for (const item of items) {
-    lines.push(`- ${item.requestName}: ${item.docTitle}`);
-    lines.push(`  ${buildDocUrl(item.docId)}`);
-  }
-  lines.push("", `Requests: ${buildRequestsUrl()}`, "", "- LinkDrop");
-
-  return { deliveries: [{ subject, text: lines.join("\n"), rows: items.map((i) => i.row) }], skipped };
+  return {
+    deliveries: [
+      { subject: email.subject, text: email.text, html: email.html, headers: email.headers, rows: items.map((i) => i.row) },
+    ],
+    skipped,
+  };
 }
 
 /** Titles of the workspace's live documents, by id. An empty title reads as "Document", as before. */
@@ -1612,7 +1617,16 @@ async function renderAndSend(params: {
       workspace: await loadWorkspace(orgId, orgIdStr, params.workspaces),
     });
   } else {
-    round = await buildRepoLinkRound({ orgId, orgIdStr, rows, mode });
+    round = await buildRepoLinkRound({
+      orgId,
+      orgIdStr,
+      rows,
+      mode,
+      membershipId: params.membershipId,
+      appUrl: params.appUrl,
+      now,
+      workspace: await loadWorkspace(orgId, orgIdStr, params.workspaces),
+    });
   }
 
   await deliverRound({

@@ -91,6 +91,17 @@ const OFF_COPY: Record<
       immediate: "View emails arrive immediately",
     },
   },
+  repo_link_requests: {
+    title: "Request inbox emails are off",
+    line: (w) => `You won't get emails when a file arrives in a request inbox in ${w}.`,
+    confirmTitle: "Turn off request inbox emails",
+    confirmLabel: "Turn off request inbox emails",
+    sentence: {
+      off: "Request inbox emails are already off",
+      daily: "Request inbox emails are set to a daily digest",
+      immediate: "Request inbox emails arrive immediately",
+    },
+  },
   doc_uploads: {
     title: "New document emails are off",
     line: (w) => `You won't get emails when a teammate adds a document to ${w}.`,
