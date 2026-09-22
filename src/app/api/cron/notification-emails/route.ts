@@ -87,17 +87,44 @@ async function handle(request: Request) {
 
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
+
+    /**
+     * A tick that completed is not the same as a tick that worked.
+     *
+     * This recorded `status: "ok"` on every run that did not throw, so a tick that dead-lettered
+     * mail or skipped members at the cap looked identical in health to a clean one — and health is
+     * the only place anybody looks. The counts were in `lastResult` the whole time; nothing read
+     * them.
+     *
+     * Only the two conditions a person must act on flip the status. `sendFailures` does not: those
+     * rows stay on the backoff schedule and the next tick retries them, so raising an alarm every
+     * time a provider blips would teach an operator to ignore the light. Dead-lettered rows will
+     * never be retried, and truncation means members got nothing this tick with no record of who.
+     */
+    const dead = result.queue?.dead ?? 0;
+    const truncated = Boolean(result.membersTruncated);
+    const failures = result.sendFailures ?? 0;
+
+    const problems: string[] = [];
+    if (dead > 0) problems.push(`${dead} notification${dead === 1 ? "" : "s"} dead-lettered and will not be retried`);
+    if (truncated) problems.push(`stopped at limitMembers — some members got nothing this tick`);
+
     try {
       await connectMongo();
       await CronHealthModel.updateOne(
         { jobKey },
         {
           $set: {
-            status: "ok",
+            status: problems.length ? "error" : "ok",
             lastFinishedAt: finishedAt,
             lastRunAt: finishedAt,
             lastDurationMs: durationMs,
             lastResult: result,
+            ...(problems.length
+              ? { lastErrorAt: finishedAt, lastError: problems.join("; ") }
+              : {}),
+            // Retryable failures are worth seeing without being worth an alarm.
+            ...(failures > 0 && !problems.length ? { lastError: `${failures} send(s) failed and will retry` } : {}),
           },
         },
         { upsert: true },

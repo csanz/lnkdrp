@@ -170,6 +170,28 @@ async function handle(request: Request) {
         // stripe@20 (API 2025-12-15) reports the period on subscription items, not the top level.
         const { start, end } = getSubscriptionPeriod(fresh);
         const status = typeof fresh.status === "string" ? fresh.status : "";
+
+        /**
+         * Write what Stripe just told us, before deciding whether to grant.
+         *
+         * This used to happen far below, after `!isBillableStatus` and after the already-granted
+         * check — both of which `continue`. So the two cases where the stored row is most likely to
+         * be wrong were exactly the two where the fresh answer was discarded: a subscription
+         * Stripe had moved to `canceled` kept saying `active` for ever, and a row whose grant was
+         * already applied never had its period refreshed even though we had just paid for the API
+         * call. Reconciling is the whole job; throwing away the truth on the quiet paths is not a
+         * saving.
+         */
+        if (!dryRun) {
+          const patch: Record<string, unknown> = { status: status || "active" };
+          if (start && end) {
+            patch.currentPeriodStart = start;
+            patch.currentPeriodEnd = end;
+          }
+          await SubscriptionModel.updateOne({ _id: new Types.ObjectId(row.id) }, { $set: patch });
+          updatedSubscription += 1;
+        }
+
         if (!start || !end) continue;
         if (!isBillableStatus(status)) continue;
 
@@ -187,13 +209,6 @@ async function handle(request: Request) {
           grantsApplied += 1; // would apply
           continue;
         }
-
-        // Keep subscription period fields fresh as a side effect (helps snapshot correctness).
-        await SubscriptionModel.updateOne(
-          { _id: new Types.ObjectId(row.id) },
-          { $set: { status: status || "active", currentPeriodStart: start, currentPeriodEnd: end } },
-        );
-        updatedSubscription += 1;
 
         const res = await grantCycleIncludedCredits({
           workspaceId: String(row.orgId),

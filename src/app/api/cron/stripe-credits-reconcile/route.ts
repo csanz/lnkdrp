@@ -126,7 +126,21 @@ async function handle(request: Request) {
         const prevStart = (s as any)?.currentPeriodStart instanceof Date ? (s as any).currentPeriodStart : null;
         const prevEnd = (s as any)?.currentPeriodEnd instanceof Date ? (s as any).currentPeriodEnd : null;
 
+        /**
+         * Status counts as a change, not only the period.
+         *
+         * The write below sets `status` as well as the two dates, but the gate only compared the
+         * dates — so a subscription Stripe had moved to `past_due`, `canceled` or `unpaid` inside
+         * the same billing period never had that written. The row kept saying `active` until the
+         * period happened to roll, and this job exists precisely because the webhook may have been
+         * missed. Reconciling everything except the field most likely to have gone stale is the
+         * one outcome it must not have.
+         */
+        const prevStatus = typeof (s as { status?: unknown }).status === "string" ? (s as { status: string }).status : "";
+        const nextStatus = status || prevStatus;
+
         const changed =
+          nextStatus !== prevStatus ||
           !prevStart ||
           prevStart.getTime() !== currentPeriodStart.getTime() ||
           !prevEnd ||
@@ -135,7 +149,7 @@ async function handle(request: Request) {
         if (changed) {
           await SubscriptionModel.updateOne(
             { _id: (s as any)._id },
-            { $set: { status: status || (s as any).status, currentPeriodStart, currentPeriodEnd } },
+            { $set: { status: nextStatus, currentPeriodStart, currentPeriodEnd } },
           );
           updated += 1;
         }
