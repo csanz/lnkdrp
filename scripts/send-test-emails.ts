@@ -117,9 +117,20 @@ async function main() {
     console.log("Unset EMAIL_TRANSPORT for a real send.\n");
   }
 
-  console.log(`\n${dryRun ? "Would send" : "Sending"} ${chosen.length} email(s) to ${to}`);
-  // Never silently: a count that hides what it dropped reads as full coverage when it is not.
-  if (hidden > 0) console.log(`${hidden} extra variant(s) skipped — pass --all to include them.`);
+  console.log(`\n${dryRun ? "Would send" : "Sending"} ${chosen.length} email${chosen.length === 1 ? "" : "s"} to ${to}`);
+  /**
+   * Say what was left out, but do not make it look like a failure.
+   *
+   * The first version printed "7 extra variant(s) skipped" on its own line directly under the
+   * count, which reads as a warning about something that went wrong — especially on a run that
+   * asked for one template and was told a variant had been skipped. It is neither a warning nor
+   * an error: it is the normal, chosen behaviour. Parenthesised and lower-case, it reads as the
+   * footnote it is, and still never lets a partial run pass for a complete one.
+   */
+  if (hidden > 0) {
+    const one = hidden === 1;
+    console.log(`(${hidden} more variant${one ? "" : "s"} ${one ? "exists" : "exist"} — pass --all to send ${one ? "it" : "them"} too.)`);
+  }
   console.log("");
 
   // Imported here, not at module scope: `--list` and `--dry-run` must work without a Resend key.

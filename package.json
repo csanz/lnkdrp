@@ -33,7 +33,7 @@
     "test:pdf2txt": "node scripts/pdf-to-text.mjs",
     "test:ai-extract": "tsx scripts/test-ai-extract.ts",
     "test:notification-emails": "tsx scripts/notifications-send-emails.ts",
-    "test:emails": "tsx --env-file=.env.local scripts/send-test-emails.ts",
+    "test:emails": "NODE_OPTIONS=--disable-warning=DEP0205 tsx --env-file=.env.local scripts/send-test-emails.ts",
     "tests:agent": "tsx tests/agent/agent.cli.ts",
     "tests:agent:cli": "tsx tests/agent/agent.cli.ts",
     "tests:agent:vitest": "vitest run --config tests/agent/vitest.config.ts",
@@ -48,7 +48,11 @@
     "cron:analytics-reconcile": "tsx --env-file=.env.local scripts/cron/cron.analytics-reconcile.ts",
     "cron:credits-purchase-expiry": "tsx --env-file=.env.local scripts/cron/cron.credits-purchase-expiry.ts",
     "cron:account-purge": "tsx --env-file=.env.local scripts/cron/cron.account-purge.ts",
-    "test:account-deletion": "tsx --env-file=.env.local scripts/test-account-deletion.ts"
+    "test:account-deletion": "tsx --env-file=.env.local scripts/test-account-deletion.ts",
+    "reset": "tsx --env-file=.env.local scripts/reset-local.ts",
+    "waitlist:invite": "tsx --env-file=.env.local scripts/waitlist-invite.ts",
+    "admin:add": "tsx --env-file=.env.local scripts/admin-add.ts",
+    "admin:list": "tsx --env-file=.env.local scripts/admin-add.ts --list"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",
