@@ -899,6 +899,110 @@ async function main(): Promise<void> {
     });
 
     // 16. Disabling one link revokes that recipient only; the document's other links are untouched.
+    /**
+     * Settings are toggled, not merely set.
+     *
+     * Everything above proves a link HONOURS the value it was created with. That is a different
+     * claim from "changing it takes effect", and the second is the one an owner leans on when they
+     * revoke something after sending the link. Each flip below is made through the MCP and then
+     * checked twice: what the tools report, and what a recipient holding the URL actually gets.
+     */
+    await step("allowDownload off and on again, with the download actually counted", async () => {
+      const setDownload = async (allowDownload: boolean) =>
+        callTool<CreateShareLinkResult>(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: extra.link.id, allowDownload });
+
+      await setDownload(false);
+      // `?download=1` with a botId is the form the viewer sends and the only one the route counts;
+      // the bare path serves the file and records nothing, which once looked like a broken counter.
+      const bot = randomUUID().replace(/-/g, "").slice(0, 32);
+      const refused = await fetch(`${extra.shareUrl}/pdf?download=1&botId=${bot}`, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+      await refused.arrayBuffer();
+      assert(refused.status === 403, `downloads are off but /pdf?download=1 answered ${refused.status}, expected 403`);
+      const offStats = await callTool<{ downloadsEnabled?: boolean }>(live, "lnkdrp_get_share_stats", { docId: shared.docId, shareId: extra.link.shareId, days: 7 });
+      assert(offStats.downloadsEnabled === false, "get_share_stats.downloadsEnabled stayed true for a link with downloads off");
+
+      await setDownload(true);
+      const served = await fetch(`${extra.shareUrl}/pdf?download=1&botId=${bot}`, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+      await served.arrayBuffer();
+      assert(served.status === 200, `downloads are on but /pdf?download=1 answered ${served.status}, expected 200`);
+      const onStats = await callTool<{ downloadsEnabled?: boolean; totals?: { downloads?: number } }>(live, "lnkdrp_get_share_stats", { docId: shared.docId, shareId: extra.link.shareId, days: 7 });
+      assert(onStats.downloadsEnabled === true, "get_share_stats.downloadsEnabled stayed false after turning downloads on");
+      assert((onStats.totals?.downloads ?? 0) >= 1, `the download was served but not counted (totals.downloads ${String(onStats.totals?.downloads)})`);
+      info("downloads", `counted ${String(onStats.totals?.downloads)}`);
+    });
+
+    await step("a password can be set and cleared, and verify_share_password follows both ways", async () => {
+      await callTool(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: extra.link.id, password: "matrix-pw" });
+      const locked = await callTool<{ passwordEnabled: boolean; matches: boolean; opensLink: boolean }>(live, "lnkdrp_verify_share_password", {
+        docId: shared.docId, linkId: extra.link.id, password: "matrix-pw",
+      });
+      assert(locked.passwordEnabled === true && locked.matches === true && locked.opensLink === true, `right password: ${JSON.stringify(locked)}`);
+      const wrong = await callTool<{ matches: boolean; opensLink: boolean }>(live, "lnkdrp_verify_share_password", {
+        docId: shared.docId, linkId: extra.link.id, password: "not-it",
+      });
+      assert(wrong.matches === false && wrong.opensLink === false, `wrong password: ${JSON.stringify(wrong)}`);
+      // A gated link still answers 200 - it serves the gate, not the document.
+      const gate = await fetch(extra.shareUrl, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+      await gate.arrayBuffer();
+      assert(gate.status === 200, `a password-gated link answered ${gate.status}, expected the gate at 200`);
+
+      await callTool(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: extra.link.id, password: null });
+      const open = await callTool<{ passwordEnabled: boolean; opensLink: boolean }>(live, "lnkdrp_verify_share_password", {
+        docId: shared.docId, linkId: extra.link.id, password: "anything",
+      });
+      assert(open.passwordEnabled === false && open.opensLink === true, `cleared password: ${JSON.stringify(open)}`);
+    });
+
+    await step("allowRevisionHistory on and off changes what /changes serves", async () => {
+      /**
+       * The per-link lever, not the document one.
+       *
+       * `/changes` gates on `link.allowRevisionHistory`, and `lnkdrp_set_share_access` says in its
+       * own description that its copy of this setting "applies to the default link only". Driving
+       * the document-wide default at a link created separately therefore changes nothing the
+       * recipient can see, and this step quietly fell through to its Free-plan branch instead of
+       * testing anything.
+       */
+      const setHistory = async (allowRevisionHistory: boolean) =>
+        callTool(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: extra.link.id, allowRevisionHistory });
+      const changes = async () => {
+        const r = await fetch(`${extra.shareUrl}/changes?limit=5`, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+        await r.arrayBuffer();
+        return r.status;
+      };
+
+      await setHistory(true);
+      const onStatus = await changes();
+      const sharePro = onStatus === 200;
+      // `ownerIsPro` is ANDed in, so on a Free workspace the route answers 403 whether the setting
+      // is on or off - deliberately, so the setting and the plan are indistinguishable to a
+      // recipient. The off-assertion therefore holds on every plan; the on-assertion only where
+      // the plan allows it.
+      await setHistory(false);
+      assert(await changes() === 403, "history is off but /changes did not answer 403");
+      if (sharePro) {
+        await setHistory(true);
+        assert(await changes() === 200, "history was turned back on but /changes stopped serving");
+      } else {
+        info("history", "this workspace plan withholds version history; only the off case is asserted");
+      }
+      await setHistory(false);
+    });
+
+    await step("set_share_access shareEnabled false takes every link down, and true brings them back", async () => {
+      await callTool(live, "lnkdrp_set_share_access", { idempotencyKey: `e2e-off-${randomUUID()}`, docId: shared.docId, shareEnabled: false });
+      const off = await callTool<GetShareResult & { anyLinkActive?: boolean }>(live, "lnkdrp_get_share", { docId: shared.docId });
+      assert(off.anyLinkActive === false, "anyLinkActive stayed true after the document-wide switch went off");
+      const down = await fetch(extra.shareUrl, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+      await down.arrayBuffer();
+      assert(down.status === 404, `the document-wide switch is off but the link answered ${down.status}`);
+
+      await callTool(live, "lnkdrp_set_share_access", { idempotencyKey: `e2e-on-${randomUUID()}`, docId: shared.docId, shareEnabled: true });
+      const back = await fetch(extra.shareUrl, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+      await back.arrayBuffer();
+      assert(back.status === 200, `the switch went back on but the link answered ${back.status}`);
+    });
+
     await step("lnkdrp_update_share_link { enabled: false } stops the link resolving", async () => {
       const res = await callTool<CreateShareLinkResult>(live, "lnkdrp_update_share_link", {
         docId: shared.docId,
