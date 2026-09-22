@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import type { DocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { isNoChangeSummary } from "@/lib/ai/docChangeSummary";
 import { fingerprintsDiffer } from "@/lib/history/pageFingerprint";
-import { sweepVisualChanges, type SweepCandidate } from "./visualPageSweep";
+import { regionsMeanChanged, sweepVisualChanges, type SweepCandidate } from "./visualPageSweep";
 import { openPdfDocument } from "@/lib/pdf/renderPage";
 
 export type PdfPageText = { page_number: number; text: string };
@@ -27,6 +27,15 @@ export type ChangedPage = {
    * null when it cannot be told: one side has no image, or neither a fingerprint nor two hashes.
    */
   imageChanged: boolean | null;
+  /**
+   * Where the two renders differ, as fractions of the page.
+   *
+   * Passed to the model so it is told which part of a page to look at rather than left to find a
+   * small mark unaided - a logo removed from a dark cover came back described as a substitution
+   * with the drone's tail marking, which is what an unanchored glance at a 1200px render produces.
+   * Empty when the comparison could not be made.
+   */
+  changedRegions?: Array<{ x: number; y: number; width: number; height: number }>;
 };
 
 /** Max changed pages sent to the model, to keep the compare's cost bounded. */
@@ -217,57 +226,32 @@ export function computeChangedPages(params: {
 }
 
 /**
- * Pages the text and fingerprint passes did not flag, that a pixel comparison says did change.
+ * Compare the two renders of every page that has both, and return what differs, by page.
  *
- * Exists because the fingerprint is blind to small local edits by construction. See
- * `visualPageSweep` for the measurements behind that.
+ * One pass serving two needs. The pipeline asks "did anything change here" for pages the text and
+ * fingerprint passes left unflagged, because the fingerprint is a whole-page gradient score and
+ * cannot see a small local edit. The prompt asks "where", so the model is pointed at the region
+ * instead of hunting for it.
  */
-async function sweepUnflagged(params: {
-  changed: ChangedPage[];
-  prevSlideNodes: unknown;
-  nextSlideNodes: unknown;
-  prevPages: PdfPageText[];
-  newPages: PdfPageText[];
-}): Promise<ChangedPage[]> {
-  const prevSlides = slidesByPage(params.prevSlideNodes);
-  const nextSlides = slidesByPage(params.nextSlideNodes);
-  if (!prevSlides.size || !nextSlides.size) return [];
-
-  const already = new Set(params.changed.map((c) => c.pageNumber));
+async function analysePageRegions(params: {
+  prevSlides: Map<number, SlideInfo>;
+  nextSlides: Map<number, SlideInfo>;
+  pages: number[];
+}) {
   const candidates: SweepCandidate[] = [];
-  for (const [pageNumber, prev] of prevSlides) {
-    if (already.has(pageNumber)) continue;
-    const next = nextSlides.get(pageNumber);
-    if (!next) continue;
-    // The thumbnail is the right rendition here: the comparison is coarse by design, and it is a
-    // tenth of the bytes of the full render across a whole deck.
+  for (const pageNumber of params.pages) {
+    const prev = params.prevSlides.get(pageNumber);
+    const next = params.nextSlides.get(pageNumber);
+    if (!prev || !next) continue;
+    // The thumbnail is the right rendition: the comparison is coarse by design and it is a tenth
+    // of the bytes of the full render across a whole deck.
     const previousUrl = prev.thumbUrl ?? prev.imageUrl;
     const newUrl = next.thumbUrl ?? next.imageUrl;
     if (!previousUrl || !newUrl) continue;
     candidates.push({ pageNumber, previousUrl, newUrl });
   }
-  if (!candidates.length) return [];
-
-  const found = await sweepVisualChanges(candidates);
-  if (!found.size) return [];
-
-  const prevByPage = textByPage(params.prevPages);
-  const newByPage = textByPage(params.newPages);
-  return [...found]
-    .sort((a, b) => a - b)
-    .map((pageNumber) => {
-      const prev = prevSlides.get(pageNumber) ?? null;
-      const next = nextSlides.get(pageNumber) ?? null;
-      return {
-        pageNumber,
-        previousText: prevByPage.get(pageNumber) ?? "",
-        newText: newByPage.get(pageNumber) ?? "",
-        previousImageUrl: prev?.imageUrl ?? prev?.thumbUrl ?? null,
-        newImageUrl: next?.imageUrl ?? next?.thumbUrl ?? null,
-        // A pixel comparison found it, which is a stronger statement than the fingerprint's.
-        imageChanged: true,
-      } satisfies ChangedPage;
-    });
+  if (!candidates.length) return new Map();
+  return await sweepVisualChanges(candidates);
 }
 
 /**
@@ -301,33 +285,58 @@ export async function loadChangedPages(params: {
   });
 
   /**
-   * Second pass over the pages nothing flagged, looking at the pixels.
+   * Look at the pixels, for two reasons at once.
    *
-   * The perceptual fingerprint is a whole-page gradient score, so it cannot see a small local
-   * edit: a logo removed from a real cover moved 2 of its 256 bits against a threshold of 12 and a
-   * noise floor that reaches 7. Lowering the threshold would trade that miss for "artwork changed"
-   * on every re-upload. A region diff asks the question per cell instead, finds the same logo
-   * exactly, and returns nothing across re-encodes - see `visualPageSweep`.
+   * The pages nothing flagged still need checking: the perceptual fingerprint is a whole-page
+   * gradient score, so a logo removed from a real cover moved 2 of its 256 bits against a threshold
+   * of 12 and a noise floor that reaches 7. Lowering the threshold would trade that miss for
+   * "artwork changed" on every re-upload. A region diff asks per cell, finds the same logo exactly,
+   * and stays silent across re-encodes.
    *
-   * Only unflagged pages are swept, because a page whose text moved is already in the list. Purely
-   * additive and best-effort: a failure here leaves the text-derived answer exactly as it was.
+   * And the pages that were flagged need locating, so the model is told where to look rather than
+   * left to spot a small mark on its own.
+   *
+   * Best-effort: a failure here leaves the text-derived answer exactly as it was.
    */
-  const extra = await sweepUnflagged({
-    changed,
-    prevSlideNodes: params.prevUpload?.slideNodes,
-    nextSlideNodes: params.newUpload?.slideNodes,
-    prevPages,
-    newPages,
-  }).catch(() => [] as ChangedPage[]);
+  const prevSlides = slidesByPage(params.prevUpload?.slideNodes);
+  const nextSlides = slidesByPage(params.newUpload?.slideNodes);
+  const flagged = new Set(changed.map((c) => c.pageNumber));
+  const everyPage = [...new Set([...prevSlides.keys(), ...nextSlides.keys()])].sort((a, b) => a - b);
 
-  if (extra.length) {
-    const merged = [...changed, ...extra].sort((a, b) => a.pageNumber - b.pageNumber);
-    params.onTotal?.((totalChanged ?? changed.length) + extra.length);
-    return merged.slice(0, MAX_PAGE_CONTEXT);
+  const regions = await analysePageRegions({ prevSlides, nextSlides, pages: everyPage }).catch(() => new Map());
+  if (!regions.size) {
+    params.onTotal?.(totalChanged ?? changed.length);
+    return changed;
   }
 
-  params.onTotal?.(totalChanged ?? changed.length);
-  return changed;
+  const prevByPage = textByPage(prevPages);
+  const newByPage = textByPage(newPages);
+  const withRegions = changed.map((c) => {
+    const r = regions.get(c.pageNumber);
+    return r && !r.reflowed && r.boxes.length ? { ...c, changedRegions: r.boxes } : c;
+  });
+
+  const extra: ChangedPage[] = everyPage
+    .filter((pageNumber) => !flagged.has(pageNumber) && regionsMeanChanged(regions.get(pageNumber)))
+    .map((pageNumber) => {
+      const prev = prevSlides.get(pageNumber) ?? null;
+      const next = nextSlides.get(pageNumber) ?? null;
+      const r = regions.get(pageNumber);
+      return {
+        pageNumber,
+        previousText: prevByPage.get(pageNumber) ?? "",
+        newText: newByPage.get(pageNumber) ?? "",
+        previousImageUrl: prev?.imageUrl ?? prev?.thumbUrl ?? null,
+        newImageUrl: next?.imageUrl ?? next?.thumbUrl ?? null,
+        // A pixel comparison found it, which is a stronger statement than the fingerprint's.
+        imageChanged: true,
+        ...(r && !r.reflowed && r.boxes.length ? { changedRegions: r.boxes } : {}),
+      } satisfies ChangedPage;
+    });
+
+  params.onTotal?.((totalChanged ?? changed.length) + extra.length);
+  if (!extra.length) return withRegions;
+  return [...withRegions, ...extra].sort((a, b) => a.pageNumber - b.pageNumber).slice(0, MAX_PAGE_CONTEXT);
 }
 
 /**

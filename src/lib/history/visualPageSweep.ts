@@ -30,7 +30,7 @@
  */
 import sharp from "sharp";
 
-import { diffRegions } from "@/lib/history/pageDiffRegions";
+import { diffRegions, type DiffRegions } from "@/lib/history/pageDiffRegions";
 
 /** Width both renders are decoded to before comparing. Matches the viewer's own analysis width. */
 const ANALYSIS_WIDTH = 640;
@@ -60,8 +60,8 @@ async function decode(url: string, width: number, height: number): Promise<Uint8
   }
 }
 
-/** Decide one page by comparing its two renders. Null when either could not be read. */
-async function pageDiffers(c: SweepCandidate): Promise<boolean | null> {
+/** Compare one page's two renders. Null when either could not be read. */
+async function pageRegions(c: SweepCandidate): Promise<DiffRegions | null> {
   // The new render's shape sets the frame, and the previous one is letterboxed into it rather than
   // stretched: a page whose box changed would otherwise move every pixel and report as changed.
   let height = Math.round((ANALYSIS_WIDTH * 9) / 16);
@@ -73,21 +73,28 @@ async function pageDiffers(c: SweepCandidate): Promise<boolean | null> {
   }
   const [prev, next] = await Promise.all([decode(c.previousUrl, ANALYSIS_WIDTH, height), decode(c.newUrl, ANALYSIS_WIDTH, height)]);
   if (!prev || !next) return null;
-  const result = diffRegions(prev, next, ANALYSIS_WIDTH, height);
-  if (!result) return null;
-  // `reflowed` means the page changed so much that regions stop being useful - still a change.
-  return result.reflowed || result.boxes.length > 0;
+  return diffRegions(prev, next, ANALYSIS_WIDTH, height);
+}
+
+/** Did this page change at all? `reflowed` means it changed too much to box, which is still a change. */
+export function regionsMeanChanged(r: DiffRegions | null | undefined): boolean {
+  return Boolean(r && (r.reflowed || r.boxes.length > 0));
 }
 
 /**
- * Which of these pages actually differ visually.
+ * Where each of these pages differs, by page number.
  *
- * Best-effort throughout: a page whose renders cannot be fetched or decoded is simply absent from
- * the result rather than guessed at, because a wrong "changed" here costs the owner a compare they
- * did not need and a wrong "unchanged" is the bug this exists to fix.
+ * Serves two callers at once, which is why it returns the regions rather than a verdict. The
+ * pipeline uses "are there any" to catch pages the fingerprint missed; the prompt uses the
+ * rectangles themselves, so the model is told where to look on a page instead of being left to
+ * find a small mark unaided - which is how a removed logo came back described as a substitution.
+ *
+ * Best-effort throughout: a page whose renders cannot be fetched or decoded is simply absent
+ * rather than guessed at, because a wrong "changed" costs a compare nobody needed and a wrong
+ * "unchanged" is the bug this exists to fix.
  */
-export async function sweepVisualChanges(candidates: SweepCandidate[]): Promise<Set<number>> {
-  const changed = new Set<number>();
+export async function sweepVisualChanges(candidates: SweepCandidate[]): Promise<Map<number, DiffRegions>> {
+  const out = new Map<number, DiffRegions>();
   const queue = candidates.slice(0, MAX_PAGES);
   let cursor = 0;
 
@@ -96,11 +103,11 @@ export async function sweepVisualChanges(candidates: SweepCandidate[]): Promise<
       const i = cursor++;
       if (i >= queue.length) return;
       const c = queue[i];
-      const differs = await pageDiffers(c);
-      if (differs === true) changed.add(c.pageNumber);
+      const regions = await pageRegions(c);
+      if (regions) out.set(c.pageNumber, regions);
     }
   }
 
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker()));
-  return changed;
+  return out;
 }

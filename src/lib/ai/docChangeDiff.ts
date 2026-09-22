@@ -113,6 +113,28 @@ function fillUserPrompt(
     .trim();
 }
 
+/**
+ * Turn the measured difference rectangles into a sentence the model can act on.
+ *
+ * A vision model asked to find what changed on a page will find *something*, and on a dark cover
+ * carrying one small mark it found the wrong thing: a logo removed from the top-left came back
+ * described as a substitution involving the drone's tail marking, halfway down the page. It was
+ * not looking in the wrong way, it was looking everywhere.
+ *
+ * These rectangles come from a deterministic pixel comparison, so they are the one part of this
+ * prompt that cannot be imagined. Stated in plain fractions of the page - which is also why the
+ * model is never asked to *produce* coordinates, only to use them.
+ */
+function describeRegions(regions: unknown): string {
+  if (!Array.isArray(regions) || !regions.length) return "";
+  const pct = (v: unknown) => Math.round(Math.max(0, Math.min(1, typeof v === "number" ? v : 0)) * 100);
+  const parts = regions.slice(0, 6).map((r) => {
+    const o = (r ?? {}) as Record<string, unknown>;
+    return `${pct(o.width)}% by ${pct(o.height)}% of the page, ${pct(o.x)}% from the left and ${pct(o.y)}% from the top`;
+  });
+  return `CHANGED_REGIONS (measured, not guessed): ${parts.join("; ")}`;
+}
+
 function normalizePageText(input: string, max: number): string {
   return (input ?? "")
     .replace(/\s+/g, " ")
@@ -163,6 +185,8 @@ export async function runDocChangeDiff(input: {
     previousImageUrl?: string | null;
     newImageUrl?: string | null;
     imageChanged?: boolean | null;
+    /** Where the two renders differ, as fractions of the page. See `describeRegions`. */
+    changedRegions?: Array<{ x: number; y: number; width: number; height: number }> | null;
   }>;
   /**
    * Page counts for the two versions, when the caller knows them.
@@ -277,7 +301,10 @@ export async function runDocChangeDiff(input: {
             `PREVIOUS: ${prev || "[empty]"}`,
             `NEW: ${next || "[empty]"}`,
             imgHint,
-          ].join("\n");
+            describeRegions(p.changedRegions),
+          ]
+            .filter(Boolean)
+            .join("\n");
         })
         .filter(Boolean)
         .join("\n\n---\n\n")

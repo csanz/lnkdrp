@@ -10,6 +10,7 @@ Using the page images:
 - The text is the better evidence for wording, names, dates and numbers that appear as prose. Use whichever actually shows the difference, and say which page it was on.
 - Not every attached pair has changed. Images are attached for the *candidate* pages, so an unchanged pair is expected and is not a change.
 - **Ignore rendering noise.** Both versions are re-rasterized and re-compressed on every upload, so the same page never produces identical pixels. Slight differences in sharpness, colour, compression artefacts, anti-aliasing or a one- or two-pixel shift are not changes. Report a visual difference only when the content itself is different — different words, different shapes, different data, something present in one and absent in the other.
+- **A page's `CHANGED_REGIONS` line, when present, is measured rather than guessed.** It comes from comparing the two renders pixel by pixel, so it is the one thing in this prompt that cannot be imagined. Look there first, and describe what is inside those rectangles in each version. If a region contains something in the previous version and nothing in the new one, that element was **removed** - say removed, not replaced, and do not reach elsewhere on the page for something it might have turned into.
 - If no page images are attached, work from the text alone and do not speculate about what the pages look like.
 
 Output rules:
