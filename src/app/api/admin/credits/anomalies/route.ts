@@ -49,6 +49,14 @@ type AnomalyItem = AdminCreditAnomaly & {
   plan: AdminCreditPlan | null;
   /** When the offending row was last written, where the source has a timestamp. */
   at: string | null;
+  /**
+   * The ledger row this anomaly *is*, where there is one.
+   *
+   * Only `stale_pending` has it. The rest describe a state — a negative bucket, a plan that should
+   * not hold on-demand — which is not one row anyone can put right in a single call, so there is
+   * nothing for the table to offer and the field stays absent.
+   */
+  ledgerId?: string;
 };
 
 type BalanceLean = {
@@ -209,6 +217,9 @@ export async function GET(request: Request) {
     const workspaceId = String(r.workspaceId ?? "");
     const created = r.createdDate instanceof Date ? r.createdDate : null;
     items.push({
+      // The row's own id, so the table can offer Release. Every other anomaly is a state to read
+      // and act on elsewhere; this one names a single row that can be put right in one call.
+      ledgerId: String(r._id ?? ""),
       code: "stale_pending",
       severity: "high",
       reason:

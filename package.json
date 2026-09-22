@@ -48,6 +48,7 @@
     "sharelinks:analytics-backfill": "tsx --env-file=.env.local scripts/sharelinks-analytics-backfill.ts",
     "cron:analytics-reconcile": "tsx --env-file=.env.local scripts/cron/cron.analytics-reconcile.ts",
     "cron:credits-purchase-expiry": "tsx --env-file=.env.local scripts/cron/cron.credits-purchase-expiry.ts",
+    "cron:credits-stale-reservations": "tsx --env-file=.env.local scripts/cron/cron.credits-stale-reservations.ts",
     "cron:account-purge": "tsx --env-file=.env.local scripts/cron/cron.account-purge.ts",
     "test:account-deletion": "tsx --env-file=.env.local scripts/test-account-deletion.ts",
     "reset": "tsx --env-file=.env.local scripts/reset-local.ts",

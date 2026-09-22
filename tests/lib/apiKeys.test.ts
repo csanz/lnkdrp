@@ -94,7 +94,11 @@ describe("agents/apiKeys key format", () => {
     const k = generateApiKeyPlaintext();
     expect(hashApiKey(k)).toBe(createHash("sha256").update(k).digest("hex"));
     expect(hashApiKey(k)).toHaveLength(64);
-    expect(hashApiKey(k)).not.toBe(hashApiKey(`${k.slice(0, -1)}x`));
+    // The altered character has to differ from the one it replaces. Hard-coding "x" made this a
+    // roughly 1-in-60 flake: a generated key already ending in "x" compared a string with itself,
+    // and the hashes were equal because they were hashes of the same key.
+    const last = k.slice(-1);
+    expect(hashApiKey(k)).not.toBe(hashApiKey(`${k.slice(0, -1)}${last === "x" ? "y" : "x"}`));
   });
 
   test("apiKeyPrefix keeps the first 12 chars", () => {

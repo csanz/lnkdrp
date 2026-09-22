@@ -142,6 +142,8 @@ type AnomalyRow = {
   workspaceName: string | null;
   plan: AdminCreditPlan | null;
   at: string | null;
+  /** Only `stale_pending` carries one: the single row that can be put right from here. */
+  ledgerId?: string | null;
 };
 
 type AnomalyScan = {
@@ -249,6 +251,8 @@ export default function AdminCreditsPage() {
   const [anomalyScan, setAnomalyScan] = useState<AnomalyScan | null>(null);
   const [anomaliesLoading, setAnomaliesLoading] = useState(false);
   const [anomaliesError, setAnomaliesError] = useState<string | null>(null);
+  /** The row whose Release is in flight, so only that button reads as busy. */
+  const [releasingLedgerId, setReleasingLedgerId] = useState<string | null>(null);
 
   // Balances.
   const [balances, setBalances] = useState<BalanceRow[]>([]);
@@ -512,6 +516,35 @@ export default function AdminCreditsPage() {
     }
   }
 
+  /**
+   * Give back one stale reservation's credits.
+   *
+   * The hourly sweeper does this on its own; this is for when an operator is already looking at
+   * the row. Both go through the same transactional refund, which does nothing to a row that has
+   * settled in the meantime, so a double press cannot refund twice. The list is reloaded rather
+   * than patched in place: whatever the row's new state is, it should come from the server.
+   */
+  async function releaseReservation(ledgerId: string) {
+    setReleasingLedgerId(ledgerId);
+    setAnomaliesError(null);
+    try {
+      const res = await fetchJson<{ released?: unknown; creditsReturned?: unknown }>("/api/admin/credits/release", {
+        method: "POST",
+        body: JSON.stringify({ ledgerId }),
+      });
+      setSuccess(
+        res.released
+          ? `Released ${Number(res.creditsReturned) || 0} credits back to the workspace.`
+          : "That reservation had already settled; nothing was returned.",
+      );
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setAnomaliesError(e instanceof Error ? e.message : "Failed to release that reservation");
+    } finally {
+      setReleasingLedgerId(null);
+    }
+  }
+
   /** Point every scoped panel and the tools at one workspace (empty string = the whole fleet). */
   function scopeTo(ws: string) {
     setWorkspaceId(ws);
@@ -713,6 +746,15 @@ export default function AdminCreditsPage() {
                 </AdminTd>
                 <AdminTd align="right" sticky actions>
                   <RowActions>
+                    {a.code === "stale_pending" && a.ledgerId ? (
+                      <RowAction
+                        onClick={() => void releaseReservation(a.ledgerId!)}
+                        disabled={releasingLedgerId !== null}
+                        title="Give these credits back now, rather than waiting for the hourly sweep"
+                      >
+                        {releasingLedgerId === a.ledgerId ? "Releasing…" : "Release"}
+                      </RowAction>
+                    ) : null}
                     <RowAction onClick={() => scopeTo(a.workspaceId)} title="Scope this page to that workspace">
                       Scope
                     </RowAction>

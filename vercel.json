@@ -37,6 +37,10 @@
       "schedule": "5 4 * * *"
     },
     {
+      "path": "/api/cron/credits-stale-reservations",
+      "schedule": "25 * * * *"
+    },
+    {
       "path": "/api/cron/account-purge",
       "schedule": "30 4 * * *"
     }
