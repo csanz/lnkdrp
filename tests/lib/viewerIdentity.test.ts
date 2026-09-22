@@ -32,18 +32,26 @@ const projectUpdateMany = vi.fn(async (_filter: Record<string, any>, _update: Re
 const shareViewPrior = vi.fn(async () => null as unknown);
 const projectPrior = vi.fn(async () => null as unknown);
 const chain = (leaf: () => Promise<unknown>) => ({ select: () => ({ sort: () => ({ lean: leaf }) }) });
+/** The filters the two prior-identity lookups issue, so a test can assert the query itself. */
+const priorFilters = { share: null as Record<string, any> | null, project: null as Record<string, any> | null };
 
 vi.mock("@/lib/models/ShareView", () => ({
   ShareViewModel: {
     updateMany: (filter: Record<string, any>, update: Record<string, any>) => updateMany(filter, update),
-    findOne: () => chain(shareViewPrior),
+    findOne: (f: Record<string, any>) => {
+      priorFilters.share = f;
+      return chain(shareViewPrior);
+    },
   },
 }));
 
 vi.mock("@/lib/models/ProjectLinkView", () => ({
   ProjectLinkViewModel: {
     updateMany: (filter: Record<string, any>, update: Record<string, any>) => projectUpdateMany(filter, update),
-    findOne: () => chain(projectPrior),
+    findOne: (f: Record<string, any>) => {
+      priorFilters.project = f;
+      return chain(projectPrior);
+    },
   },
 }));
 
@@ -259,5 +267,58 @@ describe("viewerIdentityNews", () => {
   test("a failed read announces nothing: a duplicate row is worse than a missing one", async () => {
     shareViewPrior.mockRejectedValue(new Error("mongo is having a moment"));
     expect(await ask()).toEqual({ isNew: false, changed: false });
+  });
+});
+
+/**
+ * An introduction is news once.
+ *
+ * Found on 2026-09-22 by a fan-out audit of a seeded workspace: one reader's `viewer.introduced`
+ * appeared twice for the same link, both with `changed: false` - announced as a first-time
+ * introduction on a repeat visit. The lookup took the newest row of any kind and only then
+ * discarded it for carrying no identity, so a single nameless row newer than the introduction was
+ * enough to answer "never heard of them". That is the normal case: an unconfirmed name is written
+ * only to the link it was typed on, so every other link the reader opens leaves a newer nameless
+ * row.
+ */
+describe("viewerIdentityNews asks for the newest row that names the reader", () => {
+  beforeEach(() => {
+    priorFilters.share = null;
+    priorFilters.project = null;
+    shareViewPrior.mockResolvedValue(null);
+    projectPrior.mockResolvedValue(null);
+  });
+
+  test("both lookups restrict to rows carrying a name or an email", async () => {
+    await viewerIdentityNews({ shareId: "abc", botIdHash: DIGEST, orgId: ORG_ID, name: "Roelof Botha", email: null });
+
+    const carries = (clause: any) =>
+      Array.isArray(clause) &&
+      clause.some((c: any) => c.viewerName) &&
+      clause.some((c: any) => c.viewerEmailSnapshot);
+
+    // ShareView: the person clause and the identity clause are ANDed, so neither can be dropped.
+    const share = priorFilters.share!;
+    expect(Array.isArray(share.$and)).toBe(true);
+    expect(share.$and.some((c: any) => carries(c.$or))).toBe(true);
+    // ProjectLinkView is keyed on the bare digest, so it needs only the identity clause.
+    expect(carries(priorFilters.project!.$or)).toBe(true);
+  });
+
+  test("a reader already on record is not announced again", async () => {
+    shareViewPrior.mockResolvedValue({ viewerName: "Roelof Botha", viewerEmailSnapshot: null });
+    const news = await viewerIdentityNews({ shareId: "abc", botIdHash: DIGEST, orgId: ORG_ID, name: "Roelof Botha", email: null });
+    expect(news).toEqual({ isNew: false, changed: false });
+  });
+
+  test("a genuinely new reader is still announced", async () => {
+    const news = await viewerIdentityNews({ shareId: "abc", botIdHash: DIGEST, orgId: ORG_ID, name: "Dana Whitfield", email: null });
+    expect(news.isNew).toBe(true);
+  });
+
+  test("a corrected name is a change, not a new introduction", async () => {
+    shareViewPrior.mockResolvedValue({ viewerName: "R. Botha", viewerEmailSnapshot: null });
+    const news = await viewerIdentityNews({ shareId: "abc", botIdHash: DIGEST, orgId: ORG_ID, name: "Roelof Botha", email: null });
+    expect(news).toEqual({ isNew: false, changed: true });
   });
 });

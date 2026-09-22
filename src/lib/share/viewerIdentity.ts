@@ -112,7 +112,22 @@ export async function viewerIdentityNews({
   // we announced this person before", and narrowing it would put the same introduction in the feed
   // once per link the reader touches. Nothing is stamped on a row from here.
   const scope = orgId ? { orgId } : { shareId };
-  const person = { ...scope, $or: viewerKeyMatchClause(viewerKey) };
+  /**
+   * "The newest row that actually names them", not "the newest row".
+   *
+   * The sort picked the most recent row of any kind and the filter below then threw it away when it
+   * carried no identity — so one nameless row newer than the introduction was enough to make this
+   * answer "never heard of them". That is the normal case, not an edge one: `identityFanOutScope`
+   * writes an unconfirmed name only to the link it was typed on, so every *other* link the reader
+   * opens leaves a newer, nameless row. Introduce yourself on link A, read link B, come back to A,
+   * and the same first introduction is announced again — twice in the feed with `changed: false`
+   * on both, and the confirmation mail re-armed with it (stats/route.ts, the isNew branch).
+   *
+   * Pushing the predicate into the query keeps the indexed `lastViewedAt` sort and cannot be
+   * defeated by whatever the reader happens to open next.
+   */
+  const carriesIdentity = [{ viewerName: { $nin: [null, ""] } }, { viewerEmailSnapshot: { $nin: [null, ""] } }];
+  const person = { ...scope, $and: [{ $or: viewerKeyMatchClause(viewerKey) }, { $or: carriesIdentity }] };
   const select = { viewerName: 1, viewerEmailSnapshot: 1 } as const;
 
   try {
@@ -124,10 +139,14 @@ export async function viewerIdentityNews({
       // past 32MB, threw — and the catch below turns a throw into "not news", so the event simply
       // stopped firing for exactly the workspaces with the most readers.
       ShareViewModel.findOne(person).select(select).sort({ lastViewedAt: -1 }).lean(),
-      ProjectLinkViewModel.findOne({ ...scope, botIdHash: viewerKey }).select(select).sort({ lastViewedAt: -1 }).lean(),
+      ProjectLinkViewModel.findOne({ ...scope, botIdHash: viewerKey, $or: carriesIdentity })
+        .select(select)
+        .sort({ lastViewedAt: -1 })
+        .lean(),
     ]);
     const priors = [read, landed].filter(Boolean) as Array<{ viewerName?: string | null; viewerEmailSnapshot?: string | null }>;
-    // Nobody has ever heard of them here.
+    // Nobody has ever heard of them here. The query above already restricts to rows carrying an
+    // identity; this stays as a guard so a relaxed filter cannot silently re-introduce the bug.
     const known = priors.filter((p) => p.viewerName || p.viewerEmailSnapshot);
     if (!known.length) return { isNew: true, changed: false };
     // Already carrying exactly this: a replayed heartbeat, not an introduction.
