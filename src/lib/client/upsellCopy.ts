@@ -10,7 +10,7 @@
  * request), agents never take a seat.
  */
 import type { PlanLimitKey } from "@/lib/client/planLimit";
-import { CREDITS_COPY, comparesFor } from "@/lib/client/planNumbers";
+import { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, comparesFor } from "@/lib/client/planNumbers";
 
 /** Which upsell to show. `pro` is the generic pitch (sidebar link, no wall hit); the next five mirror API limit keys; `credits` is passive. */
 export type UpsellKey =
@@ -38,7 +38,15 @@ export type UpsellCopy = {
 /** Shown in the modal price line when `/api/billing/status` has no `proPriceLabel` (or is unavailable). */
 export const PRO_PRICE_FALLBACK = "$29/mo";
 
-/** Copy per upsell key. Keep numbers in sync with `/pricing`. */
+/**
+ * Copy per upsell key.
+ *
+ * Every plan number here is interpolated from `planNumbers.ts` rather than written out.
+ * `tests/lib/planCopyMirror.test.ts` keeps that module equal to the server constants, but it could
+ * not see this file: the numbers lived inside prose, so raising the Free cap to 10 documents and
+ * Pro to 500 credits left the upgrade modal telling people they had 3 documents and 300 credits —
+ * the one screen whose whole job is explaining what they get for paying.
+ */
 export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
   pro: {
     title: "Pro is for sending every day",
@@ -46,7 +54,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     bullets: [
       "Unlimited documents, share links and projects",
       "Deep analytics: who opened it, time per page, full history",
-      "300 AI credits a month, and a version list recipients can browse",
+      `${CREDITS_COPY.proPerMonth} AI credits a month, and a version list recipients can browse`,
     ],
     secondaryLabel: "Compare plans",
   },
@@ -55,14 +63,14 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     reason: "Your own version history and AI compare work on every plan. On Pro, the people you share with can open earlier versions and see what changed.",
     bullets: [
       "A version list on the share page, with what changed in each",
-      "300 AI credits a month for summaries and compares",
+      `${CREDITS_COPY.proPerMonth} AI credits a month for summaries and compares`,
       "Unlimited documents, projects and deep analytics",
     ],
     secondaryLabel: "Compare plans",
   },
   documents: {
     title: "You're at the Free document limit",
-    reason: "Free workspaces can share 3 documents. Each one can carry as many links as you need. Pro removes the cap on documents.",
+    reason: `Free workspaces can share ${FREE_PLAN_LIMITS_COPY.documents} documents. Each one can carry as many links as you need. Pro removes the cap on documents.`,
     bullets: [
       "Unlimited links per document, one per investor",
       "Unlimited shared documents and projects across the workspace",
@@ -71,8 +79,8 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     secondaryLabel: "Manage documents",
   },
   projects: {
-    title: "Projects are limited to 1 on Free",
-    reason: "Free workspaces get one project; Pro lets you create as many as you need.",
+    title: `Projects are limited to ${FREE_PLAN_LIMITS_COPY.projects} on Free`,
+    reason: `Free workspaces get ${FREE_PLAN_LIMITS_COPY.projects} projects; Pro lets you create as many as you need.`,
     bullets: [
       "Unlimited projects",
       "Unlimited shared documents",

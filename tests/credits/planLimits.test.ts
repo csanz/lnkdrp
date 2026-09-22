@@ -143,7 +143,11 @@ describe("billing/planLimits checkLimit", () => {
       ok: false,
       code: "plan_limit",
       limit: "documents",
-      used: FREE_DOCUMENTS + 1,
+      // `used` is what the workspace HOLDS, not what the refused write would have taken it to —
+      // the old `current + adding` reported a state the workspace had never been in, wrote it into
+      // the activity feed, and disagreed with GET /api/plan in the same minute.
+      used: FREE_DOCUMENTS,
+      requested: 1,
       max: FREE_DOCUMENTS,
       grace: null,
       upgradeUrl: "/pricing",
@@ -156,7 +160,10 @@ describe("billing/planLimits checkLimit", () => {
     const check = await checkLimit(ORG_ID, "documents", { adding: FREE_DOCUMENTS + 2 });
     expect(check.ok).toBe(false);
     if (check.ok) throw new Error("expected blocked");
-    expect(check.used).toBe(FREE_DOCUMENTS + 2);
+    // The workspace holds nothing; the refused write asked for twelve. Reporting `used: 12` said
+    // it held twelve, which is the state it was refused for reaching.
+    expect(check.used).toBe(0);
+    expect(check.requested).toBe(FREE_DOCUMENTS + 2);
   });
 
   test("collaborators: Free workspace with only the owner cannot add one", async () => {
@@ -165,7 +172,9 @@ describe("billing/planLimits checkLimit", () => {
     expect(check.ok).toBe(false);
     if (check.ok) throw new Error("expected blocked");
     expect(check.limit).toBe("collaborators");
-    expect(check.used).toBe(1);
+    // Only the owner: zero collaborators held, one requested.
+    expect(check.used).toBe(0);
+    expect(check.requested).toBe(1);
     expect(check.max).toBe(0);
     expect(check.message).toMatch(/single-user/i);
   });
@@ -183,7 +192,8 @@ describe("billing/planLimits checkLimit", () => {
       ok: true,
       warning: {
         limit: "documents",
-        used: FREE_DOCUMENTS + 6,
+        used: FREE_DOCUMENTS + 5,
+        requested: 1,
         max: FREE_DOCUMENTS,
         grace: { startedAt: startedAt.toISOString(), endsAt: endsAt.toISOString(), blockedAt: null },
       },
@@ -257,6 +267,7 @@ describe("billing/planLimits checkLimit version_history (feature gate)", () => {
       code: "plan_limit",
       limit: "version_history",
       used: 0,
+      requested: 0,
       max: 0,
       grace: null,
       upgradeUrl: "/pricing",
@@ -310,6 +321,7 @@ describe("billing/planLimits checkLimit analytics_history (feature gate)", () =>
       code: "plan_limit",
       limit: "analytics_history",
       used: 0,
+      requested: 0,
       max: 0,
       grace: null,
       upgradeUrl: "/pricing",
@@ -401,7 +413,11 @@ describe("billing/planLimits planLimitResponse", () => {
       message: check.message,
       code: "plan_limit",
       limit: "documents",
-      used: FREE_DOCUMENTS + 1,
+      // `used` is what the workspace HOLDS, not what the refused write would have taken it to —
+      // the old `current + adding` reported a state the workspace had never been in, wrote it into
+      // the activity feed, and disagreed with GET /api/plan in the same minute.
+      used: FREE_DOCUMENTS,
+      requested: 1,
       max: FREE_DOCUMENTS,
       grace: null,
       upgradeUrl: "/pricing",

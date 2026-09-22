@@ -14,6 +14,7 @@
  * number, so a deliberate pricing change stays a one-line edit on each side and an accidental
  * one-sided edit fails here.
  */
+import { UPSELL_COPY } from "@/lib/client/upsellCopy";
 import { describe, expect, test, vi } from "vitest";
 
 import { CREDITS_COPY, COMPARE_CREDITS, FREE_PLAN_LIMITS_COPY } from "@/lib/client/planNumbers";
@@ -52,5 +53,37 @@ describe("client copy mirrors the server plan constants", () => {
     expect(CREDITS_COPY.freeStarter).toBe(FREE_STARTER_CREDITS);
     expect(CREDITS_COPY.proPerMonth).toBe(INCLUDED_CREDITS_PER_CYCLE);
     expect(CREDITS_COPY.freeDailyCap).toBe(FREE_DAILY_CREDIT_CAP);
+  });
+});
+
+describe("the upgrade modal quotes the same numbers", () => {
+  /**
+   * The mirror test above compares `planNumbers.ts` to the server constants, and that was enough
+   * right up until it wasn't: `upsellCopy.ts` wrote the same numbers out inside prose, where no
+   * comparison could see them. Raising Free to 10 documents and Pro to 500 credits left the upgrade
+   * modal — the one screen whose entire job is explaining what you get for paying — still saying 3
+   * documents and 300 credits.
+   *
+   * These assert the rendered strings carry the current numbers and none of the retired ones, so
+   * the prose cannot drift from the constants it is describing.
+   */
+  test("no upsell string quotes a retired plan number", () => {
+    const blob = JSON.stringify(UPSELL_COPY);
+    for (const stale of ["3 documents", "300 AI credits", "300 credits", "limited to 1 on Free", "get one project"]) {
+      expect(blob, `retired copy still present: ${stale}`).not.toContain(stale);
+    }
+  });
+
+  test("the document and project caps come from the mirror", () => {
+    const docs = UPSELL_COPY.documents;
+    expect(docs.reason).toContain(`${FREE_PLAN_LIMITS_COPY.documents} documents`);
+    const projects = UPSELL_COPY.projects;
+    expect(projects.title).toContain(String(FREE_PLAN_LIMITS_COPY.projects));
+    expect(projects.reason).toContain(`${FREE_PLAN_LIMITS_COPY.projects} projects`);
+  });
+
+  test("the Pro credit allowance comes from the mirror", () => {
+    const blob = JSON.stringify(UPSELL_COPY);
+    expect(blob).toContain(`${CREDITS_COPY.proPerMonth} AI credits a month`);
   });
 });
