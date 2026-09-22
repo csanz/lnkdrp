@@ -11,10 +11,11 @@
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: "x" }), { status: 200 }));
+const fetchMock = vi.fn(async (..._args: unknown[]) => new Response(JSON.stringify({ id: "x" }), { status: 200 }));
 
 function sentFrom(): string {
-  const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string);
+  const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+  const body = JSON.parse(String(init?.body ?? "{}"));
   return body.from as string;
 }
 

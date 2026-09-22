@@ -9,6 +9,7 @@
  * Usage:
  *   npx tsx --env-file=.env.local scripts/send-test-emails.ts --list
  *   npx tsx --env-file=.env.local scripts/send-test-emails.ts --to=you@example.com
+ *   ... --to=you@example.com --all          # every variant, not one per template
  *   ... --to=you@example.com --only=share_views.immediate,plan_limit
  *   ... --to=you@example.com --raw        # exact subjects, no [TEST] prefix
  *   ... --to=you@example.com --dry-run
@@ -42,10 +43,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function listTemplates(rows: PreviewRow[]) {
   const covered = new Set(rows.map((r) => r.catalogId));
-  console.log(`\n${rows.length} renderable template${rows.length === 1 ? "" : "s"}:\n`);
-  for (const r of rows) {
-    console.log(`  ${r.catalogId.padEnd(28)} ${r.label}`);
-    console.log(`  ${"".padEnd(28)} ${r.subject}`);
+  const byId = new Map<string, PreviewRow[]>();
+  for (const r of rows) byId.set(r.catalogId, [...(byId.get(r.catalogId) ?? []), r]);
+
+  console.log(`\n${byId.size} template${byId.size === 1 ? "" : "s"}, ${rows.length} fixtures.`);
+  console.log(`A plain run sends the first of each; --all sends every one.\n`);
+  for (const [id, group] of byId) {
+    console.log(`  ${id}`);
+    group.forEach((r, i) => {
+      // The marker says which one a plain run would actually send.
+      console.log(`    ${i === 0 ? "*" : " "} ${r.key.padEnd(38)} ${r.label}`);
+      console.log(`      ${"".padEnd(38)} ${r.subject}`);
+    });
   }
   const missing = EMAIL_CATALOG.filter((c) => !covered.has(c.id));
   if (missing.length) {
@@ -67,11 +76,32 @@ async function main() {
   }
 
   const only = (flag("only") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const chosen = only.length ? rows.filter((r) => only.includes(r.catalogId) || only.includes(r.key)) : rows;
-  if (!chosen.length) {
+  const matched = only.length ? rows.filter((r) => only.includes(r.catalogId) || only.includes(r.key)) : rows;
+  if (!matched.length) {
     console.error(`No template matched --only=${only.join(",")}. Run with --list.`);
     process.exit(2);
   }
+
+  /**
+   * One email per template, unless you ask for more.
+   *
+   * Several templates carry more than one fixture, because the same builder produces materially
+   * different mail depending on what it is given — a welcome with a name and one without, a
+   * plan-limit warning at three stages. Those exist so the previews page can show the cases, and
+   * sending all of them means the inbox gets two near-identical welcomes and you have to work out
+   * which is which. Reviewing the copy is the normal reason to run this, and for that one per
+   * template is the whole point; `--all` is there for the day you want to compare the variants.
+   */
+  const variants = flag("all") !== null;
+  const seen = new Set<string>();
+  const chosen = variants
+    ? matched
+    : matched.filter((r) => {
+        if (seen.has(r.catalogId)) return false;
+        seen.add(r.catalogId);
+        return true;
+      });
+  const hidden = matched.length - chosen.length;
 
   const dryRun = flag("dry-run") !== null;
   // Off by default: the prefix is what stops a stray test looking like a live notification, so
@@ -87,7 +117,10 @@ async function main() {
     console.log("Unset EMAIL_TRANSPORT for a real send.\n");
   }
 
-  console.log(`\n${dryRun ? "Would send" : "Sending"} ${chosen.length} template(s) to ${to}\n`);
+  console.log(`\n${dryRun ? "Would send" : "Sending"} ${chosen.length} email(s) to ${to}`);
+  // Never silently: a count that hides what it dropped reads as full coverage when it is not.
+  if (hidden > 0) console.log(`${hidden} extra variant(s) skipped — pass --all to include them.`);
+  console.log("");
 
   // Imported here, not at module scope: `--list` and `--dry-run` must work without a Resend key.
   const { sendTextEmail } = await import("@/lib/email/sendTextEmail");
