@@ -51,6 +51,22 @@ const EXPLAINERS: Record<string, Explainer> = {
     note:
       "Who the reader is can only be shown on Pro. On Free the email says which link was opened and when, without naming anyone.",
   },
+  docUploads: {
+    title: "When a teammate adds a document",
+    trigger:
+      "Someone else in this workspace uploads a new document. Your own uploads never send you anything — you were there.",
+    options: [
+      { label: "Off", what: "Nothing is sent. The document still appears in the workspace and in the activity feed." },
+      {
+        label: "Daily digest",
+        what: "One email at the end of the UTC day listing everything your teammates added since the last one.",
+      },
+      { label: "Immediately", what: "Within about five minutes of the upload finishing." },
+    ],
+    contains: ["Who added it", "The document's name and how many pages it has", "A link straight to it"],
+    note:
+      "A personal workspace never sends these: it has one member, and that member is always the person who uploaded.",
+  },
   docUpdates: {
     title: "Doc update emails",
     trigger:

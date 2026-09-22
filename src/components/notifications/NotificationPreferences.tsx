@@ -15,7 +15,7 @@ import { ORGS_CACHE_UPDATED_EVENT } from "@/lib/orgsCache";
 const FEATURE_REQUESTS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
 
 type Mode = "off" | "daily" | "immediate";
-type PrefKey = "viewEmailMode" | "docUpdateEmailMode" | "repoLinkRequestEmailMode";
+type PrefKey = "viewEmailMode" | "docUpdateEmailMode" | "docUploadEmailMode" | "repoLinkRequestEmailMode";
 
 type PrefsResponse = {
   ok: true;
@@ -27,6 +27,7 @@ type PrefsResponse = {
 export default function NotificationPreferences() {
   const [viewMode, setViewMode] = useState<Mode>("daily");
   const [docMode, setDocMode] = useState<Mode>("daily");
+  const [uploadMode, setUploadMode] = useState<Mode>("daily");
   const [repoMode, setRepoMode] = useState<Mode>("daily");
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<PrefKey | null>(null);
@@ -44,11 +45,13 @@ export default function NotificationPreferences() {
         const json = (await res.json()) as PrefsResponse | any;
         const nextView = typeof json?.viewEmailMode === "string" ? (json.viewEmailMode as Mode) : "daily";
         const nextDoc = typeof json?.docUpdateEmailMode === "string" ? (json.docUpdateEmailMode as Mode) : "daily";
+        const nextUpload = typeof json?.docUploadEmailMode === "string" ? (json.docUploadEmailMode as Mode) : "daily";
         const nextRepo =
           typeof json?.repoLinkRequestEmailMode === "string" ? (json.repoLinkRequestEmailMode as Mode) : "daily";
         if (!cancelled) {
           setViewMode(nextView);
           setDocMode(nextDoc);
+          setUploadMode(nextUpload);
           setRepoMode(nextRepo);
         }
       } catch (e) {
@@ -79,6 +82,7 @@ export default function NotificationPreferences() {
       if (!res.ok) throw new Error("Failed to save");
       if (key === "viewEmailMode") setViewMode(next);
       if (key === "docUpdateEmailMode") setDocMode(next);
+    if (key === "docUploadEmailMode") setUploadMode(next);
       if (key === "repoLinkRequestEmailMode") setRepoMode(next);
       setSavedKey(key);
       setTimeout(() => setSavedKey(null), 1500);
@@ -146,6 +150,35 @@ export default function NotificationPreferences() {
               <option value="immediate">Immediately</option>
             </select>
             {savedKey === "docUpdateEmailMode" ? (
+              <span className="text-[12px] font-medium text-emerald-600">Saved</span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <div className="text-[13px] font-semibold text-[var(--fg)]">New documents from teammates</div>
+              <PreferenceExplainer topic="docUploads" />
+            </div>
+            <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
+              Get notified when someone else in this workspace adds a document.
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <select
+              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--fg)]"
+              value={uploadMode}
+              disabled={loading || savingKey !== null}
+              onChange={(e) => void save("docUploadEmailMode", e.target.value as Mode)}
+              aria-label="New document email preference"
+            >
+              <option value="off">Off</option>
+              <option value="daily">Daily digest</option>
+              <option value="immediate">Immediately</option>
+            </select>
+            {savedKey === "docUploadEmailMode" ? (
               <span className="text-[12px] font-medium text-emerald-600">Saved</span>
             ) : null}
           </div>

@@ -167,18 +167,33 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
     previewNote: null,
     flagGated: null,
   },
+  "doc_upload.immediate": {
+    trace: "run_totals",
+    traceNote:
+      "Recorded per member as a NotificationQueue row (kind doc_uploads), enqueued by the upload processor on the non-replacement path and skipping the uploader; the row's status is the delivery record. The run reports totals, not per-message outcomes.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
+  "doc_upload.daily": {
+    trace: "run_totals",
+    traceNote: "The same queue rows folded into one end-of-day email; each row still carries its own sent/skipped/dead.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
   "doc_update.immediate": {
     trace: "run_totals",
     traceNote: DOC_RUN_NOTE,
-    previewable: false,
-    previewNote: INLINE_NOTE,
+    previewable: true,
+    previewNote: null,
     flagGated: null,
   },
   "doc_update.daily": {
     trace: "run_totals",
     traceNote: DOC_RUN_NOTE,
-    previewable: false,
-    previewNote: INLINE_NOTE,
+    previewable: true,
+    previewNote: null,
     flagGated: null,
   },
   "repo_link_request.immediate": {

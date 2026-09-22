@@ -30,6 +30,8 @@ export const EMAIL_CATALOG: readonly {
   { id: "plan_limit", what: "A Free workspace is over a plan limit (grace, then blocked)", to: "owner", builtBy: "email/sendPlanLimitEmail.ts" },
   { id: "share_views.immediate", what: "A recipient opened a share link", to: "member", builtBy: "notifications/sendNotificationEmails.ts" },
   { id: "share_views.daily", what: "Daily digest of recipient opens", to: "member", builtBy: "notifications/sendNotificationEmails.ts" },
+  { id: "doc_upload.immediate", what: "A teammate added a new document to the workspace", to: "member", builtBy: "notifications/docUploadEmail.ts" },
+  { id: "doc_upload.daily", what: "Daily digest of documents teammates added", to: "member", builtBy: "notifications/docUploadEmail.ts" },
   { id: "doc_update.immediate", what: "A document was replaced and what changed", to: "member", builtBy: "notifications/sendNotificationEmails.ts" },
   { id: "doc_update.daily", what: "Daily digest of document updates", to: "member", builtBy: "notifications/sendNotificationEmails.ts" },
   { id: "repo_link_request.immediate", what: "A repository link was requested or needs review (request repos, behind a flag)", to: "member", builtBy: "notifications/sendNotificationEmails.ts" },
