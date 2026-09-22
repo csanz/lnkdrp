@@ -40,6 +40,7 @@
     "tests:upload:vitest": "vitest run --config tests/upload/vitest.config.ts",
     "tests:credits:vitest": "vitest run --config tests/credits/vitest.config.ts",
     "tests:lib:vitest": "vitest run --config tests/lib/vitest.config.ts",
+    "measure:image-tokens": "tsx --env-file=.env.local scripts/measure-image-tokens.ts",
     "tests:routes": "node scripts/tests-routes.mjs",
     "tests:benchmark": "tsx scripts/tests-benchmark.ts",
     "audit:blob-urls": "tsx --env-file=.env.local scripts/audit-stored-blob-urls.ts",

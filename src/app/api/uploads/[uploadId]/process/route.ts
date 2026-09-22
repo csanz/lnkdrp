@@ -24,7 +24,7 @@ import {
   buildDocPageThumbPathname,
 } from "@/lib/blob/clientUpload";
 import { analyzePdfText, isFallbackAnalysis, analysisTelemetry } from "@/lib/ai/analyzePdfText";
-import { normalizeForCompare, runDocChangeDiff } from "@/lib/ai/docChangeDiff";
+import { normalizeForCompare, runDocChangeDiff, type DocChangeDiffUsage } from "@/lib/ai/docChangeDiff";
 import { attachPageContext, extractPdfTextByPage, fetchPdfBytes, loadChangedPages, type ChangedPage } from "@/lib/history/changedPages";
 import { computePageFingerprint } from "@/lib/history/pageFingerprint";
 import { reviewDocText } from "@/lib/ai/reviewDocText";
@@ -69,6 +69,15 @@ async function reserveForAttempt(params: Parameters<typeof reserveCreditsOrThrow
 
 /** An upload stuck in `processing` longer than this is considered abandoned and may be re-claimed. */
 const PROCESSING_STALE_MS = 20 * 60 * 1000;
+
+/**
+ * Hard ceiling on the automatic compare's model call, matching the manual rerun's.
+ *
+ * Deliberately well under `maxDuration`: the compare runs inside `after()` ahead of the summary
+ * and ahead of the write that marks the upload ready, so a call that outlives the function takes
+ * the whole job down with it and leaves a credit reservation nothing will ever resolve.
+ */
+const COMPARE_TIMEOUT_MS = 90_000;
 /**
  * Header (uses get, toLowerCase).
  */
@@ -2342,6 +2351,7 @@ export async function POST(
             }
 
             let diff = null as any;
+            let compareUsage: DocChangeDiffUsage | null = null;
             if (nothingChanged) {
               // Free path: the fixed "no changes" record, without touching the model.
               diff = await runDocChangeDiff({ previousText, newText, changedPages, qualityTier: historyTier }).catch(() => null);
@@ -2349,7 +2359,27 @@ export async function POST(
             }
             if (historyLedgerId) {
               try {
-                diff = await runDocChangeDiff({ previousText, newText, changedPages, qualityTier: historyTier });
+                /**
+                 * The same 90s ceiling the manual rerun has always had, and for a worse case.
+                 *
+                 * Without it a hung compare runs until the whole function hits `maxDuration` and is
+                 * killed - which happens here, inside `after()`, *before* the upload is marked
+                 * ready and before either the charge or the refund. Two things are then stuck: the
+                 * document stays `processing` until the 20-minute stale reclaim, and the credit
+                 * reservation stays `pending` forever, because reserving already decremented the
+                 * balance and nothing sweeps a reservation that never resolved. An abort lands in
+                 * the catch below instead, which refunds.
+                 */
+                diff = await runDocChangeDiff({
+                  previousText,
+                  newText,
+                  changedPages,
+                  qualityTier: historyTier,
+                  abortSignal: AbortSignal.timeout(COMPARE_TIMEOUT_MS),
+                  onUsage: (u) => {
+                    compareUsage = u;
+                  },
+                });
                 if (!diff) {
                   await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
                   aiState.compare = "failed";
@@ -2365,6 +2395,10 @@ export async function POST(
                     workspaceId: String(existingDocOrgId),
                     ledgerId: historyLedgerId,
                     creditsCharged: historyChargedCredits,
+                    // What the tier actually bought. Until this was recorded, the only answer to
+                    // "is 2/5/12 the right price, and what do the extra pages cost?" was arithmetic
+                    // over a provider tiling rule nobody here has measured.
+                    telemetry: compareUsage ? { compare: compareUsage } : null,
                   });
                   creditsUsedThisRun += historyChargedCredits;
                   aiState.compare = "done";

@@ -14,7 +14,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
-import { runDocChangeDiff } from "@/lib/ai/docChangeDiff";
+import { runDocChangeDiff, type DocChangeDiffUsage } from "@/lib/ai/docChangeDiff";
 import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger } from "@/lib/credits/creditService";
 import { creditsForRun } from "@/lib/credits/schedule";
 import { idempotencyKeyFromRequest, generateIdempotencyKey } from "@/lib/credits/idempotency";
@@ -152,6 +152,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     }
 
     try {
+      let usage: DocChangeDiffUsage | null = null;
       const diff = attachPageContext(
         await runDocChangeDiff({
           previousText,
@@ -159,6 +160,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
           changedPages,
           qualityTier,
           abortSignal: AbortSignal.timeout(DIFF_TIMEOUT_MS),
+          onUsage: (u) => {
+            usage = u;
+          },
         }),
         changedPages,
       );
@@ -172,7 +176,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
         { $set: { diff } },
       );
 
-      await markLedgerCharged({ workspaceId: actor.orgId, ledgerId: reserved.ledgerId, creditsCharged: credits });
+      await markLedgerCharged({
+        workspaceId: actor.orgId,
+        ledgerId: reserved.ledgerId,
+        creditsCharged: credits,
+        telemetry: usage ? { compare: usage } : null,
+      });
       return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
     } catch (e) {
       // Any failure (including the 90s abort) refunds the reservation; nothing was charged.

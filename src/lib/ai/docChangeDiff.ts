@@ -49,6 +49,31 @@ export const DocChangeDiffSchema = z
 
 export type DocChangeDiff = z.infer<typeof DocChangeDiffSchema>;
 
+/**
+ * What one compare actually consumed, and what it was given to consume.
+ *
+ * Reported through `onUsage` rather than on the return value on purpose: the return value is
+ * persisted verbatim as `DocChange.diff`, and that subdocument is a strict schema. Anything extra
+ * hung off it would be silently dropped on save, which is the kind of thing that reads as working.
+ *
+ * `imagesAttached` and `pagesAttached` are here because `inputTokens` alone cannot be attributed.
+ * Images are the overwhelming majority of a compare's input, and how many tokens an image costs
+ * depends on how the provider tiles it, which is not something we control or can read back. With
+ * the count beside the total, one real run answers it.
+ */
+export type DocChangeDiffUsage = {
+  /** Total tokens billed as input: system, prompt, page context and every attached image. */
+  inputTokens: number | null;
+  outputTokens: number | null;
+  /** Individual images in the request (two per page when both versions rendered). */
+  imagesAttached: number;
+  /** Pages that contributed at least one image, capped by tier. */
+  pagesAttached: number;
+  qualityTier: "basic" | "standard" | "advanced";
+  /** Which model read it - the compare picks by modality, not by tier (see `modelForCompare`). */
+  model: string;
+};
+
 let cachedPrompts: { system: string; user: string } | null = null;
 async function loadPrompts(): Promise<{ system: string; user: string }> {
   if (cachedPrompts) return cachedPrompts;
@@ -88,11 +113,33 @@ function fillUserPrompt(
     .trim();
 }
 
-function normalizePageText(input: string): string {
+function normalizePageText(input: string, max: number): string {
   return (input ?? "")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 6000);
+    .slice(0, max);
+}
+
+/**
+ * Which model reads this compare, and why it depends on whether images are attached.
+ *
+ * Both OpenAI models charge images by 512px tile, but at wildly different rates. Measured against
+ * the live API on 2026-09-22, one 1200x675 page render costs 36,835 input tokens on gpt-4o-mini and
+ * 1,105 on gpt-4o - a ratio of exactly 33.33, while mini's input price is only 16.67x cheaper. The
+ * same picture therefore costs about twice as much in dollars on the small model.
+ *
+ * Context is the part that forces the issue rather than merely arguing for it. An advanced compare
+ * attaches ten pages, previous and new, so twenty images: 736,700 tokens on mini against a 128k
+ * window. Not slower or pricier - impossible. That failure only appears when many pages changed,
+ * which is exactly the replacement an owner most wants explained.
+ *
+ * So the split is by modality, not by tier: text-only compares stay on mini, where its discount is
+ * real and there are no tiles to pay for. Anything carrying page images goes to gpt-4o, which is
+ * both cheaper for those tiles and the better reader of them - and reading them is the whole point,
+ * since a swapped logo or a moved chart bar exists nowhere in the extracted text.
+ */
+function modelForCompare(hasImages: boolean): string {
+  return hasImages ? "gpt-4o" : "gpt-4o-mini";
 }
 
 /**
@@ -123,6 +170,11 @@ export async function runDocChangeDiff(input: {
    * AbortError/TimeoutError when it fires. Callers must refund any credit reservation on failure.
    */
   abortSignal?: AbortSignal;
+  /**
+   * Called once, after a model call, with what it cost. Not called on the paths that never reach
+   * the model (an identical re-upload, a missing API key, empty text) - those cost nothing.
+   */
+  onUsage?: (usage: DocChangeDiffUsage) => void;
 }): Promise<DocChangeDiff | null> {
   // A re-upload of the same file: the model was asked to compare two identical texts and duly
   // invented "reorganized sections" and "updated terminology" (owner, 2026-09-17). Answered here,
@@ -150,14 +202,24 @@ export async function runDocChangeDiff(input: {
 
   const changedPages = Array.isArray(input.changedPages) ? input.changedPages : [];
 
+  /**
+   * The per-page block is the one part of the prompt nothing bounded by tier.
+   *
+   * `trimForPrompt` caps each full text at 20k/35k/50k chars and looks like the tier's cost
+   * control, but the page block underneath it could reach 12 pages x 2 sides x 6,000 chars =
+   * 144,000 chars, roughly 36k tokens - on basic, over three times the tier's entire text budget,
+   * and largely the same words already present in PREVIOUS_TEXT and NEW_TEXT.
+   */
+  const perPageChars = qualityTier === "advanced" ? 6_000 : qualityTier === "basic" ? 1_500 : 3_000;
+
   const changedPagesText = changedPages.length
     ? changedPages
         .slice(0, MAX_PAGES_THAT_CHANGED)
         .map((p) => {
           const pageNumber = Number.isFinite(p.pageNumber) ? Math.floor(p.pageNumber) : NaN;
           if (!Number.isFinite(pageNumber) || pageNumber < 1) return null;
-          const prev = normalizePageText(p.previousText);
-          const next = normalizePageText(p.newText);
+          const prev = normalizePageText(p.previousText, perPageChars);
+          const next = normalizePageText(p.newText, perPageChars);
           const imgHint =
             typeof p.imageChanged === "boolean"
               ? `IMAGE_CHANGED: ${p.imageChanged ? "yes" : "no"}`
@@ -185,6 +247,10 @@ export async function runDocChangeDiff(input: {
   });
 
   const maxAttachedPages = qualityTier === "advanced" ? 10 : qualityTier === "basic" ? 4 : 7;
+  // Counted for `onUsage`: an input token total says nothing without knowing how many images it
+  // was carrying, and the images are most of it.
+  let imagesAttached = 0;
+  let pagesAttached = 0;
   const messages: any[] | null = hasAnyImages
     ? (() => {
         const parts: any[] = [{ type: "text", text: prompt }];
@@ -197,10 +263,17 @@ export async function runDocChangeDiff(input: {
           const nextImg = typeof p.newImageUrl === "string" && p.newImageUrl.trim() ? p.newImageUrl.trim() : "";
           if (!prevImg && !nextImg) continue;
           parts.push({ type: "text", text: `Page ${pageNumber} images (previous then new):` });
-          if (prevImg) parts.push({ type: "image", image: prevImg });
-          if (nextImg) parts.push({ type: "image", image: nextImg });
+          if (prevImg) {
+            parts.push({ type: "image", image: prevImg });
+            imagesAttached += 1;
+          }
+          if (nextImg) {
+            parts.push({ type: "image", image: nextImg });
+            imagesAttached += 1;
+          }
           attachedPages += 1;
         }
+        pagesAttached = attachedPages;
         if (attachedPages < changedPages.length) {
           parts.push({
             type: "text",
@@ -211,8 +284,9 @@ export async function runDocChangeDiff(input: {
       })()
     : null;
 
-  const { object } = await generateObject({
-    model: openai("gpt-4o-mini"),
+  const modelId = modelForCompare(Boolean(messages));
+  const { object, usage } = await generateObject({
+    model: openai(modelId),
     providerOptions: OPENAI_PROVIDER_OPTIONS,
     system,
     ...(messages ? { messages } : { prompt }),
@@ -221,6 +295,24 @@ export async function runDocChangeDiff(input: {
     maxRetries: qualityTier === "advanced" ? 2 : qualityTier === "standard" ? 1 : 0,
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
   });
+
+  // Reported before the result is shaped, so a compare whose output we reject still tells us what
+  // it cost - that is exactly the run worth knowing about.
+  if (input.onUsage) {
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    try {
+      input.onUsage({
+        inputTokens: n(usage?.inputTokens),
+        outputTokens: n(usage?.outputTokens),
+        imagesAttached,
+        pagesAttached,
+        qualityTier,
+        model: modelId,
+      });
+    } catch {
+      // Telemetry must never fail a compare the customer already paid for.
+    }
+  }
 
   // Extra guardrail: ensure summary is always <= MAX_SUMMARY_CHARS.
   const summary = (object.summary ?? "").toString().trim().slice(0, MAX_SUMMARY_CHARS).trimEnd();
