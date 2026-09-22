@@ -1671,12 +1671,11 @@ export async function POST(
             uploadId,
           });
           debugLog(1, "[process] uploading preview png", { uploadId, previewPathname });
-          // Deterministic pathname: allow overwrite so retries succeed.
+          // See the note on the page images below: the path is the access control here.
           const blob = await put(previewPathname, png, {
             access: "public",
             contentType: "image/png",
-            addRandomSuffix: false,
-            allowOverwrite: true,
+            addRandomSuffix: true,
           });
           previewUrl = blob.url;
           debugLog(2, "[process] preview uploaded", { uploadId, previewPathname });
@@ -1811,19 +1810,27 @@ export async function POST(
               pageNumber,
             });
 
-            // Deterministic pathnames: allow overwrite so retries after a partial run succeed.
+            // Unguessable path (B0, docs/prds/lnkdrp-blob-privacy.md). These artifacts are written
+            // `access: "public"` because the store has no other mode, so the path IS the access
+            // control: with a deterministic one, a recipient who saw a single preview URL could
+            // construct every page image and the full extracted text, and keep them after the link
+            // was revoked. A random segment per artifact severs that — a leaked URL is now worth
+            // exactly the one file it names.
+            //
+            // The cost, honestly: `allowOverwrite` was how a retry after a partial run reused the
+            // same path. It cannot now, so a re-render orphans the previous blob. The stored URL
+            // always points at the newest write, so this is storage to sweep up, not a wrong
+            // answer.
             const [imageBlob, thumbBlob] = await Promise.all([
               put(imagePathname, jpeg, {
                 access: "public",
                 contentType: "image/jpeg",
-                addRandomSuffix: false,
-                allowOverwrite: true,
+                addRandomSuffix: true,
               }),
               put(thumbPathname, thumbJpeg, {
                 access: "public",
                 contentType: "image/jpeg",
-                addRandomSuffix: false,
-                allowOverwrite: true,
+                addRandomSuffix: true,
               }),
             ]);
 
@@ -2150,12 +2157,12 @@ export async function POST(
               docId: String(docId),
               uploadId,
             });
-            // Deterministic pathname: allow overwrite so retries succeed.
+            // The whole text of a private document at a public URL, so this is the one that most
+            // needed an unguessable path. See the page images above.
             const blob = await put(textPathname, buf, {
               access: "public",
               contentType: "text/plain; charset=utf-8",
-              addRandomSuffix: false,
-              allowOverwrite: true,
+              addRandomSuffix: true,
             });
             extractedTextBlobUrl = blob.url;
             extractedTextBlobPathname = blob.pathname;

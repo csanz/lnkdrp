@@ -157,7 +157,9 @@ async function importBytes(request: Request, ctx: { params: Promise<{ uploadId: 
     const blob = await put(pathname, buf, {
       access: "public",
       contentType: "application/pdf",
-      addRandomSuffix: false,
+      // Unguessable, like every other artifact this pipeline writes — see the note in
+      // `process/route.ts`. `blobUrl` below is what `put()` returned, so nothing recomputes it.
+      addRandomSuffix: true,
     });
     await progress.report("stored", { force: true });
 

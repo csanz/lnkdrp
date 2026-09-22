@@ -249,6 +249,21 @@ export async function POST(request: Request) {
         return {
           allowedContentTypes,
           maximumSizeInBytes,
+          /**
+           * The browser's uploads get an unguessable path too (B0,
+           * `docs/prds/lnkdrp-blob-privacy.md`).
+           *
+           * The server pipeline was the obvious half; this is the half that matters most, because
+           * the PDF and `preview.png` come through here and the preview URL is the one a recipient
+           * has always been handed. `addRandomSuffix` defaults to **false** in the client-upload
+           * flow, so leaving it unset left exactly the artifact the whole problem starts from
+           * sitting at a path anyone could derive from two ObjectIds.
+           *
+           * Safe because nothing recomputes these: every call site stores what `upload()` returned
+           * (`preview.url`, `blobUrl`), and `parseDocUploadBlobPathname` reads the ids from the
+           * directory segments, which the suffix does not touch.
+           */
+          addRandomSuffix: true,
         };
       },
       // NOTE: We intentionally do NOT set `onUploadCompleted` here.
