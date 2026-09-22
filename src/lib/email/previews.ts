@@ -166,15 +166,45 @@ export function buildPreviews(): PreviewRow[] {
       "doc_update.immediate",
       "A document was replaced",
       false,
-      [{ title: SAMPLE_TITLE, version: 4, summary: "Pricing page rewritten; two slides added.", url: `${SITE_URL}/doc/${SAMPLE_DOC_ID}` }],
+      [
+        {
+          title: SAMPLE_TITLE,
+          version: 4,
+          summary: "Pricing page rewritten; two slides added.",
+          changes: [
+            "Pricing — three tiers replaced with two, annual discount removed",
+            "Team — two new slides for the engineering hires",
+            "Traction — ARR chart updated through August",
+          ],
+          pagesChanged: [4, 9, 10, 12],
+          historyUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/history`,
+          docUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}`,
+        },
+      ],
     ],
     [
       "doc_update.daily",
       "Documents replaced \u2014 daily digest",
       true,
       [
-        { title: SAMPLE_TITLE, version: 4, summary: "Pricing page rewritten.", url: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/history` },
-        { title: "Board update Q3", version: 2, summary: "", url: `${SITE_URL}/doc/68c1f0a2b3c4d5e6f7a80002/history` },
+        {
+          title: SAMPLE_TITLE,
+          version: 4,
+          summary: "Pricing page rewritten.",
+          changes: [],
+          pagesChanged: [4, 9],
+          historyUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/history`,
+          docUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}`,
+        },
+        {
+          title: "Board update Q3",
+          version: 2,
+          summary: "",
+          changes: [],
+          pagesChanged: [],
+          historyUrl: `${SITE_URL}/doc/68c1f0a2b3c4d5e6f7a80002/history`,
+          docUrl: `${SITE_URL}/doc/68c1f0a2b3c4d5e6f7a80002`,
+        },
       ],
     ],
   ] as const) {

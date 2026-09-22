@@ -25,10 +25,22 @@ export type DocUpdateEntry = {
   title: string;
   /** The new version, when we know it. */
   version: number | null;
-  /** What changed between the two versions; empty when the comparison produced nothing. */
+  /** One sentence on what changed; empty when the comparison produced nothing. */
   summary: string;
-  /** Where this document's change goes — history for a digest, the document for an immediate. */
-  url: string;
+  /**
+   * The itemised changes, when the comparison produced them.
+   *
+   * `DocChange.diff.changes` has been populated all along and no email ever showed it — the mail
+   * said "Pricing page rewritten" and stopped, when the record underneath listed each change with
+   * a title. A person deciding whether to reopen a deck wants the list, not the sentence.
+   */
+  changes: string[];
+  /** 1-based page numbers the comparison flagged, from `diff.pagesThatChanged`. */
+  pagesChanged: number[];
+  /** Where the comparison itself lives — the document's history. */
+  historyUrl: string;
+  /** The document as it now stands. */
+  docUrl: string;
 };
 
 export type ComposedDocUpdateEmail = {
@@ -71,11 +83,25 @@ export function composeDocUpdateEmail(params: {
   ];
 
   if (one) {
-    // One document: the title is already the heading, so the body is the version and what changed.
+    // One document: the title is the heading, so the body is the change itself.
     const only = entries[0]!;
-    if (only.version) blocks.push({ kind: "rows", rows: [["Version", `v${only.version}`]] });
+    const facts: Array<[string, string]> = [];
+    if (only.version) facts.push(["Version", `v${only.version}`]);
+    // Which pages moved is the fastest way to judge whether a change matters, and it was thrown
+    // away entirely: the record has page numbers, the email had none.
+    if (only.pagesChanged.length) {
+      facts.push([
+        only.pagesChanged.length === 1 ? "Page changed" : "Pages changed",
+        only.pagesChanged.join(", "),
+      ]);
+    }
+    if (facts.length) blocks.push({ kind: "rows", rows: facts });
     if (only.summary) blocks.push({ kind: "p", text: only.summary });
-    blocks.push({ kind: "action", label: daily ? "See what changed" : "Open the document", url: only.url });
+    if (only.changes.length) blocks.push({ kind: "bullets", items: only.changes });
+    // The comparison is what the email is about, so it gets the button; the document itself is
+    // one line below for anyone who wants the thing rather than the difference.
+    blocks.push({ kind: "action", label: "See what changed", url: only.historyUrl });
+    blocks.push({ kind: "links", items: [{ label: "Open the document", url: only.docUrl }] });
   } else {
     /**
      * Several: each title is itself the link, with its summary under it.
@@ -87,7 +113,7 @@ export function composeDocUpdateEmail(params: {
     for (const entry of entries) {
       blocks.push({
         kind: "links",
-        items: [{ label: entry.version ? `${entry.title} (v${entry.version})` : entry.title, url: entry.url }],
+        items: [{ label: entry.version ? `${entry.title} (v${entry.version})` : entry.title, url: entry.historyUrl }],
       });
       if (entry.summary) blocks.push({ kind: "muted", text: entry.summary });
     }

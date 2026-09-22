@@ -673,7 +673,17 @@ async function buildViewRound(params: {
 }
 
 /** One doc update, resolved from its replacement upload back to the change it recorded. */
-type DocUpdateItem = { row: ClaimedNotification; docId: string; title: string; version: number | null; summary: string };
+type DocUpdateItem = {
+  row: ClaimedNotification;
+  docId: string;
+  title: string;
+  version: number | null;
+  summary: string;
+  /** Itemised changes from the comparison, already trimmed to what an email should carry. */
+  changes: string[];
+  /** 1-based page numbers the comparison flagged. */
+  pagesChanged: number[];
+};
 
 /**
  * Doc-update emails: the same lines this file has always sent, fed from the queue.
@@ -732,10 +742,12 @@ async function buildDocUpdateRound(params: {
   // The summary only. A missing change row costs the email one line, never the email.
   const changes = uploadIds.size
     ? await DocChangeModel.find({ orgId: params.orgId, toUploadId: { $in: Array.from(uploadIds.values()) } })
-        .select({ _id: 1, docId: 1, toUploadId: 1, toVersion: 1, "diff.summary": 1 })
+        .select({ _id: 1, docId: 1, toUploadId: 1, toVersion: 1, "diff.summary": 1, "diff.changes": 1, "diff.pagesThatChanged": 1 })
         .lean()
     : [];
   const summaryByUpload = new Map<string, string>();
+  const changesByUpload = new Map<string, string[]>();
+  const pagesByUpload = new Map<string, number[]>();
   const versionByUpload = new Map<string, number>();
   const changeDocByUpload = new Map<string, string>();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -744,13 +756,35 @@ async function buildDocUpdateRound(params: {
     if (!uploadId) continue;
     const summary = typeof c?.diff?.summary === "string" ? c.diff.summary.trim() : "";
     if (summary) summaryByUpload.set(uploadId, summary);
+    /**
+     * Capped at six, because a rewrite can produce dozens and an email is not the place to read
+     * them. The button goes to the comparison, which has no such limit.
+     */
+    const changes = Array.isArray(c?.diff?.changes)
+      ? (c.diff.changes as Array<{ title?: unknown; detail?: unknown }>)
+          .map((ch) => {
+            const t = typeof ch?.title === "string" ? ch.title.trim() : "";
+            const d = typeof ch?.detail === "string" ? ch.detail.trim() : "";
+            return t && d ? `${t} — ${d}` : t || d;
+          })
+          .filter(Boolean)
+          .slice(0, 6)
+      : [];
+    if (changes.length) changesByUpload.set(uploadId, changes);
+    const pages = Array.isArray(c?.diff?.pagesThatChanged)
+      ? (c.diff.pagesThatChanged as Array<{ pageNumber?: unknown }>)
+          .map((pg) => Number(pg?.pageNumber))
+          .filter((n) => Number.isFinite(n) && n >= 1)
+          .sort((a, b) => a - b)
+      : [];
+    if (pages.length) pagesByUpload.set(uploadId, pages);
     if (Number.isFinite(Number(c?.toVersion))) versionByUpload.set(uploadId, Number(c.toVersion));
     const docId = c?.docId ? String(c.docId) : "";
     if (Types.ObjectId.isValid(docId)) changeDocByUpload.set(uploadId, docId);
   }
 
   /** What each row is about, resolved event-first. */
-  const resolved = new Map<string, { docId: string; version: number | null; summary: string }>();
+  const resolved = new Map<string, { docId: string; version: number | null; summary: string; changes: string[]; pagesChanged: number[] }>();
   for (const row of params.rows) {
     const uploadId = String(toObjectIdOrNull(row.event.uploadId ?? sourceIdOf(row)) ?? "");
     const fromUpload = uploadId ? uploadInfo.get(uploadId) : undefined;
@@ -766,7 +800,13 @@ async function buildDocUpdateRound(params: {
     const version =
       (Number.isFinite(Number(row.event.version)) ? Number(row.event.version) : null) ??
       (uploadId ? versionByUpload.get(uploadId) ?? fromUpload?.version ?? null : null);
-    resolved.set(row.id, { docId, version, summary: (uploadId && summaryByUpload.get(uploadId)) || "" });
+    resolved.set(row.id, {
+      docId,
+      version,
+      summary: (uploadId && summaryByUpload.get(uploadId)) || "",
+      changes: (uploadId && changesByUpload.get(uploadId)) || [],
+      pagesChanged: (uploadId && pagesByUpload.get(uploadId)) || [],
+    });
   }
 
   const docTitles = await loadDocTitles(params.orgId, Array.from(resolved.values()).map((r) => r.docId));
@@ -780,7 +820,15 @@ async function buildDocUpdateRound(params: {
       skipped.push({ id: row.id, reason: SKIP_DOCUMENT_GONE });
       continue;
     }
-    items.push({ row, docId: about.docId, title, version: about.version, summary: about.summary });
+    items.push({
+      row,
+      docId: about.docId,
+      title,
+      version: about.version,
+      summary: about.summary,
+      changes: about.changes,
+      pagesChanged: about.pagesChanged,
+    });
   }
   if (!items.length) return { deliveries: [], skipped };
   items.sort((a, b) => a.row.occurredAt.getTime() - b.row.occurredAt.getTime());
@@ -791,7 +839,11 @@ async function buildDocUpdateRound(params: {
       title: item.title,
       version: item.version,
       summary: item.summary,
-      url: daily ? buildDocHistoryUrl(item.docId) : buildDocUrl(item.docId),
+      changes: item.changes,
+      pagesChanged: item.pagesChanged,
+      // The comparison, always: it is what the email is about. The document is offered beside it.
+      historyUrl: buildDocHistoryUrl(item.docId),
+      docUrl: buildDocUrl(item.docId),
     })),
     daily,
     workspace: params.workspace,
