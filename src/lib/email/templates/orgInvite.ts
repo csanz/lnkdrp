@@ -7,6 +7,7 @@
  * The role is shown because it is the one thing the recipient cannot work out from the app once
  * they arrive — whether they were added to look or to edit.
  */
+import type { EmailWorkspace } from "@/lib/email/layout";
 import { blocks, transactional, type EmailContent } from "./compose";
 
 export function orgInviteEmail(params: {
@@ -15,6 +16,8 @@ export function orgInviteEmail(params: {
   role: string;
   /** Who sent it, when we know; an invite from nobody reads like phishing. */
   invitedByEmail?: string | null;
+  /** The workspace's mark, for the header. The reader knows this name, not ours. */
+  workspace?: EmailWorkspace | null;
 }): EmailContent {
   const workspace = (params.orgName ?? "").trim() || "a workspace";
   const invitedBy = (params.invitedByEmail ?? "").trim();
@@ -23,6 +26,7 @@ export function orgInviteEmail(params: {
   return transactional({
     subject: `You're invited to join ${workspace}`,
     preheader: invitedBy ? `${invitedBy} added you.` : "Open the link to join.",
+    workspace: params.workspace ?? { name: workspace, avatarUrl: null },
     blocks: blocks(
       { kind: "heading", text: `You're invited to ${workspace}` },
       { kind: "p", text: "Someone added you to their LinkDrop workspace." },

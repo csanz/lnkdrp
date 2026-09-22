@@ -9,7 +9,7 @@
  * unsubscribe — `viewNotifications.ts` passes those — but a welcome or a download approval has no
  * "off" to offer, and a footer implying otherwise would be a dead promise.
  */
-import { renderHtml, renderText, type Block } from "@/lib/email/layout";
+import { renderHtml, renderText, type Block, type EmailWorkspace } from "@/lib/email/layout";
 import { EMAIL_SIGNATURE } from "./signature";
 
 export type EmailContent = {
@@ -27,12 +27,26 @@ export function transactional(params: {
    */
   preheader?: string;
   blocks: readonly Block[];
+  /**
+   * The workspace this is about, shown in the header.
+   *
+   * Omitted by the emails that are about an account rather than a workspace — `welcome` and
+   * `waitlist_approved` arrive before there is a workspace worth naming.
+   */
+  workspace?: EmailWorkspace | null;
 }): EmailContent {
   const footer = { signature: EMAIL_SIGNATURE };
+  const workspace = params.workspace ?? null;
   return {
     subject: params.subject,
-    text: renderText(params.blocks, footer),
-    html: renderHtml({ subject: params.subject, preheader: params.preheader ?? "", blocks: params.blocks, footer }),
+    text: renderText(params.blocks, footer, workspace),
+    html: renderHtml({
+      subject: params.subject,
+      preheader: params.preheader ?? "",
+      blocks: params.blocks,
+      footer,
+      workspace,
+    }),
   };
 }
 

@@ -5,7 +5,7 @@
  * approval mail with the claim link. `POST /api/share/[shareId]/download-requests` sends the first
  * two; the approve route sends the third.
  */
-import type { Block } from "@/lib/email/layout";
+import type { Block, EmailWorkspace } from "@/lib/email/layout";
 import { blocks, transactional, type EmailContent } from "./compose";
 
 /** Re-exported: `EmailContent` moved to `compose.ts`, where the renderer that produces it lives. */
@@ -26,11 +26,16 @@ function linkBlock(label: string, url: string, variant?: "secondary"): Block {
 }
 
 /** Receipt to the person who asked, sent once per new request (not for repeats inside the window). */
-export function downloadRequestReceivedEmail(params: { title: string; shareUrl: string }): EmailContent {
+export function downloadRequestReceivedEmail(params: {
+  title: string;
+  shareUrl: string;
+  workspace?: EmailWorkspace | null;
+}): EmailContent {
   const title = params.title || "Shared document";
   return transactional({
     subject: `Request received: ${title}`,
     preheader: "We passed your request to the owner.",
+    workspace: params.workspace ?? null,
     blocks: blocks(
       { kind: "heading", text: "Request sent" },
       { kind: "p", text: "We passed your request to the owner of this document." },
@@ -55,11 +60,13 @@ export function downloadRequestOwnerEmail(params: {
   requesterEmail: string;
   approveUrl: string;
   denyUrl: string;
+  workspace?: EmailWorkspace | null;
 }): EmailContent {
   const title = params.title || "Shared document";
   return transactional({
     subject: `Download request: ${title}`,
     preheader: `${params.requesterEmail} asked to download it.`,
+    workspace: params.workspace ?? null,
     blocks: blocks(
       { kind: "heading", text: "Someone wants to download this" },
       { kind: "p", text: "A reader of your share link asked for the PDF." },
@@ -78,11 +85,16 @@ export function downloadRequestOwnerEmail(params: {
 }
 
 /** Sent when the owner approves: the claim link, which needs a sign-in. */
-export function downloadRequestApprovedEmail(params: { title: string; claimUrl: string }): EmailContent {
+export function downloadRequestApprovedEmail(params: {
+  title: string;
+  claimUrl: string;
+  workspace?: EmailWorkspace | null;
+}): EmailContent {
   const title = params.title || "Shared document";
   return transactional({
     subject: `Download approved: ${title}`,
     preheader: "Sign in to download or save it.",
+    workspace: params.workspace ?? null,
     blocks: blocks(
       { kind: "heading", text: "Approved" },
       { kind: "p", text: "The owner approved your download request." },

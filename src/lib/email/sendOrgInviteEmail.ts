@@ -8,6 +8,7 @@
  */
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
 import { orgInviteEmail } from "@/lib/email/templates/orgInvite";
+import { workspaceForEmail } from "@/lib/email/workspaceIdentity";
 
 type SendOrgInviteEmailParams = {
   to: string;
@@ -15,6 +16,8 @@ type SendOrgInviteEmailParams = {
   inviteUrl: string;
   role: string;
   invitedByEmail?: string | null;
+  /** Resolves the workspace's avatar for the header; the name already comes from `orgName`. */
+  orgId?: string | null;
 };
 
 export async function sendOrgInviteEmail(params: SendOrgInviteEmailParams): Promise<void> {
@@ -23,6 +26,7 @@ export async function sendOrgInviteEmail(params: SendOrgInviteEmailParams): Prom
     inviteUrl: params.inviteUrl,
     role: params.role,
     invitedByEmail: params.invitedByEmail ?? null,
+    workspace: (await workspaceForEmail(params.orgId)) ?? { name: params.orgName, avatarUrl: null },
   });
   await sendTextEmail({
     to: params.to,

@@ -10,6 +10,7 @@
  */
 import { sendEmailContent } from "@/lib/email/sendTextEmail";
 import { viewerIntroducedEmail, viewerVerifyEmail } from "@/lib/email/templates";
+import { workspaceForEmail } from "@/lib/email/workspaceIdentity";
 
 type SendViewerVerifyEmailParams = {
   to: string;
@@ -17,6 +18,8 @@ type SendViewerVerifyEmailParams = {
   documentTitle?: string | null;
   /** Who shared it, when the workspace has a name worth showing. */
   workspaceName?: string | null;
+  /** Resolves the workspace avatar for the header. */
+  orgId?: string | null;
   verifyUrl: string;
 };
 
@@ -24,6 +27,7 @@ export async function sendViewerVerifyEmail(params: SendViewerVerifyEmailParams)
   const content = viewerVerifyEmail({
     documentTitle: params.documentTitle,
     workspaceName: params.workspaceName,
+    workspace: await workspaceForEmail(params.orgId),
     verifyUrl: params.verifyUrl,
   });
   await sendEmailContent({ to: params.to, ...content });
@@ -37,15 +41,19 @@ type SendViewerIntroducedEmailParams = {
   verified: boolean;
   /** Where the owner goes to see the reading itself. */
   metricsUrl?: string | null;
+  /** Which workspace the reading happened in. */
+  orgId?: string | null;
 };
 
 export async function sendViewerIntroducedEmail(params: SendViewerIntroducedEmailParams): Promise<void> {
+  const workspace = await workspaceForEmail(params.orgId);
   const content = viewerIntroducedEmail({
     documentTitle: params.documentTitle,
     viewerName: params.viewerName,
     viewerEmail: params.viewerEmail,
     verified: params.verified,
     metricsUrl: params.metricsUrl,
+    workspace,
   });
   await sendEmailContent({ to: params.to, ...content });
 }

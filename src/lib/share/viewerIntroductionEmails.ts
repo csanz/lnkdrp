@@ -116,6 +116,7 @@ export async function sendViewerIntroductionEmails(
         to: email,
         documentTitle: args.documentTitle,
         workspaceName: args.workspaceName,
+        orgId: String(orgId),
         verifyUrl: viewerEmailVerifyUrl(args.appUrl, {
           shareId: args.shareId,
           viewerKey: args.viewerKey,
@@ -151,6 +152,7 @@ export async function sendViewerIntroductionEmails(
           // for a returning contact who confirmed this address on an earlier document.
           verified: record.verified,
           metricsUrl: args.metricsUrl,
+          orgId: String(orgId),
         });
         result.ownerEmailsSent += 1;
       } catch (err) {

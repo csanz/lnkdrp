@@ -181,6 +181,8 @@ export async function POST(request: Request) {
     inviteUrl,
     role,
     invitedByEmail: null,
+    // For the workspace's avatar in the header: the invitee knows this name, not ours.
+    orgId: orgIdRaw,
   });
 
   // Logged after the send, not before: an invite the mail provider refused is not an invitation,

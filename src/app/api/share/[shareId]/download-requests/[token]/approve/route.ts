@@ -20,6 +20,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendEmailContent } from "@/lib/email/sendTextEmail";
 import { downloadRequestApprovedEmail } from "@/lib/email/templates";
+import { workspaceForEmail } from "@/lib/email/workspaceIdentity";
 import { getPublicSiteBase } from "@/lib/urls";
 import { recordActivity } from "@/lib/activity/log";
 
@@ -296,7 +297,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
   if (to) {
     try {
-      await sendEmailContent({ to, ...downloadRequestApprovedEmail({ title, claimUrl }) });
+      await sendEmailContent({
+        to,
+        ...downloadRequestApprovedEmail({ title, claimUrl, workspace: await workspaceForEmail(doc?.orgId ? String(doc.orgId) : null) }),
+      });
       await ShareDownloadRequestModel.updateOne(
         { _id: reqDoc._id },
         { $set: { claimEmailSentAt: new Date(), claimEmailError: null } },

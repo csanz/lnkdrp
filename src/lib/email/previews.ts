@@ -58,6 +58,8 @@ export type PreviewRow = {
 const SITE_URL = "https://lnkdrp.com";
 const SAMPLE_NOW = new Date("2026-09-17T09:40:00.000Z");
 const SAMPLE_TITLE = "Series A deck";
+/** No avatar on purpose: Google gives us no workspace logo, so most orgs never have one. */
+const SAMPLE_WORKSPACE = { name: "Acme", avatarUrl: null };
 const SAMPLE_SHARE_URL = `${SITE_URL}/p/ab12cd34`;
 const SAMPLE_DOC_ID = "68c1f0a2b3c4d5e6f7a80001";
 
@@ -190,7 +192,7 @@ export function buildPreviews(): PreviewRow[] {
       { label: "title", value: SAMPLE_TITLE },
       { label: "shareUrl", value: SAMPLE_SHARE_URL },
     ],
-    ...content(downloadRequestReceivedEmail({ title: SAMPLE_TITLE, shareUrl: SAMPLE_SHARE_URL })),
+    ...content(downloadRequestReceivedEmail({ title: SAMPLE_TITLE, shareUrl: SAMPLE_SHARE_URL, workspace: SAMPLE_WORKSPACE })),
     headers: null,
   });
 
@@ -211,6 +213,7 @@ export function buildPreviews(): PreviewRow[] {
       requesterEmail: "dana@example.com",
       approveUrl: `${SITE_URL}/download-requests/approve/tok`,
       denyUrl: `${SITE_URL}/download-requests/deny/tok`,
+      workspace: SAMPLE_WORKSPACE,
     })),
     headers: null,
   });
@@ -278,6 +281,7 @@ export function buildPreviews(): PreviewRow[] {
         inviteUrl: `${SITE_URL}/invites/tok`,
         role: "editor",
         invitedByEmail: "dana@example.com",
+        workspace: SAMPLE_WORKSPACE,
       }),
     ),
     headers: null,

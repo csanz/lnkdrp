@@ -12,6 +12,7 @@ import { UserModel } from "@/lib/models/User";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendEmailContent } from "@/lib/email/sendTextEmail";
 import { downloadRequestOwnerEmail, downloadRequestReceivedEmail } from "@/lib/email/templates";
+import { workspaceForEmail } from "@/lib/email/workspaceIdentity";
 import { getPublicSiteBase } from "@/lib/urls";
 import { debugLog, debugWarn } from "@/lib/debug";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
@@ -213,7 +214,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const base = getPublicSiteBase();
       const title = docTitle ?? "Shared document";
       const shareUrl = base ? new URL(`/s/${encodeURIComponent(shareId)}`, base).toString() : "";
-      await sendEmailContent({ to: email, ...downloadRequestReceivedEmail({ title, shareUrl }) });
+      await sendEmailContent({
+        to: email,
+        ...downloadRequestReceivedEmail({ title, shareUrl, workspace: await workspaceForEmail(activityOrgId) }),
+      });
       emailedRequester = true;
       await ShareDownloadRequestModel.updateOne(
         { _id: created._id },
@@ -255,7 +259,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       try {
         await sendEmailContent({
           to: ownerEmail,
-          ...downloadRequestOwnerEmail({ title, shareUrl, requesterEmail: email, approveUrl, denyUrl }),
+          ...downloadRequestOwnerEmail({
+            title,
+            shareUrl,
+            requesterEmail: email,
+            approveUrl,
+            denyUrl,
+            workspace: await workspaceForEmail(activityOrgId),
+          }),
         });
         emailedOwner = true;
         await ShareDownloadRequestModel.updateOne(
