@@ -685,6 +685,23 @@ export default function ActivityPageClient() {
     setError(null);
     setCursors([null]);
     setPageIndex(0);
+    /**
+     * Throw away anything still waiting to be staged in.
+     *
+     * Live rows arrive in a burst and are drained one per `STAGE_MS`, so up to several seconds of
+     * them can be queued when the filter changes. This effect replaces `items` wholesale but left
+     * the queue and its timer alone, so the pending drain fired afterwards and prepended a row
+     * belonging to the *previous* filter onto the new feed — highlighted as a fresh arrival, with
+     * `.slice(0, pageSize)` quietly dropping a legitimate row off the end to make room. On a
+     * paged view it put a page-one row at the top of page two.
+     *
+     * `tick` already refuses to enqueue while `pageIndex !== 0`; nothing guarded the draining.
+     */
+    arrivalQueueRef.current = [];
+    if (drainTimerRef.current !== null) {
+      window.clearTimeout(drainTimerRef.current);
+      drainTimerRef.current = null;
+    }
     fetchPage(null)
       .then((page) => {
         if (cancelled) return;
@@ -785,6 +802,13 @@ export default function ActivityPageClient() {
     setPending(true);
     setLeaving(true);
     setError(null);
+    // Same reason as the load effect above: a staged arrival that fires mid-transition lands on
+    // the page you are moving to, where it does not belong.
+    arrivalQueueRef.current = [];
+    if (drainTimerRef.current !== null) {
+      window.clearTimeout(drainTimerRef.current);
+      drainTimerRef.current = null;
+    }
     feedRef.current?.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
     const minWait = new Promise<void>((r) => window.setTimeout(r, reduceMotion ? 0 : PAGE_TRANSITION_MIN_MS));
     try {

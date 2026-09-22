@@ -168,6 +168,18 @@ export default function SearchPageClient() {
     const id = ++projectsReqRef.current;
     if (!showProjects) {
       setProjects([]);
+      /**
+       * ...and stop saying a request is in flight, because this branch is how the last one ends.
+       *
+       * Bumping the ref above abandons whatever was running: its `finally` is guarded by
+       * `id === projectsReqRef.current`, which is already false, so `setProjectsPending(false)`
+       * never ran. Switching scope from All to Documents while the projects request was still open
+       * therefore left `projectsPending` true for the life of the page — and `pending` feeds the
+       * pager, so the indeterminate bar animated forever, the indicator read "Loading…" instead of
+       * "Page 1", and Previous/Next stayed disabled. On a query with more than a page of matches
+       * you simply could not reach page two.
+       */
+      setProjectsPending(false);
       return;
     }
     const ctrl = new AbortController();
