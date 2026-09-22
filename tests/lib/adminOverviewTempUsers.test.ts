@@ -146,6 +146,9 @@ vi.mock("@/lib/models/ShareLink", () => ({ ShareLinkModel: empty }));
 vi.mock("@/lib/models/AiRun", () => ({ AiRunModel: empty }));
 vi.mock("@/lib/models/CreditLedger", () => ({ CreditLedgerModel: empty }));
 vi.mock("@/lib/models/CronHealth", () => ({ CronHealthModel: empty }));
+// The plan-limit breakdown on the same route. Unrelated to what this file asserts, but it shares
+// the route's `Promise.all`, so leaving it unmocked hangs every test here on a real Mongo call.
+vi.mock("@/lib/models/ActivityEvent", () => ({ ActivityEventModel: empty }));
 
 const { GET } = await import("@/app/api/admin/overview/route");
 

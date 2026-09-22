@@ -36,6 +36,8 @@ type Overview = {
   trend: Record<"users" | "docs" | "views", { current: number; previous: number }>;
   health: { jobs: number; failing: string[]; pendingDeletions: number };
   series: TrendPoint[];
+  /** One row per plan limit that refused somebody in the window; see the route for the two counts. */
+  planLimits: Array<{ limit: string; hits: number; workspaces: number }>;
 };
 
 type Revenue = {
@@ -48,6 +50,22 @@ type Revenue = {
 const RANGES = [7, 30, 90] as const;
 
 /** A headline figure that also selects the chart's series. */
+/**
+ * What each limit key is called on screen.
+ *
+ * The stored value is the `LimitKey` the route refused with, which is fine in a row but reads as
+ * an enum in a table somebody is using to decide where to set a price.
+ */
+const PLAN_LIMIT_LABELS: Record<string, string> = {
+  documents: "Shared documents",
+  projects: "Projects",
+  collaborators: "Collaborators",
+  team_workspaces: "Team workspaces",
+  version_history: "Version history (Pro feature)",
+  analytics_history: "Deep analytics (Pro feature)",
+  project_links: "Extra project links (Pro feature)",
+};
+
 function MetricTile({
   label,
   value,
@@ -129,6 +147,7 @@ export default function AdminHomePage() {
   }, [days]);
 
   const t = overview?.totals;
+  const planLimits = Array.isArray(overview?.planLimits) ? overview.planLimits : [];
   const num = (n: number | undefined) => (typeof n === "number" ? n.toLocaleString() : "—");
 
   return (
@@ -203,6 +222,40 @@ export default function AdminHomePage() {
           <MetricTile label="Documents" value={num(t?.docs)} hint="Live, not archived" />
           <MetricTile label="Share links" value={num(t?.liveLinks)} hint="Enabled and not archived" />
         </div>
+
+        <AdminSection
+          title="Where the plan stops people"
+          description="Every refusal a plan limit produced in the window. Eight routes have been recording these since limits shipped; this is the first screen to read them."
+        >
+          {planLimits.length ? (
+            <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
+              <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-b border-[var(--border)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
+                <span>Limit</span>
+                <span className="text-right">Refusals</span>
+                <span className="text-right">Workspaces</span>
+              </div>
+              <ul className="divide-y divide-[var(--border)]">
+                {planLimits.map((row) => (
+                  <li
+                    key={row.limit}
+                    className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 px-4 py-2.5 text-[13px] text-[var(--fg)]"
+                  >
+                    <span className="truncate font-medium">{PLAN_LIMIT_LABELS[row.limit] ?? row.limit}</span>
+                    <span className="text-right tabular-nums">{num(row.hits)}</span>
+                    {/* The second number is the one that matters for pricing: one workspace
+                        retrying twenty times is demand in the first column and a single frustrated
+                        person in this one. */}
+                    <span className="text-right tabular-nums text-[var(--muted)]">{num(row.workspaces)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-6 text-center text-[13px] text-[var(--muted)]">
+              No plan limit was reached in this window.
+            </p>
+          )}
+        </AdminSection>
 
         <AdminSection
           title="Revenue"

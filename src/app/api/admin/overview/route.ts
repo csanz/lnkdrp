@@ -19,6 +19,7 @@ import { ShareLinkModel } from "@/lib/models/ShareLink";
 import { AiRunModel } from "@/lib/models/AiRun";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { CronHealthModel } from "@/lib/models/CronHealth";
+import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,6 +82,7 @@ export async function GET(request: Request) {
     aiSeries,
     jobs,
     pendingDeletions,
+    planLimitHits,
   ] = await Promise.all([
     // A purged account leaves an anonymised tombstone row. It is not an account any more and it is
     // not a signup: counting it put five of my own test accounts in "signups" on this page.
@@ -128,6 +130,24 @@ export async function GET(request: Request) {
     AiRunModel.aggregate<DayRow>([{ $match: { createdDate: { $gte: since } } }, ...byDay("createdDate")]),
     CronHealthModel.find({}).select({ jobKey: 1, status: 1, lastRunAt: 1, lastError: 1 }).limit(50).lean(),
     UserModel.countDocuments({ deletionRequestedAt: { $ne: null }, deletionPurgedAt: null }),
+    /**
+     * Which plan limit actually stops people, and how many workspaces it stops.
+     *
+     * Eight routes have been writing `plan.limit_reached` with `{ limit, used, max }` since limits
+     * shipped, and nothing has ever read them — so every decision about where to set a cap has been
+     * made from reasoning rather than from the rows sitting in the database. Raising Free to 10
+     * documents and 100 credits was one of those.
+     *
+     * Two numbers per limit, because they answer different questions: `hits` is how often the wall
+     * is met, `workspaces` is how many distinct people meet it. A single workspace retrying twenty
+     * times looks like demand in the first number and like one frustrated person in the second.
+     */
+    ActivityEventModel.aggregate([
+      { $match: { type: "plan.limit_reached", createdDate: { $gte: since } } },
+      { $group: { _id: { limit: "$meta.limit", orgId: "$orgId" }, hits: { $sum: 1 } } },
+      { $group: { _id: "$_id.limit", hits: { $sum: "$hits" }, workspaces: { $sum: 1 } } },
+      { $sort: { hits: -1 } },
+    ]) as Promise<Array<{ _id?: unknown; hits?: number; workspaces?: number }>>,
   ]);
 
   // One series array the chart can switch metrics on, rather than four parallel arrays.
@@ -145,9 +165,18 @@ export async function GET(request: Request) {
 
   const failing = (jobs as Array<{ jobKey?: string; status?: string }>).filter((j) => j.status === "error").map((j) => String(j.jobKey));
 
+  const planLimits = (Array.isArray(planLimitHits) ? planLimitHits : [])
+    .map((r) => ({
+      limit: typeof r?._id === "string" ? r._id : "unknown",
+      hits: Number(r?.hits ?? 0),
+      workspaces: Number(r?.workspaces ?? 0),
+    }))
+    .filter((r) => r.hits > 0);
+
   return NextResponse.json({
     ok: true,
     days,
+    planLimits,
     totals: {
       users,
       orgs: Number(orgs?.[0]?.n ?? 0),
