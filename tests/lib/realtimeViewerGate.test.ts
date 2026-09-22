@@ -23,6 +23,9 @@
  * mocked out from under it and the socket is joined to its room through the server's own
  * `connection` handler.
  */
+import fs from "node:fs";
+import path from "node:path";
+
 import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
 const ORG = "6512c0ffee00000000000001";
@@ -252,5 +255,87 @@ describe("realtime viewer frames carry no reader identity", () => {
     expect(frames).toHaveLength(1);
     expect(frames[0].reading.viewerKey).toBe("deadbeef");
     expect(sent.join("\n")).not.toContain(READER_NAME);
+  });
+});
+
+/**
+ * The gate above is only half of the contract. The other half is the type the browser is written
+ * against, and it was never updated: `src/lib/client/realtime.ts` went on declaring
+ * `viewer: { docId, shareId, name }` for a frame the server had stopped putting a name on. Nothing
+ * reads `.name` today, so there was no visible bug, only a standing invitation: the next consumer
+ * writes `frame.viewer.name`, it compiles, it is `undefined` at runtime, and the shortest way to
+ * make the type's promise true is to add the name back to `broadcast()` and hand every socket in a
+ * Free workspace the identity the REST gate withholds.
+ *
+ * So the client declaration is pinned against the server's two emitters by source, not by hand: the
+ * field list on the wire and the field list in the type have to be the same set, whichever side
+ * someone adds to next.
+ */
+describe("the browser's viewer frame type matches what the server sends", () => {
+  const REPO_ROOT = path.resolve(__dirname, "../..");
+  const CLIENT = "src/lib/client/realtime.ts";
+  const SERVER = "realtime/server.ts";
+
+  /** The body of every `viewer: { ... }` that sits inside a `type: "viewer"` frame, in order. */
+  function viewerPayloadBodies(source: string): string[] {
+    const bodies: string[] = [];
+    const frame = /type:\s*"viewer"\s*[,;]/g;
+    let match: RegExpExecArray | null;
+    while ((match = frame.exec(source))) {
+      const at = source.indexOf("viewer:", match.index);
+      if (at === -1) continue;
+      const open = source.indexOf("{", at);
+      if (open === -1) continue;
+      let depth = 0;
+      for (let i = open; i < source.length; i += 1) {
+        if (source[i] === "{") depth += 1;
+        else if (source[i] === "}") {
+          depth -= 1;
+          if (depth === 0) {
+            bodies.push(source.slice(open + 1, i));
+            break;
+          }
+        }
+      }
+    }
+    return bodies;
+  }
+
+  /** The keys that body declares or assigns, comments stripped, sorted. */
+  function keysOf(body: string): string[] {
+    return body
+      .split("\n")
+      .map((line) => line.replace(/\/\/.*$/, ""))
+      .join("\n")
+      .split(/[;,\n]/)
+      .map((part) => /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\??\s*:/.exec(part)?.[1])
+      .filter((key): key is string => Boolean(key))
+      .sort();
+  }
+
+  const clientBodies = viewerPayloadBodies(fs.readFileSync(path.join(REPO_ROOT, CLIENT), "utf8"));
+  const serverBodies = viewerPayloadBodies(fs.readFileSync(path.join(REPO_ROOT, SERVER), "utf8"));
+
+  test("the declaration and both emitters were found", () => {
+    expect(clientBodies).toHaveLength(1);
+    // `shareviews` and `projectlinkviews`.
+    expect(serverBodies).toHaveLength(2);
+  });
+
+  test("the type declares the two fields on the wire and no third one", () => {
+    expect(keysOf(clientBodies[0])).toEqual(["docId", "shareId"]);
+  });
+
+  test("every emitted frame carries exactly the declared fields", () => {
+    for (const body of serverBodies) {
+      expect(keysOf(body)).toEqual(keysOf(clientBodies[0]));
+    }
+  });
+
+  test("no identity field is declared on the client frame", () => {
+    const declared = keysOf(clientBodies[0]);
+    for (const identity of ["name", "viewerName", "email", "viewerEmail", "viewerEmailSnapshot"]) {
+      expect(declared).not.toContain(identity);
+    }
   });
 });

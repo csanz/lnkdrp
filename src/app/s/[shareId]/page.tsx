@@ -5,6 +5,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { resolveShareLink } from "@/lib/share/links";
+import { ownerCanShowVersionHistory } from "@/lib/share/ownerPlan";
 import type { AiOutput } from "@/components/PdfJsViewer";
 import ShareViewerClient from "./ShareViewerClient";
 import BrandHeader from "@/components/BrandHeader";
@@ -222,7 +223,22 @@ export default async function SharePage(props: {
   // Permissions belong to the link, not the document: two recipients of the same deck can have
   // different download rights.
   const allowDownload = Boolean(link.allowDownload);
-  const allowRevisionHistory = Boolean(link.allowRevisionHistory);
+  // The per-link toggle is half the answer. Version history is also a Pro feature, and the two
+  // routes that serve the data ask `ownerCanShowVersionHistory` on every read for the reason
+  // written at the top of `src/lib/share/ownerPlan.ts`: the toggle is gated when it is set, so a
+  // workspace that turned it on while on Pro and then downgraded still carries
+  // `allowRevisionHistory: true` on every one of its links forever.
+  //
+  // This page was the third reader of that question and answered it from the link row alone, so a
+  // downgraded workspace drew recipients a History control whose every press returned the read
+  // path's 403 — permanently, for as long as the plan is what it is, with the raw error body shown
+  // in the viewer and nothing anywhere telling the owner their readers had a dead button. Asking
+  // the same helper here keeps the affordance and the data on one answer. The `&&` short-circuits,
+  // so a link with the toggle off costs no plan lookup; the doc carries `orgId` and the legacy
+  // `userId` already, since `resolveShareLink` projects both on every call.
+  const allowRevisionHistory =
+    Boolean(link.allowRevisionHistory) &&
+    (await ownerCanShowVersionHistory(doc as { orgId?: unknown; userId?: unknown }));
 
   if (pdfUrl) {
     return (

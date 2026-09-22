@@ -41,6 +41,39 @@ import {
   type ShareViewerProfile,
   type ShareViewerScope,
 } from "@/lib/share/viewerProfile";
+
+/** What the version-history panel says when we have nothing more specific to tell the reader. */
+export const HISTORY_ERROR_FALLBACK = "Version history isn’t available right now.";
+
+/**
+ * An error whose message was written here, for the recipient to read.
+ *
+ * The history drawer used to show whatever text it could get its hands on. `loadMoreHistory` did
+ * `throw new Error(await res.text())` on a refusal and the catch set that message straight into the
+ * red panel, so a reader whose link was revoked while their tab sat open was shown the literal
+ * string `{"error":"Not found"}`. `/s/:shareId/changes` answers JSON for every refusal it has, so
+ * the calm sentence sitting next to it as a fallback was unreachable. The browser's own text
+ * reached the panel the same way: a dropped connection put `Failed to fetch` there, and the 10s
+ * abort below put `The user aborted a request`. A recipient is the one person who cannot ask us
+ * what happened, and none of those tell them anything they can act on. Only messages of this type
+ * are rendered now; everything else falls back to the sentence above.
+ */
+export class HistoryMessageError extends Error {}
+
+/**
+ * Turn a refusal from `/s/:shareId/changes` into something a recipient can act on.
+ *
+ * The statuses are the route's own (see its header comment): 404 for a link that is gone, revoked,
+ * expired or archived, 403 when history is off for the link or the owner's plan no longer carries
+ * it, 401 when the share-auth cookie for a password-gated link has lapsed.
+ */
+export function historyErrorForStatus(status: number): string {
+  if (status === 401) return "This link needs its password again. Reload the page to continue.";
+  if (status === 403) return "Version history isn’t available for this document.";
+  if (status === 404 || status === 410) return "This link is no longer available.";
+  return HISTORY_ERROR_FALLBACK;
+}
+
 /**
  * Title From Enum (uses join, map, filter).
  */
@@ -931,8 +964,14 @@ export function PdfJsViewer({
         ...(controller ? { signal: controller.signal } : {}),
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `Request failed (${res.status})`);
+        // The body is ours to read, never the reader's: it is a JSON error object, and it used to
+        // be rendered verbatim in the drawer. Status in, sentence out.
+        const detail = await res.text().catch(() => "");
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.log("[lnkdrp][share][history] refused", { reason, reqId, status: res.status, detail });
+        }
+        throw new HistoryMessageError(historyErrorForStatus(res.status));
       }
       const json = (await res.json().catch(() => null)) as any;
       if (historyReqIdRef.current !== reqId) return;
@@ -981,9 +1020,10 @@ export function PdfJsViewer({
       setHistoryCursor(nextCursor);
       setHistoryHasMore(Boolean(nextCursor));
     } catch (e) {
-      const message = e instanceof Error ? e.message : "";
-      // Keep wording calm and factual (avoid blame/negativity).
-      setHistoryError(message || "Version history isn’t available right now.");
+      // Keep wording calm and factual (avoid blame/negativity), which means only ever showing a
+      // sentence written above: `e.message` here belongs to fetch, to the abort, or to the server.
+      const message = e instanceof HistoryMessageError ? e.message : "";
+      setHistoryError(message || HISTORY_ERROR_FALLBACK);
     } finally {
       if (timeoutId && typeof window !== "undefined") window.clearTimeout(timeoutId);
       setHistoryLoading(false);
@@ -3164,14 +3204,25 @@ export function PdfJsViewer({
               <div className="inline-flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/80 backdrop-blur-sm">
                 <span className="font-semibold text-white/90">Simplified view</span>
                 <span>This document is open in your browser’s own PDF viewer, so some controls are unavailable.</span>
-                <a
-                  className="pointer-events-auto ml-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 font-semibold text-white/90 hover:bg-black/30"
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open PDF directly
-                </a>
+                {/* Only offered when the sender allows downloads, because `/s/:shareId/pdf` refuses
+                    exactly this request otherwise. Opening the link in a tab is a top-level
+                    navigation, which the browser stamps `sec-fetch-dest: document`, which is what
+                    the route's `isRawFileRequest` gate is written to catch. So on the 25-of-28
+                    no-download links this button was a new tab containing the two words "Download
+                    disabled", with no branding and no way back. A reader whose viewer had just
+                    fallen back would have read that as the product breaking twice. `allowDownload`
+                    rather than `canDownload` on purpose: this href is the raw file, not
+                    `downloadUrl`, and `allowDownload` is the flag the route actually gates on. */}
+                {allowDownload ? (
+                  <a
+                    className="pointer-events-auto ml-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 font-semibold text-white/90 hover:bg-black/30"
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open PDF directly
+                  </a>
+                ) : null}
                 <button
                   type="button"
                   className="pointer-events-auto ml-1 rounded-lg bg-white/10 px-2.5 py-1 font-semibold text-white/90 hover:bg-white/15"
@@ -3201,14 +3252,33 @@ export function PdfJsViewer({
                   <div className="text-sm font-semibold">Native viewer failed</div>
                   <div className="mt-2 whitespace-pre-wrap text-sm text-white/80">{nativePdfError}</div>
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <a
-                      className="inline-flex items-center justify-center rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15"
-                      href={url}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open PDF directly
-                    </a>
+                    {/* Same gate as the banner above: on a no-download link this navigation is
+                        refused with a bare 403, so offering it here, at the moment the reader
+                        has nothing left but this panel, would be the worst place to send them to
+                        a blank tab. Asking the sender is the honest alternative on those links. */}
+                    {allowDownload ? (
+                      <a
+                        className="inline-flex items-center justify-center rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15"
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open PDF directly
+                      </a>
+                    ) : shareIdSafe && canRequestDownload ? (
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15"
+                        onClick={() => {
+                          setDownloadRequestOpen(true);
+                          setDownloadRequestSent(false);
+                          setDownloadRequestResult(null);
+                          setDownloadRequestError(null);
+                        }}
+                      >
+                        Request download
+                      </button>
+                    ) : null}
                     <button
                       type="button"
                       className="inline-flex items-center justify-center rounded-xl border border-white/15 bg-black/40 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-black/30"

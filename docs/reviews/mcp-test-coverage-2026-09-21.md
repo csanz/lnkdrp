@@ -174,9 +174,13 @@ Carried from `docs/CHANGELOG-2026-09-20.md`; unchanged as of 2026-09-21.
   API keys, so removing them needs a signed-in human on `/tags`. Every sweep that touches tagging
   adds a few more.
 - **Six product surfaces have no MCP tool at all**: version history, workspace metrics, project
-  analytics, project-link passwords, member and invite management, billing detail. Reported in
-  `whoami.capabilities.notMcpAccessible` so their absence reads as "not built" rather than as a
-  silent failure.
+  analytics, project-link passwords, member and invite management, billing detail. Nothing
+  announces them: `whoami.capabilities.notMcpAccessible` names `requestRepos` and
+  `downloadAccessRequests`, and has never held any of these six, so an agent meets their absence
+  only as a tool missing from `listTools`. This bullet used to claim the six were reported in that
+  field. They never were, on any commit, and the sentence was not in the changelog it says it
+  carries; a reader who called `whoami` to find the warning about, say, workspace metrics got two
+  unrelated entries and had to guess whether the field or this document was broken.
 - **Nothing checks the Docker image's `COPY` list** against what `mcp/src` imports out of
   `src/lib`. A new import compiles locally and breaks the image.
 

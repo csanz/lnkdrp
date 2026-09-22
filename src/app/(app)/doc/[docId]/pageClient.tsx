@@ -101,6 +101,30 @@ type UploadDTO = {
   status: string | null;
   error?: unknown | null;
 };
+
+/**
+ * Activity that changes what THIS page is showing, when someone other than this tab writes it.
+ *
+ * Every one of these is something an MCP tool does (`replace_pdf`, `archive_doc`,
+ * `set_share_access`, the share-password routes, `add_doc_to_project`), and every one of them lands
+ * as an activity row rather than a `doc` status flip, so the `doc` frame alone does not cover them.
+ * `share.updated` and `share.password_*` in particular do not start with `share_link.`, which is
+ * why the link-count subscription further down never saw them.
+ *
+ * Exported for `tests/lib/docPageRealtime.test.ts`, which pins this list against the routes that
+ * write the rows; the page itself has no other reason to name them in one place.
+ */
+export const REMOTE_DOC_CHANGE_ACTIVITY = new Set<string>([
+  "doc.replaced",
+  "doc.processed",
+  "doc.archived",
+  "doc.unarchived",
+  "share.updated",
+  "share.password_set",
+  "share.password_cleared",
+  "doc.added_to_project",
+  "doc.removed_from_project",
+]);
 /**
  * Normalize Urlish (uses trim, test).
  */
@@ -558,6 +582,58 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summaryRun.state, doc.currentUploadId]);
+
+  /**
+   * Someone else changed this document while it is open here.
+   *
+   * The hydrate loop above stops the moment the doc is `ready` with a share id, and the 900ms
+   * replace poll only runs against `replaceUploadId` — state this tab sets when THIS tab starts a
+   * replacement. Both encode the assumption that the only writer is the person looking at the page,
+   * which the MCP server breaks: an agent's `replace_pdf` left the version badge, the page count,
+   * the preview and the iframe on the previous version, and a `set_share_access` left the sharing
+   * panel (pure props off `doc`, no fetch of its own) showing the old switches, until a reload.
+   * The sidebar row would update underneath it, because `LeftSidebar` does listen, so the page was
+   * visibly the one stale thing on screen.
+   *
+   * Two sources, because one change can arrive as either: a `doc` frame for the status flips a
+   * replacement makes (`preparing` → `ready`), and the activity rows for everything that never
+   * touches `status`. The `doc` frame carries an id and is filtered on it; activity frames carry
+   * only a type, so the workspace's share and archive rows all refetch this one document — one
+   * lite-ish GET, coalesced, which is cheaper than being wrong. `hello` is in here for the same
+   * reason the metrics pages take it: the change streams keep no resume token, so whatever happened
+   * while the socket was down is simply missing.
+   */
+  useEffect(() => {
+    let timer: number | null = null;
+    // Processing writes several frames in a row (status flip, then the activity row). Coalesce them
+    // into one refetch, the same 400ms the sidebar uses.
+    const schedule = () => {
+      if (timer !== null) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        void refreshDocFull();
+      }, 400);
+    };
+    const offDoc = subscribeRealtime("doc", (f) => {
+      if (f.type !== "doc" || f.doc.id !== docRef.current.id) return;
+      schedule();
+    });
+    const offActivity = subscribeRealtime("activity", (f) => {
+      if (f.type !== "activity") return;
+      if (!REMOTE_DOC_CHANGE_ACTIVITY.has(f.event.type ?? "")) return;
+      schedule();
+    });
+    const offHello = subscribeRealtime("hello", schedule);
+    return () => {
+      offDoc();
+      offActivity();
+      offHello();
+      if (timer !== null) window.clearTimeout(timer);
+    };
+    // `refreshDocFull` reads the doc id from `docRef` and only calls setters, so the first render's
+    // closure stays correct for the life of the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function writeSummary() {
     const uploadId = doc.currentUploadId;

@@ -28,6 +28,13 @@ vi.mock("@/components/BrandHeader", () => ({
 vi.mock("@/lib/http/fetchJson", () => ({ fetchJson: vi.fn() }));
 vi.mock("@/lib/botId", () => ({ getOrCreateBotId: () => "bot-id" }));
 
+/**
+ * The route the gate is being rendered on. Stood in for rather than mocked away: the gate reads the
+ * path because no caller ever passed `scope`, so the path is the input under test here.
+ */
+const nav = vi.hoisted(() => ({ pathname: null as string | null }));
+vi.mock("next/navigation", () => ({ usePathname: () => nav.pathname }));
+
 const { default: PasswordGate } = await import("@/components/PasswordGate");
 
 /** What a caller must not be able to disclose through the gate, however it is passed. */
@@ -35,8 +42,18 @@ const SECRET_TITLE = "Acme Series A — cap table";
 const SECRET_PREVIEW = "https://store123.public.blob.vercel-storage.com.com/docs/64f0c0ffee/preview.png";
 
 /** The gate's markup for one set of props, as a recipient's browser would receive it. */
-function render(props: Record<string, unknown>): string {
-  return renderToStaticMarkup(createElement(PasswordGate as never, { shareId: "pl_locked01", ...props } as never));
+function render(props: Record<string, unknown>, pathname: string | null = null): string {
+  nav.pathname = pathname;
+  try {
+    return renderToStaticMarkup(createElement(PasswordGate as never, { shareId: "pl_locked01", ...props } as never));
+  } finally {
+    nav.pathname = null;
+  }
+}
+
+/** The gate as a recipient sees it after following one of the links we actually send. */
+function renderAt(pathname: string): string {
+  return render({ title: null, previewUrl: null }, pathname);
 }
 
 describe("PasswordGate discloses nothing behind the password", () => {
@@ -71,5 +88,44 @@ describe("PasswordGate copy", () => {
     expect(html).toContain("Enter the password to continue.");
     expect(html).not.toContain("this document");
     expect(html).not.toContain("this data room");
+  });
+});
+
+/**
+ * The wording as it actually reaches a recipient.
+ *
+ * The three pages that render the gate pass `shareId title={null} previewUrl={null} workspace` and
+ * have never passed `scope`, so the copy tests above were all passing while every real gate said
+ * "Enter the password to continue." — the `scope` branch was dead the day it was written. These
+ * pin the route, which is the thing that is actually different between the three, rather than a
+ * prop someone has to remember.
+ */
+describe("PasswordGate copy on the routes that render it", () => {
+  test("a document link says document", () => {
+    expect(renderAt("/s/DTn73xg6mf9y")).toContain("Enter the password to view this document.");
+  });
+
+  test("a data room says data room", () => {
+    const html = renderAt("/p/Rmdhxorepvsy");
+    expect(html).toContain("Enter the password to view this data room.");
+    expect(html).not.toContain("this document");
+  });
+
+  test("one document deep inside a room says document", () => {
+    // And says it for an id the room does not hold either: the gate is rendered before membership
+    // is checked, so this wording must not be the thing that answers "is this in there".
+    const inRoom = renderAt("/p/Rmdhxorepvsy/68c1f0aa11223344556677aa");
+    expect(inRoom).toContain("Enter the password to view this document.");
+    expect(renderAt("/p/Rmdhxorepvsy/000000000000000000000000")).toBe(inRoom);
+  });
+
+  test("an unrecognised route says nothing about what is behind it", () => {
+    expect(renderAt("/something/else")).toContain("Enter the password to continue.");
+    expect(render({ title: null, previewUrl: null }, null)).toContain("Enter the password to continue.");
+  });
+
+  test("an explicit scope still wins over the route", () => {
+    expect(render({ scope: "project" }, "/s/DTn73xg6mf9y")).toContain("Enter the password to view this data room.");
+    expect(render({ scope: null }, "/s/DTn73xg6mf9y")).toContain("Enter the password to continue.");
   });
 });

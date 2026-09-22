@@ -65,7 +65,11 @@ import {
 import { formatDayKey } from "@/lib/format/date";
 import { valueLabels } from "@/components/charts/ChartValueLabel";
 import { buildPublicProjectUrl, buildPublicShareUrl } from "@/lib/urls";
-import { realtimeState, subscribeRealtime } from "@/lib/client/realtime";
+import {
+  type RealtimeState,
+  realtimeState,
+  subscribeRealtime,
+} from "@/lib/client/realtime";
 import { rememberEntityTitle } from "@/lib/client/entityTitles";
 import EntityCrumbLabel, {
   CrumbSkeleton,
@@ -993,6 +997,62 @@ function LockedViewersBlock({
 }
 
 /**
+ * Is this `reading` frame about what is on screen?
+ *
+ * The realtime server splits a reader's life into two frames: `viewer` for the arrival and for a
+ * name (a `shareviews` insert, or a `viewerName` / `viewerEmailSnapshot` write), and `reading` for
+ * everything after it, the visit clock, the page clock, the pages reached, a repeat open. This
+ * page subscribed to the first and not the second, so an owner watching someone read saw the
+ * arrival land and then nothing move for the rest of the session.
+ *
+ * Same filter as the identity frame, for the same reason: a document page can compare the frame's
+ * document with its own, and a project page cannot, because a `ShareView` carries no project (the
+ * link does). So the project scope takes every progress frame in the workspace. The server
+ * throttles a reader to one frame every few seconds and the debounce below collapses a burst into
+ * one refetch, which is what makes that affordable.
+ */
+export function readingFrameInScope(
+  reading: { docId: string | null },
+  isProject: boolean,
+  scopeId: string,
+): boolean {
+  if (isProject) return true;
+  return !reading.docId || reading.docId === scopeId;
+}
+
+/**
+ * How long the page may go without asking the server anything, socket or no socket.
+ *
+ * Two poll periods: long enough that a healthy channel never reaches it, short enough that a
+ * frame this page does not understand cannot freeze it for a whole reading session.
+ */
+export const METRICS_STALE_FLOOR_MS = 60_000;
+
+/**
+ * Should the fallback timer refetch on this tick?
+ *
+ * The guard used to be "socket open, nothing to do", which reads as "the channel delivers
+ * everything this page renders". It does not, and never did: the channel delivers the frame types
+ * this page happens to subscribe to. So a healthy socket carrying only frames nobody here listened
+ * for left the page with no refresh path at all, while a dead socket would have caught the same
+ * numbers within half a minute. Realtime working made the page staler than realtime being gone.
+ *
+ * A floor instead of an either/or. An open channel still suppresses the ordinary tick, so a live
+ * page costs nothing extra, but a page that has not been to the server inside
+ * `METRICS_STALE_FLOOR_MS` goes anyway and stops guessing why. A hidden tab never polls either
+ * way: nobody is looking, and it refetches on `hello` when it comes back.
+ */
+export function shouldFallbackRefetch(input: {
+  realtime: RealtimeState;
+  visible: boolean;
+  msSinceLastFetch: number;
+}): boolean {
+  if (!input.visible) return false;
+  if (input.realtime !== "open") return true;
+  return input.msSinceLastFetch >= METRICS_STALE_FLOOR_MS;
+}
+
+/**
  * Render the MetricsPageClient UI (uses effects, local state).
  *
  * Free workspaces get the basic tier: totals, the views-by-day charts and the unique viewer
@@ -1073,6 +1133,14 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
    * replace them in place.
    */
   const silentRefreshRef = useRef(false);
+  /**
+   * When this page last went to the server, asked or not, answered or not.
+   *
+   * The staleness floor below measures from here rather than from the last successful payload: a
+   * request that failed or 404'd still means the page has just been told what the server thinks,
+   * and retrying it every tick would make a broken endpoint into a loop.
+   */
+  const lastFetchAtRef = useRef(Date.now());
   /**
    * Whether the identities have ever arrived on this page.
    *
@@ -1292,6 +1360,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
       // range, a different link) is allowed to take the page back to skeletons.
       const silent = silentRefreshRef.current;
       silentRefreshRef.current = false;
+      lastFetchAtRef.current = Date.now();
       if (!silent) setLoading(true);
       setError(null);
       setViewersLoading(false);
@@ -1390,12 +1459,23 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
    * timer collapses them into a single refetch. On the project scope the frame's document is not
    * enough to tell whether it is inside this project, so any identity change in the workspace
    * refetches — a rare event, and a stale name is the thing this exists to prevent.
+   *
+   * The third event is the one this page was missing: somebody is reading, right now. An arrival
+   * happens once per (link, reader) and then never again, so a page subscribed to `viewer` alone
+   * showed a visitor appear and then froze for the whole of their session, with time spent,
+   * per-page time, pages seen and a repeat open all arriving as `reading` frames nothing here
+   * listened for. It goes through the same debounce as the rest: the server already caps a reader
+   * at one frame every few seconds, and a refetch answers all three events with one request.
    */
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const bump = () => {
       silentRefreshRef.current = true;
       setIdentityNonce((n) => n + 1);
+    };
+    const bumpSoon = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(bump, 400);
     };
     // A reconnection means a gap: the streams keep no resume token, so anything that happened
     // while this tab was disconnected was never delivered and never will be.
@@ -1404,31 +1484,44 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
       if (frame.type !== "viewer") return;
       if (!isProject && frame.viewer.docId && frame.viewer.docId !== scope.id)
         return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        silentRefreshRef.current = true;
-        setIdentityNonce((n) => n + 1);
-      }, 400);
+      bumpSoon();
+    });
+    const offReading = subscribeRealtime("reading", (frame) => {
+      if (frame.type !== "reading") return;
+      if (!readingFrameInScope(frame.reading, isProject, scope.id)) return;
+      bumpSoon();
     });
     return () => {
       if (timer) clearTimeout(timer);
       offHello();
       off();
+      offReading();
     };
   }, [isProject, scope.id]);
 
   /**
-   * The fallback for a tab with no socket.
+   * The fallback for a tab with no socket, and the floor under one that has a socket.
    *
    * Realtime was this page's only refresh path — no poll, no refetch on focus — so a workspace
    * behind a proxy that blocks the upgrade, or a deployment with no realtime host at all, showed
-   * numbers frozen at page load with nothing to say so. Only while the tab is visible and the
-   * channel is not open, so it costs nothing in the normal case.
+   * numbers frozen at page load with nothing to say so. Only while the tab is visible, so it costs
+   * nothing in a background tab.
+   *
+   * It is not an either/or any more (see `shouldFallbackRefetch`): an open socket suppresses the
+   * ordinary tick, but never for longer than `METRICS_STALE_FLOOR_MS`. Trusting "open" to mean
+   * "everything is delivered" is what turned a missing subscription into a page with no refresh
+   * path at all, and the floor is what stops the next one doing it again.
    */
   useEffect(() => {
     const id = window.setInterval(() => {
-      if (realtimeState() === "open") return;
-      if (document.visibilityState !== "visible") return;
+      if (
+        !shouldFallbackRefetch({
+          realtime: realtimeState(),
+          visible: document.visibilityState === "visible",
+          msSinceLastFetch: Date.now() - lastFetchAtRef.current,
+        })
+      )
+        return;
       silentRefreshRef.current = true;
       setIdentityNonce((n) => n + 1);
     }, 30_000);

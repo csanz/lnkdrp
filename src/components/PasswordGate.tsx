@@ -1,10 +1,42 @@
 "use client";
 
 import { useState } from "react";
+import { usePathname } from "next/navigation";
 import BrandHeader from "@/components/BrandHeader";
 import type { ShareWorkspaceBrand } from "@/lib/share/brand";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { getOrCreateBotId } from "@/lib/botId";
+
+/** What the gate stands in front of, or `null` for "say nothing about it". */
+type GateScope = "document" | "project";
+
+/**
+ * Which kind of thing is behind the password, read off the route the gate was rendered on.
+ *
+ * `scope` was added to fix the room wording and then never passed by a single caller, so every gate
+ * in the product fell through to "Enter the password to continue.": `/p/` stopped being wrong and
+ * `/s/` stopped being right, and the branch that says either was dead in production. Handing the
+ * three pages the prop fixes today's copy and leaves the fourth page to forget it, which is exactly
+ * the arrangement this component already refuses for `title` and `previewUrl` — the reasoning above
+ * applies unchanged, so the answer lives here too.
+ *
+ * The route can answer it and no caller has to: `/s/:shareId` is one document, `/p/:shareId` is the
+ * room, `/p/:shareId/:docId` is one document inside it. Nothing is disclosed by reading it — the
+ * recipient has the URL in their address bar, which is how they got here. A path this function does
+ * not recognise stays `null` rather than guessing, and `scope` still overrides it for a caller that
+ * knows better than the URL does.
+ */
+function scopeFromPath(pathname: string | null | undefined): GateScope | null {
+  const [prefix, shareId, docId] = (pathname ?? "").split("/").filter(Boolean);
+  if (!shareId) return null;
+  if (prefix === "s") return "document";
+  // A deep link to one document in a room is still one document, and saying so confirms nothing
+  // about the room's contents: the gate goes up before the room is asked whether it holds this id
+  // (see the ordering note in `/p/[shareId]/[docId]/page.tsx`), so the wording is identical for an
+  // id that is in there and one that is not.
+  if (prefix === "p") return docId ? "document" : "project";
+  return null;
+}
 
 /**
  * Password gate for share pages — a document link's (`/s/:shareId`) and a data room's (`/p/...`).
@@ -37,11 +69,11 @@ export default function PasswordGate({
   previewUrl?: string | null;
   /**
    * What is behind the password, for the wording only. A data room is several documents, so "Enter
-   * the password to view this document" was simply wrong there. Unset means "not said": the copy
-   * stays true of both rather than guessing, since the component cannot tell a document slug from a
-   * project slug by looking at it.
+   * the password to view this document" was simply wrong there. Optional and normally left unset:
+   * the route already says which one it is, and `scopeFromPath` reads it there so that no page has
+   * to remember. Pass it only to override that, and `null` to say nothing at all.
    */
-  scope?: "document" | "project" | null;
+  scope?: GateScope | null;
   /**
    * The workspace that shared this. Shown here on purpose, and it is the one thing on this page
    * that is: the gate withholds the name and the cover of whatever is behind it (see above), but
@@ -57,8 +89,11 @@ export default function PasswordGate({
   const [error, setError] = useState<string | null>(null);
 
   // What the password is in front of, in words that are true before it has been given: one
-  // document, or a room of them. Nothing here names either of them.
-  const behindTheGate = scope === "project" ? "this data room" : scope === "document" ? "this document" : null;
+  // document, or a room of them. Nothing here names either of them. An explicit `scope` wins,
+  // including an explicit `null` for "do not say"; leaving it off asks the route (see above).
+  const pathname = usePathname();
+  const behind = scope === undefined ? scopeFromPath(pathname) : scope;
+  const behindTheGate = behind === "project" ? "this data room" : behind === "document" ? "this document" : null;
 
   async function unlock() {
     setSubmitting(true);

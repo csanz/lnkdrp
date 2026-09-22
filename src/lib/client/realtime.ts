@@ -35,12 +35,25 @@ export type RealtimeFrame =
       upload: { id: string; docId: string | null; percent: number; stage: string | null; status: string | null };
     }
   | { type: "project"; orgId: string; project: { id: string; name: string | null } }
-  // A recipient's volunteered name or email changed (they re-answered "introduce yourself"). The
-  // metrics pages refetch on it so a corrected name does not wait for a reload.
+  /**
+   * A recipient arrived, or their volunteered name or email changed (they re-answered "introduce
+   * yourself"). The metrics pages refetch on it so a corrected name does not wait for a reload.
+   *
+   * A nudge, never an identity: the name is read back through the gated REST endpoint, which is
+   * the only place that knows the workspace's plan. This variant used to declare `name` as well,
+   * and the server stopped sending it when reader identity was gated (see the long comment at
+   * `broadcast(orgId, { type: "viewer" ... })` in `realtime/server.ts`, "Nothing here may ever
+   * carry viewer identity again", and `tests/lib/realtimeViewerGate.test.ts`). The declaration
+   * outlived the wire format, so `frame.viewer.name` still typechecked and was for ever
+   * `undefined`: a reader would have concluded the name was being dropped somewhere in the browser
+   * and fixed the display bug at the obvious end, by putting the name back on the wire, which is
+   * the ungated leak the gate closed. Declaring exactly what the server sends is what stops that,
+   * the same way the server refuses to declare `viewerName` on its own local shape.
+   */
   | {
       type: "viewer";
       orgId: string;
-      viewer: { docId: string | null; shareId: string | null; name: string | null };
+      viewer: { docId: string | null; shareId: string | null };
     }
   /**
    * Someone is reading, right now — the visit clock, the page clock or the pages they have reached

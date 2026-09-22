@@ -19,7 +19,13 @@ agent (Claude Code, Cursor, …)  ──MCP/HTTP──▶  mcp/ (this)  ──RE
 | `npm run mcp:prod` | Prod: `node --import tsx mcp/src/main.ts` (env from the process). |
 | `npm run mcp -- --stdio` | Local stdio mode for one client; needs `LNKDRP_API_KEY=lnk_…`. |
 
-Health: `curl http://localhost:8787/healthz` → `{ ok, sessions, version, apiUrl }`.
+Health: `curl http://localhost:8787/healthz` → `{ ok, sessions, version, apiUrl, confirmations }`.
+`confirmations` is `"enforced"` or `"skipped"`, the second only when `LNKDRP_SKIP_CONFIRMATIONS` is set against a
+localhost API URL, and it is the one way to ask a running server whether a delete will stop and ask a human
+without reading its startup log (`src/confirm.ts`; `tests/mcp/e2e.ts` reads it to decide whether the confirmation
+steps are even in play). This line listed four fields while the endpoint has sent five since the gate landed, so
+the field that answers the one question the rest of this README calls dangerous read as if it did not exist, and
+an operator checking a deployment from here had nothing to check.
 
 ## Connect a client
 
@@ -334,8 +340,13 @@ is archived" were byte-identical, and only the second is recoverable in one call
 ### `lnkdrp_set_share_access`
 In `{ idempotencyKey, docId, shareEnabled?, allowDownload?, password?: string|null, allowRevisionHistory? }` (≥1 setting).
 `shareEnabled` is the document-wide switch; the other three are the default link's, and any other link is
-`lnkdrp_update_share_link`. Out: the `lnkdrp_get_share` shape plus `warnings`. Free-plan caps surface as
-`plan_limit` with the pricing link.
+`lnkdrp_update_share_link`. Out: the `lnkdrp_get_share` shape plus `warnings`, and `replayed: true` on a retried
+`idempotencyKey`. Free-plan caps surface as `plan_limit` with the pricing link.
+The replay is not a cached answer: this tool alone re-applies the settings and rebuilds the view, so a repeat
+describes access as it stands now rather than as it stood at the first call (docs/MCP.md, Idempotency). The flag
+was missing from this shape while `share_pdf`, `replace_pdf` and `create_project` all carry it a few sections up,
+which reads as this tool having no such flag, the inverse of the truth, and telling a retry from a first call is
+the whole reason the flag exists.
 The switch only restores links it turned off itself, so asking for `shareEnabled: true` has two failure modes and
 they get different warnings: the default link stays off because it was revoked on its own (other links are live), or
 *every* link was revoked on its own and nothing opened at all. The second is the dangerous one — an agent told

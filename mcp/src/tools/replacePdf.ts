@@ -21,7 +21,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import type { PlanWarning, UploadAi } from "../api";
+import type { ApiClient, ApiDoc, PlanWarning, UploadAi } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
@@ -34,6 +34,8 @@ import { docIdSchema, SAFETY_TAIL, existsUnlessNotFound } from "./shared";
 
 const PROCESS_NOT_READY_RETRIES = 5;
 const PROCESS_NOT_READY_DELAY_MS = 1000;
+/** How often the superseded path polls this call's own upload row; only used off the happy path. */
+const OWN_UPLOAD_POLL_MS = 1000;
 
 export const replacePdfInputShape = {
   idempotencyKey: z
@@ -130,6 +132,11 @@ export type ReplacePdfResult = {
   unchangedFromPrevious?: true;
   /** The document is archived, so the `shareUrl` in this same reply resolves for nobody. */
   docArchived?: true;
+  /**
+   * Another replacement won: the document, and so the `shareUrl` above, is on this upload, not on
+   * the `version`/`uploadId` this call stored. This call's version still exists in the history.
+   */
+  supersededBy?: { uploadId: string; version: number | null };
   /** This `idempotencyKey` had already run: the same result, not a second upload. */
   replayed?: true;
 };
@@ -171,6 +178,92 @@ function archiveFields(isArchived: boolean, warnings: string[]): { docArchived: 
   return isArchived ? { docArchived: true as const, warnings: [ARCHIVED_DOC_WARNING, ...rest] } : { docArchived: undefined, warnings: rest };
 }
 
+/**
+ * Said in the same reply as the shareUrl, for the same reason `docArchived` is: that URL is what the
+ * agent is about to send, and this is the other way it can serve something other than what this call
+ * uploaded.
+ *
+ * Two replacements can overlap on one document (two agents, or an agent while the owner clicks
+ * "replace the file"). Both succeed and both get their own version number, and the server settles
+ * which one the document lands on: `updateDocUnlessSuperseded` in the process route skips the doc
+ * write when a newer upload is already current, leaving the losing upload row completed and in the
+ * version history. The loser's *report* was the thing that had never been told. It waited with
+ * `waitForDocStatus`, which resolves on the DOCUMENT's status, so a status some other upload caused
+ * came back next to this call's own version and the shared shareUrl with `warnings: []`, and the
+ * agent's next sentence to its human was "updated, here is the link" about a link serving the other
+ * file. Nothing was lost, only mis-reported.
+ *
+ * The check is a stable fact rather than a guess at liveness: `doc.currentUploadId` is already in
+ * the reply the wait just read, and a document that has moved past this version never moves back.
+ */
+const SUPERSEDED_WARNING_PREFIX = "Another replacement has taken this document over";
+
+/** The sentence for a losing replacement, naming both versions so the agent can say which is live. */
+function supersededWarning(version: number, doc: ApiDoc): string {
+  const live = doc.version !== null ? `version ${doc.version}` : "a newer version";
+  return (
+    `${SUPERSEDED_WARNING_PREFIX}: the shareUrl serves ${live} from another replacement, not the version ${version} ` +
+    `this call uploaded. Version ${version} was stored and stays in the document's version history, but nobody ` +
+    "opening the link will see it. Do not tell the human the file you sent is the live one; call lnkdrp_replace_pdf " +
+    "again if it should be."
+  );
+}
+
+/**
+ * Supersede state as of this reply, plus the sentence that goes with it.
+ *
+ * Shaped like `archiveFields` and for the same reason: it strips its own sentence before it adds
+ * one, so a replay cannot carry a stale verdict, and `supersededBy: undefined` clears the cached
+ * field the way `JSON.stringify` drops the key. A null `currentUploadId` is not a supersede: the
+ * document simply has no current upload to compare against, and inventing a warning from that would
+ * be worse than saying nothing.
+ */
+function supersededFields(
+  doc: ApiDoc | null,
+  uploadId: string,
+  version: number,
+  warnings: string[],
+): { supersededBy: { uploadId: string; version: number | null } | undefined; warnings: string[] } {
+  const rest = warnings.filter((w) => !w.startsWith(SUPERSEDED_WARNING_PREFIX));
+  const current = doc?.currentUploadId ?? null;
+  if (!doc || !current || current === uploadId) return { supersededBy: undefined, warnings: rest };
+  return { supersededBy: { uploadId: current, version: doc.version }, warnings: [supersededWarning(version, doc), ...rest] };
+}
+
+/**
+ * The upload pipeline's own vocabulary (`uploading|uploaded|processing|completed|failed`) in the
+ * document's (`preparing|ready|failed`), so `status` means the same thing to a caller whichever row
+ * it was read from. Nothing else in this payload speaks the upload's dialect and a caller comparing
+ * against "ready" should not have to learn a second one.
+ */
+function docStatusFromUpload(status: string | null | undefined): string | null {
+  if (!status) return null;
+  if (status === "completed") return "ready";
+  if (status === "failed") return "failed";
+  return "preparing";
+}
+
+/**
+ * Wait for THIS call's upload row to finish, once the document has moved on to someone else's.
+ *
+ * Only reached off the happy path. The document-level wait is satisfied the moment the document is
+ * terminal, which under a race is a state another upload caused, so this call's own row can still be
+ * mid-process. Returning then would report the other upload's status as this one's and, worse, would
+ * have `readAiOutcome` read a half-written row for `unchangedFromPrevious`, `failureReason` and the
+ * credit figure. A read that fails is treated as "not terminal yet" rather than as an error: this is
+ * a report detail, and the replace itself has already happened.
+ */
+async function waitForOwnUpload(api: ApiClient, uploadId: string, deadlineMs: number): Promise<{ status: string | null; timedOut: boolean }> {
+  for (;;) {
+    const own = await api.getUpload(uploadId).catch(() => null);
+    const status = docStatusFromUpload(own?.status);
+    if (status === "ready" || status === "failed") return { status, timedOut: false };
+    const remaining = deadlineMs - Date.now();
+    if (remaining <= 0) return { status, timedOut: true };
+    await sleep(Math.min(OWN_UPLOAD_POLL_MS, remaining));
+  }
+}
+
 /** Resolve after `ms`. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -196,7 +289,10 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         "result's optimized field reports what happened. Returns { docId, shareId, shareUrl, status, " +
         "version, uploadId, optimized, warnings, creditsRemaining }. "
         + "unchangedFromPrevious: true means the new file reads the same as the one it replaced - a new version number "
-        + "over identical content. Say so rather than reporting the document as updated; it is usually a re-sent file. " +
+        + "over identical content. Say so rather than reporting the document as updated; it is usually a re-sent file. "
+        + "supersededBy means another replacement landed on this document while this one ran: the version here was "
+        + "stored and is in the history, but the shareUrl serves that other version, so do not report this file as the "
+        + "live one. " +
         "The document's status flips to preparing the moment this call starts, before the new file is even fetched - " +
         "recipients opening a link in that window see 'preparing', same as during the first upload. If import or " +
         "processing then fails, the document goes back to its previous version and to ready - it is not left stuck in " +
@@ -281,6 +377,12 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
 
           let status: string = "preparing";
           let timedOut = false;
+          // The document as of the end of the wait, which is the only read that can tell whether the
+          // document ended up on THIS upload. Null when nothing was waited for: there is no verdict
+          // to give then (the file has not even been fetched), and `before.currentUploadId` is the
+          // previous version, which would make every no-wait call look superseded.
+          let latest: ApiDoc | null = null;
+          const waitDeadline = Date.now() + args.timeoutSeconds * 1000;
           if (args.waitForReady) {
             const waited = await waitForDocStatus({
               api,
@@ -305,6 +407,16 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
             });
             status = waited.doc.status;
             timedOut = waited.timedOut;
+            latest = waited.doc;
+            // The wait above answers "is the DOCUMENT done", not "is this upload done". When another
+            // replacement has taken the document over, that answer belongs to its file, so `status`
+            // is re-read from this call's own row and the AI outcome below waits for it too rather
+            // than reading a row that is still being written.
+            if (latest.currentUploadId && latest.currentUploadId !== uploadId) {
+              const own = await waitForOwnUpload(api, uploadId, waitDeadline);
+              if (own.status) status = own.status;
+              timedOut = own.timedOut;
+            }
           }
 
           const outcome =
@@ -317,6 +429,8 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
                   failureReason: null as string | null,
                   unchangedFromPrevious: false,
                 };
+
+          const superseded = supersededFields(latest, uploadId, version, outcome.warnings);
 
           return {
             ...ids,
@@ -343,10 +457,13 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
             // summary; that is what is read now, so the answer no longer depends on how the caller
             // paid for the summary.
             ...(outcome.unchangedFromPrevious ? { unchangedFromPrevious: true as const } : {}),
+            // The other way the shareUrl in this reply serves something else. Read off the same doc
+            // the wait already fetched, so it costs no extra call.
+            supersededBy: superseded.supersededBy,
             // `before` was read before the upload and already carries this; the flag was simply
             // thrown away, so the one fact that decides whether the shareUrl above is worth sending
             // was the one fact the reply did not mention.
-            ...archiveFields(before.isArchived, outcome.warnings),
+            ...archiveFields(before.isArchived, superseded.warnings),
             ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };
         } catch (err) {
@@ -365,18 +482,24 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
       // `replayed` is said out loud: without it an agent that retried after a network error reads a
       // second identical success and reports two versions uploaded when only one was.
       const fresh = await api.getDoc(value.docId).catch(() => null);
-      return fresh
-        ? {
-            ...value,
-            replayed: true as const,
-            status: fresh.status,
-            // Archiving is refreshed off the same read for the same reason the status is: the
-            // cached answer is as old as the first call, and this one is about whether the URL in
-            // this reply resolves right now.
-            ...archiveFields(fresh.isArchived, value.warnings),
-            ...(fresh.status === "ready" || fresh.status === "failed" ? { timedOut: undefined } : {}),
-          }
-        : { ...value, replayed: true as const };
+      if (!fresh) return { ...value, replayed: true as const };
+      const superseded = supersededFields(fresh, value.uploadId, value.version, value.warnings);
+      return {
+        ...value,
+        replayed: true as const,
+        // The document's status is this call's status only while the document is still on this
+        // call's upload. Once another replacement has taken it over, refreshing from the doc would
+        // answer about that file, so the cached status stays: it is stale, but it is at least about
+        // the right upload, and the warning below says which version the link actually serves.
+        ...(superseded.supersededBy
+          ? {}
+          : { status: fresh.status, ...(fresh.status === "ready" || fresh.status === "failed" ? { timedOut: undefined } : {}) }),
+        supersededBy: superseded.supersededBy,
+        // Archiving is refreshed off the same read for the same reason the status is: the
+        // cached answer is as old as the first call, and this one is about whether the URL in
+        // this reply resolves right now.
+        ...archiveFields(fresh.isArchived, superseded.warnings),
+      };
     }),
   );
 }

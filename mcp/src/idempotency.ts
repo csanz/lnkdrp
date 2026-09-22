@@ -108,7 +108,18 @@ export class IdempotencyStore {
         if (!alive) {
           // Gone. Forget the key and fall through to a real run, which is what the caller asked
           // for: "give me this thing", not "tell me what I once made".
-          this.entries.delete(key);
+          //
+          // Only the caller still looking at the dead entry may drop it. Everywhere else in here
+          // the entry is read and replaced synchronously, which is what makes the in-flight join
+          // safe; this branch is the one place we let go of it across two awaits (the promise,
+          // then a real HTTP lookup), and a blind delete turned that into the opposite of what
+          // the probe is for. Two replays of one key both saw the same dead entry, both came back
+          // with `alive === false`, the first re-ran and stored its result, and the second then
+          // deleted *that* and re-ran too: one key, two documents, two credit charges, and a
+          // second live share link neither caller mentions because each one only sees its own id.
+          // A caller that loses the check leaves the winner's entry alone and recurses into it,
+          // so it joins the fresh run and gets one document back, marked as the replay it is.
+          if (this.entries.get(key) === existing) this.entries.delete(key);
           return this.run(key, fn, opts);
         }
       }

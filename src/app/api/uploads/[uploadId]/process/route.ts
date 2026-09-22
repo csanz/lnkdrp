@@ -1233,6 +1233,17 @@ export async function POST(
             const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
             const historyIdempotencyKey = `history:auto:${String(docId)}:to:${toVersion}`;
             let historyLedgerId: string | null = null;
+            /**
+             * What to settle this reservation at. Set from the reservation itself, never recomputed.
+             *
+             * `historyCredits` is this attempt's price at *today's* default tier, and the key above
+             * deliberately carries no tier, so a retried attempt after the owner moved the default
+             * (or after a Free -> Pro upgrade) replays a reservation taken at the old price. Marking
+             * it charged at the new one wrote a ledger row the balance never matched: 5 credits left
+             * the buckets, 12 landed in `creditsCharged`, and `usedThisCycle` and `creditsRemaining`
+             * drifted apart for good. `creditsReserved` is what was actually taken.
+             */
+            let historyChargedCredits = historyCredits;
             // Credit-gated on every plan (no plan check): the reservation below is the gate. Recipient
             // uploads (request/replace links) never bill the owner, so they get no compare.
             // ...and the workspace's own switch. Failing open on a read error keeps a database
@@ -1251,7 +1262,25 @@ export async function POST(
             }
             if (historyAllowed) {
               try {
-                const reserved = await reserveCreditsOrThrow({
+                /**
+                 * `reserveForAttempt`, not `reserveCreditsOrThrow`, and the status is checked.
+                 *
+                 * This was the only reserve in the file that skipped both, and it is the one most
+                 * likely to replay: the key is `history:auto:<docId>:to:<v>`, completed uploads are
+                 * never claimed, and every POST to this route re-enters this block whenever the
+                 * DocChange write did not land. A raw reserve looks that key up with no status
+                 * filter, so it handed back the earlier attempt's finished row — a `failed` one
+                 * whose credits had already gone back to the balance, and the code below then ran
+                 * the model and re-marked it `charged`: the usage aggregates and `usedThisCycle`
+                 * rose while `creditsRemaining` did not move. A `charged` one bought a second
+                 * compare for nothing.
+                 *
+                 * So: reserve again under a retry key when the row holds no credits, and when it is
+                 * already `charged` leave the model alone. That version's compare was paid for and
+                 * produced something; the DocChange written below records the version either way and
+                 * version history can rerun the compare on purpose.
+                 */
+                const reserved = await reserveForAttempt({
                   workspaceId: actor.orgId,
                   userId: actor.userId,
                   docId: String(docId),
@@ -1259,7 +1288,16 @@ export async function POST(
                   qualityTier: historyTier,
                   idempotencyKey: historyIdempotencyKey,
                 });
-                historyLedgerId = reserved.ledgerId;
+                if (reserved.status === "charged") {
+                  debugLog(1, "[process] history compare already charged for this version, skipping the run", {
+                    uploadId,
+                    docId: String(docId),
+                    version: toVersion,
+                  });
+                } else {
+                  historyLedgerId = reserved.ledgerId;
+                  historyChargedCredits = reserved.creditsReserved;
+                }
               } catch {
                 historyLedgerId = null;
               }
@@ -1277,8 +1315,8 @@ export async function POST(
                   await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
                   diff = null;
                 } else {
-                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId: historyLedgerId, creditsCharged: historyCredits });
-                  creditsUsedThisRun += historyCredits;
+                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId: historyLedgerId, creditsCharged: historyChargedCredits });
+                  creditsUsedThisRun += historyChargedCredits;
                 }
               } catch {
                 await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
@@ -1397,6 +1435,11 @@ export async function POST(
             if (!isRequestDoc) {
               // Non-request docs: rerun the legacy review agent.
               let ledgerId: string | null = null;
+              // Settle at what the reservation took, not at this call's price. The deterministic key
+              // pins the tier, but `requestIdempotencyKey` overrides it, so two calls sharing one
+              // `x-idempotency-key` and asking for different tiers replay one reservation: charging
+              // the second call's price moves the ledger without moving the balance.
+              let reviewChargedCredits = reviewCredits;
               try {
                 /**
                  * `reserveForAttempt`, not `reserveCreditsOrThrow`, and the status is checked.
@@ -1432,6 +1475,7 @@ export async function POST(
                   return;
                 }
                 ledgerId = reserved.ledgerId;
+                reviewChargedCredits = reserved.creditsReserved;
               } catch (e) {
                 debugLog(1, "[process] forceReview=1; insufficient credits (skipping)", {
                   uploadId,
@@ -1467,11 +1511,11 @@ export async function POST(
                     uploadId,
                     docId: String(docId),
                     version: uploadVersion,
-                    credits: reviewCredits,
+                    credits: reviewChargedCredits,
                   });
                 } else {
-                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
-                  creditsUsedThisRun += reviewCredits;
+                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewChargedCredits });
+                  creditsUsedThisRun += reviewChargedCredits;
                 }
               } catch (e) {
                 await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
@@ -1489,6 +1533,10 @@ export async function POST(
                 version: uploadVersion,
               });
               let ledgerId: string | null = null;
+              // Settle at what the reservation took, not at this call's price: see the sibling
+              // branch above. A caller-supplied `x-idempotency-key` can replay a reservation made
+              // at a different tier, and the ledger has to agree with the balance.
+              let reviewChargedCredits = reviewCredits;
               try {
                 /**
                  * `reserveForAttempt`, not `reserveCreditsOrThrow`, and the status is checked.
@@ -1524,6 +1572,7 @@ export async function POST(
                   return;
                 }
                 ledgerId = reserved.ledgerId;
+                reviewChargedCredits = reserved.creditsReserved;
               } catch (e) {
                 debugLog(1, "[process] forceReview=1; insufficient credits (skipping)", {
                   uploadId,
@@ -1570,11 +1619,11 @@ export async function POST(
                     uploadId,
                     docId: String(docId),
                     version: uploadVersion,
-                    credits: reviewCredits,
+                    credits: reviewChargedCredits,
                   });
                 } else {
-                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
-                  creditsUsedThisRun += reviewCredits;
+                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewChargedCredits });
+                  creditsUsedThisRun += reviewChargedCredits;
                 }
               } catch (e) {
                 await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
@@ -2146,6 +2195,17 @@ export async function POST(
             const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
             const historyIdempotencyKey = `history:auto:${String(docId)}:to:${uploadVersion}`;
             let historyLedgerId: string | null = null;
+            /**
+             * What to settle this reservation at. Set from the reservation itself, never recomputed.
+             *
+             * `historyCredits` is this attempt's price at *today's* default tier, and the key above
+             * deliberately carries no tier, so a retried attempt after the owner moved the default
+             * (or after a Free -> Pro upgrade) replays a reservation taken at the old price. Marking
+             * it charged at the new one wrote a ledger row the balance never matched: 5 credits left
+             * the buckets, 12 landed in `creditsCharged`, and `usedThisCycle` and `creditsRemaining`
+             * drifted apart for good. `creditsReserved` is what was actually taken.
+             */
+            let historyChargedCredits = historyCredits;
             /** The compare for this version was already charged by an earlier attempt; keep its DocChange. */
             let historyAlreadyDone = false;
             // Credit-gated on every plan (no plan check): a Free workspace with credits gets the compare
@@ -2157,7 +2217,28 @@ export async function POST(
             const nothingChanged =
               normalizeForCompare(previousText) === normalizeForCompare(newText) &&
               !changedPages.some((p) => p.imageChanged === true);
-            const historyAllowed = !viaUploadSecret && !nothingChanged;
+            /**
+             * The workspace switch, which gates only this automatic run.
+             *
+             * This is the replacement path — the one "Compare every replacement" is named after —
+             * and it was the one path that never read the flag. The read sat in the completed-upload
+             * backfill higher up, which is near-identical code that only runs when an upload finished
+             * without a DocChange, so an owner who switched the compare off was still billed 5
+             * credits (12 on Advanced) on every replacement whose text changed. The sibling summary
+             * gate above honoured its flag, which made this look like the compare toggle was broken
+             * rather than simply never wired in.
+             *
+             * Only asked when it can matter, in the shape the summary uses: a recipient upload and an
+             * identical re-upload are already not running the model. Fails open on a read error, so a
+             * database blip cannot silently drop a compare the owner is paying for.
+             */
+            const automationCompareOn =
+              viaUploadSecret || nothingChanged
+                ? true
+                : await getAiAutomation(String(existingDocOrgId))
+                    .then((a) => a.compare)
+                    .catch(() => true);
+            const historyAllowed = !viaUploadSecret && !nothingChanged && automationCompareOn;
             if (nothingChanged) {
               debugLog(1, "[process] history compare skipped: identical text", { uploadId, docId: String(docId), version: uploadVersion });
             }
@@ -2169,6 +2250,17 @@ export async function POST(
               aiState.compare = "skipped";
               warningDetails.historyPlan = "recipient upload; AI compare is not run on the owner's credits";
               debugLog(1, "[process] history compare skipped (recipient upload)", { uploadId, docId: String(docId), version: uploadVersion });
+            }
+            if (!automationCompareOn) {
+              // Named, not silent, the same way the summary names its own switch: the version history
+              // page offers "compare these versions" and the reader should know the empty compare is a
+              // setting rather than a failure or a missing credit. `??` because both switches can be
+              // off at once and the summary's reason was written first.
+              aiState.compare = "skipped";
+              aiState.reason = aiState.reason ?? "automatic compares are turned off for this workspace";
+              aiState.code = aiState.code ?? "turned_off";
+              warningDetails.historyPlan = "automatic compares are turned off for this workspace";
+              debugLog(1, "[process] history compare skipped (turned off)", { uploadId, docId: String(docId), version: uploadVersion });
             }
             if (historyAllowed) {
               try {
@@ -2185,6 +2277,7 @@ export async function POST(
                   aiState.compare = "done";
                 } else {
                   historyLedgerId = reserved.ledgerId;
+                  historyChargedCredits = reserved.creditsReserved;
                 }
               } catch (e) {
                 const message = e instanceof Error ? e.message : String(e);
@@ -2223,9 +2316,9 @@ export async function POST(
                   await markLedgerCharged({
                     workspaceId: String(existingDocOrgId),
                     ledgerId: historyLedgerId,
-                    creditsCharged: historyCredits,
+                    creditsCharged: historyChargedCredits,
                   });
-                  creditsUsedThisRun += historyCredits;
+                  creditsUsedThisRun += historyChargedCredits;
                   aiState.compare = "done";
                 }
               } catch (e) {

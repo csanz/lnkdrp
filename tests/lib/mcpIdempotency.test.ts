@@ -64,6 +64,48 @@ describe("idempotency: replays of deleted objects", () => {
     expect(created).toBe(2);
   });
 
+  /**
+   * Two retries of one key, arriving together, must still create one thing.
+   *
+   * The probe reads the entry, then awaits it, then awaits a real lookup, so two callers on the
+   * same key both saw the same dead entry and both concluded "gone". The first re-ran and stored
+   * its result; the second deleted that and re-ran as well. One key, two documents, two credit
+   * charges, and a second share link neither caller reports because each only sees its own id.
+   * Exactly the retry the store exists for: the first call timed out at the transport, a human
+   * deleted the document, and the client asked twice.
+   */
+  it("two concurrent replays of a deleted object run the write once between them", async () => {
+    const store = new IdempotencyStore();
+    let created = 0;
+    const alive = new Set<string>();
+    const run = async () => {
+      created += 1;
+      const id = `doc-${created}`;
+      alive.add(id);
+      return { docId: id };
+    };
+    // Awaits before answering, like the getDoc this stands in for: the window is real, not a tick.
+    const stillExists = async (v: { docId: string }) => {
+      await Promise.resolve();
+      return alive.has(v.docId);
+    };
+
+    const first = await store.run("k", run, { stillExists });
+    expect(first.value).toEqual({ docId: "doc-1" });
+    alive.delete("doc-1");
+
+    const [a, b] = await Promise.all([
+      store.run("k", run, { stillExists }),
+      store.run("k", run, { stillExists }),
+    ]);
+
+    expect(created).toBe(2);
+    expect(a.value).toEqual({ docId: "doc-2" });
+    expect(b.value).toEqual({ docId: "doc-2" });
+    // The loser joined the winner's run rather than starting its own, so it is a replay.
+    expect([a.replayed, b.replayed].sort()).toEqual([false, true]);
+  });
+
   it("a failed existence check is treated as still there, not as a deletion", async () => {
     const store = new IdempotencyStore();
     let created = 0;
