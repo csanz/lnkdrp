@@ -14,7 +14,7 @@ import { newSecretToken, newShareId } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
 import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
-import { setAllProjectLinksEnabled } from "@/lib/share/projectLinks";
+import { setAllProjectLinksEnabled, syncProjectShareState } from "@/lib/share/projectLinks";
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
 import { liveProjectByIdMatch } from "@/lib/projects/scope";
 
@@ -291,9 +291,31 @@ export async function PATCH(
     // so switching back on does not resurrect a link the sender revoked on its own. Best-effort —
     // a project whose links cannot be reached still saves, and `syncProjectShareState` repairs the
     // flag on the next link edit.
+    // What the switch *became*, which is not always what was asked for. Seeded from the document
+    // we just saved so the paths that never reach the links (a legacy project with no orgId, or a
+    // link write that threw) answer exactly as they did before.
+    let effectiveShareEnabled = (project as unknown as { shareEnabled?: unknown }).shareEnabled !== false;
+    let effectiveShareId: unknown = (project as unknown as { shareId?: unknown }).shareId ?? null;
     if (typeof body.shareEnabled === "boolean" && project.orgId) {
       try {
         await setAllProjectLinksEnabled({ orgId: project.orgId as Types.ObjectId, projectId: project._id, enabled: body.shareEnabled });
+        // The links, not the `save()` above, decide `shareEnabled`: every link
+        // `setAllProjectLinksEnabled` touches ends in `syncProjectShareState`, which rewrites the
+        // flag in Mongo to "at least one link is active". Switching back on cannot revive a link
+        // that has expired, nor one the sender revoked on its own, so the derived value can be
+        // false a millisecond after we wrote true; and when the switch changed no link at all,
+        // nothing ran the sync and the stale true is still sitting in the row. Sync once here (it
+        // is idempotent and cheap) and read the row back, because serialising the in-memory
+        // document below told the caller the data room was back up and handed them a `/p/` URL
+        // that 404s — which is what they then forward to recipients.
+        await syncProjectShareState(project._id);
+        const fresh = await ProjectModel.findById(project._id)
+          .select({ shareEnabled: 1, shareId: 1 })
+          .lean<{ shareEnabled?: unknown; shareId?: unknown } | null>();
+        if (fresh) {
+          effectiveShareEnabled = fresh.shareEnabled !== false;
+          effectiveShareId = fresh.shareId ?? null;
+        }
       } catch (err) {
         debugError(1, "[api/projects/:id] PATCH could not apply shareEnabled to project links", {
           projectId: projectIdParam,
@@ -321,7 +343,15 @@ export async function PATCH(
         type: "share.updated",
         projectId: project._id,
         title: project.name ?? null,
-        meta: { scope: "project", shareEnabled: body.shareEnabled },
+        // The state the project is actually in, for the same reason the response carries it:
+        // a feed row reading "enabled the share link" beside a page that never came back up is
+        // the record an owner later trusts when working out when the link stopped working.
+        // `requested` keeps the intent when the two differ.
+        meta: {
+          scope: "project",
+          shareEnabled: effectiveShareEnabled,
+          ...(effectiveShareEnabled === body.shareEnabled ? {} : { requested: body.shareEnabled }),
+        },
         request,
       });
     }
@@ -361,8 +391,8 @@ export async function PATCH(
       NextResponse.json({
         project: {
           id: String(project._id),
-          shareId: (project as unknown as { shareId?: unknown }).shareId ?? null,
-          shareEnabled: (project as unknown as { shareEnabled?: unknown }).shareEnabled !== false,
+          shareId: effectiveShareId,
+          shareEnabled: effectiveShareEnabled,
           name: project.name ?? "",
           slug: project.slug ?? "",
           description: project.description ?? "",

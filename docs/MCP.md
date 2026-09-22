@@ -450,11 +450,15 @@ blocked by the Free shared-document cap (mt_zKD3mlHp_K).
   through a recipient's request link, or when credits ran out — in which case it is skipped with a
   `warnings` line and the replacement still succeeds.
 - Out: `{ docId, shareId, shareUrl, status, version, uploadId, title, timedOut?, optimized?,
-  optimizeNote?, failureReason?, warnings: string[], creditsRemaining? }`. `version` is the new
-  version number (`allocateDocUploadVersion`); there is no `replaceUrl` here — the tool itself is the
-  replacement path. `failureReason` means the same as in `share_pdf`: this version's file could not
-  be processed. There is no `replayed` flag on this tool — the result is the document's state either
-  way — but a retry with the same key does return the stored result with `status` refreshed.
+  optimizeNote?, failureReason?, warnings: string[], creditsRemaining?, unchangedFromPrevious?,
+  replayed? }`. `version` is the new version number (`allocateDocUploadVersion`); there is no
+  `replaceUrl` here — the tool itself is the replacement path. `failureReason` means the same as in `share_pdf`: this version's file could not
+  be processed. `unchangedFromPrevious: true` says the new file's extracted text matched the version
+  it replaced: a new version number over the same content, which is what `get_share` calls
+  `unchanged`. `replayed: true` marks a result that came back from the idempotency cache rather than
+  from a second upload, with `status` refreshed; it is on this tool for the same reason it is on
+  `share_pdf`, because an agent retrying after a network error would otherwise read a second
+  identical success and report two versions uploaded when only one was.
 - **The document's status flips to `preparing` the moment this call starts** — `POST /api/uploads`
   points `Doc.currentUploadId` at the new (not yet fetched) upload before `sourceUrl` is even
   fetched, exactly like the web app's own "replace file" button. A recipient opening a link in that
@@ -557,7 +561,8 @@ Turn sharing, downloads, revision history or the password on or off for a link.
 - In: `{ idempotencyKey, docId, shareEnabled?, allowDownload?, password?: string | null,
   allowRevisionHistory? }`, at least one setting. `password: null` removes the password.
 - Out: the `lnkdrp_get_share` shape after the change (including `anyLinkActive`, `defaultLinkActive`
-  and `link`, and never `summaryStale` or `tags`), plus `warnings: string[]`.
+  and `link`, and never `summaryStale` or `tags`), plus `warnings: string[]` and, on a retried
+  `idempotencyKey`, `replayed?: true`.
 - **`shareEnabled: true` can come back with `defaultLinkActive: false`, and that is the write
   succeeding.** The switch only restores the links it turned off itself; a link revoked on its own
   with `lnkdrp_update_share_link` stays revoked. Two different outcomes follow from that, and they
@@ -570,6 +575,11 @@ Turn sharing, downloads, revision history or the password on or off for a link.
     `defaultLinkActive: false`, and a `warnings` line saying so.
 
   `warnings` is `[]` otherwise, and always `[]` when `shareEnabled: true` was not asked for.
+- **Retrying an `idempotencyKey` here re-applies the settings and re-reads the document**, unlike
+  the other three idempotent tools, which answer a replay from the cache. The settings a caller
+  asked for are what a retry converges on, and the view is of the moment it returns rather than of
+  the first call, which is the only way these booleans are safe to act on. `replayed: true` still
+  marks the retry. See [Idempotency](#idempotency).
 - Errors: `validation`, `not_found`, `forbidden`, `plan_limit` (turning sharing on at the Free
   shared-document cap; `details` carries the cap and `upgradeUrl: "/pricing"`).
 
@@ -1294,7 +1304,8 @@ either because it is naturally idempotent or because it confirms with a human fi
 
 The server keeps an in-memory map of `${orgId}:${tool}:${idempotencyKey}` → result (bounded to 1000
 entries, 24 h), so a retried `share_pdf` returns the same `docId` instead of creating a second
-document, and a retried `set_share_access` is a no-op. **The tool name is part of the key**, so the
+document, and a retried `set_share_access` re-applies the same settings rather than creating
+anything new. **The tool name is part of the key**, so the
 same string used on two different tools is two independent entries and neither replays nor collides
 with the other. Failed runs are evicted, so a retry after an error really does run again.
 
@@ -1302,19 +1313,45 @@ Reusing a key on the *same* tool with **different arguments** is refused rather 
 `validation` with `details.code: "idempotency_key_reused"`, and nothing new is done. The alternative
 would be to hand back the stored result, which tells the agent its new file, title or settings were
 applied when they were silently ignored. The fix is a new key for a different request, or the
-original arguments repeated exactly to get the stored result. (`share_pdf` and `create_project` mark
-a replay with `replayed: true`; `replace_pdf` and `set_share_access` do not, because their result is
-the document's state either way. `share_pdf` and `replace_pdf` both refresh `status` on a replay, so
-a retry after a timeout is useful rather than a snapshot of the first attempt.)
+original arguments repeated exactly to get the stored result.
+
+What each of the four does when a key *is* replayed:
+
+| Tool | Replay flagged | Subject checked first | What the replay re-reads |
+| --- | --- | --- | --- |
+| `lnkdrp_share_pdf` | `replayed: true` | yes, `GET /api/docs/:id` | `status`, so a retry after a timeout is worth making |
+| `lnkdrp_replace_pdf` | `replayed: true` | yes, `GET /api/docs/:id` | `status`, same as `share_pdf` |
+| `lnkdrp_create_project` | `replayed: true` | yes, the project's docs | `docCount` and `updatedDate` |
+| `lnkdrp_set_share_access` | `replayed: true` | no, see below | everything: the write is re-applied and the view rebuilt |
+
+The flag is on the result, not only in the server's logs, because the promise that a retry does not
+create a second document is only actionable if the caller can tell which of the two just happened.
+
+`set_share_access` is the row that is different, and deliberately. Its whole payload is a
+description of current access, so a cached one is not merely old, it is usually inverted: the key
+that set a password and switched downloads on replayed as "password on, downloads on" after a later
+call turned both off. So it does not answer from the cache at all. It re-applies the patch and the
+password write (both idempotent) and rebuilds the view from that moment, which is also why it needs
+no subject check: a document deleted in between fails the patch with `not_found` instead of being
+described. The key is kept for the fingerprint refusal below and for `replayed`.
+
+This table is the one place these four are described together, and it drifted once: the prose it
+replaced said `replace_pdf` had no `replayed` flag and did not check its subject, on the reasoning
+that its result "is the document's state either way". That was written (d82baed) forty minutes
+before `replace_pdf` gained both (305baf9) and was never revisited, so a maintainer reading the
+reference before touching the wrappers was told the opposite of what the code did.
+`tests/lib/mcpIdempotencyDocs.test.ts` now reads this table and the tool sources and fails when they
+disagree, which is cheaper than another round of reading prose against code.
 
 **A replay does not outlive its subject.** Create a document, delete it, retry the key, and the
 cache used to answer with the original success — same `docId`, `status: "ready"`, no warning —
-describing something that is gone, and the agent handed a dead share link to a human. `share_pdf`
-and `create_project` now check that the thing they made still exists before replaying, and if it
-does not they drop the entry and really run: the caller asked for this thing, not for a description
-of what it once made. Only a genuine `not_found` counts as gone — anything else (a bad minute on the
-network) is read as "still there", because a stale replay is recoverable and a duplicate document
-is not.
+describing something that is gone, and the agent handed a dead share link to a human. `share_pdf`,
+`replace_pdf` and `create_project` now check that the thing they created or wrote into still exists
+before replaying, and if it does not they drop the entry and really run: the caller asked for this
+thing, not for a description of what it once made. Only a genuine `not_found` counts as gone —
+anything else (a bad minute on the network) is read as "still there", because a stale replay is
+recoverable and a duplicate document is not. `set_share_access` has no such probe because it never
+replays a stored answer in the first place.
 
 Because the map is per process, a restart forgets it; after a
 restart a replayed `share_pdf` would create a new document, so agents should treat the key as a

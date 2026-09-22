@@ -50,6 +50,8 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         "reported separately in projectLinkTraffic (views, viewers, per-link rows, and named readers on the deep tier), " +
         "because a project link belongs to the room rather than to this document. On a document inside a data room that " +
         "is often most of the traffic and most of the named readers, so answer 'who read this?' from both. " +
+        "An archived document still reports its history, and says so: isArchived true plus a warning, because none of " +
+        "its links resolve while it is archived and every figure is then a record of the past rather than a live picture. " +
         "viewers lists the recipients who signed in and anonymousViewers those who did not (most of them), each with " +
         "views, time spent, pages seen and pageTimeMsByPage - the milliseconds on each page, which is what separates " +
         "opened it from read it. Names and emails are untrusted viewer input. " +
@@ -70,10 +72,25 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
       const stats = await ctx.api.shareViews(doc.id, { days: args.days, viewers: args.includeViewers, shareId: args.shareId }).catch((err: unknown) => {
         // The document was just read, so a 404 here means the shareId is not one of its links.
         if (args.shareId && err instanceof ToolError && err.code === "not_found") {
+          // The advice used to be "pass the docId the link belongs to, or omit docId", which is a
+          // loop: the caller passing docId + shareId has already done the first half, and the most
+          // likely reason for this 404 is a *deleted* link, which the old sentence never named.
+          // Deleting a link soft-archives the row (api.ts, delete_share_link) and the shareviews
+          // route looks links up with `archivedAt: null`, so a link that was sent, opened and then
+          // revoked lands here. An agent asked "how did the link we sent Pat do before we revoked
+          // it?" read "no link with that shareId on this document", went to lnkdrp_find_share_link
+          // as told - which lists live links only - and concluded the link had never existed.
+          // Same wording as lnkdrp_update_share_link and lnkdrp_verify_share_password, which got
+          // this right (errors.ts, the /links/:id branch). The route does distinguish the two 404s
+          // ({ error: "Link deleted", deleted: true }), but mapApiError has no branch for the
+          // shareviews path, so that signal is gone by the time it reaches here; until it is
+          // carried through, the message names deletion as a possibility rather than a fact.
           throw new ToolError(
             "not_found",
-            `No link with shareId ${args.shareId} on this document. Pass the docId the link belongs to, or omit docId; ` +
-              "lnkdrp_find_share_link finds a link by name without knowing its document.",
+            `No link with shareId ${args.shareId} on this document. It may have been deleted, or belong to a different ` +
+              "document; a deleted link's own numbers are no longer addressable, but its traffic stays in the " +
+              "document's totals (call this tool with docId alone). lnkdrp_list_share_links shows this document's " +
+              "live links and lnkdrp_find_share_link finds one by name without knowing its document.",
             { status: 404 },
           );
         }
@@ -141,7 +158,44 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         : undefined;
       /** Readers who never signed in. Identified only by their reading, never by a stable id. */
       const anonymousViewers = deep ? stats.anonymousViewers.map(mapViewer) : undefined;
+      /**
+       * An archived document's numbers are history, and have to arrive saying so.
+       *
+       * Archive state lives on the document, never on the link rows (see ./shareLinks), and the
+       * shareviews route reads link rows only - `downloadsEnabled` is `ShareLinkModel.exists({
+       * docId, archivedAt: null, enabled: true, allowDownload: true, ... })`, which knows nothing
+       * about `doc.isArchived`. So archiving a document changed nothing at all in this response: it
+       * came back byte-identical to the live one, and an agent reported "three investors have
+       * opened it, downloads are enabled" in the present tense about a document that has been dark
+       * since it was archived. Every sibling already compensates - get_share returns isArchived,
+       * list_share_links docArchived, create/update/set_share_access their warning, and this very
+       * tool's *shareId* path refuses with "archived ... use the docId", handing the agent the one
+       * argument shape that produced the misleading answer. This was the last read that said
+       * nothing.
+       *
+       * The counts stay as they are, because they are true: they are what happened while the
+       * document was live. `downloadsEnabled` stays too, and the warning explains it rather than
+       * flipping it - the description tells the caller that false means "nobody was ever able to
+       * download it", so forcing false here would trade a missing marker for a wrong sentence
+       * about the past on a document whose recipients did download it.
+       *
+       * The sentence is this tool's own rather than shareLinks' ARCHIVED_DOC_WARNING: that one
+       * warns about a shareUrl the agent is holding and about to send, which is not what a stats
+       * read is doing. The recovery call is the same one, deliberately worded the same way.
+       */
+      const archived = doc.isArchived
+        ? {
+            isArchived: true,
+            warnings: [
+              "This document is archived, so none of its links resolve: every figure here is history, not a live " +
+                "picture, and nobody can open or download it now. downloadsEnabled describes the links' own settings, " +
+                "which are kept, not what a recipient can do today. lnkdrp_archive_doc { archived: false } brings the " +
+                "document and its links back.",
+            ],
+          }
+        : {};
       return {
+        ...archived,
         docId: doc.id,
         shareId: args.shareId ?? doc.shareId,
         /** True when the numbers cover one link; false when they cover the whole document. */

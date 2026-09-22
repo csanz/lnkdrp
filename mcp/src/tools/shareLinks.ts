@@ -16,7 +16,7 @@ import { z } from "zod";
 
 import type { ApiClient, ApiShareLink, PlanWarning, ShareLinkPatch } from "../api";
 import type { ToolContext } from "../context";
-import { handleTool, ToolError } from "../errors";
+import { handleTool, LINK_NOT_FOUND_ON_DOC, ToolError } from "../errors";
 import { requireHumanConfirmation, severityFromTraffic } from "../confirm";
 import { DISMISSED_PROMPT_NOTE, docIdSchema, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
 
@@ -363,7 +363,11 @@ export function registerDeleteShareLinkTool(server: McpServer, ctx: ToolContext)
       // the person confirming sees the link's real label and real traffic, not an id.
       const links = await ctx.api.listShareLinks(args.docId);
       const link = links.find((l) => l.id === args.linkId);
-      if (!link) throw new ToolError("not_found", "No share link with that id on this document.");
+      // The same sentence the mapper gives for the same fault. Resolving the link here means the
+      // API never 404s, so mapApiError never runs, and this branch used to answer a stale linkId
+      // with a shorter message of its own that named no way to find the right one - on the tool
+      // where the next guess deletes something.
+      if (!link) throw new ToolError("not_found", LINK_NOT_FOUND_ON_DOC);
       if (link.isDefault) throw new ToolError("validation", "The default link cannot be deleted; disable it with lnkdrp_update_share_link instead.");
       const doc = await ctx.api.getDoc(args.docId);
       const severity = severityFromTraffic({ recipientViews: link.viewCount });

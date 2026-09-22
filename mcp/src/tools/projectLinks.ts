@@ -30,7 +30,7 @@ import { z } from "zod";
 import type { ApiClient, ApiProject, ApiProjectLink, ProjectLinkPatch } from "../api";
 import { requireHumanConfirmation, severityFromTraffic } from "../confirm";
 import type { ToolContext } from "../context";
-import { handleTool, ToolError } from "../errors";
+import { handleTool, LINK_NOT_FOUND_ON_PROJECT, ToolError } from "../errors";
 import { UNTRUSTED_LIMITS, untrustedOrNull } from "../untrusted";
 import { loadProject, projectIdSchema, projectSlugSchema } from "./projects";
 import { DISMISSED_PROMPT_NOTE, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
@@ -83,6 +83,28 @@ type ProjectLinkResult = ApiProjectLink & { shareUrl: string };
 /** Add the `/p/:shareId` URL to a project link DTO. */
 function withUrl(api: ApiClient, link: ApiProjectLink): ProjectLinkResult {
   return { ...link, shareUrl: api.projectPublicUrl(link.shareId) };
+}
+
+/**
+ * Warn when a label is about to be a project's second link with that name.
+ *
+ * The label is how the human finds a link again; two identical ones on a project are
+ * indistinguishable in every list and in `query`, which sorts default-then-newest and has nothing
+ * else to tell them apart by. Allowed (a resend can be deliberate), but said out loud.
+ *
+ * Shared with `update`, which reaches the same end state by the quieter route: a rename adds no new
+ * row to the listing to prompt a second look, so the silence there was the worse one. The document
+ * side (`./shareLinks.ts`) warns on both halves; this file had the create half only.
+ * `exceptLinkId` keeps an update from warning a link about its own name.
+ */
+function duplicateLabelWarning(label: string, existing: ApiProjectLink[], exceptLinkId?: string): string | undefined {
+  const wanted = label.trim().toLowerCase();
+  const same = existing.filter((l) => l.id !== exceptLinkId && l.label.trim().toLowerCase() === wanted);
+  if (!same.length) return undefined;
+  return (
+    `This project already has ${same.length === 1 ? "a link" : `${same.length} links`} labelled "${label.trim()}" ` +
+    `(shareId ${same.map((l) => l.shareId).join(", ")}). Tell the human, and consider a label or audience that tells them apart.`
+  );
 }
 
 /** The project identity every tool echoes back, so a result says which data room it changed. */
@@ -174,11 +196,9 @@ export function registerCreateProjectLinkTool(server: McpServer, ctx: ToolContex
       if (args.password !== undefined) settings.password = args.password;
       if (args.expiresAt !== undefined) settings.expiresAt = args.expiresAt;
 
-      // The label is how the human finds a link again; two identical ones on a project are
-      // indistinguishable in every list. Allowed (a resend can be deliberate), but said out loud.
-      const wantedLabel = args.label.trim().toLowerCase();
+      // Read before the write, and advisory: a listing that fails does not stop a create.
       const existing = await ctx.api.listProjectLinks(project.id).catch(() => [] as ApiProjectLink[]);
-      const sameLabel = existing.filter((l) => l.label.trim().toLowerCase() === wantedLabel);
+      const duplicateLabel = duplicateLabelWarning(args.label, existing);
       // Read before the write: `Project.shareEnabled` follows "any link is live", so an enabled
       // link on a switched-off project silently re-opens the public page for every recipient who
       // still holds a link. The agent has to be able to tell the human that happened.
@@ -187,19 +207,12 @@ export function registerCreateProjectLinkTool(server: McpServer, ctx: ToolContex
       const link = await ctx.api.createProjectLink(project.id, settings);
 
       const warnings = [
-        ...(sameLabel.length
-          ? [
-              `This project already has ${sameLabel.length === 1 ? "a link" : `${sameLabel.length} links`} labelled "${args.label.trim()}" ` +
-                `(shareId ${sameLabel.map((l) => l.shareId).join(", ")}). Tell the human, and consider a label or audience that tells them apart.`,
-            ]
-          : []),
-        ...(pageWasOff && link.active
-          ? [
-              "The project's public page was off and this link turned it back on: the page is live whenever any link is. " +
-                "Links the sender had disabled stay disabled, but tell the human the page is reachable again.",
-            ]
-          : []),
-      ];
+        duplicateLabel,
+        pageWasOff && link.active
+          ? "The project's public page was off and this link turned it back on: the page is live whenever any link is. " +
+            "Links the sender had disabled stay disabled, but tell the human the page is reachable again."
+          : undefined,
+      ].filter((w): w is string => Boolean(w));
 
       return {
         project: projectRef(project),
@@ -221,8 +234,7 @@ export function registerListProjectLinksTool(server: McpServer, ctx: ToolContext
         "Every share link of a project, the default link first: label, audience, shareUrl (/p/<shareId>), status " +
         "(active|disabled|expired), whether a password is set, expiry, whether downloads are allowed, and that link's own " +
         "view and download counts. viewCount is the number of recipients who opened something through the link, the same " +
-        "quantity it carries on a document link. It is not landings on the project page and not documents opened. publicPageEnabled says whether the project's page resolves at all: while it is false every link " +
-        "reads disabled, and lnkdrp_update_project { publicPageEnabled: true } turns them back on. Pass query to search this " +
+        "quantity it carries on a document link. It is not landings on the project page and not documents opened. publicPageEnabled says whether /p/<shareId> resolves for anyone right now, and it is derived from the rows below: it is true while at least one link is live. It is not the same question as the owner's switch - lnkdrp_update_project { publicPageEnabled: false } reads every link disabled and true restores those, but it cannot revive a link that has expired, which needs a new expiresAt via lnkdrp_update_project_link. links[].status is what a particular recipient gets, so read it per link before telling anyone their URL works. Pass query to search this " +
         "project's links by label/audience instead of listing all of them. Use a link's id with " +
         "lnkdrp_update_project_link / lnkdrp_delete_project_link. Archived (deleted) links are not listed. An empty links list does NOT mean the project is private: a new project's default link has no row until the first write, so check publicPageEnabled, and read note when it is present. " +
         SAFETY_TAIL,
@@ -242,11 +254,47 @@ export function registerListProjectLinksTool(server: McpServer, ctx: ToolContext
        * anyone holding the URL can read right now. Say so instead, and say where the handle is.
        */
       const unmaterialisedDefault = !args.query && project.shareEnabled && links.length === 0;
+      /**
+       * "Does the page resolve" answered from the rows, not from `Project.shareEnabled`.
+       *
+       * That field is denormalised "at least one link is live", and it is only recomputed when a
+       * link is *written* (`syncProjectShareState`, src/lib/share/projectLinks.ts). Expiry is the
+       * passage of time and not a write, so a room whose every link has expired keeps reporting
+       * `publicPageEnabled: true` forever while `/p/:shareId` 404s for everyone holding it. An
+       * agent asked "is the data room still reachable?" answered yes about a dead page. Each row's
+       * `active` is evaluated live (enabled, not archived, not expired), so the rows already knew.
+       * `./shared.ts` fixed the same class of bug on the document side for the same reason.
+       *
+       * Two cases cannot be derived and keep the stored flag: a `query`, which returns a subset and
+       * says nothing about the links it filtered out, and the unmaterialised default below, where
+       * the page is serving with no row to show for it.
+       */
+      const derivable = !args.query && links.length > 0;
+      const anyLive = links.some((l) => l.active);
+      const publicPageEnabled = derivable ? anyLive : project.shareEnabled;
+      // Say why the two disagree, because the stale one is what every other surface still shows the
+      // owner, and because an expired link is not something the page switch can bring back.
+      const staleFlag = derivable && project.shareEnabled !== null && project.shareEnabled !== anyLive;
+      const expiredCount = links.filter((l) => l.status === "expired").length;
+      const liveCount = links.filter((l) => l.active).length;
+      const warnings = staleFlag
+        ? [
+            anyLive
+              ? `This project's stored public-page switch reads off, but ${liveCount} of its links ${liveCount === 1 ? "is" : "are"} live and ` +
+                "serving: publicPageEnabled above is derived from the rows, which are what a recipient meets."
+              : `This project's public page does not resolve for anyone: none of its ${links.length} link${links.length === 1 ? " is" : "s are"} live` +
+                `${expiredCount ? ` (${expiredCount} expired)` : ""}. The project's stored switch still reads on - it is only recomputed when a link ` +
+                "is written, and expiry is not a write - so the app and lnkdrp_get_project will still say the page is on. " +
+                "publicPageEnabled above is derived from the rows. An expired link cannot be revived with " +
+                "lnkdrp_update_project { publicPageEnabled: true }; give it a new expiresAt with lnkdrp_update_project_link.",
+          ]
+        : [];
       return {
         project: projectRef(project),
-        // `null` only when the route did not say; the project docs route always does.
-        publicPageEnabled: project.shareEnabled,
+        // `null` only when neither the rows nor the route said; the project docs route always does.
+        publicPageEnabled,
         links: links.map((l) => withUrl(ctx.api, l)),
+        ...(warnings.length ? { warnings } : {}),
         ...(unmaterialisedDefault
           ? {
               note:
@@ -276,6 +324,8 @@ export function registerUpdateProjectLinkTool(server: McpServer, ctx: ToolContex
         "untouched - which is how a project link is revoked without deleting it and losing nothing of its analytics. " +
         "Changing allowDownload changes it for every document opened through this link. Editing is not a plan decision: a " +
         "workspace that has dropped to Free can still edit, disable and re-enable the links it already has. " +
+        "warnings also cover a label that another link on this project already carries: two links with one name are " +
+        "indistinguishable in every listing, and a rename adds no new row to prompt a second look. " +
         SAFETY_TAIL,
       inputSchema: updateProjectLinkInputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -292,15 +342,24 @@ export function registerUpdateProjectLinkTool(server: McpServer, ctx: ToolContex
         throw new ToolError("validation", "Pass at least one of label, audience, enabled, allowDownload, password, expiresAt.");
       }
       const { project } = await loadProject(ctx.api, args);
+      // The label listing has to be taken before the PATCH or the old label is already gone, and
+      // only when a rename is actually being asked for: every other setting leaves the names alone.
+      const existing = args.label === undefined ? [] : await ctx.api.listProjectLinks(project.id).catch(() => [] as ApiProjectLink[]);
       const { link, warnings } = await ctx.api.updateProjectLink(project.id, args.linkId, patch);
+      const allWarnings = [
+        // A rename onto a sibling's name is the same end state as creating a duplicate, and create
+        // has warned about it since M5; the rename was the half that stayed quiet.
+        args.label === undefined ? undefined : duplicateLabelWarning(args.label, existing, args.linkId),
+        // Turning a link on can republish the room and bring back the links its page switch had
+        // taken down — a change to who can reach the data room, reported to the caller that caused
+        // it rather than left to be discovered by listing.
+        ...warnings,
+      ].filter((w): w is string => Boolean(w));
       return {
         project: projectRef(project),
         link: withUrl(ctx.api, link),
         shareUrl: ctx.api.projectPublicUrl(link.shareId),
-        // Turning a link on can republish the room and bring back the links its page switch had
-        // taken down — a change to who can reach the data room, reported to the caller that caused
-        // it rather than left to be discovered by listing.
-        ...(warnings.length ? { warnings } : {}),
+        ...(allWarnings.length ? { warnings: allWarnings } : {}),
       };
     }),
   );
@@ -335,7 +394,11 @@ export function registerDeleteProjectLinkTool(server: McpServer, ctx: ToolContex
       const { project, total } = await loadProject(ctx.api, args);
       const links = await ctx.api.listProjectLinks(project.id);
       const link = links.find((l) => l.id === args.linkId);
-      if (!link) throw new ToolError("not_found", "No project link with that id on this project.");
+      // Same fault, same sentence as the mapper - and as the projectId one line above, which has
+      // always pointed at lnkdrp_list_projects. Two ids in one handler held to two standards: a
+      // bad projectId got a next step, a bad linkId got a full stop, and the likeliest way to hold
+      // a wrong linkId here is a document link's id, which only this wording names.
+      if (!link) throw new ToolError("not_found", LINK_NOT_FOUND_ON_PROJECT);
       if (link.isDefault) {
         throw new ToolError("validation", "The project's default link cannot be deleted; disable it with lnkdrp_update_project_link instead.");
       }

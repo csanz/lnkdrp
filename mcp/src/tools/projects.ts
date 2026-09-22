@@ -20,7 +20,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import type { ApiClient, ApiProject } from "../api";
+import type { ApiClient, ApiProject, ApiProjectLink } from "../api";
 import { requireHumanConfirmation, severityFromTraffic } from "../confirm";
 import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
@@ -70,9 +70,40 @@ const confirmSchema = z
 
 export type ProjectRef = { projectId?: string | undefined; projectSlug?: string | undefined };
 
-/** The project fields every tool returns. Names and descriptions are the workspace's own text. */
-function projectView(api: ApiClient, p: ApiProject, extra: { docCount?: number | null } = {}) {
+/**
+ * The link `/p/:shareId` addresses, when the caller has the project's links to hand.
+ *
+ * `Project.shareEnabled` means "some link of this project is active" and `Project.shareId` points
+ * at the default link whatever state that link is in: `syncProjectShareState`
+ * (src/lib/share/projectLinks.ts) writes both and never consults the default link's own switch.
+ * Disable the default link while one sibling link is live and the pair still reads "page on, here
+ * is the URL" while that URL answers "not found", because `/p/:shareId` resolves the link the slug
+ * names and refuses a disabled or expired one.
+ *
+ * So judge the link the URL actually addresses, not the project's two summary fields. A list we
+ * could not read, and a default link not materialised yet (the lazy one, which serves fine),
+ * both leave the old answer alone: this narrows a URL, it never invents one.
+ */
+function addressedLink(p: ApiProject, links: ApiProjectLink[] | null | undefined): ApiProjectLink | null {
+  if (!links || !p.shareId) return null;
+  return links.find((l) => l.shareId === p.shareId) ?? null;
+}
+
+/**
+ * The project fields every tool returns. Names and descriptions are the workspace's own text.
+ *
+ * `publicUrl` is only ever a URL that resolves. It used to be `shareEnabled && shareId`, so an
+ * agent that disabled the default link of a project with other live links was told nothing, and
+ * every later read repeated `publicPageEnabled: true` beside a `/p/` URL that 404s: a lying read,
+ * against this tool's own contract that publicUrl is null while the page is off, and durable for
+ * whichever agent came next. Pass `links` wherever we have them and the dead URL becomes null plus
+ * `publicUrlNote` saying which link went down and how to bring it back.
+ */
+function projectView(api: ApiClient, p: ApiProject, extra: { docCount?: number | null; links?: ApiProjectLink[] | null } = {}) {
   const docCount = extra.docCount !== undefined ? extra.docCount : p.docCount;
+  const addressed = addressedLink(p, extra.links);
+  // Only when we read the link and it refuses: unknown stays as it was.
+  const urlIsDead = addressed !== null && !addressed.active;
   return {
     projectId: p.id,
     slug: p.slug,
@@ -83,12 +114,36 @@ function projectView(api: ApiClient, p: ApiProject, extra: { docCount?: number |
     ...(p.shareEnabled !== null
       ? {
           publicPageEnabled: p.shareEnabled,
-          publicUrl: p.shareEnabled && p.shareId ? api.projectPublicUrl(p.shareId) : null,
+          publicUrl: p.shareEnabled && p.shareId && !urlIsDead ? api.projectPublicUrl(p.shareId) : null,
+          // Reachable only with shareEnabled true: if this were the project's last active link,
+          // shareEnabled would be false and publicUrl null for that reason instead. So the page
+          // being on and its address being dead really are both true here, and saying only the
+          // first half is what sent agents back to a 404.
+          ...(urlIsDead && p.shareEnabled && addressed
+            ? {
+                publicUrlNote:
+                  `publicUrl is null because the link that address belongs to (/p/${addressed.shareId}${addressed.isDefault ? ", this project's default link" : ""}) is ` +
+                  `${addressed.status}, so it answers "not found". It is the URL earlier recipients were sent. publicPageEnabled stays true because other ` +
+                  "links of this project are still live: lnkdrp_list_project_links shows them and their own URLs, and " +
+                  "lnkdrp_update_project_link { enabled: true } on that link brings the original address back.",
+              }
+            : {}),
         }
       : {}),
     createdDate: p.createdDate,
     updatedDate: p.updatedDate,
   };
+}
+
+/**
+ * This project's links, or null when they cannot be read.
+ *
+ * Best-effort on purpose: the links are here to stop `projectView` publishing a URL that 404s, and
+ * a listing that fails is a reason to answer as we always did, never a reason to fail the project
+ * read the human asked for.
+ */
+async function readProjectLinks(api: ApiClient, projectId: string): Promise<ApiProjectLink[] | null> {
+  return api.listProjectLinks(projectId).catch(() => null);
 }
 
 /**
@@ -279,7 +334,10 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
       title: "Get project",
       description:
         "One project and a page of its documents, most recently updated first. Project: projectId, slug, name, description, " +
-        "docCount, appUrl, publicPageEnabled and publicUrl (null while the public page is off). Documents: docId, shareId, " +
+        "docCount, appUrl, publicPageEnabled and publicUrl. publicUrl is a URL that resolves or it is null: null while the " +
+        "public page is off, and also null when the page is on through other links but the link that address belongs to has " +
+        "been disabled or has expired, in which case publicUrlNote says so and lnkdrp_list_project_links has the URLs that " +
+        "do work. Documents: docId, shareId, " +
         "shareUrl, title, status, version and dates. archived: true shows the project's Archive view (its archived documents) " +
         "instead of the live ones; total then counts archived documents and docCount stays the live count. query narrows " +
         "the documents by title or default link slug. " +
@@ -298,9 +356,11 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
       const res = await loadProject(ctx.api, args, { q: args.query, page: args.page, limit: args.limit, archived: args.archived });
       // The project's own tags, and each listed document's, in two reads rather than one per row.
       // Best-effort: tags are how a workspace files things, not part of what a project *is*.
-      const [projectTags, docTags] = await Promise.all([
+      // The links come along because publicUrl is only true if the link it addresses is live.
+      const [projectTags, docTags, links] = await Promise.all([
         ctx.api.tagsForTarget({ targetKind: "project", targetId: res.project.id }).catch(() => []),
         ctx.api.tagsForTargets({ targetKind: "doc", ids: res.docs.map((d) => d.id) }).catch(() => new Map()),
+        readProjectLinks(ctx.api, res.project.id),
       ]);
       const asTagRows = (list: { name: string; slug: string; color: string }[]) =>
         list.map((t) => ({ name: t.name, slug: t.slug, color: t.color }));
@@ -311,6 +371,7 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
             ctx.api,
             // docCount is the live count; the route's total is only that without a query or the archive view.
             await withListedMeta(ctx.api, args.query || args.archived ? { ...res.project, docCount: null } : { ...res.project, docCount: res.total }),
+            { links },
           ),
           tags: asTagRows(projectTags),
         },
@@ -394,14 +455,28 @@ export function registerAddDocsToProjectTool(server: McpServer, ctx: ToolContext
       const ids = (kind: Outcome["kind"]) => outcomes.filter((o) => o.kind === kind).map((o) => o.docId);
       const failed = outcomes.flatMap((o) => (o.kind === "failed" ? [{ docId: o.docId, code: o.code, message: o.message }] : []));
       const added = ids("added");
+      // Same question projectView asks, and only asked when we are about to answer it: the page can
+      // be on through other links while `/p/<shareId>` is disabled, and a URL the human is told to
+      // send has to be one that opens. A listing we cannot read says what it always said.
+      const willPublish = added.length > 0 && project.shareEnabled !== false && Boolean(project.shareId);
+      const addressed = willPublish ? addressedLink(project, await readProjectLinks(ctx.api, project.id)) : null;
+      const addressDead = addressed !== null && !addressed.active;
       return {
         project: { projectId: project.id, slug: project.slug, name: untrustedOrNull(project.name, "document", UNTRUSTED_LIMITS.short) },
         added,
         alreadyInProject: ids("alreadyInProject"),
         notFound: ids("notFound"),
         ...(failed.length ? { failed } : {}),
-        ...(added.length && project.shareEnabled !== false && project.shareId
-          ? { publicUrl: ctx.api.projectPublicUrl(project.shareId), publicPageNote: "The project's public page is on: added documents with their link on are listed there." }
+        ...(willPublish && !addressDead
+          ? { publicUrl: ctx.api.projectPublicUrl(project.shareId as string), publicPageNote: "The project's public page is on: added documents with their link on are listed there." }
+          : {}),
+        ...(willPublish && addressDead && addressed
+          ? {
+              publicPageNote:
+                `The project's public page is on and lists the added documents whose link is on, but /p/${addressed.shareId}` +
+                `${addressed.isDefault ? ", this project's default link and the address earlier recipients hold," : ""} is ${addressed.status}, so that URL ` +
+                "answers \"not found\". lnkdrp_list_project_links shows the links that do resolve.",
+            }
           : {}),
       };
     }),
@@ -488,7 +563,10 @@ export function registerUpdateProjectTool(server: McpServer, ctx: ToolContext): 
         }
         throw err;
       }
-      return { project: projectView(ctx.api, await withListedMeta(ctx.api, { ...updated, docCount: updated.docCount ?? total })) };
+      // After the write, not before: `publicPageEnabled: true` restores the links the page switch
+      // had taken down, and this result is the read of record for the agent that just wrote.
+      const links = await readProjectLinks(ctx.api, project.id);
+      return { project: projectView(ctx.api, await withListedMeta(ctx.api, { ...updated, docCount: updated.docCount ?? total }), { links }) };
     }),
   );
 }
@@ -518,7 +596,6 @@ export function registerDeleteProjectTool(server: McpServer, ctx: ToolContext): 
     handleTool(async (args) => {
       const { project, total } = await loadProject(ctx.api, args);
       const publicLive = project.shareEnabled !== false && Boolean(project.shareId);
-      const publicUrl = project.shareId ? ctx.api.projectPublicUrl(project.shareId) : null;
       /**
        * Severity from traffic, like every other destructive tool.
        *
@@ -531,6 +608,17 @@ export function registerDeleteProjectTool(server: McpServer, ctx: ToolContext): 
        * for a confirmation prompt is the louder one, so an unreadable listing stays "high".
        */
       const links = await ctx.api.listProjectLinks(project.id).catch(() => null);
+      /**
+       * Name the address only while it resolves.
+       *
+       * `/p/<shareId>` is dead whenever the link that slug names is disabled or expired, even
+       * though the project still reads "public page on" through its other links. Printing it in a
+       * confirmation prompt had the human picture recipients losing a page that had already
+       * stopped answering them, and hid the links they really are about to lose.
+       */
+      const addressed = addressedLink(project, links);
+      const publicUrl = project.shareId && !(addressed && !addressed.active) ? ctx.api.projectPublicUrl(project.shareId) : null;
+      const liveLinks = links ? links.filter((l) => l.active).length : 0;
       const severity = links
         ? severityFromTraffic({
             recipientViews: links.reduce((n, l) => n + l.viewCount, 0),
@@ -545,7 +633,11 @@ export function registerDeleteProjectTool(server: McpServer, ctx: ToolContext): 
             total > 0
               ? `${total} document${total === 1 ? " leaves" : "s leave"} the project; the documents, their links and analytics are kept`
               : "The project has no documents",
-            publicLive && publicUrl ? `Its public page ${publicUrl} stops resolving` : "Its public page is already off",
+            publicLive && publicUrl
+              ? `Its public page ${publicUrl} stops resolving`
+              : publicLive && liveLinks > 0
+                ? `Its ${liveLinks} live share ${liveLinks === 1 ? "link stops" : "links stop"} resolving (the /p/ address the project reports is already ${addressed?.status ?? "off"})`
+                : "Its public page is already off",
             "The project itself cannot be restored from the app",
           ],
           severity,

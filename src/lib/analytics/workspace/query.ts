@@ -182,6 +182,56 @@ export type WorkspaceMetricsInput = {
   now?: Date;
 };
 
+/**
+ * Opens and reading time counted the only way the word is allowed to mean anything: one sitting,
+ * not one row.
+ *
+ * A project link stores its `visitIdHash` per link, so one sitting in a data room that opened three
+ * files wrote three `ShareVisit` rows sharing a visit id (`projectPublic.ts`). `$sum: 1` over those
+ * rows calls that three opens, where `docs/METRICS.md` defines an open as a tab session and the
+ * project route collapses them the same way (`countSessions`). Collapsing on
+ * `{shareId, visitIdHash}` before counting is what makes the two agree.
+ *
+ * The collapse lives here, taking its bucket as an argument, because the current window and the
+ * previous one ask the same question of the same collection — and they drifted once. The day series
+ * was fixed to count sittings while the previous-period total kept counting rows, which left
+ * `headline.opens.previous` measured in rows against a `value` measured in sittings: the comparison
+ * chip then reported a decline on exactly the workspaces whose readers open several files per
+ * sitting, with no change in behaviour behind it. One helper means there is no second place to
+ * forget.
+ *
+ * Time is summed across the sitting's rows rather than deduped with it: each row holds the time
+ * spent in its own document, and the sitting's reading time is their total.
+ *
+ * `bucket` names the dimension the totals come out under (the day, for the series); without one the
+ * pipeline yields a single total row.
+ */
+export function visitSessionStages(bucket?: { as: string; expr: unknown }): PipelineStage.FacetPipelineStage[] {
+  return [
+    {
+      $group: {
+        _id: { ...(bucket ? { [bucket.as]: bucket.expr } : {}), shareId: "$shareId", visit: "$visitIdHash" },
+        readingTimeMs: VISIT_TIME_SUM_EXPR,
+      },
+    },
+    {
+      $group: {
+        _id: bucket ? `$_id.${bucket.as}` : null,
+        opens: { $sum: 1 },
+        readingTimeMs: { $sum: "$readingTimeMs" },
+      },
+    },
+  ];
+}
+
+/**
+ * The previous period's opens and reading time: the same collapse as the current window, behind the
+ * same helper, so the two sides of the comparison chip can only ever be in the same unit.
+ */
+export function previousVisitTotalsPipeline(match: Record<string, unknown>): PipelineStage[] {
+  return [{ $match: match }, ...visitSessionStages()];
+}
+
 /** The empty payload a workspace with no live documents gets: real zeros, never a missing section. */
 function emptyResponse(resolved: ResolvedWorkspaceRange, plan: PlanId, isPro: boolean): WorkspaceMetricsResponse {
   const zero = () => delta(0, resolved.previousStart ? 0 : null);
@@ -487,29 +537,17 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
    */
   const visitFacetStage: Record<string, PipelineStage.FacetPipelineStage[]> = {
     /**
-     * Sessions, not rows.
+     * Sessions, not rows — `visitSessionStages` above, bucketed by day.
      *
      * `$sum: 1` over the rows called one sitting in a data room two opens, because that sitting
-     * wrote a row per document. `docs/METRICS.md` defines Opens as tab sessions, and the project
-     * route already collapses them the same way (`countSessions`) — this was the surface still
-     * answering a different question with the same word. Measured on the launch workspace's
-     * 30-day window: 39 rows, 37 sessions.
-     *
-     * The time is summed across the session's rows rather than deduped with it: each row holds the
-     * time spent in its own document, and the sitting's reading time is their total.
+     * wrote a row per document. Measured on the launch workspace's 30-day window: 39 rows, 37
+     * sessions. The previous-period total is built from the same helper, so the tile and its
+     * comparison chip are the same unit.
      *
      * Grouping by the day of each row means a session straddling midnight is counted on both days,
      * which is what a per-day series should say.
      */
-    byDay: [
-      {
-        $group: {
-          _id: { day: VISIT_DAY_KEY_EXPR, shareId: "$shareId", visit: "$visitIdHash" },
-          readingTimeMs: VISIT_TIME_SUM_EXPR,
-        },
-      },
-      { $group: { _id: "$_id.day", opens: { $sum: 1 }, readingTimeMs: { $sum: "$readingTimeMs" } } },
-    ],
+    byDay: visitSessionStages({ as: "day", expr: VISIT_DAY_KEY_EXPR }),
     // Same split as the view facet's `byDoc`, and for the same reason: the ranked row's opens and
     // reading time have to come from the document's own links, or a row reconciles on views and
     // disagrees on everything beside them.
@@ -633,10 +671,11 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
         : Promise.resolve<TotalsRow[]>([]),
       previousStart && previousEnd
         ? (ShareVisitModel.aggregate(
-            [
-              { $match: { ...visitScope, ...visitBetweenMatch(previousStart, previousEnd) } },
-              { $group: { _id: null, opens: { $sum: 1 }, readingTimeMs: VISIT_TIME_SUM_EXPR } },
-            ],
+            // Sittings, like the current window (`visitSessionStages`). Counting rows here was a
+            // baseline in a different unit from the value it is compared against, and it inflated
+            // the baseline most on the data rooms whose readers open several files at a sitting, so
+            // the chip printed a drop nobody's reading had fallen by.
+            previousVisitTotalsPipeline({ ...visitScope, ...visitBetweenMatch(previousStart, previousEnd) }),
             { allowDiskUse: true },
           ) as Promise<VisitTotalsRow[]>)
         : Promise.resolve<VisitTotalsRow[]>([]),

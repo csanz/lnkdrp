@@ -148,8 +148,12 @@ Error: `{ isError: true, content: [{ type: "text", text: JSON.stringify({ error:
 Every result carries `workspace: { id, name }`, successes and errors alike: a person can hold one
 connection per workspace, all with identical tools, and a right call against the wrong one comes back
 as an ordinary "not found" unless the answer says where it landed.
-Codes: `unauthorized`, `key_revoked`, `forbidden`, `not_found`, `validation`, `out_of_credits`,
-`rate_limited`, `fetch_blocked`, `source_not_found` (the URL answered 404/410 — a missing file, not a
+Codes: `unauthorized`, `key_revoked`, `owner_removed` (the key is valid but the member who created it
+was removed from the workspace — another key by the same person fails identically; `initialize`
+answers it `401 {"error":"owner_removed"}` rather than with the "use a key, not OAuth" sentence),
+`forbidden`, `not_found`, `validation`, `out_of_credits`,
+`rate_limited` (details carry `retryAfterSeconds` when the API sent one, and the message names the
+wait), `fetch_blocked`, `source_not_found` (the URL answered 404/410 — a missing file, not a
 blocked fetch), `unsupported_content_type`, `too_large`, `plan_limit` (details carry
 `limit/used/max/grace/upgradeUrl` plus `alternatives`, the things the workspace can still do on its
 current plan), `upstream`. `upstream` also covers our own faults that a route answers with a 400 — a

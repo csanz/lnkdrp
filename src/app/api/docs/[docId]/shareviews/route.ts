@@ -107,6 +107,16 @@ function utcDayKey(d: Date): string {
 }
 
 /**
+ * A row's last activity as a number, for ordering only. A row with no recorded activity sorts last
+ * rather than poisoning the comparison with `NaN`, which would leave the array in an order that
+ * depends on the engine's sort implementation — the exact thing the tiebreakers exist to remove.
+ */
+function lastViewedAtMs(row: { lastViewedAt: string | null }): number {
+  const ms = row.lastViewedAt ? Date.parse(row.lastViewedAt) : NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
  * Sum the `pageTimeMsByPage` maps pushed by the viewer `$group` into one object.
  *
  * Built from the `$group` output field directly — see `pageTimeMergeExpr`, which documents why
@@ -542,9 +552,25 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             { $match: docScopeMatch },
             ...perLinkGroupStages,
             {
+              // Both branches sort on a **total** order, which is what makes the ranking a fact
+              // about the document rather than about which row Mongo happened to read first.
+              //
+              // `{ $sort: { views: -1 } }` alone was not one. Ties are the ordinary case here (two
+              // links with one reader each), `$sort` + `$limit` is a top-k that is not stable, and
+              // `perLinkGroupStages` projects `_id: 0`, so nothing unique survived into the facet
+              // to break them. The `$limit` then kept an arbitrary member of the tie: two identical
+              // requests ranked the same links differently, and because `byRecent` is deduped into
+              // the same map below, the *number* of rows moved with it — a real link dropped out of
+              // the answer entirely instead of merely changing place. The top-links card named a
+              // different winner on refresh, and an agent asking "which link performed best" got a
+              // different answer each time it asked.
+              //
+              // `shareId` is this stage's `$group` key, so it is unique per row and settles any
+              // tie the counts leave open; the secondary count is there so the runner-up is the
+              // one a reader would expect, not just the first slug alphabetically.
               $facet: {
-                byViews: [{ $sort: { views: -1 } }, { $limit: topLinksParam }],
-                byRecent: [{ $sort: { lastSeen: -1 } }, { $limit: topLinksParam }],
+                byViews: [{ $sort: { views: -1, lastSeen: -1, shareId: 1 } }, { $limit: topLinksParam }],
+                byRecent: [{ $sort: { lastSeen: -1, views: -1, shareId: 1 } }, { $limit: topLinksParam }],
               },
             },
           ])) as Array<{ byViews: PerLinkRow[]; byRecent: PerLinkRow[] }>;
@@ -665,7 +691,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             lastViewedAt: r.lastSeen ? new Date(r.lastSeen).toISOString() : null,
           }))
           .filter((r) => Boolean(r.shareId))
-          .sort((a, b) => b.views - a.views);
+          // The same total order the ranking above uses, for the same reason: `b.views - a.views`
+          // alone left equal-view rows in whatever order the two facet branches happened to dedupe
+          // into, so even when the *set* was stable the printed order could still swap two links
+          // between identical requests. A caller reading "the top row" as the best link was reading
+          // a coin toss.
+          .sort((a, b) => b.views - a.views || lastViewedAtMs(b) - lastViewedAtMs(a) || a.shareId.localeCompare(b.shareId));
       }
 
       const [viewersAgg, anonymousAgg] = includeViewers

@@ -86,7 +86,14 @@ function warningsForSwitchedOn(view: ShareViewWithLink, links: ApiShareLink[]): 
 }
 
 export const setShareAccessInputShape = {
-  idempotencyKey: z.string().min(1).max(128).describe("Caller-chosen key (1-128 chars); a retry with the same key returns the stored result."),
+  idempotencyKey: z
+    .string()
+    .min(1)
+    .max(128)
+    .describe(
+      "Caller-chosen key (1-128 chars). Reusing it within 24h applies the same settings again and returns the access as it " +
+        "stands then, marked replayed: true; the same key with different arguments is refused.",
+    ),
   docId: docIdSchema,
   shareEnabled: z
     .boolean()
@@ -138,7 +145,7 @@ export function registerSetShareAccessTool(server: McpServer, ctx: ToolContext):
       }
 
       const orgId = ctx.whoami().orgId;
-      const { value } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "set_share_access", args.idempotencyKey), async () => {
+      const apply = async () => {
         if (Object.keys(patch).length > 0) await ctx.api.patchDoc(args.docId, patch);
         if (wantsPassword) await ctx.api.setSharePassword(args.docId, args.password ?? null);
         const doc = await ctx.api.getDoc(args.docId);
@@ -158,8 +165,39 @@ export function registerSetShareAccessTool(server: McpServer, ctx: ToolContext):
         const askedOn = args.shareEnabled === true;
         const warnings = askedOn ? warningsForSwitchedOn(view, links) : [];
         return { ...view, warnings };
-      }, { fingerprint: fingerprintArgs(args) });
-      return value;
+      };
+
+      /**
+       * A repeated key re-runs the write; it does not narrate the first one.
+       *
+       * Everything that builds this tool's answer lives inside `apply`: the patch, the password
+       * write, the re-read of the document and its links, and the warning. Caching the answer
+       * therefore froze all of it, and a second call with the same key described the document as it
+       * was at the first call however far it had moved since. Three live ones: a key that had set
+       * {allowDownload: true, password: "..."} replayed as {shareAllowPdfDownload: true,
+       * sharePasswordEnabled: true} after a later call turned both off, while lnkdrp_get_share on
+       * the same document in the next breath said false to both; a key replayed after the document
+       * was archived answered isArchived: false, anyLinkActive: true and warnings: [], defeating
+       * the archived warning a fresh key gets; a key replayed after the document was deleted still
+       * answered status "ready" with a live shareUrl. This tool's whole payload is a description of
+       * current access, so a frozen one is not merely old, it is usually inverted: the agent tells
+       * its human the link is password-protected and downloads are on while the link is open to
+       * anyone, or that sharing is on for a document that opens for nobody.
+       *
+       * The patch and the password write are both idempotent, so caching their result bought
+       * nothing and cost that. Running them again converges on what this call asked for, and the
+       * view is rebuilt from a read of that moment, which is also why no `stillExists` probe is
+       * needed here as in share_pdf and replace_pdf: a document that has since been deleted fails
+       * the patch with not_found instead of being described. The key is kept for the one thing it
+       * still buys, the fingerprint refusal that catches a key reused for different arguments, and
+       * `replayed` is said out loud so a caller can tell the key was a repeat.
+       */
+      const { value, replayed } = await ctx.idempotency.run(
+        IdempotencyStore.key(orgId, "set_share_access", args.idempotencyKey),
+        apply,
+        { fingerprint: fingerprintArgs(args) },
+      );
+      return replayed ? { ...(await apply()), replayed: true as const } : value;
     }),
   );
 }

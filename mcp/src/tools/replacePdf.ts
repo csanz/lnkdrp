@@ -41,7 +41,10 @@ export const replacePdfInputShape = {
     .min(1)
     .max(128)
     .describe("Caller-chosen key (1-128 chars). Reusing it within 24h returns the same result instead of replacing again."),
-  docId: docIdSchema.describe("The existing document to update. Every one of its share links keeps working and keeps its analytics history."),
+  docId: docIdSchema.describe(
+    "The existing document to update. Every one of its share links keeps working and keeps its analytics history " +
+      "(an archived document's links stay dead until it is brought back; the reply says docArchived: true).",
+  ),
   sourceUrl: z
     .string()
     .min(1)
@@ -125,9 +128,48 @@ export type ReplacePdfResult = {
   creditsRemaining?: number;
   /** The new file's text matched the previous version: a new version number, the same document. */
   unchangedFromPrevious?: true;
+  /** The document is archived, so the `shareUrl` in this same reply resolves for nobody. */
+  docArchived?: true;
   /** This `idempotencyKey` had already run: the same result, not a second upload. */
   replayed?: true;
 };
+
+/**
+ * Said in the same reply as the shareUrl, because that URL is what the agent is about to send.
+ *
+ * Archiving is a property of the document, and the replace succeeds on an archived one by design:
+ * `POST /api/uploads` guards only `isDeleted`, and preparing a version before bringing a document
+ * back is a legitimate thing to do. What was wrong was the report. This tool returned `status:
+ * "ready"`, the new version and a shareUrl with `warnings: []`, so the agent's next sentence to its
+ * human was "updated, here is the link" about a URL that 404s for every recipient, while
+ * `lnkdrp_create_share_link` and `lnkdrp_update_share_link`, called on the same document a moment
+ * later, said `docArchived: true` and refused to call the link active. `status` here is the
+ * processing status, not whether anything resolves, so nothing else in the payload carried it.
+ *
+ * `docArchived` rather than `isArchived`, matching the two link-write tools, because this payload's
+ * other flags (`status`, `unchangedFromPrevious`) are about the upload: the thing that is archived
+ * is the document behind it. Its own sentence rather than the one in ./shareLinks, in the way
+ * `setShareAccess` writes its own: each tool names the remedy for what *it* just did, and what this
+ * one just did is store a version nobody can open yet.
+ */
+const ARCHIVED_DOC_WARNING =
+  "This document is archived, so none of its links resolve: anyone opening this shareUrl gets \"not found\". The new " +
+  "version is stored and every link keeps its own settings, so lnkdrp_archive_doc { archived: false } brings the " +
+  "document and its links back on this new version. Tell the human before they send it.";
+
+/**
+ * Archive state as of this reply, plus the sentence that goes with it.
+ *
+ * Shared by the fresh return and the replay, and it strips before it adds so a replay cannot carry
+ * a stale sentence: a key replayed after the document was brought back would otherwise repeat the
+ * cached warning about a link that resolves again, and one archived in between would replay the
+ * cached silence. `docArchived: undefined` clears the cached flag the same way; `JSON.stringify`
+ * drops the key.
+ */
+function archiveFields(isArchived: boolean, warnings: string[]): { docArchived: true | undefined; warnings: string[] } {
+  const rest = warnings.filter((w) => w !== ARCHIVED_DOC_WARNING);
+  return isArchived ? { docArchived: true as const, warnings: [ARCHIVED_DOC_WARNING, ...rest] } : { docArchived: undefined, warnings: rest };
+}
 
 /** Resolve after `ms`. */
 function sleep(ms: number): Promise<void> {
@@ -142,7 +184,8 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
       title: "Replace a document's PDF",
       description:
         "Put a new PDF on an existing document. Every share link keeps its address, its settings and its analytics " +
-        "history - recipients open the same URL and see the new file. This is how to update a document you have " +
+        "history - recipients open the same URL and see the new file, unless the document is archived, in which case " +
+        "the reply says docArchived: true and nothing resolves until lnkdrp_archive_doc { archived: false }. This is how to update a document you have " +
         "already shared, including on a Free workspace at its document cap: replacing does not create a document, " +
         "so it is never blocked by plan_limit the way lnkdrp_share_pdf is. Pass exactly one of sourceUrl (an https URL " +
         "the server fetches), filePath (an absolute path READ BY THE MCP SERVER ITSELF, so only for a server running on " +
@@ -300,7 +343,10 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
             // summary; that is what is read now, so the answer no longer depends on how the caller
             // paid for the summary.
             ...(outcome.unchangedFromPrevious ? { unchangedFromPrevious: true as const } : {}),
-            warnings: outcome.warnings,
+            // `before` was read before the upload and already carries this; the flag was simply
+            // thrown away, so the one fact that decides whether the shareUrl above is worth sending
+            // was the one fact the reply did not mention.
+            ...archiveFields(before.isArchived, outcome.warnings),
             ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };
         } catch (err) {
@@ -324,6 +370,10 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
             ...value,
             replayed: true as const,
             status: fresh.status,
+            // Archiving is refreshed off the same read for the same reason the status is: the
+            // cached answer is as old as the first call, and this one is about whether the URL in
+            // this reply resolves right now.
+            ...archiveFields(fresh.isArchived, value.warnings),
             ...(fresh.status === "ready" || fresh.status === "failed" ? { timedOut: undefined } : {}),
           }
         : { ...value, replayed: true as const };

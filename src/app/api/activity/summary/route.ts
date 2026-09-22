@@ -19,6 +19,7 @@ import { errorJson } from "@/lib/http/errorResponse";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { agentLabel } from "@/lib/activity/log";
+import { windowStartUtc } from "@/lib/analytics/shareViewAggregates";
 import {
   ACTIVITY_WORK_TYPES,
   buildActivitySeries,
@@ -53,13 +54,22 @@ function emptySummary(days: number, since: Date) {
  * `{ days, since, counts: { docsAdded, docsReplaced, linksCreated, docsRemoved, projectsCreated },
  *    actors: { total, people, agents, slices: [{ key, kind, client, label, count }] },
  *    series: [{ day, total, people, agents, ...counts }] }` - one point per day, gaps filled.
+ * `since` is midnight UTC of the window's first day, so it names `series[0].day` and the counts,
+ * the donut and the chart are all measured over the same days.
  * Errors: 403 when the caller is not a workspace member; 400 for unexpected failures.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const daysRaw = Number(url.searchParams.get("days"));
   const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(MAX_DAYS, Math.max(MIN_DAYS, Math.floor(daysRaw))) : DEFAULT_DAYS;
-  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  // Midnight UTC of the day `days - 1` days ago, the bound every other windowed aggregate here
+  // takes from `windowStartUtc()` - and the exact span the chart draws. A rolling `Date.now() -
+  // days * 24h` starts partway through a calendar day, while the day group below keys rows by their
+  // UTC day, so the events in that leading sliver landed under a key `buildActivitySeries` never
+  // emits: counted in the tiles and the donut, absent from every point of the line beneath them,
+  // under a `since` naming a day the series does not contain. A reader would have read that as the
+  // chart losing a day of work. Snapped, the match and the buckets cover the same days.
+  const since = windowStartUtc(days);
 
   try {
     debugLog(2, "[api/activity/summary] GET", { days });

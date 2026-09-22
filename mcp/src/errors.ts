@@ -13,6 +13,17 @@ import { log } from "./config";
 export type ToolErrorCode =
   | "unauthorized"
   | "key_revoked"
+  /**
+   * The key is good; the member who created it is no longer in the workspace.
+   *
+   * Its own code rather than an `unauthorized`, because the two faults need different remedies and
+   * `main.ts` branches on the code alone: an `unauthorized` at connect time is answered with the
+   * OAuth sentence ("this server takes a lnkdrp key, get one at /connect"), which here is advice
+   * that cannot work. The header is already right, and a key minted by a removed member fails the
+   * same way. Keeping the cause distinct all the way up is the whole reason the REST layer answers
+   * `owner_removed` instead of `unauthorized` in the first place (src/lib/gating/apiKeyActor.ts).
+   */
+  | "owner_removed"
   | "forbidden"
   | "not_found"
   | "validation"
@@ -117,10 +128,52 @@ const TOO_LARGE_RE = /too large/i;
 const INTERNAL_FAULT_RE =
   /validation failed:|Cast to \w+ failed|is not a valid enum value|MongoServerError|MongooseError|E11000|ECONNREFUSED|Topology is closed/i;
 const RATE_LIMITED_RE = /over its limit of \d+ requests/i;
+/**
+ * A 404 body that is about the *container* in the path, not the link at the end of it.
+ *
+ * Both link gates answer a container they cannot see with a bare `{ error: "Not found" }`
+ * (`api/docs/[docId]/links/shared.ts` accessDocForLinks, `api/projects/[projectSlug]/links/shared.ts`
+ * accessProjectForLinks), and they answer it before the route has looked at the linkId at all. A
+ * link that is genuinely missing says "Link not found." So the body already knows which of the two
+ * ids was wrong, and the path never can.
+ *
+ * Only the document link branch consults this. Every project link tool resolves the project to an
+ * id of its own before it calls a link route, so a project that is not there is refused with the
+ * right noun long before a 404 reaches here, and guarding that branch too would be a test for a
+ * case it cannot be handed.
+ */
+const CONTAINER_NOT_FOUND_RE = /^(?:not found|document not found|project not found)\.?$/i;
 
 /** A finite number or null. */
 function numOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * `rate_limited` carrying the wait the limiter already computed.
+ *
+ * The API answers a 429 with `retryAfterSeconds` in the body and the same number in a `retry-after`
+ * header, worked out from the bucket's real expiry - it produces it twice so the caller never has
+ * to guess. Both were being dropped: the header never survives `ApiClient.request`, which reads
+ * only the status and the body text, and this branch passed on `{ status }` alone. "Over its limit
+ * of 300 requests per minute" says what went wrong and nothing about when to come back, so an agent
+ * either sleeps a whole window or keeps calling and stays refused, and every refused call is itself
+ * charged against the window. The number goes in the message for a client that only shows text and
+ * in `details` for one that reads structure, the way every neighbouring branch propagates its own.
+ *
+ * Older routes that catch the limiter themselves and answer 400 send the sentence without the
+ * field; they get the old "slow down and retry", since inventing a wait would be worse than none.
+ */
+function rateLimitedError(status: number, message: string, body: Record<string, unknown>): ToolError {
+  const retryAfter = numOrNull(body.retryAfterSeconds);
+  const next =
+    retryAfter !== null
+      ? ` Wait ${retryAfter} second${retryAfter === 1 ? "" : "s"} and retry the same call; nothing was changed.`
+      : " Slow down and retry.";
+  return new ToolError("rate_limited", `${message || "Too many requests."}${next}`, {
+    status,
+    details: retryAfter !== null ? { retryAfterSeconds: retryAfter } : undefined,
+  });
 }
 
 /**
@@ -155,6 +208,27 @@ function outOfCreditsError(status: number, body: Record<string, unknown>, bodyCo
 }
 
 /**
+ * The two "that link is not here" sentences, hoisted so every caller says the same thing.
+ *
+ * Not every link 404 comes back from the API. The delete tools resolve the link client-side, out of
+ * the list they already read to build the confirmation preview, so `mapApiError` never runs and
+ * they used to write their own shorter message: "No share link with that id on this document."
+ * One fault answered two ways, and the terser half named neither of the two ways an agent actually
+ * gets here - a link id from an earlier listing that has since been deleted, or a project link id
+ * passed to the document tool - nor any call that would find the right id. An agent that read it
+ * had been told what went wrong and nothing about what to do next, on the one tool where guessing
+ * again is a delete. Kept here, beside the mapper that also uses them, so a fifth caller cannot
+ * drift a third wording into existence.
+ */
+export const LINK_NOT_FOUND_ON_DOC =
+  "No such link on this document. The link may belong to a different document or have been deleted; " +
+  "lnkdrp_find_share_link finds a link by name without knowing its document.";
+
+export const LINK_NOT_FOUND_ON_PROJECT =
+  "No such link on this project. The link may belong to a different project, be a document link rather than a " +
+  "project link, or have been deleted; lnkdrp_list_project_links lists this project's links.";
+
+/**
  * Map a non-2xx lnkdrp REST response to a `ToolError`.
  *
  * Routes that go through `errorJson` return `{ error: "unauthorized" | "key_revoked" | "forbidden" }`
@@ -173,6 +247,26 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
   if (errorText === "key_revoked" || /api key was revoked/i.test(message)) {
     return new ToolError("key_revoked", "This API key was revoked. Create a new key in the lnkdrp dashboard.", { status });
   }
+  /**
+   * Before the generic 401, because a removed owner is not a bad key.
+   *
+   * The REST layer goes out of its way to tell these apart - "an agent told 'invalid key' when the
+   * real answer is 'the person who made this key is no longer in the workspace' will retry forever
+   * with a good key" (apiKeyActor.ts) - and this mapper threw the distinction away one layer up:
+   * `owner_removed` fell into the `status === 401` catch-all and came out byte-identical to a bad
+   * key, so the retry loop that comment exists to prevent happened anyway. Both remedies a reader
+   * would take from "the API key was not accepted" are dead ends here: the key is fine, and a new
+   * one made by the same person fails the same way. The one move that works is named instead.
+   */
+  if (errorText === "owner_removed" || /no longer in this workspace/i.test(message)) {
+    return new ToolError(
+      "owner_removed",
+      "The member who created this API key is no longer in this workspace, so the key no longer resolves to a member. " +
+        "The key itself is fine, and a new key created by the same person will fail the same way. Ask the workspace " +
+        "owner to re-add them, or use a key created by a current member.",
+      { status, details: { reason: "owner_removed" } },
+    );
+  }
   if (errorText === "unauthorized" || /invalid api key/i.test(message) || status === 401) {
     return new ToolError("unauthorized", "The API key was not accepted by lnkdrp.", { status });
   }
@@ -188,25 +282,24 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
       // the more specific answer. Told "no such project" for a bad linkId, an agent goes looking
       // for a project problem that is not there — the same trap the document link branch fixed.
       if (/^\/api\/projects\/[^/]+\/links\/[^/]+/.test(path)) {
-        return new ToolError(
-          "not_found",
-          "No such link on this project. The link may belong to a different project, be a document link rather than a " +
-            "project link, or have been deleted; lnkdrp_list_project_links lists this project's links.",
-          { status },
-        );
+        return new ToolError("not_found", LINK_NOT_FOUND_ON_PROJECT, { status });
       }
       if (/^\/api\/projects\//.test(path)) {
         return new ToolError("not_found", "No such project in this workspace. lnkdrp_list_projects lists the projects you can use.", { status });
       }
       // Link routes 404 when the link is not on that document, even though the document exists;
       // "No such document" sent agents looking for a document problem that was not there.
-      if (/\/links\/[^/]+/.test(path) || /^link not found/i.test(errorText)) {
-        return new ToolError(
-          "not_found",
-          "No such link on this document. The link may belong to a different document or have been deleted; " +
-            "lnkdrp_find_share_link finds a link by name without knowing its document.",
-          { status },
-        );
+      //
+      // The path alone is not enough to say so, which is why the body gets a veto. Most tools read
+      // their document before they touch its links, so a bad docId fails earlier with the right
+      // noun and this branch only ever saw real link misses. The two password tools
+      // (tools/shareLinkPassword.ts) call the link route first, and there a ghost docId 404s in
+      // accessDocForLinks with a bare "Not found" on a path this regex matches - so the agent was
+      // told its link was gone, went looking for a link problem that was not there, and
+      // find_share_link duly returned the link with a docId it had no reason to compare. That is
+      // the same misdirection the comment above describes, pointed the other way.
+      if (!CONTAINER_NOT_FOUND_RE.test(errorText.trim()) && (/\/links\/[^/]+/.test(path) || /^link not found/i.test(errorText))) {
+        return new ToolError("not_found", LINK_NOT_FOUND_ON_DOC, { status });
       }
       /**
        * Anything left is about a document.
@@ -221,7 +314,7 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
     case 400: {
       // Older routes (the project routes among them) catch the API-key limiter's error and answer 400.
       if (RATE_LIMITED_RE.test(message)) {
-        return new ToolError("rate_limited", message, { status });
+        return rateLimitedError(status, message, body);
       }
       // A URL that answered 404/410 is a missing file, not a blocked fetch: "blocked" sent agents
       // looking for a network policy problem instead of checking the link.
@@ -339,12 +432,45 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
         },
       );
     case 429:
-      return new ToolError("rate_limited", message || "Too many requests; slow down and retry.", { status });
+      return rateLimitedError(status, message, body);
+    case 409:
+      /**
+       * The 50-links-per-document (and per-project) cap is the caller's to clear, not ours.
+       *
+       * With no case here it fell to `default:` and came back as `upstream` — the code that means
+       * "something on our side broke, retry the same call" (see the 400 branch above). Both halves
+       * of that are false at a link cap: nothing broke, and the same call fails forever. An agent
+       * adding one link per investor to a busy deck branches on the code, reads it as transient and
+       * loops. docs/MCP.md has always specified `validation` with `code: "too_many_links"` for this;
+       * the case was simply never written. The remedy is spelled out because the API's sentence says
+       * only what the ceiling is, never how to get under it.
+       *
+       * Other 409s (an upload still processing, a doc create that exhausted its id retries) really
+       * are ours, so they keep falling through to `upstream` below.
+       */
+      if (bodyCode === "too_many_links") {
+        const onProject = /^\/api\/projects\//.test(path);
+        const remedy = onProject
+          ? "Delete a link this project no longer needs with lnkdrp_delete_project_link, or reuse one it already has (lnkdrp_list_project_links)."
+          : "Delete a link you no longer need with lnkdrp_delete_share_link, reuse one that already exists " +
+            "(lnkdrp_list_share_links), or send this audience a project link instead, which carries several documents on " +
+            "one URL (lnkdrp_create_project_link).";
+        return new ToolError("validation", `${message || "That link cap is full."} ${remedy}`, { status, details: { code: bodyCode } });
+      }
+      return upstreamError();
     default:
-      return new ToolError("upstream", `lnkdrp API ${where} failed with ${status}${errorText ? `: ${errorText}` : ""}.`, {
-        status,
-        details: { status, ...(errorText ? { error: errorText } : {}) },
-      });
+      return upstreamError();
+  }
+
+  /**
+   * The answer for a status this mapper has nothing specific to say about. A function so `case 409`
+   * can hand the 409s that are genuinely ours to the same place `default:` sends everything else.
+   */
+  function upstreamError(): ToolError {
+    return new ToolError("upstream", `lnkdrp API ${where} failed with ${status}${errorText ? `: ${errorText}` : ""}.`, {
+      status,
+      details: { status, ...(errorText ? { error: errorText } : {}) },
+    });
   }
 }
 
@@ -392,11 +518,30 @@ export function handleTool<A, E>(
  */
 export function initializeFailureResponse(err: unknown): {
   status: number;
-  body: { error: string; message: string };
+  body: { error: string; message: string; retryAfterSeconds?: number };
   log: string;
 } {
   if (isToolError(err) && err.code === "rate_limited") {
-    return { status: 429, body: { error: "rate_limited", message: err.message }, log: "initialize refused: rate limited" };
+    // The wait travels with the refusal here too. A client that cannot connect and is told only
+    // "over its limit" reconnects on its own schedule, which is what filled the window.
+    const retryAfterSeconds = numOrNull(err.details?.retryAfterSeconds);
+    return {
+      status: 429,
+      body: { error: "rate_limited", message: err.message, ...(retryAfterSeconds !== null ? { retryAfterSeconds } : {}) },
+      log: "initialize refused: rate limited",
+    };
+  }
+  /**
+   * `owner_removed` answers 401 from here rather than through main.ts's `unauthorized()`.
+   *
+   * That helper knows two codes and sends the OAuth sentence for anything else, which is the wrong
+   * remedy for this one: the header is correct, the client is not an OAuth client, and minting
+   * another key at /connect produces one that fails identically. So this code deliberately does not
+   * take main.ts's auth path - it lands here, where the API's own explanation is passed through
+   * whole and the human is told the thing that actually fixes it.
+   */
+  if (isToolError(err) && err.code === "owner_removed") {
+    return { status: 401, body: { error: "owner_removed", message: err.message }, log: "initialize refused: key owner is no longer a member" };
   }
   return {
     status: 502,
