@@ -175,8 +175,24 @@ export function computeChangedPages(params: {
       pageNumber: p,
       previousText: prevByPage.get(p) ?? "",
       newText: newByPage.get(p) ?? "",
-      previousImageUrl: prevImg?.thumbUrl ?? prevImg?.imageUrl ?? null,
-      newImageUrl: nextImg?.thumbUrl ?? nextImg?.imageUrl ?? null,
+      /**
+       * The full page render, not the thumbnail — and it costs nothing to switch.
+       *
+       * These URLs are handed straight to the vision model. `thumbUrl` is 480px wide at JPEG
+       * quality 65 (`process/route.ts`), which on a 16:9 slide leaves a logo about 24-70px across
+       * and smeared by compression: enough to see that a mark is present, nowhere near enough to
+       * tell that it was replaced with a different one. `imageUrl` is 1200px at quality 78.
+       *
+       * The reason this is free: for `detail: "high"` the API fits the image inside 2048x2048,
+       * scales the *shortest* side to 768, then counts 512x512 tiles. A 480x270 thumb and a
+       * 1200x675 render both land on 1365x768 and both cost six tiles — the thumb simply arrives
+       * upscaled, paying full price for interpolated pixels. Same tokens, a fraction of the
+       * evidence.
+       *
+       * The thumb stays as the fallback for rows written before full-size renders existed.
+       */
+      previousImageUrl: prevImg?.imageUrl ?? prevImg?.thumbUrl ?? null,
+      newImageUrl: nextImg?.imageUrl ?? nextImg?.thumbUrl ?? null,
       imageChanged: pageImageChanged(prevImg, nextImg),
     };
   });
