@@ -329,6 +329,34 @@ base62 slug.
 their owner's account; an invite was never compared to the address it was sent to.
 → *Ask, for every token:* who can withdraw it, and what happens to it when its holder leaves?
 
+**15. Two privileges in one handler, gated as one.** `POST /api/waitlist/accept` recorded the Terms
+*and* approved the account off the early-access queue. The first is something a person may do for
+themselves, so the route was written to accept a session alone — and the reasoning used to justify
+that ("a session proves more than a signed token, so requiring one is the stricter rule") was true
+of the Terms and false of the approval. `{}` with a valid cookie was a self-service way into the
+product, and the row it produced was indistinguishable from a real approval except that
+`approvedByUserId` was null.
+→ *Ask:* does this handler do more than one thing? If so, does each of them deserve the *weakest*
+credential the handler accepts? The gate has to be per privilege, not per route.
+→ *Grep:* a route whose name describes one action but whose body calls two writers.
+
+**16. Caching the restrictive answer.** `readAccessStatus` cached "waitlisted" for fifteen seconds.
+Approving somebody therefore did nothing for the rest of the TTL, and worse, it looped: `/waitlist`
+reads Mongo directly, saw "approved" and redirected to `/`, which still had "waitlisted" cached and
+redirected back, until the browser gave up. `accessStatusChanged` could not save it — the cache is
+per process, and a dev server or a multi-instance deploy answers the two requests from different
+ones.
+→ *Rule:* cache the permissive answer, re-read the restrictive one. Being wrong in the permissive
+direction costs a few seconds of access somebody already had; being wrong in the restrictive one
+locks out the person you just let in, on the screen where that is the whole product.
+
+**17. A guard that counts rows the system will not honour.** `admin:add --remove` refused to remove
+the last admin by counting `{ role: "admin" }` — but `actor.ts` ends the session of anybody disabled
+or pending deletion, and the purge leaves `role` on the tombstone. A deleted admin still answered
+the count, so removing the only working one passed the check and closed `/a` to everybody.
+→ *Ask, of any count used as a safety check:* does it count what the rest of the system will
+actually accept? A guard and an authenticator disagreeing about who exists is the whole bug.
+
 ---
 
 ## 8. Before you ship a handler
@@ -357,18 +385,32 @@ this was done.
 
 ## 9. Known open
 
-- **Public blob URLs.** Page images and the full extracted text of every PDF live at paths that are
-  a pure function of `(docId, uploadId)`, written `access: "public"` with no random suffix, and
-  nothing consults the link's state before the blob store serves them. One preview URL, handed to a
-  recipient by a page that is working as designed, spells out both ids, and every other artifact
-  hangs off the same prefix. This is the one finding from the 2026-09-20 review still live.
-  Options are costed in [lnkdrp-blob-privacy](./prds/lnkdrp-blob-privacy.md), which is waiting on
-  one question: can the store sign URLs with a lifetime we choose? That answer picks the design.
-- **One route still holds a local copy of the blob allowlist.** `fetchStoredBlob`
+- **Public blob URLs — narrowed, not closed.** Every artifact is still written `access: "public"`,
+  because that is the only mode `@vercel/blob` has, and nothing consults the link's state before the
+  CDN serves one. What changed on 2026-09-22 is that the paths stopped being derivable: B0 from
+  [lnkdrp-blob-privacy](./prds/lnkdrp-blob-privacy.md) shipped, so `addRandomSuffix: true` on all
+  seven writes — including `POST /api/blob/upload`, where the default is `false` and where the
+  browser mints the preview URL a recipient is actually handed. One leaked URL is now worth the one
+  file it names, instead of every page image and the complete extracted text.
+
+  Still open: a URL somebody saved keeps working after the link is revoked, expired,
+  password-protected or archived. Real revocation needs option B — a route in front of the bytes —
+  and that is a caching question on the viewer's hot path, not a security one. The PRD's blocking
+  question is answered: the store cannot sign URLs (`access: 'public'` is a one-member literal
+  type), so B is the design by default rather than by preference.
+
+  One consequence worth knowing: unguessable paths mean a re-run writes a *new* blob rather than
+  overwriting, so any write without an "already stored" guard orphans its predecessor — and the
+  account purge deletes by the URL it knows. The extracted-text write had exactly that gap and was
+  fixed the same day; check for it before adding another `put()`.
+- ~~One route still holds a local copy of the blob allowlist.~~ **Answered.** `fetchStoredBlob`
   (`src/lib/blob/fetchStoredBlob.ts`) is the one place that validates a stored URL and follows its
-  redirects, re-checking the host on every hop. Four of the five call sites use it;
-  `/p/:shareId/:docId/preview` still carries its own predicate and a bare `fetch`, so it remains a
-  redirect-follower until it is converted.
+  redirects, re-checking the host on every hop, and all five call sites now use it.
+  `/p/:shareId/:docId/preview` was the last holdout: it carried its own predicate and a bare
+  `fetch`, so its allowlist only ever saw hop zero and an allowlisted pointer answering a 302 to an
+  internal address was still dereferenced. Converted, with the drift pinned in
+  `tests/lib/projectPreviewProxy.test.ts`, which asks of both preview twins that neither call a
+  bare `fetch`.
 - ~~No audit of already-stored URLs.~~ **Answered.** `npm run audit:blob-urls`
   (`scripts/audit-stored-blob-urls.ts`) walks every document and upload and reports any value the
   serving path would refuse, asking `blobFetchUrl` rather than re-deriving the rule. Read-only,
