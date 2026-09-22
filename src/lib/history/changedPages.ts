@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 import type { DocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { isNoChangeSummary } from "@/lib/ai/docChangeSummary";
 import { fingerprintsDiffer } from "@/lib/history/pageFingerprint";
+import { sweepVisualChanges, type SweepCandidate } from "./visualPageSweep";
 import { openPdfDocument } from "@/lib/pdf/renderPage";
 
 export type PdfPageText = { page_number: number; text: string };
@@ -216,6 +217,60 @@ export function computeChangedPages(params: {
 }
 
 /**
+ * Pages the text and fingerprint passes did not flag, that a pixel comparison says did change.
+ *
+ * Exists because the fingerprint is blind to small local edits by construction. See
+ * `visualPageSweep` for the measurements behind that.
+ */
+async function sweepUnflagged(params: {
+  changed: ChangedPage[];
+  prevSlideNodes: unknown;
+  nextSlideNodes: unknown;
+  prevPages: PdfPageText[];
+  newPages: PdfPageText[];
+}): Promise<ChangedPage[]> {
+  const prevSlides = slidesByPage(params.prevSlideNodes);
+  const nextSlides = slidesByPage(params.nextSlideNodes);
+  if (!prevSlides.size || !nextSlides.size) return [];
+
+  const already = new Set(params.changed.map((c) => c.pageNumber));
+  const candidates: SweepCandidate[] = [];
+  for (const [pageNumber, prev] of prevSlides) {
+    if (already.has(pageNumber)) continue;
+    const next = nextSlides.get(pageNumber);
+    if (!next) continue;
+    // The thumbnail is the right rendition here: the comparison is coarse by design, and it is a
+    // tenth of the bytes of the full render across a whole deck.
+    const previousUrl = prev.thumbUrl ?? prev.imageUrl;
+    const newUrl = next.thumbUrl ?? next.imageUrl;
+    if (!previousUrl || !newUrl) continue;
+    candidates.push({ pageNumber, previousUrl, newUrl });
+  }
+  if (!candidates.length) return [];
+
+  const found = await sweepVisualChanges(candidates);
+  if (!found.size) return [];
+
+  const prevByPage = textByPage(params.prevPages);
+  const newByPage = textByPage(params.newPages);
+  return [...found]
+    .sort((a, b) => a - b)
+    .map((pageNumber) => {
+      const prev = prevSlides.get(pageNumber) ?? null;
+      const next = nextSlides.get(pageNumber) ?? null;
+      return {
+        pageNumber,
+        previousText: prevByPage.get(pageNumber) ?? "",
+        newText: newByPage.get(pageNumber) ?? "",
+        previousImageUrl: prev?.imageUrl ?? prev?.thumbUrl ?? null,
+        newImageUrl: next?.imageUrl ?? next?.thumbUrl ?? null,
+        // A pixel comparison found it, which is a stronger statement than the fingerprint's.
+        imageChanged: true,
+      } satisfies ChangedPage;
+    });
+}
+
+/**
  * Build changed-page context for two stored uploads by fetching both PDFs. Best-effort: returns []
  * when either PDF is missing or cannot be read (the compare then runs on full text only).
  * `newPages` skips the second extraction when the caller already has them.
@@ -234,13 +289,45 @@ export async function loadChangedPages(params: {
     fetchPdfBytes(prevUrl).then(extractPdfTextByPage),
     params.newPages ? Promise.resolve(params.newPages) : fetchPdfBytes(newUrl).then(extractPdfTextByPage),
   ]);
-  return computeChangedPages({
+  let totalChanged: number | null = null;
+  const changed = computeChangedPages({
     prevPages,
     newPages,
     prevSlideNodes: params.prevUpload?.slideNodes,
     nextSlideNodes: params.newUpload?.slideNodes,
-    onTotal: params.onTotal,
+    onTotal: (n) => {
+      totalChanged = n;
+    },
   });
+
+  /**
+   * Second pass over the pages nothing flagged, looking at the pixels.
+   *
+   * The perceptual fingerprint is a whole-page gradient score, so it cannot see a small local
+   * edit: a logo removed from a real cover moved 2 of its 256 bits against a threshold of 12 and a
+   * noise floor that reaches 7. Lowering the threshold would trade that miss for "artwork changed"
+   * on every re-upload. A region diff asks the question per cell instead, finds the same logo
+   * exactly, and returns nothing across re-encodes - see `visualPageSweep`.
+   *
+   * Only unflagged pages are swept, because a page whose text moved is already in the list. Purely
+   * additive and best-effort: a failure here leaves the text-derived answer exactly as it was.
+   */
+  const extra = await sweepUnflagged({
+    changed,
+    prevSlideNodes: params.prevUpload?.slideNodes,
+    nextSlideNodes: params.newUpload?.slideNodes,
+    prevPages,
+    newPages,
+  }).catch(() => [] as ChangedPage[]);
+
+  if (extra.length) {
+    const merged = [...changed, ...extra].sort((a, b) => a.pageNumber - b.pageNumber);
+    params.onTotal?.((totalChanged ?? changed.length) + extra.length);
+    return merged.slice(0, MAX_PAGE_CONTEXT);
+  }
+
+  params.onTotal?.(totalChanged ?? changed.length);
+  return changed;
 }
 
 /**

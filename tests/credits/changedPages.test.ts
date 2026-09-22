@@ -43,13 +43,31 @@ describe("changed pages", () => {
 
   test("attaches thumbnails to listed pages and adds image-only pages", () => {
     const diff = { summary: "s", changes: [], pagesThatChanged: [{ pageNumber: 2, summary: "Pricing changed" }] } as never;
+    // The per-page text rides along too: the viewer word-diffs it to show which words moved, which
+    // is the one thing a box drawn around a rewritten block cannot say.
     const out = attachPageContext(diff, [
-      { pageNumber: 2, previousText: "", newText: "", previousImageUrl: "p2", newImageUrl: "n2", imageChanged: false },
+      { pageNumber: 2, previousText: "Pricing: three tiers", newText: "Pricing: one tier", previousImageUrl: "p2", newImageUrl: "n2", imageChanged: false },
       { pageNumber: 5, previousText: "", newText: "", previousImageUrl: "p5", newImageUrl: "n5", imageChanged: true },
     ]) as { pagesThatChanged: Array<Record<string, unknown>> };
     expect(out.pagesThatChanged).toEqual([
-      { pageNumber: 2, summary: "Pricing changed", previousImageUrl: "p2", newImageUrl: "n2", imageChanged: false },
-      { pageNumber: 5, summary: "Graphics/visuals changed on this page.", previousImageUrl: "p5", newImageUrl: "n5", imageChanged: true },
+      {
+        pageNumber: 2,
+        summary: "Pricing changed",
+        previousImageUrl: "p2",
+        newImageUrl: "n2",
+        imageChanged: false,
+        previousText: "Pricing: three tiers",
+        newText: "Pricing: one tier",
+      },
+      {
+        pageNumber: 5,
+        summary: "Graphics/visuals changed on this page.",
+        previousImageUrl: "p5",
+        newImageUrl: "n5",
+        imageChanged: true,
+        previousText: "",
+        newText: "",
+      },
     ]);
     expect(attachPageContext(null, [])).toBeNull();
   });
