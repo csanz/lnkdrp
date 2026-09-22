@@ -20,11 +20,12 @@
  *
  * Images load only for the page being looked at. The strip that opens this deliberately shows none.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PageChange } from "@/components/history/PageDiffStrip";
 import { useDiffRegions } from "@/components/history/useDiffRegions";
 import type { DiffBox } from "@/lib/history/pageDiffRegions";
+import { diffPresentation } from "@/lib/history/wordDiff";
 
 type Mode = "side" | "slider" | "fade";
 
@@ -94,34 +95,167 @@ function Swatch({ tone, children }: { tone: "removed" | "added"; children: React
   );
 }
 
+/**
+ * What the model said about this page, laid over it.
+ *
+ * The boxes are geometry and the note is language, and each is only good at its own half: a pixel
+ * difference knows exactly where something moved and nothing about what it means, while the model
+ * reads the page well and places things on it badly - which is why it is never asked for
+ * coordinates. Pairing them keeps each to what it can be trusted for.
+ *
+ * Docked to a corner rather than pinned to a region for the same reason. An arrow into a specific
+ * box would be claiming the note describes that box, which is more than the data supports: the
+ * model returns one summary per page.
+ */
+function PageNote({ text }: { text: string }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-3 bottom-3 flex justify-center">
+      <div className="max-w-xl rounded-lg border border-[var(--border)] bg-[var(--panel)]/95 px-3 py-2 text-[11px] leading-relaxed text-[var(--fg)] shadow-lg backdrop-blur-sm">
+        {text}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The words that changed, which is what a box around a rewritten paragraph cannot show.
+ *
+ * Two shapes, chosen by how much moved. A few edits read best marked in place, inside the sentence
+ * they belong to. A rewrite does not: common little words keep matching and shatter the passage
+ * into dozens of fragments, every one correct and the whole unreadable, so both versions are shown
+ * whole instead. See `diffPresentation`.
+ *
+ * The colours are the ones on the page marks, so red and green mean the same thing throughout.
+ */
+function WordDiff({ previous, next }: { previous: string; next: string }) {
+  const result = diffPresentation(previous, next);
+
+  if (result.mode === "identical") {
+    return <div className="text-[11px] text-[var(--muted)]">The words on this page are identical; any difference is in the artwork.</div>;
+  }
+
+  if (result.mode === "blocks") {
+    return (
+      <div className="space-y-2">
+        <div className="text-[11px] text-[var(--muted)]">
+          This page was rewritten rather than edited ({Math.round(result.changed * 100)}% of the wording moved), so both versions
+          are shown whole.
+        </div>
+        <div className="grid gap-2 lg:grid-cols-2">
+          <p className="m-0 rounded-md bg-rose-500/10 px-3 py-2 text-xs leading-relaxed text-rose-700 dark:text-rose-200">
+            {result.previous || "(no text on this page)"}
+          </p>
+          <p className="m-0 rounded-md bg-emerald-500/10 px-3 py-2 text-xs leading-relaxed text-emerald-800 dark:text-emerald-200">
+            {result.next || "(no text on this page)"}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <p className="m-0 whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--muted)]">
+      {result.spans.map((sp, i) =>
+        sp.type === "same" ? (
+          <span key={i}>{sp.text}</span>
+        ) : sp.type === "removed" ? (
+          <span key={i} className="rounded-[2px] bg-rose-500/15 text-rose-600 line-through decoration-rose-500/50 dark:text-rose-300">
+            {sp.text}
+          </span>
+        ) : (
+          <span key={i} className="rounded-[2px] bg-emerald-500/15 font-medium text-emerald-700 dark:text-emerald-300">
+            {sp.text}
+          </span>
+        ),
+      )}
+    </p>
+  );
+}
+
+/** Two letters from a name, for the avatar. Falls back to one, then to a neutral mark. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+/**
+ * Who made this change, against the change itself.
+ *
+ * The row header already names them, but by the time somebody is looking at a page in here the
+ * header is behind a modal and two clicks away, and "who changed this" is most often asked exactly
+ * when looking at the thing that changed. It sits on the new version only: the previous page is
+ * what was there before this person touched it.
+ */
+function AuthorBadge({ name, when }: { name: string; when: string | null }) {
+  return (
+    <div
+      className="pointer-events-none absolute right-3 top-3 flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel)]/95 py-1 pl-1 pr-2.5 shadow-lg backdrop-blur-sm"
+      title={when ? `Replaced by ${name}, ${when}` : `Replaced by ${name}`}
+    >
+      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--fg)] text-[10px] font-semibold text-[var(--bg)]">
+        {initials(name)}
+      </span>
+      <span className="text-[11px] font-medium text-[var(--fg)]">{name}</span>
+      {when ? <span className="text-[11px] text-[var(--muted)]">{when}</span> : null}
+    </div>
+  );
+}
+
 /** One changed page at full size, with side-by-side, slider and fade comparisons. */
 export default function PageCompareViewer({
   pages,
   index,
   onIndexChange,
   onClose,
+  totalPages,
   fromVersion,
   toVersion,
+  authorName,
+  changedAt,
 }: {
   pages: PageChange[];
   index: number;
   onIndexChange: (next: number) => void;
   onClose: () => void;
+  totalPages: number | null;
   fromVersion: number | null;
   toVersion: number | null;
+  authorName: string | null;
+  changedAt: string | null;
 }) {
   const [mode, setMode] = useState<Mode>("side");
   const [showMarks, setShowMarks] = useState(true);
+  const [showNotes, setShowNotes] = useState(true);
   /** Slider position and fade amount, both 0-100 so one control shape serves both. */
   const [wipe, setWipe] = useState(50);
   const [fade, setFade] = useState(50);
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  const railRef = useRef<HTMLDivElement | null>(null);
 
   const page = pages[index] ?? null;
   const prev = page?.previousImageUrl ?? null;
   const next = page?.newImageUrl ?? null;
   const fromLabel = versionLabel(fromVersion, "previous");
   const toLabel = versionLabel(toVersion, "new");
+
+  /**
+   * Every page of the deck, each carrying the index of its comparison when it has one.
+   *
+   * Falls back to the changed pages alone when the deck's length is unknown - rows written before
+   * the page count was carried through - rather than inventing a total.
+   */
+  const railPages = useMemo(() => {
+    const byPage = new Map(pages.map((p, i) => [p.pageNumber, i]));
+    const highest = pages.reduce((m, p) => Math.max(m, p.pageNumber), 0);
+    const count = typeof totalPages === "number" && totalPages >= highest ? totalPages : highest;
+    if (!count) return [];
+    return Array.from({ length: count }, (_, i) => ({ pageNumber: i + 1, changedIndex: byPage.get(i + 1) ?? null }));
+  }, [pages, totalPages]);
+
+  /** The deck's length, only when we actually know it rather than inferring it from the edits. */
+  const railTotal = typeof totalPages === "number" && totalPages > 0 ? totalPages : null;
 
   const regions = useDiffRegions(prev, next, showMarks);
   const boxes = regions.status === "done" && !regions.reflowed ? regions.boxes : [];
@@ -150,7 +284,16 @@ export default function PageCompareViewer({
     dialogRef.current?.focus();
   }, []);
 
+  // Keep the current tick visible: on a 50-page deck the active page is otherwise off the end of
+  // the rail after a few presses of the arrow key.
+  useEffect(() => {
+    railRef.current?.querySelector('[data-active="1"]')?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [index]);
+
   if (!page) return null;
+
+  const note = page.summary?.trim() || "";
+
 
   /** What the marks are currently saying, in one line, including when they say nothing. */
   const marksNote =
@@ -211,8 +354,25 @@ export default function PageCompareViewer({
                 : "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
             ].join(" ")}
           >
-            Highlight changes
+            Highlight areas
           </button>
+
+          {page?.summary?.trim() ? (
+            <button
+              type="button"
+              onClick={() => setShowNotes((v) => !v)}
+              aria-pressed={showNotes}
+              title="What the AI compare said about this page, laid over both versions"
+              className={[
+                "shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                showNotes
+                  ? "border-[var(--fg)]/30 bg-[var(--panel-hover)] text-[var(--fg)]"
+                  : "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+              ].join(" ")}
+            >
+              AI notes
+            </button>
+          ) : null}
 
           <div className="flex shrink-0 items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-0.5">
             {MODES.map((m) => (
@@ -256,6 +416,7 @@ export default function PageCompareViewer({
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={prev} alt={`Page ${page.pageNumber}, ${fromLabel}`} className="block h-auto w-full" />
                       {showMarks && boxes.length ? <Marks boxes={boxes} tone="removed" /> : null}
+                      {showNotes && note ? <PageNote text={note} /> : null}
                     </>
                   ) : (
                     <div className="px-4 py-10 text-center text-xs text-[var(--muted)]">No render stored for this version</div>
@@ -270,6 +431,8 @@ export default function PageCompareViewer({
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={next} alt={`Page ${page.pageNumber}, ${toLabel}`} className="block h-auto w-full" />
                       {showMarks && boxes.length ? <Marks boxes={boxes} tone="added" /> : null}
+                      {authorName ? <AuthorBadge name={authorName} when={changedAt} /> : null}
+                      {showNotes && note ? <PageNote text={note} /> : null}
                     </>
                   ) : (
                     <div className="px-4 py-10 text-center text-xs text-[var(--muted)]">No render stored for this version</div>
@@ -289,6 +452,8 @@ export default function PageCompareViewer({
                   <img src={prev} alt={`Page ${page.pageNumber}, ${fromLabel}`} className="block h-full w-full object-cover object-left-top" />
                 </div>
                 {showMarks && boxes.length ? <Marks boxes={boxes} tone="added" /> : null}
+                {authorName ? <AuthorBadge name={authorName} when={changedAt} /> : null}
+                {showNotes && note ? <PageNote text={note} /> : null}
                 <div className="pointer-events-none absolute inset-y-0 w-px bg-[var(--fg)]/70" style={{ left: `${wipe}%` }} />
               </div>
               <div className="mt-3 flex items-center gap-3">
@@ -315,6 +480,8 @@ export default function PageCompareViewer({
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={next} alt={`Page ${page.pageNumber}, ${toLabel}`} className="absolute inset-0 block h-full w-full" style={{ opacity: fade / 100 }} />
                 {showMarks && boxes.length ? <Marks boxes={boxes} tone="added" /> : null}
+                {authorName ? <AuthorBadge name={authorName} when={changedAt} /> : null}
+                {showNotes && note ? <PageNote text={note} /> : null}
               </div>
               <div className="mt-3 flex items-center gap-3">
                 <span className="w-16 shrink-0 text-[11px] font-medium uppercase tracking-wide text-[var(--muted)]">{fromLabel}</span>
@@ -332,6 +499,23 @@ export default function PageCompareViewer({
             </div>
           ) : null}
 
+          {/*
+            The words themselves, under the pages.
+            A box around a rewritten paragraph says only "this block changed"; this says which
+            words, which is the question the reader actually arrived with. Empty on rows written
+            before the per-page text was stored, and it simply does not render there.
+          */}
+          {page.previousText || page.newText ? (
+            <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Text on this page</span>
+                <Swatch tone="removed">removed</Swatch>
+                <Swatch tone="added">added</Swatch>
+              </div>
+              <WordDiff previous={page.previousText} next={page.newText} />
+            </div>
+          ) : null}
+
           {/* Slider and fade both need two images to have anything to do. */}
           {mode !== "side" && !(prev && next) ? (
             <div className="px-4 py-10 text-center text-xs text-[var(--muted)]">
@@ -340,39 +524,74 @@ export default function PageCompareViewer({
           ) : null}
         </div>
 
-        {pages.length > 1 ? (
-          <div className="flex items-center justify-between gap-3 border-t border-[var(--border)] px-4 py-2.5">
+        {/*
+          The rail: the comparisons, against the shape of the deck.
+
+          Two things are true at once and the first draft only told one of them. Every page of the
+          deck matters for orientation - a reader cannot otherwise see that the edits cluster at the
+          front, or that eleven pages were appended - but only the changed pages have a comparison
+          to open. Numbering all eighteen made the eleven inert ones look like entries that were
+          missing something, and the owner's reaction was to ask why pages that do not exist were
+          listed. They do exist; they simply have nothing to show.
+
+          So changed pages are numbered chips you can click, and the rest are unnumbered ticks: the
+          deck's shape stays visible, and nothing inert pretends to be a destination. The row scrolls
+          on its own axis rather than wrapping, and the active chip is scrolled into view when it
+          moves, so a 50-page deck behaves the same as this one.
+        */}
+        {pages.length > 0 ? (
+          <div className="flex items-center gap-3 border-t border-[var(--border)] px-4 py-2.5">
             <button
               type="button"
               onClick={() => step(-1)}
               disabled={index === 0}
-              className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-40"
+              className="shrink-0 rounded-md border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-40"
             >
-              Previous page
+              Previous
             </button>
-            <div className="flex flex-wrap justify-center gap-1">
-              {pages.map((p, i) => (
-                <button
-                  key={p.pageNumber}
-                  type="button"
-                  onClick={() => onIndexChange(i)}
-                  aria-label={`Page ${p.pageNumber}`}
-                  className={[
-                    "min-w-7 rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums transition-colors",
-                    i === index ? "bg-[var(--fg)] text-[var(--bg)]" : "text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-                  ].join(" ")}
-                >
-                  {p.pageNumber}
-                </button>
-              ))}
+
+            <div ref={railRef} className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-1">
+              {railPages.map((rp) =>
+                rp.changedIndex === null ? (
+                  <span
+                    key={rp.pageNumber}
+                    title={`Page ${rp.pageNumber} · unchanged`}
+                    aria-hidden="true"
+                    className="h-1 w-1 shrink-0 rounded-full bg-[var(--border)]"
+                  />
+                ) : (
+                  <button
+                    key={rp.pageNumber}
+                    type="button"
+                    data-active={rp.changedIndex === index ? "1" : undefined}
+                    onClick={() => onIndexChange(rp.changedIndex as number)}
+                    aria-label={`Compare page ${rp.pageNumber}`}
+                    aria-current={rp.changedIndex === index ? "true" : undefined}
+                    title={`Page ${rp.pageNumber} · changed`}
+                    className={[
+                      "shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums transition-colors",
+                      rp.changedIndex === index
+                        ? "bg-[var(--fg)] text-[var(--bg)]"
+                        : "text-emerald-600 hover:bg-[var(--panel-hover)] dark:text-emerald-400",
+                    ].join(" ")}
+                  >
+                    {rp.pageNumber}
+                  </button>
+                ),
+              )}
             </div>
+
+            <span className="shrink-0 text-[11px] text-[var(--muted)]">
+              {railTotal ? `${pages.length} of ${railTotal} pages changed` : `${pages.length} changed`}
+            </span>
+
             <button
               type="button"
               onClick={() => step(1)}
               disabled={index === pages.length - 1}
-              className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-40"
+              className="shrink-0 rounded-md border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-40"
             >
-              Next page
+              Next
             </button>
           </div>
         ) : null}

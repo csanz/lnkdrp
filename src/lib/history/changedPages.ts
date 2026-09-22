@@ -244,6 +244,20 @@ export async function loadChangedPages(params: {
 }
 
 /**
+ * How much of a page's text is stored on the change record, per side.
+ *
+ * Enough for a slide or a dense page of prose, and short enough that thirty of them do not bloat a
+ * document that already holds both full texts. Past the cap the word diff still renders; it simply
+ * stops before the end of a very long page.
+ */
+const MAX_PAGE_TEXT_CHARS = 4_000;
+
+/** Normalize and cap one side of a page's text for storage. */
+function capPageText(input: unknown): string {
+  return typeof input === "string" ? input.replace(/\s+/g, " ").trim().slice(0, MAX_PAGE_TEXT_CHARS) : "";
+}
+
+/**
  * Attach thumbnails and image-change hints to a diff's `pagesThatChanged`, and add pages whose
  * graphics changed but that the model did not list. Returns the diff unchanged when it has none.
  */
@@ -265,7 +279,14 @@ export function attachPageContext<T extends DocChangeDiff | null>(diff: T, chang
     if (!Number.isFinite(n) || n < 1) return p;
     seen.add(n);
     const ctx = ctxByPage.get(n) ?? null;
-    return { ...p, previousImageUrl: ctx?.previousImageUrl ?? null, newImageUrl: ctx?.newImageUrl ?? null, imageChanged: ctx?.imageChanged ?? null };
+    return {
+      ...p,
+      previousImageUrl: ctx?.previousImageUrl ?? null,
+      newImageUrl: ctx?.newImageUrl ?? null,
+      imageChanged: ctx?.imageChanged ?? null,
+      previousText: capPageText(ctx?.previousText),
+      newText: capPageText(ctx?.newText),
+    };
   });
   const imageOnly = changedPages
     .filter((p) => !seen.has(p.pageNumber) && p.imageChanged === true)
@@ -276,6 +297,8 @@ export function attachPageContext<T extends DocChangeDiff | null>(diff: T, chang
       previousImageUrl: p.previousImageUrl,
       newImageUrl: p.newImageUrl,
       imageChanged: true,
+      previousText: capPageText(p.previousText),
+      newText: capPageText(p.newText),
     }));
   return { ...diff, pagesThatChanged: [...augmented, ...imageOnly].slice(0, MAX_PAGES_THAT_CHANGED) } as T;
 }

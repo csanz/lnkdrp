@@ -26,6 +26,9 @@ export type PageChange = {
   newImageUrl: string | null;
   /** The perceptual verdict. Null when neither version carried a fingerprint (older uploads). */
   imageChanged: boolean | null;
+  /** This page's text in each version, for the word diff. Empty on rows written before it was stored. */
+  previousText: string;
+  newText: string;
 };
 
 /** "v4" for a real version number, otherwise the caller's word for that side. */
@@ -37,14 +40,22 @@ function versionLabel(v: number | null, fallback: string): string {
 export default function PageDiffStrip({
   pages,
   changedPageCount,
+  totalPages,
   fromVersion,
   toVersion,
+  authorName,
+  changedAt,
 }: {
   pages: PageChange[];
   /** Total pages that changed, against the ones listed. Null on rows written before it was stored. */
   changedPageCount: number | null;
+  /** Pages in the new version, so the viewer's rail can show the deck rather than only the edits. */
+  totalPages: number | null;
   fromVersion: number | null;
   toVersion: number | null;
+  /** Who replaced the file, shown against the change itself rather than only in the row header. */
+  authorName: string | null;
+  changedAt: string | null;
 }) {
   const [openAt, setOpenAt] = useState<number | null>(null);
 
@@ -110,8 +121,11 @@ export default function PageDiffStrip({
           index={Math.min(openAt, withImages.length - 1)}
           onIndexChange={setOpenAt}
           onClose={() => setOpenAt(null)}
+          totalPages={totalPages}
           fromVersion={fromVersion}
           toVersion={toVersion}
+          authorName={authorName}
+          changedAt={changedAt}
         />
       ) : null}
     </div>

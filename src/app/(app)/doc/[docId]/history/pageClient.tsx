@@ -62,6 +62,8 @@ type DocChangeItem = {
   pagesThatChanged: PageChange[];
   /** Total pages that changed, against the up-to-30 listed above. Null on older rows. */
   changedPageCount: number | null;
+  /** Pages in the new version, so the comparison rail can show the deck rather than only the edits. */
+  toPages: number | null;
   /** Why there is no summary, when there is none. See `compareStateLine`. */
   compare: string | null;
   compareCode: string | null;
@@ -317,6 +319,22 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     };
   }, []);
 
+  /**
+   * Drop expansion state for rows that are no longer in the list, and keep the rest.
+   *
+   * This used to clear the map outright on every refresh, which quietly undid two things. React
+   * runs the mount effect twice in development, so the second load wiped the newest row's automatic
+   * expansion the instant after it was applied - the row shipped collapsed and the one-shot guard
+   * meant it never came back. And a reader who had opened two rows lost both to any refresh.
+   * Stale ids are the only thing that actually needed clearing.
+   */
+  function keepKnown(current: Record<string, boolean>, rows: DocChangeItem[]): Record<string, boolean> {
+    const live = new Set(rows.map((r) => r.id));
+    const next: Record<string, boolean> = {};
+    for (const [id, open] of Object.entries(current)) if (live.has(id)) next[id] = open;
+    return next;
+  }
+
   function parseChangeListPayload(json: any): { items: DocChangeItem[]; nextCursor: string | null } {
     const arr = json && typeof json === "object" && Array.isArray((json as any).changes) ? ((json as any).changes as any[]) : [];
     const parsedNextCursor = typeof json?.nextCursor === "string" && json.nextCursor.trim() ? json.nextCursor.trim() : null;
@@ -370,11 +388,14 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                   previousImageUrl: typeof p?.previousImageUrl === "string" && p.previousImageUrl ? p.previousImageUrl : null,
                   newImageUrl: typeof p?.newImageUrl === "string" && p.newImageUrl ? p.newImageUrl : null,
                   imageChanged: typeof p?.imageChanged === "boolean" ? p.imageChanged : null,
+                  previousText: typeof p?.previousText === "string" ? p.previousText : "",
+                  newText: typeof p?.newText === "string" ? p.newText : "",
                 }))
                 .filter((p) => p.pageNumber >= 1)
             : [],
           changedPageCount:
             typeof c?.changedPageCount === "number" && Number.isFinite(c.changedPageCount) ? Math.floor(c.changedPageCount) : null,
+          toPages: typeof c?.toPages === "number" && Number.isFinite(c.toPages) && c.toPages > 0 ? Math.floor(c.toPages) : null,
           compare: typeof c?.compare === "string" ? c.compare : null,
           compareCode: typeof c?.compareCode === "string" ? c.compareCode : null,
           compareReason: typeof c?.compareReason === "string" ? c.compareReason : null,
@@ -403,7 +424,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
         const parsed = parseChangeListPayload(json);
         setItems(parsed.items);
         setNextCursor(parsed.nextCursor);
-        if (!params?.keepExpanded) setExpandedById({});
+        if (!params?.keepExpanded) setExpandedById((m) => keepKnown(m, parsed.items));
       } else {
         setItems([]);
         setNextCursor(null);
@@ -825,6 +846,15 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                       updated <span className="font-medium text-[var(--fg)]">{timeLabel}</span>
                                     </span>
                                   ) : null}
+                                  {/*
+                                    A collapsed row gave no sign that page comparisons were waiting
+                                    behind it, so the only prompt to open it was curiosity.
+                                  */}
+                                  {it.pagesThatChanged.length ? (
+                                    <span className="font-medium text-[var(--fg)]">
+                                      {it.pagesThatChanged.length} page{it.pagesThatChanged.length === 1 ? "" : "s"} to compare
+                                    </span>
+                                  ) : null}
                                   {/* The file itself, not what the AI read in it. */}
                                   {it.fileLabel ? (
                                     <span className="tabular-nums" title="File size (and the change from the previous version)">
@@ -870,7 +900,12 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                 aria-expanded={isExpanded}
                                 aria-label={isExpanded ? "Collapse details" : "Expand details"}
                               >
-                                {isExpanded ? "Collapse" : "Expand"}
+                                {/*
+                                  Named after what is behind it. "Expand" describes the animation;
+                                  on a row carrying page comparisons the useful label says there is
+                                  a diff to look at, which is the reason anyone opens this page.
+                                */}
+                                {isExpanded ? "Collapse" : it.pagesThatChanged.length ? "View changes" : "Expand"}
                               </button>
                             </div>
                           </div>
@@ -895,8 +930,11 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                               <PageDiffStrip
                                 pages={it.pagesThatChanged}
                                 changedPageCount={it.changedPageCount}
+                                totalPages={it.toPages}
                                 fromVersion={fromV}
                                 toVersion={toV}
+                                authorName={uploaderLabel}
+                                changedAt={timeLabel}
                               />
 
                               <div className="mt-4 flex flex-wrap items-center gap-2">

@@ -73,6 +73,19 @@ const docChangeSchema = new Schema(
             previousImageUrl: { type: String, trim: true, default: null },
             newImageUrl: { type: String, trim: true, default: null },
             imageChanged: { type: Boolean, default: null },
+            /**
+             * This page's text in each version, so the viewer can show which words moved.
+             *
+             * The region boxes say where on the page; on a block rewritten wholesale that is one
+             * box around the block, which is no more than the reader already knew. The words are
+             * the answer they came for, and a word diff of two short strings is free and needs no
+             * model - so it works on rows whose compare was skipped for credits too.
+             *
+             * Capped: these already exist whole on `previousText`/`newText` above, and thirty
+             * pages of duplicated prose per change record is not worth the document size.
+             */
+            previousText: { type: String, default: "" },
+            newText: { type: String, default: "" },
           },
         ],
         default: [],
