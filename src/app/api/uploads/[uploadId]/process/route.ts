@@ -2220,6 +2220,9 @@ export async function POST(
             let changedPages: ChangedPage[] = [];
             /** Pages that changed in total, before the context cap. See `computeChangedPages`. */
             let totalChangedPages: number | null = null;
+            /** Page counts for both versions; see the no-change short-circuit in `runDocChangeDiff`. */
+            let previousPageCount: number | null = null;
+            let newPageCount: number | null = null;
             let previousUploadId: Types.ObjectId | null = null;
             await progress.report("comparing");
             try {
@@ -2234,9 +2237,21 @@ export async function POST(
                 isDeleted: { $ne: true },
               })
                 .sort({ version: -1 })
-                .select({ _id: 1, blobUrl: 1, slideNodes: 1 })
+                .select({ _id: 1, blobUrl: 1, slideNodes: 1, "metadata.pages": 1 })
                 .lean();
               previousUploadId = prevUpload?._id ?? null;
+              /**
+               * Page counts for the no-change short-circuit, which cannot see them otherwise.
+               * `metadata.pages` first; the rendered slide count is the fallback for rows written
+               * before that field, and 0 reads as unknown rather than as an empty document.
+               */
+              const countPages = (meta: unknown, slides: unknown) => {
+                const m = (meta as { pages?: unknown } | null | undefined)?.pages;
+                if (typeof m === "number" && Number.isFinite(m) && m > 0) return Math.floor(m);
+                return Array.isArray(slides) && slides.length ? slides.length : null;
+              };
+              previousPageCount = countPages((prevUpload as any)?.metadata, (prevUpload as any)?.slideNodes);
+              newPageCount = countPages((upload as any)?.metadata, slideNodes) ?? (extractedPages?.length || null);
               changedPages = await loadChangedPages({
                 prevUpload,
                 newUpload: { slideNodes: Array.isArray(slideNodes) ? slideNodes : [] },
@@ -2359,7 +2374,14 @@ export async function POST(
             let compareUsage: DocChangeDiffUsage | null = null;
             if (nothingChanged) {
               // Free path: the fixed "no changes" record, without touching the model.
-              diff = await runDocChangeDiff({ previousText, newText, changedPages, qualityTier: historyTier }).catch(() => null);
+              diff = await runDocChangeDiff({
+                previousText,
+                newText,
+                changedPages,
+                previousPageCount,
+                newPageCount,
+                qualityTier: historyTier,
+              }).catch(() => null);
               aiState.compare = "done";
             }
             if (historyLedgerId) {
@@ -2379,6 +2401,8 @@ export async function POST(
                   previousText,
                   newText,
                   changedPages,
+                  previousPageCount,
+                  newPageCount,
                   qualityTier: historyTier,
                   abortSignal: AbortSignal.timeout(COMPARE_TIMEOUT_MS),
                   onUsage: (u) => {

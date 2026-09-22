@@ -164,6 +164,14 @@ export async function runDocChangeDiff(input: {
     newImageUrl?: string | null;
     imageChanged?: boolean | null;
   }>;
+  /**
+   * Page counts for the two versions, when the caller knows them.
+   *
+   * A decisive signal the text cannot supply: if the page count moved, the version did not "read
+   * the same as the previous one", whatever the extracted text says. See the short-circuit below.
+   */
+  previousPageCount?: number | null;
+  newPageCount?: number | null;
   qualityTier?: "basic" | "standard" | "advanced";
   /**
    * Optional abort signal (e.g. `AbortSignal.timeout(90_000)`); the AI call rejects with an
@@ -186,12 +194,52 @@ export async function runDocChangeDiff(input: {
   // is re-rendered here, so the bytes of an unchanged page differ on every single run. Fed a byte
   // verdict, this short-circuit never fires and the whole deck comes back as "graphics changed".
   const pagesIn = Array.isArray(input.changedPages) ? input.changedPages : [];
+  const prevNorm = normalizeForCompare(input.previousText);
+  const nextNorm = normalizeForCompare(input.newText);
+
+  /**
+   * A page count that moved settles it on its own.
+   *
+   * A version that gained five pages did not read the same as the previous one, however the text
+   * compares - and it did compare equal, because pages appended with no extractable text change
+   * neither side of the concatenation. Real rows said "No changes: this version reads the same as
+   * the previous one" beside "13 to 18 pages" in the same sentence.
+   */
+  const pageCount = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : null);
+  const prevPages = pageCount(input.previousPageCount);
+  const nextPages = pageCount(input.newPageCount);
+  const pageCountMoved = prevPages !== null && nextPages !== null && prevPages !== nextPages;
+
+  /**
+   * No text on either side and no image verdict either is not evidence of sameness.
+   *
+   * Two empty strings compare equal, so a document nothing could read - a scan with no text layer,
+   * a failed extraction - satisfied the text half of this test for free. With `imageChanged` null
+   * on every page (no fingerprints, or none usable), the escape hatch below could not fire either,
+   * and the answer came back as a confident "nothing changed" derived from having looked at
+   * nothing. Falling through to the model is the honest outcome: it either reads the images or the
+   * empty-text guard returns null and the credits are refunded.
+   */
+  const noEvidence = !prevNorm && !nextNorm && !pagesIn.some((p) => typeof p.imageChanged === "boolean");
+
+  // A re-upload of the same file: the model was asked to compare two identical texts and duly
+  // invented "reorganized sections" and "updated terminology" (owner, 2026-09-17). Answered here,
+  // before the model and before the API-key check, unless a page's image changed (same words, new
+  // artwork) - that is a real change the text cannot show.
+  //
+  // `imageChanged` must be the perceptual verdict from `@/lib/history/changedPages`, not a byte
+  // comparison: every MCP upload is re-encoded by Ghostscript (`mcp/src/optimize.ts`) and every page
+  // is re-rendered here, so the bytes of an unchanged page differ on every single run. Fed a byte
+  // verdict, this short-circuit never fires and the whole deck comes back as "graphics changed".
   if (
-    normalizeForCompare(input.previousText) === normalizeForCompare(input.newText) &&
+    !pageCountMoved &&
+    !noEvidence &&
+    prevNorm === nextNorm &&
     !pagesIn.some((p) => p.imageChanged === true)
   ) {
     return { summary: NO_CHANGE_SUMMARY, changes: [], pagesThatChanged: [] };
   }
+
   if (!process.env.OPENAI_API_KEY) return null;
 
   const qualityTier = input.qualityTier ?? "standard";

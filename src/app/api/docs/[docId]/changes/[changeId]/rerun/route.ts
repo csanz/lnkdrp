@@ -109,6 +109,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     let changedPages: ChangedPage[] = [];
     /** Pages that changed in total, before the context cap. See `computeChangedPages`. */
     let totalChangedPages: number | null = null;
+    /** Page counts for both versions; see the no-change short-circuit in `runDocChangeDiff`. */
+    let previousPageCount: number | null = null;
+    let newPageCount: number | null = null;
     try {
       // Resolve the previous version by number: older rows stored the new upload as `fromUploadId`.
       const fromVersion = Number((change as { fromVersion?: unknown }).fromVersion);
@@ -116,10 +119,19 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       if (Number.isFinite(fromVersion) && fromVersion >= 1 && toUploadId && Types.ObjectId.isValid(String(toUploadId))) {
         const [prevUpload, newUpload] = await Promise.all([
           UploadModel.findOne({ docId: docObjectId, version: fromVersion, isDeleted: { $ne: true } })
-            .select({ blobUrl: 1, slideNodes: 1 })
+            .select({ blobUrl: 1, slideNodes: 1, "metadata.pages": 1 })
             .lean(),
-          UploadModel.findById(String(toUploadId)).select({ blobUrl: 1, slideNodes: 1 }).lean(),
+          UploadModel.findById(String(toUploadId)).select({ blobUrl: 1, slideNodes: 1, "metadata.pages": 1 }).lean(),
         ]);
+        /** See the no-change short-circuit in `runDocChangeDiff`: a moved page count settles it. */
+        const countPages = (row: unknown) => {
+          const m = (row as { metadata?: { pages?: unknown } } | null)?.metadata?.pages;
+          if (typeof m === "number" && Number.isFinite(m) && m > 0) return Math.floor(m);
+          const slides = (row as { slideNodes?: unknown } | null)?.slideNodes;
+          return Array.isArray(slides) && slides.length ? slides.length : null;
+        };
+        previousPageCount = countPages(prevUpload);
+        newPageCount = countPages(newUpload);
         changedPages = await loadChangedPages({
           prevUpload,
           newUpload,
@@ -166,6 +178,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
           previousText,
           newText,
           changedPages,
+          previousPageCount,
+          newPageCount,
           qualityTier,
           abortSignal: AbortSignal.timeout(DIFF_TIMEOUT_MS),
           onUsage: (u) => {
