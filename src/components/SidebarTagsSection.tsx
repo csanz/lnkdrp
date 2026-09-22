@@ -147,8 +147,20 @@ export default function SidebarTagsSection() {
   }, [pathname, load]);
 
 
-  // Nothing at all until there is a tag: an empty section is a permanent question nobody asked.
-  if (!tags || !tags.length) return null;
+  /**
+   * Until a tag existed, this returned `null` — "an empty section is a permanent question nobody
+   * asked". The question it avoided cost more than it saved, because of where the section sits in
+   * the product: **the gear in this header is the only route to `/tags`**, and `/tags` is the only
+   * screen that can create a tag nothing carries yet. So the door to making your first tag lived
+   * inside a section that did not render until you already had one. A new workspace could not make
+   * a tag from the UI at all; only an MCP call or the API could, which is exactly how it was being
+   * discovered.
+   *
+   * It renders now, collapsed, as one quiet line with a count of zero — the same shape Projects
+   * has always had. The section header is the discovery.
+   */
+  if (!tags) return null;
+  const empty = tags.length === 0;
   const hidden = Math.max(0, total - tags.length);
 
   // Open only when you opened it, or when you are on a tag page — where the list is the context.
@@ -203,6 +215,16 @@ export default function SidebarTagsSection() {
 
       {open ? (
         <ul className="mt-0.5 grid gap-0.5">
+          {empty ? (
+            <li className="px-2 py-2 text-[13px] leading-5 text-[var(--muted-2)]">
+              No tags yet.{" "}
+              <Link href="/tags" className="text-[var(--muted)] underline-offset-4 hover:text-[var(--fg)] hover:underline">
+                Make one
+              </Link>
+              .
+            </li>
+          ) : null}
+
           {tags.map((tag) => {
             const active = activeSlug === tag.slug;
             return (
