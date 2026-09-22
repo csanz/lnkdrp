@@ -50,12 +50,40 @@ function usage(message?: string): never {
   process.exit(1);
 }
 
+/**
+ * Admins who can actually sign in.
+ *
+ * `{ role: "admin" }` alone counts rows that cannot: `actor.ts` ends the session of anybody with
+ * `isActive === false` or a `deletionRequestedAt`, and the purge leaves the tombstone's `role`
+ * untouched. So a deleted admin still answered the last-admin guard, and removing the only working
+ * one passed the check and closed `/a` to everybody — the exact lockout this script's docstring
+ * says cannot happen.
+ */
 async function listAdmins(): Promise<Array<{ email: string; id: string }>> {
-  const rows = (await UserModel.find({ role: "admin" }).select({ email: 1 }).lean()) as Array<{
-    _id: Types.ObjectId;
-    email?: string | null;
-  }>;
+  const rows = (await UserModel.find({
+    role: "admin",
+    isActive: { $ne: false },
+    deletionRequestedAt: null,
+  })
+    .select({ email: 1 })
+    .lean()) as Array<{ _id: Types.ObjectId; email?: string | null }>;
   return rows.map((r) => ({ email: (r.email ?? "").trim() || "(no email)", id: String(r._id) }));
+}
+
+/**
+ * Refuse to act on an account that cannot sign in.
+ *
+ * A person keeps their real address through the 30-day deletion grace period while every request
+ * from them is already refused. Inviting them mails "your account is open" to somebody who asked
+ * to be forgotten, with a link that can never work; granting them a role adds an admin who cannot
+ * use it — and inflates the count the guard above depends on.
+ */
+export function refuseIfUnusable(row: { isActive?: unknown; deletionRequestedAt?: unknown }, email: string): void {
+  if (row.isActive === false || row.deletionRequestedAt) {
+    console.error(`\n  ${email} has requested deletion or is disabled.`);
+    console.error("  Every request from that account is already refused, so this would do nothing but send mail.\n");
+    process.exit(1);
+  }
 }
 
 async function main() {
@@ -77,12 +105,14 @@ async function main() {
   const remove = a.remove === true;
 
   const user = (await UserModel.findOne({ email: new RegExp(`^${to.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") })
-    .select({ _id: 1, email: 1, role: 1, accessStatus: 1 })
+    .select({ _id: 1, email: 1, role: 1, accessStatus: 1, isActive: 1, deletionRequestedAt: 1 })
     .lean()) as {
     _id: Types.ObjectId;
     email?: string | null;
     role?: string | null;
     accessStatus?: string | null;
+    isActive?: unknown;
+    deletionRequestedAt?: unknown;
   } | null;
 
   if (!user) {
@@ -90,6 +120,8 @@ async function main() {
     console.error("  They have to sign in once before the role can be given — that is what creates the account.\n");
     process.exit(1);
   }
+
+  refuseIfUnusable(user, user.email ?? to);
 
   const userId = String(user._id);
   const isAdmin = user.role === "admin";

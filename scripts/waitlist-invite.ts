@@ -77,18 +77,33 @@ async function main() {
 
   // Case-insensitively, because an address typed by hand rarely matches the case it was stored in.
   const user = (await UserModel.findOne({ email: new RegExp(`^${to.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") })
-    .select({ _id: 1, email: 1, name: 1, accessStatus: 1, termsAcceptedAt: 1 })
+    .select({ _id: 1, email: 1, name: 1, accessStatus: 1, termsAcceptedAt: 1, isActive: 1, deletionRequestedAt: 1 })
     .lean()) as {
     _id: Types.ObjectId;
     email?: string | null;
     name?: string | null;
     accessStatus?: string | null;
     termsAcceptedAt?: Date | null;
+    isActive?: unknown;
+    deletionRequestedAt?: unknown;
   } | null;
 
   if (!user) {
     console.error(`\n  No account for ${to}.`);
     console.error("  They have to sign in once before they can be invited — that is what creates the account.\n");
+    process.exit(1);
+  }
+
+  /**
+   * Not somebody who asked to be forgotten.
+   *
+   * They keep their real address through the 30-day grace period while `actor.ts` already refuses
+   * every request from them, so this would approve a row nobody can use and mail "your account is
+   * open" to a person who asked for the opposite.
+   */
+  if (user.isActive === false || user.deletionRequestedAt) {
+    console.error(`\n  ${user.email ?? to} has requested deletion or is disabled.`);
+    console.error("  Approving would send a real email with a link that can never work.\n");
     process.exit(1);
   }
 

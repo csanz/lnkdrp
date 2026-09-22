@@ -2148,7 +2148,31 @@ export async function POST(
       let extractedTextBlobUrl: string | null = null;
       let extractedTextBlobPathname: string | null = null;
       try {
-        const text = (extractedText ?? "").trim();
+        /**
+         * Reuse what is already stored, the way the preview and the page images do.
+         *
+         * This block had no such guard, which was survivable while paths were deterministic — a
+         * second run simply overwrote the first. Random suffixes made the same run write a *second*
+         * copy at a new path and leave the old one behind, and the account purge deletes by the
+         * URL it knows, so the orphan is unreachable and permanent: the full text of a private
+         * document, still public, after its owner deleted their account.
+         *
+         * "Write the summary" is the ordinary way in. `queueSummaryRerun` flips the upload back to
+         * `uploaded` and re-POSTs this route, there is no summary-only branch, and `extractedText`
+         * is repopulated from `rawExtractedText` — so every rerun reached this write.
+         */
+        const alreadyStored =
+          typeof (upload as { extractedTextBlobUrl?: unknown }).extractedTextBlobUrl === "string"
+            ? ((upload as { extractedTextBlobUrl: string }).extractedTextBlobUrl || "").trim()
+            : "";
+        if (alreadyStored) {
+          extractedTextBlobUrl = alreadyStored;
+          const storedPath = (upload as { extractedTextBlobPathname?: unknown }).extractedTextBlobPathname;
+          extractedTextBlobPathname = typeof storedPath === "string" && storedPath.trim() ? storedPath : null;
+          debugLog(2, "[process] extracted text already stored; reusing", { uploadId });
+        }
+
+        const text = alreadyStored ? "" : (extractedText ?? "").trim();
         if (text) {
           const maxBytes = 1_000_000; // 1MB
           const buf = Buffer.from(text, "utf8");

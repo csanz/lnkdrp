@@ -22,6 +22,8 @@ import { CreditPurchaseModel } from "@/lib/models/CreditPurchase";
 import { ensureWorkspaceStripeCustomer } from "@/lib/billing/workspaceCustomer";
 import { CREDIT_PACK_CURRENCY, PURCHASED_CREDITS_EXPIRY_MONTHS, findCreditPack } from "@/lib/credits/packs";
 import { forbidWaitlisted } from "@/lib/gating/waitlist";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
+import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 
 export const runtime = "nodejs";
 
@@ -39,11 +41,33 @@ export async function POST(request: Request) {
       if (!Types.ObjectId.isValid(actor.userId) || !Types.ObjectId.isValid(actor.orgId)) {
         return NextResponse.json({ error: "Invalid workspace" }, { status: 400 });
       }
+      /**
+       * The two guards every sibling money route has, and this one did not.
+       *
+       * `/api/stripe/checkout`, `/api/stripe/portal` and `/api/billing/spend` all call
+       * `forbidApiKey` and check the org role. This route checked neither, and an `lnk_` API key
+       * resolves to a `kind: "user"` actor — so an agent could POST a packId and get back a live
+       * Stripe Checkout URL for a $39 charge bound to the workspace's own customer, and a `viewer`
+       * could do the same from the browser. Committing somebody else's workspace to a charge is
+       * exactly what the role check on the subscription route exists to prevent; a one-off pack is
+       * the same act for less money.
+       */
+      const keyForbidden = forbidApiKey(actor, "buy credits");
+      if (keyForbidden) return keyForbidden;
+
       // Same rule as the subscription checkout: credits buy AI runs, and a queued account cannot
       // reach an AI run. Refused before the pack is resolved, so nothing about the catalogue or the
       // price is disclosed to someone who may not buy.
       const queued = await forbidWaitlisted(actor, "buy credits", { reason: "credits" });
       if (queued) return queued;
+
+      const role = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "admin" });
+      if (!role.ok) {
+        return NextResponse.json(
+          { error: "Only an owner or admin can buy credits for this workspace." },
+          { status: 403 },
+        );
+      }
 
       const body = (await request.json().catch(() => null)) as { packId?: unknown } | null;
       const pack = findCreditPack(body?.packId);
