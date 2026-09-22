@@ -581,16 +581,10 @@ function DashboardPageInner() {
                 </div>
               </div>
 
-              {/* The other ten. Two dropdowns described two of the dozen emails we send, which is
-                  precisely the part somebody goes looking for when an unexpected one arrives. */}
+              {/* The other ten, behind one line. On the page they would outweigh the settings,
+                  which are what anyone actually came here to change. */}
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
-                <div className="text-[13px] font-semibold text-[var(--fg)]">Everything else we send</div>
-                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-                  The complete list, so nothing arrives unexplained.
-                </div>
-                <div className="mt-4">
-                  <EmailCatalogList />
-                </div>
+                <EmailCatalogList />
               </div>
 
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-4 sm:px-6 text-[12px] text-[var(--muted-2)]">
