@@ -16,9 +16,18 @@
  * can re-send to. An account still queued because the mail failed is a person stuck behind a
  * sign-up form with nothing to tell them why.
  *
- * **This sends real mail.** `.env.local` carries a live `RESEND_API_KEY` and no `EMAIL_TRANSPORT`,
- * so anything you type here lands in somebody's inbox. `EMAIL_TRANSPORT=console` prints it instead,
- * and `--dry` stops before both the write and the send, printing the link it would have mailed.
+ * **This sends real mail, on purpose, even though `.env.local` sets `EMAIL_TRANSPORT=console`.**
+ *
+ * That console default is right for everything else — it is what stops a cron tick or a stray test
+ * run mailing real people, which has happened. But this command exists to deliver one invitation to
+ * one person who is waiting for it, and a delivery tool that silently prints instead is a tool that
+ * looks like it worked. The default was costing a second run with a prefix in front of it, every
+ * time.
+ *
+ * So the transport is forced here unless you ask otherwise:
+ *
+ *   --dry       stop before the write and the send; print the link it would have mailed
+ *   --console   print the email instead of sending, for looking at the body
  */
 import "dotenv/config";
 import { Types } from "mongoose";
@@ -53,6 +62,7 @@ function usage(message?: string): never {
       "    --ttl-days=<n>     how long the accept link lives (default 14)",
       "    --base=<url>       site URL for the link (default NEXT_PUBLIC_SITE_URL)",
       "    --dry              print the link, write nothing, send nothing",
+      "    --console          print the email instead of sending it",
       "",
     ].join("\n"),
   );
@@ -66,6 +76,22 @@ async function main() {
   if (!to.includes("@")) usage(`"${to}" is not an email address.`);
 
   const dry = a.dry === true;
+  const console_ = a.console === true;
+  /**
+   * Force delivery unless asked not to.
+   *
+   * `sendTextEmail` reads `process.env.EMAIL_TRANSPORT` when it is called, so setting it here —
+   * before any send — is enough, and it is scoped to this process.
+   *
+   * `--console` is the only way to ask for the printed version, and it has to be: `--env-file`
+   * merges the file into `process.env`, so by the time this runs there is no way to tell an
+   * `EMAIL_TRANSPORT=console` the caller typed from the one sitting in `.env.local`. A flag says
+   * which of the two it was; an environment variable cannot.
+   */
+  if (!console_ && (process.env.EMAIL_TRANSPORT ?? "").trim().toLowerCase() === "console") {
+    process.env.EMAIL_TRANSPORT = "";
+  }
+  if (console_) process.env.EMAIL_TRANSPORT = "console";
   const ttlDays = typeof a["ttl-days"] === "string" ? Number(a["ttl-days"]) : NaN;
   const ttlMs = Number.isFinite(ttlDays) && ttlDays > 0 ? ttlDays * 24 * 60 * 60 * 1000 : WAITLIST_ACCEPT_TTL_MS;
 
