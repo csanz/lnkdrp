@@ -125,7 +125,7 @@ export default async function PricingPage() {
                 muted="text-white/75"
                 items={[
                   `${FREE_DOCUMENTS} shared documents, each with unlimited share links`,
-                  `${FREE_PROJECTS} project`,
+                  `${FREE_PROJECTS} project${FREE_PROJECTS === 1 ? "" : "s"}`,
                   `Basic analytics: views and downloads, last ${FREE_ANALYTICS_DAYS} days`,
                   "AI summary on every link, 1 credit; free when your agent writes it",
                   "Version history, with AI compare from 2 credits",
@@ -380,7 +380,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What do credits pay for?",
-                  a: `AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Personal Free workspaces start with ${FREE_STARTER_CREDITS} credits, one time, and use at most ${CREDITS_COPY.freeDailyCap} credits a day; once they run out, ${whatHappensAfterFreeCredits()}. Pro includes ${INCLUDED_CREDITS_PER_CYCLE} credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.`,
+                  a: `AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Every Free workspace, personal or team, starts with ${FREE_STARTER_CREDITS} credits, one time, and uses at most ${CREDITS_COPY.freeDailyCap} credits a day; once they run out, ${whatHappensAfterFreeCredits()}. Pro includes ${INCLUDED_CREDITS_PER_CYCLE} credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.`,
                 },
                 {
                   q: "What happens when I run out of credits?",

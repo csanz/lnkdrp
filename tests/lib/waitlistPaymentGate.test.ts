@@ -10,9 +10,9 @@
  * Two things are pinned, and the second is the one that will actually catch a regression:
  *
  * 1. The two routes that start a payment call the gate.
- * 2. The two that *end* one — the billing portal and subscription management — do not. Someone who
- *    already paid has to be able to cancel, and gating their way out would turn a refund into a
- *    support ticket. That asymmetry is deliberate and easy to "tidy up" into a bug.
+ * 2. The one that *ends* one — the billing portal — does not. Someone who already paid has to be
+ *    able to cancel, and gating their way out would turn a refund into a support ticket. That
+ *    asymmetry is deliberate and easy to "tidy up" into a bug.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,7 +26,7 @@ const read = (p: string) => readFileSync(join(ROOT, p), "utf8");
 const TAKES_MONEY = ["src/app/api/stripe/checkout/route.ts", "src/app/api/credits/purchase/route.ts"];
 
 /** Routes a person who already paid needs, including to stop paying. */
-const LETS_THEM_OUT = ["src/app/api/stripe/portal/route.ts", "src/app/api/billing/subscription/manage/route.ts"];
+const LETS_THEM_OUT = ["src/app/api/stripe/portal/route.ts"];
 
 describe("the waitlist gate on payment", () => {
   test.each(TAKES_MONEY)("%s refuses a queued account", (path) => {

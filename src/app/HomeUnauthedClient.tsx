@@ -212,7 +212,7 @@ export default function HomeUnauthedClient({
 
         <section className="mx-auto w-full max-w-6xl px-8 pb-24 pt-12 sm:px-10 md:pt-16 lg:px-12">
           <div className="w-full md:w-[min(560px,54%)]">
-            <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">MCP · API · CLI</p>
+            <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">MCP · API</p>
             <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[56px] lg:text-[64px]">
               {/* Non-breaking space: never leave "agents" alone on the last line. */}
               Trackable share links, built for AI&nbsp;agents

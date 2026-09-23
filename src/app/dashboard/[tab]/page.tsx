@@ -7,11 +7,12 @@ import { FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
 // Keep legacy `spending` for backwards compatibility (redirects to `limits`).
 const ALLOWED = new Set(["overview", "account", "workspace", "teams", "usage", "limits", "spending", "billing"]);
 
-// Credits surfaces (AI Credits usage + on-demand limits) are hidden unless `NEXT_PUBLIC_FEATURE_CREDITS=1`.
+// Credits surfaces (AI Credits usage + on-demand limits) ship on: `FEATURE_CREDITS_ENABLED` is
+// `NEXT_PUBLIC_FEATURE_CREDITS !== "0"`, so these tabs fall back to Overview only at an explicit 0.
 const CREDITS_TABS = new Set(["usage", "limits"]);
 
 /**
- * Redirect `/dashboard/:tab` to `/dashboard?tab=...`; credits tabs fall back to Overview while the flag is off.
+ * Redirect `/dashboard/:tab` to `/dashboard?tab=...`; credits tabs fall back to Overview when the flag is explicitly off.
  */
 export default async function DashboardTabPage({
   params,

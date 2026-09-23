@@ -6,7 +6,7 @@
  *   node db/migration/run.mjs [--dry-run]
  *
  * Notes:
- * - Loads `.env.local` automatically (same convention as scripts/mongo-clear.mjs).
+ * - Loads `.env.local` automatically (same convention as the other scripts in `scripts/`).
  * - Runs migrations in filename sort order.
  * - Tracks applied migrations in the `migrations` collection.
  */

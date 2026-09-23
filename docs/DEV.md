@@ -367,8 +367,6 @@ Stripe API version note (stripe@20 → `2025-12-15.clover`): `current_period_sta
 | `POST /api/stripe/webhook` | Handle Stripe webhooks |
 | `POST /api/stripe/portal` | Create billing portal session |
 | `GET /api/billing/status` | Current billing status (for UI polling) |
-| `GET /api/billing/subscription` | Detailed subscription info |
-| `POST /api/billing/subscription/manage` | Create portal session for workspace |
 
 ### Credits & Metered Billing
 
@@ -381,7 +379,7 @@ Cycle Key = ${stripeSubscriptionId}:${currentPeriodStartUnixSeconds}
 **How credits work:**
 1. Webhook receives `invoice.paid` with new period dates
 2. System generates `cycleKey` from subscription + period start
-3. Idempotent grant of 300 included credits (no duplicates)
+3. Idempotent grant of `INCLUDED_CREDITS_PER_CYCLE` (500) included credits (no duplicates)
 4. On-demand usage is reported to Stripe via metered billing (Billing Meter events)
 
 **On-demand (overage) rules:**
@@ -667,12 +665,22 @@ node db/migration/run.mjs
 
 ### Clear development data
 
-```bash
-# Clear all collections (DESTRUCTIVE!)
-npm run mongo:clear
+Both commands refuse to run against anything but a database on this machine — see
+`src/lib/db/localTarget.ts`. `mongodb+srv://` is never local, every host in a replica-set URI has to
+be local (not just the first), and `NODE_ENV=production` or any `VERCEL` variable refuses outright.
+There is deliberately no `--force`.
 
-# Clear only AI runs and requests
-npm run mongo:clear:ai-runs-requests
+```bash
+# Empty the database (DESTRUCTIVE). Stop the dev server first — an open tab
+# re-creates your user and workspace seconds after the drop.
+npm run reset
+
+# See what is in there without changing anything
+npm run reset -- --dry
+
+# Scoped: clear only AI runs and request repos, keeping docs and uploads
+npm run mongo:clear:ai-runs-requests -- --dry-run
+npm run mongo:clear:ai-runs-requests -- --yes
 ```
 
 ---
@@ -701,12 +709,14 @@ npm run tests:benchmark
 
 ### Test environment
 
-Create `.env.test` for test-specific overrides:
+There is no `.env.test`: every vitest config sets `envDir: "./tmp"`, which deliberately points env
+loading away from the repo root, so a file there is read by nothing.
+
+The auth bypass the route tests use belongs on the **Next.js dev server process**, not on the test
+runner — `scripts/tests-routes.mjs` says the same in its own usage text:
 
 ```bash
-MONGODB_URI=mongodb://localhost:27017/lnkdrp_test
-API_TEST_BYPASS_AUTH=1
-API_TEST_USER_ID=<test-user-mongo-id>
+API_TEST_BYPASS_AUTH=1 API_TEST_USER_ID=<test-user-mongo-id> npm run dev
 ```
 
 ---
@@ -728,8 +738,8 @@ All available scripts from `package.json`:
 
 | Script | Command | Description |
 |--------|---------|-------------|
-| `npm run mongo:clear` | `node scripts/mongo-clear.mjs` | Clear all collections (DESTRUCTIVE!) |
-| `npm run mongo:clear:ai-runs-requests` | `node scripts/mongo-clear-ai-runs-and-requests.mjs` | Clear AI runs and requests only |
+| `npm run reset` | `tsx scripts/reset-local.ts` | Empty the local database (refuses anything but localhost) |
+| `npm run mongo:clear:ai-runs-requests` | `tsx scripts/mongo-clear-ai-runs-and-requests.ts` | Clear AI runs and request repos only (same guard) |
 
 ### Metrics & Background Jobs
 
@@ -895,7 +905,7 @@ curl -X POST http://localhost:3001/api/cron/credits-cycle-reconcile
 **What it does:**
 1. Finds active subscriptions
 2. Checks if cycle grant exists for current period
-3. Grants 300 included credits if missing (idempotent)
+3. Grants `INCLUDED_CREDITS_PER_CYCLE` (500) included credits if missing (idempotent)
 
 #### Stripe Credits Reconcile
 

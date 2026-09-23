@@ -33,7 +33,7 @@ Public (optional, pricing-table embed component only):
 - Creates a Stripe Checkout Session (`mode=subscription`) with `metadata.orgId` and `subscription_data.metadata.orgId`.
 - Line items: `STRIPE_PRICE_ID` (qty 1) plus `STRIPE_AI_CREDITS_PRICE_ID` (metered; no quantity) when configured.
 - Returns **409** (`code: "SUBSCRIPTION_ALREADY_ACTIVE"`, with a `portalUrl` hint) when the workspace already has an `active`/`trialing` subscription — use the billing portal instead.
-- `GET /api/billing/subscription` returns `checkoutUrl` pointing at this route (or `null` + `checkoutError` when Stripe is not configured); there is no static Payment Link.
+- There is no static Payment Link: the Checkout Session is minted per request by this route.
 
 2) Stripe redirects to `/billing/success`
 - UI shows “Processing…” and polls `GET /api/billing/status` until webhooks update MongoDB.
@@ -54,7 +54,7 @@ Public (optional, pricing-table embed component only):
 - Pro includes **500 credits per billing cycle** (subscription anniversary, not calendar month).
 - Cycle key for idempotent “reset/grant”:
   - `cycleKey = ${stripeSubscriptionId}:${currentPeriodStartUnixSeconds}`
-- On a new cycle, the system resets included credits to **300** (no rollover) and records a ledger entry keyed by `cycleKey`.
+- On a new cycle, the system resets included credits to `INCLUDED_CREDITS_PER_CYCLE` (**500**, no rollover) and records a ledger entry keyed by `cycleKey`.
 - Links, uploads, replacements and stats never need credits. Credits pay for AI runs: the automatic AI summary costs **1 credit** per upload (basic; standard 2, advanced 5), and AI compare on replacement costs **2 / 5 / 12** by tier (Basic on Free, Standard on Pro by default). The owner's version history and AI compare work on every plan and are limited only by credits; letting recipients browse versions on the share page is Pro.
 - The summary costs **0 credits** when the uploader's own agent writes it (MCP `share_pdf` with summary and key points, or the API) and for files recipients upload through a request or replace link.
 - Personal Free workspaces get **100 credits to start, once** (no monthly top-up since 2026-09-16), with at most **15 credits per day**. Team workspaces on Free get no allowance.
