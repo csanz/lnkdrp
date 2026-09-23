@@ -6,7 +6,7 @@
  * Every claim here should be backed by the code. Notable facts this page reflects: Google-only
  * sign-in, anonymous browser identities, share-viewer tracking (including IP addresses), OpenAI as
  * the AI processor (text and page images), Vercel Blob + MongoDB storage, Resend email, Stripe
- * billing, no third-party analytics, soft deletes, and no self-service deletion or export yet.
+ * billing, no third-party analytics, soft deletes, self-service account deletion with a 30-day window, and no self-service export yet.
  * `LAST_UPDATED` is a fixed date, bumped by hand whenever the wording changes.
  */
 /* eslint-disable react/no-unescaped-entities */
@@ -230,7 +230,11 @@ export default function PrivacyPolicyPage() {
               <li><strong>Billing records</strong> are kept as required for tax and accounting purposes.</li>
             </ul>
             <p className="leading-6">
-              We do not yet offer self-service account deletion or data export. To close your account, delete specific information, or receive a copy of your data, email hi@lnkdrp.com and we will handle it manually.
+              You can delete your account yourself, from your dashboard. Your account stops working immediately - your
+              API keys are revoked and share links in workspaces you own alone stop resolving - and the data is erased
+              30 days later, which is the window in which you can change your mind by emailing us. We do not yet offer
+              self-service data export: to receive a copy of your data, or to delete specific information without
+              closing your account, email hi@lnkdrp.com and we will handle it manually.
             </p>
           </section>
 

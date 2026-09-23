@@ -94,7 +94,9 @@ function LoginPageInner() {
         ? "Your session ended, so we stopped here rather than showing you a half-loaded page. Sign back in and we’ll take you straight back to where you were."
         : "Your session ended, so we stopped here rather than showing you a half-loaded page. Sign back in to pick up where you left off.";
     }
-    return "One button, no password to remember. New accounts start free and nothing is charged until you choose a plan.";
+    // Deliberately says what the account *is*, not when you get it: whether sign-in joins a queue
+    // is server-only knowledge, and `EarlyAccessNotice` above this card is what states it.
+    return "One button, no password to remember. Accounts are free and nothing is charged until you choose a plan.";
   }, [authEnabled, signedOut, next]);
 
   const perks: string[] = [

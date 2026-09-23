@@ -12,6 +12,7 @@
  * enforce with, so the numbers here always match what users hit.
  */
 import type { Metadata } from "next";
+import { waitlistEnabled } from "@/lib/waitlist/waitlist";
 import Link from "next/link";
 
 import PublicFooter from "@/components/PublicFooter";
@@ -139,7 +140,20 @@ export default async function PricingPage() {
                 {whatHappensAfterFreeCredits()}; Free uses at most {CREDITS_COPY.freeDailyCap} credits a day.
               </p>
               <div className="mt-8 flex-1" />
-              <PricingCta plan="free" variant="dark" helper={`Sign in with Google. ${FREE_STARTER_CREDITS} free credits to try the AI features. No card needed.`} />
+              {/*
+                The helper has to know about the queue. It said "Sign in with Google" full stop,
+                while every new account was being queued - so the page sold immediate access and
+                the click delivered a waiting list.
+              */}
+              <PricingCta
+                plan="free"
+                variant="dark"
+                helper={
+                  waitlistEnabled()
+                    ? `Early access: sign in to request an account. ${FREE_STARTER_CREDITS} free credits once you are in. No card needed.`
+                    : `Sign in with Google. ${FREE_STARTER_CREDITS} free credits to try the AI features. No card needed.`
+                }
+              />
             </div>
 
             {/* Pro */}
@@ -350,7 +364,11 @@ export default async function PricingPage() {
                 },
                 {
                   q: "Can I create more than one link for a document?",
-                  a: "Yes. Give a document a link per audience: one per investor, one per counterparty. Each link carries its own label, password, download switch, expiry and stats, and you never upload the file again. Links are not capped on any plan. Free counts shared documents (3), not the links on them, so three investor links on one deck use one slot.",
+                  // Interpolated, like every other number on this page. Typed by hand it said 3
+                  // eight lines under a card saying 10 - the cap was 3 when the sentence was
+                  // written, and the commit that raised it swept the interpolated copy and could
+                  // not see this one.
+                  a: `Yes. Give a document a link per audience: one per investor, one per counterparty. Each link carries its own label, password, download switch, expiry and stats, and you never upload the file again. Links are not capped on any plan. Free counts shared documents (${FREE_DOCUMENTS}), not the links on them, so three investor links on one deck use one slot.`,
                 },
                 {
                   q: "Is Pro per person or per workspace?",

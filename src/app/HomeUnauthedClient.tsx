@@ -6,6 +6,7 @@
 "use client";
 
 import Image from "next/image";
+import ProductShots from "@/components/home/ProductShots";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { signIn } from "next-auth/react";
@@ -22,7 +23,21 @@ const AUTH_TRANSITION_MAX_AGE_SECONDS = 30;
 /**
  * Render the HomeUnauthedClient UI (uses effects, memoized values, local state).
  */
-export default function HomeUnauthedClient({ authTransitionHint }: { authTransitionHint?: string }) {
+export default function HomeUnauthedClient({
+  authTransitionHint,
+  queued = false,
+}: {
+  authTransitionHint?: string;
+  /**
+   * Is the early-access queue on? Read on the server and passed down, because the flag is
+   * server-only and this is a client component.
+   *
+   * Without it every button here promised immediate free access while the queue sent the person
+   * who pressed it to "You're on the list." - a promise made before the Google consent screen and
+   * broken after it.
+   */
+  queued?: boolean;
+}) {
   const router = useRouter();
   const authEnabled = useAuthEnabled();
   const [retryBusy, setRetryBusy] = useState(false);
@@ -223,7 +238,7 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
                   disabled={isSigningIn}
                   aria-busy={isSigningIn}
                 >
-                  <span className={isSigningIn ? "invisible" : ""}>Get started</span>
+                  <span className={isSigningIn ? "invisible" : ""}>{queued ? "Request access" : "Get started"}</span>
                   {isSigningIn ? (
                     <span className="absolute inset-0 grid place-items-center">
                       <Spinner className="h-4 w-4" label="Signing in" />
@@ -234,7 +249,9 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
               {/* One reassurance beside the one action. Credit amounts live on /pricing, which the header
                   already links to; spelling them out here made the CTA row read like fine print. */}
               {authEnabled ? (
-                <span className="text-[13px] leading-5 text-white/55">Free to start · no card needed</span>
+                <span className="text-[13px] leading-5 text-white/55">
+                  {queued ? "Early access · we let people in a few at a time" : "Free to start · no card needed"}
+                </span>
               ) : (
                 <div className="text-sm text-white/60">Login isn’t available (auth is disabled).</div>
               )}
@@ -259,8 +276,13 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
         </div>
       </div>
 
+      {/* The product itself, below the animation. The page was exactly one viewport tall until this
+          section existed, which is why the footer is positioned against `main` rather than the
+          fold — it now lands under the last screenshot instead of over the globe. */}
+      <ProductShots />
+
       {/* Aligned to the hero column (not corner-pinned) so it reads as the page's last line. */}
-      <PublicFooter className="absolute inset-x-0 bottom-4" />
+      <PublicFooter className="relative z-10 mt-4 mb-8" />
     </main>
   );
 }

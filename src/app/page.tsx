@@ -1,4 +1,5 @@
 import HomeAuthedClient from "@/app/HomeAuthedClient";
+import { waitlistEnabled } from "@/lib/waitlist/waitlist";
 import HomeUnauthedClient from "@/app/HomeUnauthedClient";
 import { cookies } from "next/headers";
 /**
@@ -28,7 +29,7 @@ export default async function Home() {
   const authTransitionHint = cookieStore.get("ld_auth_transition")?.value ?? "";
 
   // If auth isn't configured, always show the marketing/invite page.
-  if (!authIsEnabled()) return <HomeUnauthedClient authTransitionHint={authTransitionHint} />;
+  if (!authIsEnabled()) return <HomeUnauthedClient authTransitionHint={authTransitionHint} queued={waitlistEnabled()} />;
 
   // Import NextAuth pieces only when auth is enabled, to avoid env-var crashes at module import time.
   const [{ getServerSession }, { authOptions }] = await Promise.all([
@@ -53,7 +54,7 @@ export default async function Home() {
   }
 
   // Authenticated users should never see the marketing animation; show the upload home directly.
-  return session ? <HomeAuthedClient /> : <HomeUnauthedClient authTransitionHint={authTransitionHint} />;
+  return session ? <HomeAuthedClient /> : <HomeUnauthedClient authTransitionHint={authTransitionHint} queued={waitlistEnabled()} />;
 }
 
 
