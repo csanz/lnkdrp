@@ -20,8 +20,18 @@
  * say "this page was reworked" rather than draw a box around the whole thing.
  */
 
+/**
+ * What happened inside one region, decided from whether each side has anything in it.
+ *
+ * "added" is content where the page was bare, "removed" is a bare patch where content was, and
+ * "replaced" is content on both sides that differs. Derived from the pixels, so it does not depend
+ * on the model returning anything, which is the point: the same fact asked of the model came back
+ * as "added" for a replacement, and came back differently on repeat runs.
+ */
+export type RegionKind = "added" | "removed" | "replaced";
+
 /** A region that differs, in fractions of the page (0-1), so it overlays any rendition. */
-export type DiffBox = { x: number; y: number; width: number; height: number };
+export type DiffBox = { x: number; y: number; width: number; height: number; kind?: RegionKind };
 
 export type DiffRegions = {
   boxes: DiffBox[];
@@ -76,6 +86,17 @@ export const REFLOW_COVERAGE = 0.35;
 /** Never draw more than this; the rest are merged into one box covering them all. */
 export const MAX_BOXES = 8;
 
+/**
+ * How far a region's mean brightness may sit from the page's own background and still count as
+ * bare, on a 0-255 scale.
+ *
+ * The page's background is taken as the median cell brightness, which on a document page is
+ * whatever the paper is - white on a light slide, near-black on a dark one - so this works on both
+ * without being told which it is. A region holding a line of text or a logo moves well clear of it;
+ * a region holding nothing sits on it.
+ */
+export const BARE_DELTA = 6;
+
 /** Rec. 601 luma. Alpha is ignored: page renders are opaque JPEGs. */
 function luma(data: Uint8ClampedArray, i: number): number {
   return 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
@@ -127,6 +148,19 @@ export function diffRegions(
       changedCount += 1;
     }
   }
+
+  /**
+   * The page's own background, per side, as the median cell brightness.
+   *
+   * Median rather than mean: a mean is dragged around by a large image or a dark band, while the
+   * median is whatever most of the page is, which is what "bare" has to be measured against.
+   */
+  const median = (values: Float32Array) => {
+    const sorted = Float32Array.from(values).sort();
+    return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+  };
+  const bgA = median(a);
+  const bgB = median(b);
 
   const coverage = changed.length ? changedCount / changed.length : 0;
   if (!changedCount) return { boxes: [], coverage: 0, reflowed: false };
@@ -204,14 +238,33 @@ export function diffRegions(
     kept.push(union);
   }
 
+  /** Mean brightness of one side inside a cell rectangle. */
+  const meanIn = (means: Float32Array, r: { x0: number; y0: number; x1: number; y1: number }) => {
+    let total = 0;
+    let n = 0;
+    for (let cy = r.y0; cy <= r.y1; cy++) {
+      for (let cx = r.x0; cx <= r.x1; cx++) {
+        total += means[cy * cols + cx];
+        n += 1;
+      }
+    }
+    return n ? total / n : 0;
+  };
+
   // Back to page fractions. `+1` because a box spans through the end of its last cell.
   const boxes = kept
-    .map((r) => ({
-      x: (r.x0 * CELL_PX) / width,
-      y: (r.y0 * CELL_PX) / height,
-      width: Math.min(1, ((r.x1 + 1) * CELL_PX) / width) - (r.x0 * CELL_PX) / width,
-      height: Math.min(1, ((r.y1 + 1) * CELL_PX) / height) - (r.y0 * CELL_PX) / height,
-    }))
+    .map((r) => {
+      const bareBefore = Math.abs(meanIn(a, r) - bgA) < BARE_DELTA;
+      const bareAfter = Math.abs(meanIn(b, r) - bgB) < BARE_DELTA;
+      const kind: RegionKind = bareBefore && !bareAfter ? "added" : !bareBefore && bareAfter ? "removed" : "replaced";
+      return {
+        x: (r.x0 * CELL_PX) / width,
+        y: (r.y0 * CELL_PX) / height,
+        width: Math.min(1, ((r.x1 + 1) * CELL_PX) / width) - (r.x0 * CELL_PX) / width,
+        height: Math.min(1, ((r.y1 + 1) * CELL_PX) / height) - (r.y0 * CELL_PX) / height,
+        kind,
+      };
+    })
     .sort((p, q) => p.y - q.y || p.x - q.x);
 
   return { boxes, coverage, reflowed: false };

@@ -12,6 +12,7 @@ import type { DocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { isNoChangeSummary } from "@/lib/ai/docChangeSummary";
 import { fingerprintsDiffer } from "@/lib/history/pageFingerprint";
 import { regionsMeanChanged, sweepVisualChanges, type SweepCandidate } from "./visualPageSweep";
+import type { DiffBox } from "./pageDiffRegions";
 import { cropPairs } from "./pageCrops";
 import { openPdfDocument } from "@/lib/pdf/renderPage";
 
@@ -36,7 +37,7 @@ export type ChangedPage = {
    * with the drone's tail marking, which is what an unanchored glance at a 1200px render produces.
    * Empty when the comparison could not be made.
    */
-  changedRegions?: Array<{ x: number; y: number; width: number; height: number }>;
+  changedRegions?: DiffBox[];
   /**
    * Each changed region of the page, cut out of both versions and encoded inline.
    *
@@ -395,20 +396,35 @@ function capPageText(input: unknown): string {
 }
 
 /**
- * What kind of change this page carries, decided from the wordings rather than from the prose.
+ * What kind of change this page carries.
  *
- * The model kept writing "Added 'the next 18 months'" directly above its own evidence that "the
- * coming years" used to stand there - a replacement described as an addition. Two prompt revisions
- * failed to shift it, which is the signal that this is not the model's job: with both wordings in
- * hand the answer is a comparison, not a judgement, and a reader deciding whether to re-send a
- * document needs to know whether a claim was withdrawn or merely expanded.
+ * Decided from the pixels first. Every changed region is already classified by whether each side
+ * has anything in it - see `RegionKind` - and that is a measurement, available on every run and the
+ * same every time.
  *
- * Null when there is nothing to compare - a purely visual change, or a row from before the
- * wordings were captured - and the UI then says nothing rather than guessing.
+ * Asking the model instead did not work. It wrote "Added 'the next 18 months'" directly above its
+ * own evidence that "the coming years" used to stand there, two prompt revisions failed to shift
+ * it, and the wordings it returns vary enough between runs that a kind derived from them appeared
+ * and disappeared on the same page. A reader deciding whether to re-send a document needs to know
+ * whether a claim was withdrawn or merely expanded, which is not a thing to leave to chance.
+ *
+ * The wordings remain the fallback for rows with no measured regions - old records, and pages the
+ * pixel pass could not read. Null when neither can say, and the UI then says nothing.
  */
-export function pageChangeKind(previousWording: unknown, newWording: unknown): "added" | "removed" | "replaced" | null {
-  const before = typeof previousWording === "string" ? previousWording.trim() : "";
-  const after = typeof newWording === "string" ? newWording.trim() : "";
+export function pageChangeKind(params: {
+  regions?: Array<{ kind?: "added" | "removed" | "replaced" }> | null;
+  previousWording?: unknown;
+  newWording?: unknown;
+}): "added" | "removed" | "replaced" | null {
+  const kinds = (params.regions ?? []).map((r) => r?.kind).filter(Boolean) as Array<"added" | "removed" | "replaced">;
+  if (kinds.length) {
+    // One verdict for the page: unanimous regions speak for it, a mix is a replacement.
+    const first = kinds[0];
+    return kinds.every((k) => k === first) ? first : "replaced";
+  }
+
+  const before = typeof params.previousWording === "string" ? params.previousWording.trim() : "";
+  const after = typeof params.newWording === "string" ? params.newWording.trim() : "";
   if (!before && !after) return null;
   if (!before) return "added";
   if (!after) return "removed";
@@ -444,7 +460,11 @@ export function attachPageContext<T extends DocChangeDiff | null>(diff: T, chang
       imageChanged: ctx?.imageChanged ?? null,
       previousText: capPageText(ctx?.previousText),
       newText: capPageText(ctx?.newText),
-      changeKind: pageChangeKind((p as Record<string, unknown>)?.previousWording, (p as Record<string, unknown>)?.newWording),
+      changeKind: pageChangeKind({
+        regions: ctx?.changedRegions,
+        previousWording: (p as Record<string, unknown>)?.previousWording,
+        newWording: (p as Record<string, unknown>)?.newWording,
+      }),
     };
   });
   const imageOnly = changedPages
@@ -458,8 +478,8 @@ export function attachPageContext<T extends DocChangeDiff | null>(diff: T, chang
       imageChanged: true,
       previousText: capPageText(p.previousText),
       newText: capPageText(p.newText),
-      // Pages the model did not list carry no wordings, so there is nothing to derive a kind from.
-      changeKind: null,
+      // No wordings here, but the regions were measured, so the pixels still answer.
+      changeKind: pageChangeKind({ regions: p.changedRegions }),
     }));
   return { ...diff, pagesThatChanged: [...augmented, ...imageOnly].slice(0, MAX_PAGES_THAT_CHANGED) } as T;
 }

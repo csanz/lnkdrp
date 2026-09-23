@@ -159,3 +159,61 @@ describe("guards", () => {
     }
   });
 });
+
+/**
+ * Whether a region was added, removed or replaced is decided from the pixels, not from the model.
+ *
+ * It was asked of the model first, and the model wrote "Added 'the next 18 months'" directly above
+ * its own evidence that "the coming years" used to stand there. Two prompt revisions failed to
+ * shift it, and the answer changed between runs on the same input. This is a measurement instead:
+ * does each side have anything in this region, against the page's own background.
+ */
+describe("what happened inside a region", () => {
+  test("content where the page was bare reads as added", () => {
+    const a = page();
+    const b = page();
+    paint(b, 60, 60, 80, 40, 20);
+    const r = diffRegions(a, b, W, H);
+    expect(r!.boxes).toHaveLength(1);
+    expect(r!.boxes[0].kind).toBe("added");
+  });
+
+  test("a bare patch where content was reads as removed", () => {
+    // The logo case: a mark on the cover in one version and nothing there in the next.
+    const a = page();
+    paint(a, 60, 60, 80, 40, 20);
+    const b = page();
+    const r = diffRegions(a, b, W, H);
+    expect(r!.boxes).toHaveLength(1);
+    expect(r!.boxes[0].kind).toBe("removed");
+  });
+
+  test("content on both sides that differs reads as replaced", () => {
+    // A rewritten line: ink before, different ink after.
+    const a = page();
+    const b = page();
+    paint(a, 60, 60, 80, 40, 20);
+    paint(b, 60, 60, 80, 40, 140);
+    const r = diffRegions(a, b, W, H);
+    expect(r!.boxes).toHaveLength(1);
+    expect(r!.boxes[0].kind).toBe("replaced");
+  });
+
+  test("it reads a dark page the same way, because background is measured not assumed", () => {
+    // A deck's cover is often near-black. "Bare" is whatever most of the page is.
+    const dark = () => {
+      const buf = new Uint8ClampedArray(W * H * 4);
+      for (let i = 0; i < buf.length; i += 4) {
+        buf[i] = 12;
+        buf[i + 1] = 12;
+        buf[i + 2] = 14;
+        buf[i + 3] = 255;
+      }
+      return buf;
+    };
+    const a = dark();
+    paint(a, 40, 40, 60, 40, 230);
+    const r = diffRegions(a, dark(), W, H);
+    expect(r!.boxes[0].kind).toBe("removed");
+  });
+});

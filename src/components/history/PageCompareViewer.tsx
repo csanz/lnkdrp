@@ -436,16 +436,26 @@ export default function PageCompareViewer({
                 </span>
               ) : null}
               {page.changeKind ? <KindChip kind={page.changeKind} /> : null}
-              {marksNote ? <span className="text-xs text-[var(--muted)]">· {marksNote}</span> : null}
             </div>
-            {showMarks && boxes.length ? (
-              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                <Swatch tone="removed">was here in {fromLabel}</Swatch>
-                <Swatch tone="added">is here now in {toLabel}</Swatch>
-              </div>
-            ) : page.summary?.trim() ? (
-              <div className="mt-0.5 truncate text-xs text-[var(--muted)]">{page.summary.trim()}</div>
-            ) : null}
+            {/*
+              One second line, always present and always one line tall.
+
+              It used to swap a legend for a summary and carry `marksNote` up into the title row,
+              so toggling the highlights changed the header's height and the pages below jumped.
+              A control that moves what you are looking at is worse than the thing it controls:
+              nothing here may change the layout, only its contents.
+            */}
+            <div className="mt-0.5 flex h-4 items-center gap-x-3 overflow-hidden whitespace-nowrap">
+              {showMarks && boxes.length ? (
+                <>
+                  <Swatch tone="removed">was here in {fromLabel}</Swatch>
+                  <Swatch tone="added">is here now in {toLabel}</Swatch>
+                  {marksNote ? <span className="truncate text-[11px] text-[var(--muted)]">· {marksNote}</span> : null}
+                </>
+              ) : (
+                <span className="truncate text-xs text-[var(--muted)]">{marksNote || page.summary?.trim() || ""}</span>
+              )}
+            </div>
           </div>
 
           <button
