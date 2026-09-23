@@ -26,7 +26,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 
 const ORG = "6512c0ffee00000000000001";
 const DOC = "6512c0ffee00000000000002";
@@ -174,6 +174,14 @@ beforeAll(async () => {
 
 afterEach(() => {
   sent.length = 0;
+});
+
+// The lib suite runs every file in one worker, so vitest's fake-timer state outlives this file.
+// Left installed, this interval-only clock makes the next file's `vi.useFakeTimers()` a no-op
+// (it sees timers already faked) and its `setSystemTime` lands on a clock that does not fake
+// `Date` - the date-window tests then read the real clock and fail by a day, depending on order.
+afterAll(() => {
+  vi.useRealTimers();
 });
 
 describe("realtime viewer frames carry no reader identity", () => {

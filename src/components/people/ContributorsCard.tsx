@@ -36,12 +36,12 @@ type Contributor = {
 type Authorship = { author: Contributor | null; contributors: Contributor[] };
 
 /** One row: a mark, a name, and what they last did. */
-function Person({ person, role }: { person: Contributor; role?: string }) {
+function Person({ person, role, now }: { person: Contributor; role?: string; now: number }) {
   const isAgent = person.kind === "agent";
   // `lastAt` is the epoch when the creator has no recorded work — a document added before the
   // activity log covered it. "Last worked on it 56 years ago" is worse than saying nothing.
   const hasWork = Boolean(person.lastAt) && person.lastAt !== new Date(0).toISOString();
-  const when = hasWork ? formatRelative(person.lastAt, Date.now()) : null;
+  const when = hasWork ? formatRelative(person.lastAt, now) : null;
 
   return (
     <li className="flex items-center gap-2.5">
@@ -79,6 +79,10 @@ function Person({ person, role }: { person: Contributor; role?: string }) {
 
 export default function ContributorsCard({ docId }: { docId: string }) {
   const [data, setData] = useState<Authorship | null>(null);
+  // "Last worked on it 3 h ago" is relative to the moment the list was fetched, not to each
+  // re-render: reading the clock during render is impure, and a row that silently ages between
+  // renders while its neighbour does not is the visible symptom.
+  const [now, setNow] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,7 +93,10 @@ export default function ContributorsCard({ docId }: { docId: string }) {
         });
         if (!res.ok) return;
         const json = (await res.json()) as Authorship;
-        if (!cancelled) setData(json);
+        if (!cancelled) {
+          setNow(Date.now());
+          setData(json);
+        }
       } catch {
         // An aid, never a precondition for reading the document.
       }
@@ -129,9 +136,9 @@ export default function ContributorsCard({ docId }: { docId: string }) {
         </div>
 
         <ul className="grid gap-2.5">
-          {author ? <Person person={author} role="Added this document" /> : null}
+          {author ? <Person person={author} role="Added this document" now={now} /> : null}
           {contributors.map((c) => (
-            <Person key={c.key} person={c} />
+            <Person key={c.key} person={c} now={now} />
           ))}
         </ul>
 
