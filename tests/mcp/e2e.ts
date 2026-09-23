@@ -1338,17 +1338,60 @@ async function main(): Promise<void> {
     // through nineteen steps and fail on the last one with a plan_limit that looked like a bug in
     // the tool rather than a shortage of room. Everything the first document was for is done by
     // here: its links were created, listed, disabled and deleted in steps 14 to 19.
-    await step("release the first document's slot (the Free cap counts documents)", async () => {
+    /**
+     * Archive, unarchive, then delete - through the tools, not around them.
+     *
+     * This step used to free the slot with a raw `DELETE /api/docs/:id` carrying the bearer key,
+     * which is why `lnkdrp_archive_doc` and `lnkdrp_delete_doc` were the last two tools appearing
+     * only in `EXPECTED_TOOLS`. Both are the ones an agent reaches for when a human says "get rid
+     * of this", and neither had a single assertion behind it.
+     *
+     * The round trip is the part worth having: archiving is sold as reversible - the links stop
+     * resolving, the analytics are kept, the Free slot is released - and "reversible" is a claim
+     * nothing checked. So the document goes away, comes back with its link live again, and only
+     * then is deleted for real.
+     */
+    await step("archive_doc takes the links down and gives them back, then delete_doc ends it", async () => {
       const first = createdDocs[0];
       assert(first, "no document to release");
-      const res = await fetch(`${first.origin}/api/docs/${encodeURIComponent(first.docId)}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${plaintext}` },
-        signal: AbortSignal.timeout(15_000),
+      const link = `${first.origin}/s/${String(shared.shareId)}`;
+      const reachable = async () => {
+        const r = await fetch(link, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+        await r.arrayBuffer();
+        return r.status;
+      };
+
+      const archived = await callTool<{ ok: boolean; isArchived: boolean; linksAffected?: number }>(live, "lnkdrp_archive_doc", {
+        docId: first.docId,
+        archived: true,
+        confirm: true,
       });
-      assert(res.ok, `could not delete the first document (HTTP ${res.status})`);
+      assert(archived.isArchived === true, `archive_doc did not archive: ${JSON.stringify(archived)}`);
+      const gone = await callTool<GetShareResult & { anyLinkActive?: boolean }>(live, "lnkdrp_get_share", { docId: first.docId });
+      assert(gone.isArchived === true && gone.anyLinkActive === false, `an archived document still reports live links: ${JSON.stringify({ a: gone.isArchived, b: gone.anyLinkActive })}`);
+      assert(await reachable() === 404, "an archived document still served its link");
+      // It leaves the live listing but is still findable in the archive, which is the difference
+      // between archiving and deleting.
+      const live1 = await callTool<DocsPage & { notFound?: string[] }>(live, "lnkdrp_list_docs", { ids: [first.docId] });
+      assert((live1.notFound ?? []).includes(first.docId), "an archived document was still listed as live");
+      const arch = await callTool<DocsPage>(live, "lnkdrp_list_docs", { ids: [first.docId], archived: true });
+      assert(arch.docs.some((d) => d.docId === first.docId), "an archived document was not in the archive listing");
+
+      const back = await callTool<{ isArchived: boolean }>(live, "lnkdrp_archive_doc", { docId: first.docId, archived: false });
+      assert(back.isArchived === false, "archive_doc could not bring the document back");
+      assert(await reachable() === 200, "unarchiving did not restore the link");
+
+      const deleted = await callTool<{ ok: boolean; deleted?: { docId?: string; links?: number } }>(live, "lnkdrp_delete_doc", {
+        docId: first.docId,
+        confirm: true,
+      });
+      assert(deleted.ok === true && deleted.deleted?.docId === first.docId, `delete_doc did not echo what it removed: ${JSON.stringify(deleted)}`);
+      assert(await reachable() === 404, "a deleted document still served its link");
+      const after = await callTool<DocsPage & { notFound?: string[] }>(live, "lnkdrp_list_docs", { ids: [first.docId], archived: true });
+      assert((after.notFound ?? []).includes(first.docId), "a deleted document still appears in the archive");
+
       createdDocs.shift();
-      info("released", first.docId);
+      info("lifecycle", `${first.docId} archived, restored, deleted`);
     });
 
     // 17. Agent-written summary: no AI summary run, 0 credits, attributed to the calling client.
