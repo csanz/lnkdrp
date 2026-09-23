@@ -1,0 +1,192 @@
+#!/usr/bin/osascript -l JavaScript
+/**
+ * check-cursor-web-limits.jxa
+ *
+ * Best-effort diagnostics for Cursor web "Limits" page inconsistencies.
+ *
+ * How it works:
+ * - Reads the active Google Chrome tab (must be open to cursor.com settings/limits page).
+ * - Extracts visible text around "AI Credits" / "AI tools".
+ * - Parses Next.js `__NEXT_DATA__` (if present) and returns any paths/values related to
+ *   credits/limits/usage/plan/unlimited.
+ *
+ * No network calls. No state changes.
+ */
+
+ObjC.import("stdlib");
+ObjC.import("Foundation");
+
+function stderrWrite(msg) {
+  const s = String(msg ?? "");
+  const data = $.NSString.stringWithString(s).dataUsingEncoding($.NSUTF8StringEncoding);
+  $.NSFileHandle.fileHandleWithStandardError.writeData(data);
+}
+
+function die(msg) {
+  stderrWrite(String(msg ?? "") + "\n");
+  $.exit(2);
+}
+
+function safeJsonStringify(obj) {
+  try {
+    return JSON.stringify(obj, null, 2);
+  } catch (e) {
+    return JSON.stringify({ error: String(e) });
+  }
+}
+
+function tryGetRunningApp(appName) {
+  try {
+    const app = Application(appName);
+    if (app && app.running()) return app;
+  } catch (_e) {}
+  return null;
+}
+
+function main() {
+  const candidates = [
+    "Google Chrome",
+    "Arc",
+    "Chromium",
+    "Brave Browser",
+    "Microsoft Edge",
+  ];
+
+  let app = null;
+  let appName = null;
+  for (const name of candidates) {
+    const a = tryGetRunningApp(name);
+    if (a) {
+      app = a;
+      appName = name;
+      break;
+    }
+  }
+  if (!app) {
+    die(
+      "No supported browser app is running. Open the Cursor Limits page in a tab, then retry.\n" +
+        "Tried: " + candidates.join(", ")
+    );
+  }
+
+  app.includeStandardAdditions = true;
+
+  const win = app.windows[0];
+  if (!win) die("No browser windows found (" + appName + ").");
+  const tab = win.activeTab();
+  if (!tab) die("No active Chrome tab found.");
+
+  const url = tab.url();
+  if (!url || url.indexOf("cursor.com") === -1) {
+    die("Active tab is not on cursor.com. Please focus the Cursor Limits page tab and retry.");
+  }
+
+  const js = `
+    (function () {
+      const KEY_RX = /(ai\\s*credits|used all credits|billing cycle|on[-_ ]demand|quota|rate.?limit|credits?|usage|limits?|plan|unlimited)/i;
+      const MAX_MATCHES = 200;
+
+      function takeTextSnips() {
+        const text = (document.body && document.body.innerText) ? document.body.innerText : "";
+        const lines = text.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);
+        const interesting = [];
+        for (let i = 0; i < lines.length; i++) {
+          if (KEY_RX.test(lines[i])) {
+            const start = Math.max(0, i - 2);
+            const end = Math.min(lines.length, i + 3);
+            interesting.push(lines.slice(start, end).join(" | "));
+            if (interesting.length >= 50) break;
+          }
+        }
+        return interesting;
+      }
+
+      function walk(obj, path, out) {
+        if (out.length >= MAX_MATCHES) return;
+        if (obj === null || obj === undefined) return;
+        const t = typeof obj;
+        if (t === "string") {
+          if (KEY_RX.test(obj)) {
+            out.push({ path, value: obj.length > 500 ? (obj.slice(0, 500) + "…") : obj });
+          }
+          return;
+        }
+        if (t === "number" || t === "boolean") return;
+        if (Array.isArray(obj)) {
+          for (let i = 0; i < obj.length && out.length < MAX_MATCHES; i++) {
+            walk(obj[i], path + "[" + i + "]", out);
+          }
+          return;
+        }
+        if (t === "object") {
+          const keys = Object.keys(obj);
+          for (let i = 0; i < keys.length && out.length < MAX_MATCHES; i++) {
+            const k = keys[i];
+            const v = obj[k];
+            const p = path ? (path + "." + k) : k;
+            if (KEY_RX.test(k)) {
+              // include value even if it doesn't match, but keep it small
+              let small = v;
+              try {
+                if (typeof v === "string" && v.length > 500) small = v.slice(0, 500) + "…";
+                else if (typeof v === "object") small = JSON.stringify(v).slice(0, 500) + (JSON.stringify(v).length > 500 ? "…" : "");
+              } catch (e) {}
+              out.push({ path: p, value: small });
+              if (out.length >= MAX_MATCHES) break;
+            }
+            walk(v, p, out);
+          }
+        }
+      }
+
+      function getNextDataMatches() {
+        const el = document.getElementById("__NEXT_DATA__");
+        if (!el || !el.textContent) return { present: false, matches: [] };
+        try {
+          const data = JSON.parse(el.textContent);
+          const matches = [];
+          walk(data, "", matches);
+          return { present: true, matches };
+        } catch (e) {
+          return { present: true, error: String(e), matches: [] };
+        }
+      }
+
+      return JSON.stringify({
+        href: location.href,
+        title: document.title,
+        textSnips: takeTextSnips(),
+        nextData: getNextDataMatches(),
+      });
+    })();
+  `;
+
+  let raw;
+  try {
+    raw = tab.execute({ javascript: js });
+  } catch (e) {
+    die("Failed to execute JS in the active tab: " + String(e));
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    parsed = { href: url, error: "Could not parse tab output as JSON", raw: String(raw).slice(0, 2000) };
+  }
+
+  const out = {
+    ok: true,
+    activeTabUrl: url,
+    activeTabTitle: parsed.title || null,
+    textSnips: parsed.textSnips || [],
+    nextDataPresent: parsed.nextData ? !!parsed.nextData.present : false,
+    nextDataError: parsed.nextData ? (parsed.nextData.error || null) : null,
+    nextDataMatches: parsed.nextData ? (parsed.nextData.matches || []) : [],
+  };
+
+  console.log(safeJsonStringify(out));
+}
+
+main();
+
