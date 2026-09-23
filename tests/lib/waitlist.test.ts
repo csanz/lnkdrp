@@ -27,21 +27,38 @@ afterEach(() => {
   }
 });
 
-describe("the queue is off unless it is turned on", () => {
-  test("an unset flag means off, and off means everyone walks in", () => {
-    expect(waitlistEnabled()).toBe(false);
-    expect(initialAccessStatus("someone@example.com")).toBe("approved");
+describe("the queue is always on", () => {
+  /**
+   * This used to read `WAITLIST_ENABLED`, off unless set. The variable was not set in production
+   * and the first person to sign in got a full account. Both failures are not equal: someone
+   * waiting is approved a little later, while a stranger who already holds an account has been
+   * inside the product and is undone only by deleting it. So the lock no longer depends on a
+   * variable being present.
+   */
+  test("a new account is queued, whatever the environment says", () => {
+    expect(waitlistEnabled()).toBe(true);
+    expect(initialAccessStatus("someone@example.com")).toBe("waitlisted");
   });
 
-  test("the words that turn it on, and the ones that do not", () => {
-    for (const on of ["1", "true", "TRUE", "on", "yes"]) {
-      process.env.WAITLIST_ENABLED = on;
-      expect(waitlistEnabled(), on).toBe(true);
+  test("no value of the old flag opens the door", () => {
+    for (const v of ["0", "false", "off", "no", "", " ", "1", "true"]) {
+      process.env.WAITLIST_ENABLED = v;
+      expect(waitlistEnabled(), JSON.stringify(v)).toBe(true);
+      expect(initialAccessStatus("stranger@example.com"), JSON.stringify(v)).toBe("waitlisted");
     }
-    for (const off of ["0", "false", "off", "no", "", " "]) {
-      process.env.WAITLIST_ENABLED = off;
-      expect(waitlistEnabled(), JSON.stringify(off)).toBe(false);
-    }
+  });
+
+  test("the ways through are all a person deciding", () => {
+    // An operator naming the address, which is a decision typed out by hand.
+    process.env.WAITLIST_ALLOW_EMAILS = "founder@lnkdrp.com";
+    expect(initialAccessStatus("founder@lnkdrp.com")).toBe("approved");
+    expect(initialAccessStatus("someone.else@lnkdrp.com")).toBe("waitlisted");
+    delete process.env.WAITLIST_ALLOW_EMAILS;
+
+    process.env.WAITLIST_ALLOW_DOMAINS = "lnkdrp.com";
+    expect(initialAccessStatus("anyone@lnkdrp.com")).toBe("approved");
+    expect(initialAccessStatus("anyone@gmail.com")).toBe("waitlisted");
+    delete process.env.WAITLIST_ALLOW_DOMAINS;
   });
 });
 

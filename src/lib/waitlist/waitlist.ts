@@ -5,9 +5,12 @@
  * here: whether the queue is on, who skips it, where a new account starts, and how someone is let
  * in. The rules the rest of the app must not have to re-derive:
  *
- * - **The queue is off unless `WAITLIST_ENABLED` says otherwise.** Off is the honest default: a
- *   flag that gates sign-ups should be something you turn on deliberately, not something a missing
- *   env var does to you.
+ * - **Every new account is queued. There is no flag.** Signing in creates an account that cannot
+ *   do anything until a human approves it. This was once `WAITLIST_ENABLED`, off unless set, on
+ *   the principle that a flag gating sign-ups should be turned on deliberately rather than by a
+ *   missing variable - and the first production sign-in walked straight in, because nobody had set
+ *   it. A door whose lock depends on a variable being present is not a lock. The only ways past
+ *   are the three below, and each of them is a person deciding.
  * - **It only ever applies to accounts created while it is on.** Status is written once, at
  *   sign-up, into `$setOnInsert`. Nobody already using the product is affected by turning it on,
  *   and a user row with no status reads as approved.
@@ -57,10 +60,23 @@ export function waitlistBlockedNotice(raw: unknown): string | null {
 }
 
 
-/** Is the queue on? `WAITLIST_ENABLED=1|true|on|yes`; anything else, including unset, is off. */
+/**
+ * Is the queue on? Always.
+ *
+ * Kept as a function rather than deleted because the admin page reports it, and because a single
+ * place saying "always" is easier to find than the absence of a check scattered across callers.
+ *
+ * Deliberately reads no environment variable. It used to, and the variable was not set in
+ * production, so the first person to sign in got a full account - which is the failure this exists
+ * to prevent and the only one of the two that cannot be undone. Waiting is reversible; a stranger
+ * who has already been inside the product is not.
+ *
+ * Getting in is `approveUser`, from the admin queue or `npm run waitlist:invite`. Locally, put your
+ * own address in `WAITLIST_ALLOW_EMAILS` (or your domain in `WAITLIST_ALLOW_DOMAINS`) so a fresh
+ * checkout does not lock you out of it.
+ */
 export function waitlistEnabled(): boolean {
-  const raw = (process.env.WAITLIST_ENABLED ?? "").trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "on" || raw === "yes";
+  return true;
 }
 
 /** Addresses and domains that never queue: `WAITLIST_ALLOW_EMAILS`, `WAITLIST_ALLOW_DOMAINS`. */

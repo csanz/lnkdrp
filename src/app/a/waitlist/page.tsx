@@ -135,12 +135,11 @@ export default function AdminWaitlistPage() {
           description="Who is waiting to be let in, oldest first. Approving opens the account and emails them that it is open."
         />
 
-        {enabled === false ? (
-          <AdminAlert className="mt-4">
-            The queue is off (<code>WAITLIST_ENABLED</code> is unset), so new sign-ups are going straight into the
-            app. Anyone listed here queued while it was on and is still waiting.
-          </AdminAlert>
-        ) : null}
+        {/*
+          No "the queue is off" alert any more, because it cannot be. Every new account is queued;
+          the only ways past are an invite, the allowlist, or being an admin, and each of those is
+          a person deciding. See `src/lib/waitlist/waitlist.ts`.
+        */}
 
         <AdminFilterBar
           className="mt-4"

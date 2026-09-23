@@ -165,14 +165,13 @@ and do not link to or announce the site until the Announce step in G.
 - [ ] Uptime monitor with a named alert recipient on `/api/health` and both `/healthz`; Vercel Log
       Drain with alerts; Stripe webhook failure emails to a watched inbox (11, Health and Logs).
 - [ ] Read 12 and decide each open item, or accept it in writing.
-- [ ] **Decide who gets in.** Unset, `WAITLIST_ENABLED` lets every new account straight into the
-      product (5 step 3). On, new accounts sign in and wait on the queue page until an admin
-      approves them at `/a/waitlist`, which sends `waitlist_approved`. It is read per request, so
-      it can be turned on or off at any point with no redeploy — but decide before announcing,
-      because the first people through the door see whichever answer is live, and put your own
-      addresses in `WAITLIST_ALLOW_EMAILS` either way so you are never queued behind your own
-      launch. If it is on, watch `/a/waitlist` from the announcement: nobody in the queue can do
-      anything until someone approves them.
+- [ ] **You are the door.** Every new account is queued — there is no flag, and there is no
+      environment in which sign-up lets someone straight in (5 step 3). They sign in, land on the
+      queue page and can do nothing until an admin approves them at `/a/waitlist`, which sends
+      `waitlist_approved`. Two things to do before announcing: make sure at least one account is an
+      admin (`npm run admin:add -- --to=you@example.com`), or there is nobody who can approve
+      anyone; and put your own addresses in `WAITLIST_ALLOW_EMAILS` so you are never queued behind
+      your own launch. Then watch `/a/waitlist` from the announcement.
 - [ ] **Announce / open to users.**
 
 **H. Watch (11) — first week**
@@ -678,8 +677,8 @@ Two more things that decide whether mail lands, neither of them DNS:
 | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | optional; leave unset. They apply only when both are set; one alone is ignored and both redirects come from `NEXT_PUBLIC_APP_URL` |
 | `NEXT_PUBLIC_FEATURE_REQUESTS` | leave unset at launch. `1` turns Requests on; it is build-time, so it needs a fresh build, the two Requests backfills in 5.2 first, and the same value on MCP (`fly secrets set NEXT_PUBLIC_FEATURE_REQUESTS=1 -a lnkdrp-mcp`, or `[env]` in `deploy/fly/mcp.fly.toml` plus `fly deploy`) |
 | `NEXT_PUBLIC_FEATURE_CREDITS` | optional; credits UI is on by default, `0` hides it — including every "Add more credits" button, so the only way to `/credits` is typing the URL |
-| `WAITLIST_ENABLED` | optional; unset means every new account is approved on sign-up. `1`/`true`/`on`/`yes` queues **new** accounts instead: they sign in, land on the queue page and can do nothing else until an admin approves them (`/a/waitlist`, which sends the `waitlist_approved` email). Read at request time, so turning it on or off takes effect on the next request with no redeploy. Existing accounts are never queued, and neither are admins |
-| `WAITLIST_ALLOW_EMAILS`, `WAITLIST_ALLOW_DOMAINS` | optional; comma- or space-separated. Addresses and domains that skip the queue while it is on — your own team, an investor, a design partner. Domains are bare (`lnkdrp.com`, not `@lnkdrp.com`), matching is case-insensitive, and both are ignored when `WAITLIST_ENABLED` is unset |
+| `WAITLIST_ENABLED` | **ignored.** The queue is unconditional: every new account is queued and waits for an admin at `/a/waitlist` (which sends the `waitlist_approved` email). This was a flag, unset meant open, and production's first sign-in walked straight in because nobody had set it — a lock that depends on a variable being present is not a lock. Existing accounts are never retroactively queued, and admins are never held |
+| `WAITLIST_ALLOW_EMAILS`, `WAITLIST_ALLOW_DOMAINS` | optional; comma- or space-separated. Addresses and domains that skip the queue — your own team, an investor, a design partner. Domains are bare (`lnkdrp.com`, not `@lnkdrp.com`) and matching is case-insensitive. Now that the queue has no off switch these are the only standing way in, so a domain left here is a door nobody remembers opening; `/a/env` reports what is set |
 | other `ERROR_LOGGING_*` | optional; see `docs/ERROR_LOGGING.md` |
 
 `NEXT_PUBLIC_*` values are inlined at build time into the browser bundle and the server routes
