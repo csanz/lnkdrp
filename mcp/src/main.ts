@@ -243,7 +243,29 @@ function createApp() {
   // at the old numbers: a payload just over the tools' ceiling tripped Express first and the
   // tool's own validation never ran. Note this only bounds `fileBase64`; `filePath` sends a path,
   // so a large local file never travels through here at all.
-  app.use(express.json({ limit: UPLOAD_MAX_BASE64_CHARS + 2 * 1024 * 1024 }));
+  /**
+   * The bearer check goes in front of the body parser, and the large limit only behind it.
+   *
+   * `express.json` buffers and parses the whole body before any route handler runs, so an
+   * anonymous POST carrying 66 MB of JSON was fully materialised in memory and only then answered
+   * 401. Measured in the Fly container this ships as (512 MB, a 259 MB V8 heap): one such request
+   * took it to 235 MiB, and six in parallel killed it with "Reached heap limit". mcp.lnkdrp.com is
+   * a single machine - sessions live in a process-local Map, so it has to be - which means anyone
+   * who knows the hostname could end every connected agent's session in a loop, with no API key.
+   *
+   * Two changes, both cheap. A request with no bearer is now refused before a byte is buffered.
+   * And the large limit applies only to `/mcp`, since `/healthz` and the well-known document need
+   * kilobytes; a junk body aimed anywhere else meets the default 100 KB.
+   */
+  app.use("/mcp", (req, res, next) => {
+    if (!bearerFrom(req)) {
+      unauthorized(res);
+      return;
+    }
+    next();
+  });
+  app.use("/mcp", express.json({ limit: UPLOAD_MAX_BASE64_CHARS + 2 * 1024 * 1024 }));
+  app.use(express.json());
 
   app.get("/healthz", (_req, res) => {
     res.json({

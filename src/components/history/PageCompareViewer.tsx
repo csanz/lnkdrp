@@ -201,13 +201,34 @@ function WordDiff({
    * explanation of our problem rather than an answer to the reader's. The model is looking at the
    * page image regardless, so it reads the wording instead and that is what gets shown.
    */
-  const extractionUnusable = !isReadableText(previous) || !isReadableText(next);
+  /**
+   * Two reasons the wordings are the only thing to show, and the second one was missed.
+   *
+   * The first is a text layer that extracts as glyph codes. The second is no text layer reaching
+   * this component at all, which is every page a recipient opens: the share payload carries the
+   * wordings deliberately and never the extracted text, so both sides arrive as "".
+   *
+   * `isReadableText("")` is true - short strings pass, by design, because there is nothing to
+   * garble - so an empty pair looked like a perfectly readable one, the wordings were dropped, and
+   * `diffPresentation("", "")` came back "identical". The panel then told the recipient the words
+   * on the page were identical while the same component printed the real before and after one
+   * click behind it.
+   */
+  const noTextLayer = !previous.trim() && !next.trim();
+  const extractionUnusable = noTextLayer || !isReadableText(previous) || !isReadableText(next);
   const readFromPage = extractionUnusable && Boolean(previousWording || newWording);
 
   if (readFromPage) {
     return (
       <div className="space-y-2">
-        <div className="text-[11px] text-[var(--muted)]">Read from the page, because this PDF stores its text as shapes.</div>
+        {/*
+          Two different reasons, and only one of them is the reader's business. A garbled text layer
+          is worth explaining, because it is why this looks different from other pages. Having sent
+          no text layer is our own arrangement and means nothing to them.
+        */}
+        <div className="text-[11px] text-[var(--muted)]">
+          {noTextLayer ? "Read from the page." : "Read from the page, because this PDF stores its text as shapes."}
+        </div>
         <div className="grid gap-2 lg:grid-cols-2">
           <p className="m-0 rounded-md bg-rose-500/10 px-3 py-2 text-xs leading-relaxed text-rose-700 dark:text-rose-200">
             {previousWording?.trim() || "(nothing here before)"}
@@ -227,6 +248,8 @@ function WordDiff({
   const result = diffPresentation(previous, next);
 
   if (result.mode === "identical") {
+    // Only sayable when there were words to compare. Two empty strings are not agreement.
+    if (noTextLayer) return null;
     return <div className="text-[11px] text-[var(--muted)]">The words on this page are identical; any difference is in the artwork.</div>;
   }
 

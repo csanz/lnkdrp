@@ -138,3 +138,21 @@ describe("diffPresentation picks a readable shape", () => {
     expect(diffPresentation("same here", "same here")).toEqual({ mode: "identical" });
   });
 });
+
+describe("an empty pair is not agreement", () => {
+  test("two empty strings are identical to each other but say nothing about the page", () => {
+    // The recipient's compare receives no extracted text at all - the share payload carries the
+    // model's wordings instead - so both sides arrive as "". `isReadableText("")` is true, because
+    // short strings have nothing to garble, so the empty pair looked like a readable one: the
+    // wordings were dropped and this told the reader the words on the page were identical while
+    // the same component printed the real before and after one click behind it.
+    //
+    // `diffPresentation` is right to call two empty strings identical; the caller is what must not
+    // say so out loud. This pins the shape so the caller's guard has something to sit against.
+    expect(diffPresentation("", "")).toEqual({ mode: "identical" });
+  });
+
+  test("a real pair that matches is still identical", () => {
+    expect(diffPresentation("the ask is unchanged", "the ask is unchanged")).toEqual({ mode: "identical" });
+  });
+});

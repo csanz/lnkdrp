@@ -600,9 +600,32 @@ export async function analyzePdfText(input: {
     return [{ role: "user", content: parts }];
   })();
 
+  /**
+   * Which model reads this summary, and why it depends on whether page images are attached.
+   *
+   * The same split `modelForCompare` makes in `@/lib/ai/docChangeDiff`, for the same measured
+   * reason, and this call was left behind when that one moved. Both OpenAI models charge images by
+   * 512px tile at wildly different rates: the table in `tests/lib/docChangeDiffBudget.test.ts` has
+   * a 480x270 thumb at 8,500 input tokens on gpt-4o-mini against 255 on gpt-4o - 33x the tokens
+   * against a price discount of only 16.7x, so the same picture costs about twice as much in
+   * dollars on the smaller model.
+   *
+   * Cost is the smaller half. This attaches up to twelve page thumbnails, and thumbnails are
+   * resized by width only, so a portrait page becomes 480x~621 - tall enough to cross 512 and cost
+   * two tiles, about 14,167 tokens each on mini. Twelve of those is ~170,000 tokens against
+   * gpt-4o-mini's 128k window, so a portrait PDF of roughly nine pages or more - a report, a
+   * contract, an A4 deck - overflows on both attempts, falls through to the empty snapshot at the
+   * bottom of this function, and the owner gets an upload with no summary and nothing to act on.
+   *
+   * This is the highest-frequency AI call in the product: it runs on every upload and every
+   * replacement. Text-only summaries stay on mini, where the discount is real and there are no
+   * tiles to pay for.
+   */
+  const modelId = imageUrlByPage.size ? "gpt-4o" : cfg.model;
+
   try {
     const { object, usage } = await generateObject({
-      model: openai(cfg.model),
+      model: openai(modelId),
       providerOptions: OPENAI_PROVIDER_OPTIONS,
       schema: AiDocAnalysisGenerationSchema,
       temperature: typeof cfg.temperature === "number" ? cfg.temperature : 0,
@@ -619,7 +642,7 @@ export async function analyzePdfText(input: {
       ...(typeof maxTokensCfg === "number" ? { maxOutputTokens: maxTokensCfg } : {}),
     });
     const normalized = normalizeAiDocAnalysis(object, input.pages);
-    analysisUsage.set(normalized, usageToTelemetry(usage, { model: cfg.model, latencyMs: Date.now() - startedAt, retriesCount: 0 }));
+    analysisUsage.set(normalized, usageToTelemetry(usage, { model: modelId, latencyMs: Date.now() - startedAt, retriesCount: 0 }));
     await completeAiRun(aiRunId, {
       durationMs: Date.now() - startedAt,
       outputObject: object,
@@ -630,7 +653,7 @@ export async function analyzePdfText(input: {
     // Retry once with a higher token budget to reduce truncation-related JSON/schema failures.
     try {
       const { object, usage } = await generateObject({
-        model: openai(cfg.model),
+        model: openai(modelId),
         providerOptions: OPENAI_PROVIDER_OPTIONS,
         schema: AiDocAnalysisGenerationSchema,
         temperature: 0,
@@ -640,7 +663,7 @@ export async function analyzePdfText(input: {
         ...(typeof maxTokensRetry === "number" ? { maxOutputTokens: maxTokensRetry } : {}),
       });
       const normalized = normalizeAiDocAnalysis(object, input.pages);
-      analysisUsage.set(normalized, usageToTelemetry(usage, { model: cfg.model, latencyMs: Date.now() - startedAt, retriesCount: 1 }));
+      analysisUsage.set(normalized, usageToTelemetry(usage, { model: modelId, latencyMs: Date.now() - startedAt, retriesCount: 1 }));
       await completeAiRun(aiRunId, {
         durationMs: Date.now() - startedAt,
         outputObject: object,
