@@ -18,7 +18,16 @@ export default function HelpTooltip({
   align?: "left" | "right";
   widthClassName?: string;
 }) {
-  const alignClass = align === "left" ? "left-0" : "right-0";
+  /**
+   * Below `sm` the panel always hangs to the left of its trigger, whatever the caller asked for.
+   *
+   * `align="left"` means "start at the trigger and run right", which is fine beside a wide desktop
+   * card and wrong on a phone: a help icon sitting two-thirds across a 390px row put ~95px of the
+   * panel past the edge, where nothing scrolls it back. Hanging leftward keeps it on screen because
+   * these triggers follow their label rather than preceding it. The width clamp below is the
+   * backstop for the remaining case — a trigger near the left edge on a very narrow screen.
+   */
+  const alignClass = align === "left" ? "right-0 sm:left-0 sm:right-auto" : "right-0";
   return (
     <span className="group relative inline-flex">
       <button
@@ -30,7 +39,7 @@ export default function HelpTooltip({
       </button>
       <span
         className={[
-          "pointer-events-none absolute top-9 z-50 hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 text-[12px] leading-5 text-[var(--muted-2)] shadow-lg",
+          "pointer-events-none absolute top-9 z-50 hidden max-w-[calc(100vw-2rem)] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 text-[12px] leading-5 text-[var(--muted-2)] shadow-lg",
           widthClassName,
           alignClass,
           "group-hover:block group-focus-within:block",

@@ -94,7 +94,12 @@ export default function ReaderDocuments({
                   {live?.page ? `Page ${live.page}${live.of ? `/${live.of}` : ""}` : "Open now"}
                 </span>
               ) : null}
-              <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[var(--panel-2)]">
+              {/* The bar is a comparison between rows, not a number anyone reads off it — so on a
+                  phone it is the first thing to go. With it, the 96px bar plus the 64px time
+                  column plus the live chip left the document's name no width at all, and the name
+                  is what the row is for. `hidden sm:block` rather than a narrower bar: half a bar
+                  compares worse than no bar. */}
+              <span className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[var(--panel-2)] sm:block">
                 <span
                   className="block h-full rounded-full bg-[var(--chart-views)]"
                   style={{ width: `${Math.max(2, Math.round((d.timeSpentMs / max) * 100))}%` }}

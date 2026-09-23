@@ -82,7 +82,12 @@ export default function DocIdentityRow({ docId, fallbackTitle }: { docId: string
   const version = identity?.version ?? null;
 
   return (
-    <span className="flex min-w-0 items-center gap-2.5">
+    /* `flex-wrap`, as the document page's own header already does (pageClient.tsx:2278). On a doc
+       sub-page the action cluster takes ~235px of a 390px row, leaving ~99px here — the name
+       collapsed to an ellipsis and everything after it (the star, the version/History link, tags,
+       project pills) was cut off with no way to reach it. Wrapping puts them on a second line
+       instead of off the edge. */
+    <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
       {/* The document's own glyph, in the slot every other header puts one: `AppPageHeader` draws a
           page's icon here, the project header draws a folder, and a document showed nothing at all.
           Same 20px, same muted colour, so the name starts on the same pixel on every page. */}

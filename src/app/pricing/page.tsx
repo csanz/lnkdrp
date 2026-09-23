@@ -325,7 +325,11 @@ export default async function PricingPage() {
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2.5">
                   <Check />
-                  <span className="whitespace-nowrap">{item}</span>
+                  {/* Wrapping, not nowrap. The list is one column on a phone, so an unbreakable
+                      feature line sets the card's width and pushes the whole page sideways. The
+                      nowrap was protecting a multi-column desktop layout that no longer applies
+                      once the grid has stacked. */}
+                  <span className="sm:whitespace-nowrap">{item}</span>
                 </li>
               ))}
             </ul>

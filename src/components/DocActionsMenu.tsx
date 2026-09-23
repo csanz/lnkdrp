@@ -107,7 +107,16 @@ export default function DocActionsMenu({
   const [projectsLastLoadedAt, setProjectsLastLoadedAt] = useState<number>(0);
   const [projectMembershipBusyId, setProjectMembershipBusyId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-  const [submenuSide, setSubmenuSide] = useState<"left" | "right">("left");
+  /**
+   * The submenu's viewport position, not a side.
+   *
+   * It used to be a `"left" | "right"` flag driving `left-[calc(100%+10px)]`. On a phone that
+   * could only ever be wrong: the menu's own left is clamped to at most `innerWidth - 220 - 8`,
+   * which at 390px is 162, so the "would the left side fit" test (`left - 270 < 8`) was always
+   * true and the submenu always flipped right — to 392px, past the edge, with nothing to scroll
+   * it into view. Adding a document to a project was impossible from a phone.
+   */
+  const [submenuPos, setSubmenuPos] = useState<{ top: number; left: number } | null>(null);
   // Membership looked up on demand when the caller doesn't know it (e.g. rows from `/api/docs`).
   const [fetchedProjectIds, setFetchedProjectIds] = useState<string[] | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
@@ -233,9 +242,19 @@ export default function DocActionsMenu({
 
     let left = rect.right - width;
     left = Math.max(margin, Math.min(window.innerWidth - width - margin, left));
-    // The projects submenu opens to the left; flip it right when that would leave the viewport
-    // (rows in the left sidebar).
-    setSubmenuSide(left - SUBMENU_GAP - SUBMENU_WIDTH < margin ? "right" : "left");
+    /**
+     * The submenu prefers the left of the menu and falls back to the right, but either way it is
+     * clamped into the viewport. At phone width both preferences land outside, so the clamp puts
+     * it at the margin and it overlaps the parent menu — which is what every phone menu does, and
+     * needs no breakpoint to arrange.
+     */
+    const preferLeft = left - SUBMENU_GAP - SUBMENU_WIDTH;
+    const preferRight = left + MENU_WIDTH + SUBMENU_GAP;
+    const wantsLeft = preferLeft >= margin;
+    const submenuLeft = Math.max(
+      margin,
+      Math.min(window.innerWidth - SUBMENU_WIDTH - margin, wantsLeft ? preferLeft : preferRight),
+    );
 
     let top = rect.bottom + gap;
     const menuEl = menuRef.current;
@@ -243,6 +262,9 @@ export default function DocActionsMenu({
     if (top + measuredH + margin > window.innerHeight) {
       top = Math.max(margin, rect.top - gap - measuredH);
     }
+    // `max-h-[320px]` on the submenu list, plus its border; keep the whole thing on screen.
+    const submenuTop = Math.max(margin, Math.min(window.innerHeight - 330 - margin, top));
+    setSubmenuPos({ top: submenuTop, left: submenuLeft });
     setMenuPos({ top, left });
   }, []);
 
@@ -545,10 +567,11 @@ export default function DocActionsMenu({
       ref={submenuRef}
       role="menu"
       aria-label={projectsLabel}
-      className={[
-        "absolute top-0 z-50 w-[260px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg",
-        submenuSide === "right" ? "left-[calc(100%+10px)]" : "right-[calc(100%+10px)]",
-      ].join(" ")}
+      /* `fixed` with computed coordinates, but still a DOM child of the `li`. It must stay in
+         tree: the outside-click handler tests `rootRef`/`menuRef` only, so portalling this
+         elsewhere would make every tap inside it read as an outside click and close the menu. */
+      className="fixed z-50 w-[260px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
+      style={{ top: submenuPos?.top ?? 16, left: submenuPos?.left ?? 16 }}
     >
       <ul className="max-h-[320px] overflow-auto py-1">
         <li>

@@ -37,10 +37,15 @@ export default function AppPageHeader({
           out identically. */}
       <div className="md:flex md:items-center md:justify-between md:gap-x-4">
         <div className="min-w-0 md:flex-1">
-          {/* `h-8`, not `min-h-8`: a badge taller than the title used to grow this row, which moved
-              the title off the line the sidebar logo sits on — the one horizontal rule every page
-              shares. Anything taller than 32px centres inside it instead of pushing it down. */}
-          <div className="flex h-8 flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:flex-nowrap">
+          {/* `h-8` from `sm` up, not `min-h-8`: a badge taller than the title used to grow this row,
+              which moved the title off the line the sidebar logo sits on — the one horizontal rule
+              every page shares. Anything taller than 32px centres inside it instead.
+              Below `sm` the row is allowed to grow, because there the row also *wraps*
+              (`flex-wrap`, dropped at `sm`) — a badge that wrapped to a second line inside a
+              locked 32px box overlapped the title rather than sitting under it. The rule the fixed
+              height protects is a desktop rule; on a phone the sidebar is a drawer and there is no
+              shared line to hold. */}
+          <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:h-8 sm:flex-nowrap">
             <div className="flex min-w-0 items-center gap-2.5">
               <Icon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
               <h1 className="truncate text-lg font-semibold tracking-tight text-[var(--fg)]">{title}</h1>

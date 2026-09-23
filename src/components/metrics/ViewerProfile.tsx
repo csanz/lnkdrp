@@ -585,7 +585,10 @@ export default function ViewerProfile({
           {name ? name.trim()[0]?.toUpperCase() : <UserIcon className="h-8 w-8 text-[var(--muted)]" aria-hidden="true" />}
         </div>
         <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-3">
+          {/* `flex-wrap`: the live chip below carries the document title, which is unbounded, and
+              on a phone that pushed the whole identity row past the card. Wrapping gives the chip
+              its own line rather than stealing width from the reader's name. */}
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
             <span className="truncate text-3xl font-semibold tracking-tight text-[var(--fg)]">{title}</span>
             <DepthBadge
               timeMs={timeMs}
@@ -601,13 +604,15 @@ export default function ViewerProfile({
                 worse than a still page. */}
             {readingNow ? (
               <span
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:border-emerald-300/40 dark:text-emerald-300"
+                className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:border-emerald-300/40 dark:text-emerald-300"
                 title="A page turn or heartbeat arrived from this reader in the last minute"
               >
-                <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse dark:bg-emerald-400" />
-                {live
-                  ? `On page ${live.page}${live.of ? ` of ${live.of}` : ""}${live.docTitle ? ` · ${live.docTitle}` : ""}`
-                  : "Reading now"}
+                <span aria-hidden="true" className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 motion-safe:animate-pulse dark:bg-emerald-400" />
+                <span className="truncate">
+                  {live
+                    ? `On page ${live.page}${live.of ? ` of ${live.of}` : ""}${live.docTitle ? ` · ${live.docTitle}` : ""}`
+                    : "Reading now"}
+                </span>
               </span>
             ) : connected ? (
               <span
