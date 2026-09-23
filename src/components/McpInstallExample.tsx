@@ -17,17 +17,22 @@ const CLIENTS = CLIENT_SETUPS.map((c) => ({ key: c.key, label: c.label, lines: c
 const EXCHANGE: Array<{ who: "you" | "agent"; text: string }> = [
   {
     who: "you",
-    // Non-breaking space keeps the proper noun "Google Doc" on one line when text-balance wraps on phones.
-    text: "Create a share link for the Google\u00A0Doc we’re working in and use it in every email from now on.",
+    // Non-breaking spaces keep the proper nouns on one line when text-balance wraps on phones.
+    text: "Create a link to the Series\u00A0A memo for Priya at Larkspur, allow downloads, and expire it in a week. Then send it to her in Superhuman with the new-investor template.",
   },
   {
     who: "agent",
-    text: "Done. Your link is lnkdrp.com/s/8Kq2Vt7Lm9Xa. It opens “Series A Memo” with a summary and key points for the reader, and I’ll use it in every outgoing email from now on.",
+    text: "Done. Priya’s link is lnkdrp.com/s/8Kq2Vt7Lm9Xa, downloads on, expires next Wednesday. Sent from Superhuman with the new-investor template, and the link stays hers if you write to her again.",
   },
-  { who: "you", text: "Who opened it this week?" },
+  { who: "you", text: "Has she opened it?" },
   {
     who: "agent",
-    text: "Four people opened it, for eleven views in total. Most of their time went to pages 2 and 7, and no one has downloaded it yet.",
+    text: "Twice, last night and again this morning, eleven minutes in total. Most of it went to pages 2 and 7, she downloaded it on the second visit, and a summary is in your inbox.",
+  },
+  {
+    who: "agent",
+    // A second turn from the agent, unprompted: the workspace changed under the link and it noticed.
+    text: "By the way, Daniel updated the memo an hour ago. Want to see what changed?",
   },
 ];
 
@@ -48,7 +53,7 @@ export default function McpInstallExample() {
   };
 
   return (
-    <section aria-label="Connect your AI agent" className="mt-12 w-full max-w-xl md:mt-20">
+    <section aria-label="Connect your AI agent" className="mt-12 w-full max-w-xl md:mt-20 md:max-w-none">
       {/* Below sm the note takes its own row directly under the h2 (left-set, like the lede);
           from sm up it shares the h2's row and right-aligns. */}
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -123,7 +128,8 @@ export default function McpInstallExample() {
         {EXCHANGE.map((line, i) => (
           <div key={i} className="grid grid-cols-1 gap-y-1.5 sm:grid-cols-[3.25rem_1fr] sm:gap-x-3 sm:gap-y-0">
             <dt className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/45 sm:pt-[3px]">
-              {line.who === "you" ? "You" : "Agent"}
+              {/* A speaker who goes on talking is not re-announced; the gutter keeps the column. */}
+              {i > 0 && EXCHANGE[i - 1].who === line.who ? <span className="sr-only">{line.who === "you" ? "You" : "Agent"}</span> : line.who === "you" ? "You" : "Agent"}
             </dt>
             <dd
               className={

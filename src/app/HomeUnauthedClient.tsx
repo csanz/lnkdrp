@@ -169,7 +169,11 @@ export default function HomeUnauthedClient({
     <main className="relative min-h-[100svh] w-full overflow-x-hidden bg-[#050506] text-white">
       {/* Full-bleed animation background (visual only), framed to the first viewport so the
           plane sits beside the headline regardless of page length. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 hidden h-[100svh] md:block">
+      {/* The frame is masked as well as faded. On the owner's machine the canvas rendered a few
+          levels lighter than #050506 across its whole width (not reproduced under software GL),
+          and the gradient painted on top still left a visible step at the fold. A mask fades the
+          frame's own pixels to nothing, so the fold cannot show as a line whatever the canvas paints. */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 hidden h-[100svh] [mask-image:linear-gradient(to_bottom,#000_62%,transparent_100%)] md:block">
         <iframe
           title="Paperplane animation"
           src="/paperplane/index.html"
@@ -179,7 +183,7 @@ export default function HomeUnauthedClient({
         />
         {/* Soft horizon: fade the globe out before the frame ends instead of a hard clip. Sized to
             the frame so an 800-tall fold keeps as much of the rim as a 1080-tall one. */}
-        <div className="absolute inset-x-0 bottom-0 h-[14svh] bg-gradient-to-t from-[#050506] to-transparent" />
+        <div className="absolute inset-x-0 bottom-0 h-[24svh] bg-gradient-to-t from-[#050506] to-transparent" />
       </div>
 
       {/* Soft lighting on top of the animation. The first two pools are anchored in svh so the
@@ -211,14 +215,16 @@ export default function HomeUnauthedClient({
         <PublicHeader />
 
         <section className="mx-auto w-full max-w-6xl px-8 pb-24 pt-12 sm:px-10 md:pt-16 lg:px-12">
-          <div className="w-full md:w-[min(560px,54%)]">
+          {/* Wide enough that the headline sets in two lines and the agent exchange below it in two-line
+              turns; the globe and plane keep the right ~38%. */}
+          <div className="w-full md:w-[min(660px,62%)]">
             <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">MCP · API</p>
             <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[56px] lg:text-[64px]">
               {/* Non-breaking space: never leave "agents" alone on the last line. */}
               Trackable share links, built for AI&nbsp;agents
             </h1>
 
-            <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
+            <p className="mt-6 max-w-xl text-sm leading-6 text-white/60 sm:text-base">
               Generate share links from your favorite AI agent through our MCP interface, then track clicks and
               usage through your agent or our dashboard. Every link opens with an AI summary and key points, so
               recipients (and their own agents) know what they&apos;re getting before they commit time.
