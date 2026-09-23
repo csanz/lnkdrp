@@ -20,7 +20,7 @@
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { VisitBriefModel, type VisitBrief, type VisitBriefRecapReason } from "@/lib/models/VisitBrief";
+import { VisitBriefModel, type VisitBrief, type VisitBriefRecapReason, type VisitBriefStatus } from "@/lib/models/VisitBrief";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareLinkModel } from "@/lib/models/ShareLink";
@@ -39,7 +39,7 @@ import { isDailyCapError, isOutOfCreditsError } from "@/lib/credits/errors";
 import { enqueueNotifications, notificationDedupeKey } from "@/lib/notifications/queue";
 import { sendNotificationEmails, type SendNotificationEmailsResult } from "@/lib/notifications/sendNotificationEmails";
 import { viewerKeyMatchClause } from "@/lib/share/projectPublic";
-import { dueAtFor } from "@/lib/visits/scheduleVisitBrief";
+import { dueAtFor, VISIT_QUIET_MS as VISIT_QUIET_MS_LOCAL } from "@/lib/visits/scheduleVisitBrief";
 import { generateVisitBrief, type VisitBriefDocument, type VisitBriefRecord } from "@/lib/ai/visitBrief";
 import { getPageOutline } from "@/lib/visits/pageOutline";
 import { debugError } from "@/lib/debug";
@@ -141,6 +141,9 @@ type LeanVisit = {
   viewerEmailSnapshot?: string | null;
 };
 
+/**
+ *
+ */
 function mapEntries(m: Map<string, number> | Record<string, number> | undefined | null): Array<[number, number]> {
   if (!m) return [];
   const entries = m instanceof Map ? Array.from(m.entries()) : Object.entries(m);
@@ -171,6 +174,40 @@ export function utcDayKeysBetween(from: Date, to: Date): string[] {
 export type SittingStats = NonNullable<VisitBrief["stats"]>;
 
 /**
+ * A reader's downloads of one document on this link: the instants when the row has them, and the
+ * per-day counts every row has.
+ *
+ * The instants (`ShareView.downloadedAt`) are what attribute a download to a *sitting*. The by-day
+ * map is the fallback for rows written before they were recorded, and it is the reason two
+ * same-day sittings both used to say "then downloaded the deck".
+ */
+export type ReaderDownloads = { byDay: ReadonlyArray<[string, number]>; at: ReadonlyArray<Date> };
+
+/**
+ * A download after the last page event still belongs to the sitting when it lands inside the quiet
+ * window: "read it, clicked download, closed the tab" writes the download after the final flush.
+ */
+export const DOWNLOAD_ATTRIBUTION_SLACK_MS = VISIT_QUIET_MS_LOCAL;
+
+/** Downloads by this reader of this document that belong to a sitting, given when it ran. */
+export function downloadsDuringSitting(
+  downloads: ReaderDownloads | ReadonlyArray<[string, number]> | undefined,
+  window: { startedAt: Date; endedAt: Date },
+): number {
+  if (!downloads) return 0;
+  const isRecord = (d: ReaderDownloads | ReadonlyArray<[string, number]>): d is ReaderDownloads => !Array.isArray(d);
+  const byDay: ReadonlyArray<[string, number]> = isRecord(downloads) ? downloads.byDay : downloads;
+  const at: ReadonlyArray<Date> = isRecord(downloads) ? downloads.at : [];
+  if (at.length) {
+    const from = window.startedAt.getTime();
+    const to = window.endedAt.getTime() + DOWNLOAD_ATTRIBUTION_SLACK_MS;
+    return at.filter((d) => d instanceof Date && d.getTime() >= from && d.getTime() <= to).length;
+  }
+  const dayKeys = new Set(utcDayKeysBetween(window.startedAt, window.endedAt));
+  return byDay.filter(([day]) => dayKeys.has(day)).reduce((n, [, c]) => n + c, 0);
+}
+
+/**
  * Freeze the sitting into the snapshot the brief and the email read.
  *
  * Pure over the rows it is given, so a test can hand it visits and views without a database.
@@ -180,19 +217,17 @@ export function buildSittingStats(params: {
   titles: ReadonlyMap<string, string>;
   /** The document's own page count, for visits whose viewer never reported one. */
   pageCounts?: ReadonlyMap<string, number>;
-  /** `downloadsByDay` of this reader's `ShareView` rows, one map per document. */
-  downloadsByDoc: ReadonlyMap<string, Array<[string, number]>>;
+  /** This reader's downloads per document (`ShareView.downloadedAt` and `downloadsByDay`); a bare by-day list still works. */
+  downloadsByDoc: ReadonlyMap<string, ReaderDownloads | Array<[string, number]>>;
   /** Earlier sittings by the same reader on this link, newest first, already grouped by visit. */
   previousSittings: readonly { startedAt: Date; timeSpentMs: number; pageTimeMs: Array<[number, number]> }[];
 }): SittingStats {
   const startedAt = params.visits.reduce((min, v) => (v.startedAt < min ? v.startedAt : min), params.visits[0]!.startedAt);
   const endedAt = params.visits.reduce((max, v) => (v.lastEventAt > max ? v.lastEventAt : max), params.visits[0]!.lastEventAt);
-  const dayKeys = new Set(utcDayKeysBetween(startedAt, endedAt));
 
   const docs = params.visits.map((v) => {
     const docId = String(v.docId);
-    const byDay = params.downloadsByDoc.get(docId) ?? [];
-    const downloads = byDay.filter(([day]) => dayKeys.has(day)).reduce((n, [, c]) => n + c, 0);
+    const downloads = downloadsDuringSitting(params.downloadsByDoc.get(docId), { startedAt, endedAt });
     const events = (v.pageEvents ?? []).slice(-MAX_STORED_PAGE_EVENTS);
     return {
       docId: new Types.ObjectId(docId),
@@ -268,15 +303,21 @@ async function loadPreviousSittings(params: { shareId: string; botIdHash: string
   return Array.from(byVisit.values()).sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
 }
 
-async function loadDownloadsByDoc(shareId: string, botIdHash: string): Promise<Map<string, Array<[string, number]>>> {
+/**
+ *
+ */
+async function loadDownloadsByDoc(shareId: string, botIdHash: string): Promise<Map<string, ReaderDownloads>> {
   const rows = (await ShareViewModel.find({ shareId, $or: viewerKeyMatchClause(botIdHash) })
-    .select({ docId: 1, downloadsByDay: 1 })
-    .lean()) as unknown as Array<{ docId: unknown; downloadsByDay?: Map<string, number> | Record<string, number> }>;
-  const out = new Map<string, Array<[string, number]>>();
+    .select({ docId: 1, downloadsByDay: 1, downloadedAt: 1 })
+    .lean()) as unknown as Array<{ docId: unknown; downloadsByDay?: Map<string, number> | Record<string, number>; downloadedAt?: unknown[] }>;
+  const out = new Map<string, ReaderDownloads>();
   for (const r of rows) {
     const m = r.downloadsByDay;
     const entries = !m ? [] : m instanceof Map ? Array.from(m.entries()) : Object.entries(m);
-    out.set(String(r.docId), entries.map(([k, v]): [string, number] => [String(k), Number(v) || 0]));
+    out.set(String(r.docId), {
+      byDay: entries.map(([k, v]): [string, number] => [String(k), Number(v) || 0]),
+      at: (Array.isArray(r.downloadedAt) ? r.downloadedAt : []).map((d) => (d instanceof Date ? d : new Date(String(d)))).filter((d) => Number.isFinite(d.getTime())),
+    });
   }
   return out;
 }
@@ -287,6 +328,9 @@ async function loadDownloadsByDoc(shareId: string, botIdHash: string): Promise<M
 
 type LinkInfo = { label: string | null; audience: string | null; isDefault: boolean; kind: "document" | "project"; projectId: string | null; docId: string | null };
 
+/**
+ *
+ */
 async function loadLink(shareId: string): Promise<LinkInfo | null> {
   const link = (await ShareLinkModel.findOne({ shareId }).select({ label: 1, audience: 1, isDefault: 1, docId: 1, projectId: 1 }).lean()) as
     | { label?: string; audience?: string | null; isDefault?: boolean; docId?: unknown; projectId?: unknown }
@@ -307,6 +351,9 @@ function seconds(ms: number): number {
   return Math.round(Math.max(0, ms) / 1000);
 }
 
+/**
+ *
+ */
 export function buildVisitBriefRecord(params: {
   row: Pick<VisitBrief, "startedAt" | "lastEventAt" | "viewerName" | "viewerEmail" | "viewerUserId">;
   stats: SittingStats;
@@ -416,10 +463,16 @@ async function resolveBillingUserId(orgId: Types.ObjectId): Promise<string | nul
   return org?.createdByUserId ? String(org.createdByUserId) : null;
 }
 
+/**
+ *
+ */
 function startOfUtcDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
+/**
+ *
+ */
 async function briefsWrittenToday(orgId: Types.ObjectId, now: Date): Promise<number> {
   return VisitBriefModel.countDocuments({ orgId, status: "briefed", closedAt: { $gte: startOfUtcDay(now) } });
 }
@@ -448,6 +501,9 @@ async function noteCreditsExhaustedOnce(params: { orgId: Types.ObjectId; docId: 
 
 type ClaimedRow = VisitBrief & { _id: Types.ObjectId };
 
+/**
+ *
+ */
 async function finish(row: ClaimedRow, set: Record<string, unknown>): Promise<void> {
   await VisitBriefModel.updateOne({ _id: row._id, claimToken: row.claimToken }, { $set: { ...set, claimedAt: null, claimToken: null } });
 }
@@ -526,10 +582,7 @@ export async function settleVisitBrief(row: ClaimedRow, params: { now: Date; dry
   }
 
   const link = await loadLink(row.shareId);
-  const firstDoc = stats.docs[0]!;
-  const title = stats.docs.length === 1 ? (firstDoc.title ?? null) : null;
-  const projectId = row.projectId ? String(row.projectId) : null;
-  const docId = row.docId ? String(row.docId) : stats.docs.length === 1 ? String(firstDoc.docId) : null;
+  const { title, docId, projectId } = describeSitting(row, stats);
 
   /** The recap exits: the visit is written up in facts, the email goes, no credit moves. */
   const recap = async (reason: VisitBriefRecapReason): Promise<SettleResult> => {
@@ -559,27 +612,99 @@ export async function settleVisitBrief(row: ClaimedRow, params: { now: Date; dry
   // ---- Reserve, generate, charge ------------------------------------------------------------
   const billingUserId = await resolveBillingUserId(row.orgId);
   if (!billingUserId) return recap("out_of_credits");
+  const written = await generateAndStoreBrief({
+    row,
+    stats,
+    link,
+    title,
+    docId,
+    projectId,
+    billingUserId,
+    // Per row and per attempt: a refunded reservation must not be handed back on the retry.
+    idempotencyKey: `brief:${String(row._id)}:${row.attempts}`,
+    base,
+    now,
+  });
+  if (written.ok) return { outcome: "briefed", creditsCharged: written.creditsCharged };
+  if (written.kind === "daily_cap") {
+    await noteCreditsExhaustedOnce({ orgId: row.orgId, docId, projectId, title, now, code: "daily_cap" });
+    return recap("daily_cap");
+  }
+  if (written.kind === "out_of_credits") {
+    await noteCreditsExhaustedOnce({ orgId: row.orgId, docId, projectId, title, now, code: "out_of_credits" });
+    return recap("out_of_credits");
+  }
+  const attempts = (row.attempts ?? 0) + 1;
+  const message = written.kind === "model_failed" ? written.message : "";
+  if (attempts >= MAX_ATTEMPTS) {
+    await finish(row, { ...base, status: "failed", recapReason: "model_failed", attempts, lastError: message.slice(0, 500) });
+    await announceAndEnqueue({ row, stats, link, title, docId, projectId, headline: null, reason: "model_failed", now });
+    return { outcome: "failed", reason: "model_failed", creditsCharged: 0 };
+  }
+  const backoff = RETRY_BACKOFF_MS[Math.min(attempts - 1, RETRY_BACKOFF_MS.length - 1)]!;
+  await finish(row, { ...base, status: "scheduled", attempts, lastError: message.slice(0, 500), dueAt: new Date(now.getTime() + backoff) });
+  return { outcome: "retry", reason: "model_failed", creditsCharged: 0 };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Writing the brief: the cron and the "Write the brief" button share this
+// ---------------------------------------------------------------------------------------------
+
+type GenerateAndStoreResult =
+  | { ok: true; headline: string; creditsCharged: number }
+  | { ok: false; kind: "out_of_credits" | "daily_cap" }
+  | { ok: false; kind: "model_failed"; message: string };
+
+/** What the sitting is about, for the feed row, the ledger and the email: one document, or the room. */
+function describeSitting(row: Pick<VisitBrief, "docId" | "projectId">, stats: SittingStats): { title: string | null; docId: string | null; projectId: string | null } {
+  const firstDoc = stats.docs[0];
+  return {
+    title: stats.docs.length === 1 ? (firstDoc?.title ?? null) : null,
+    projectId: row.projectId ? String(row.projectId) : null,
+    docId: row.docId ? String(row.docId) : stats.docs.length === 1 && firstDoc ? String(firstDoc.docId) : null,
+  };
+}
+
+/**
+ * Reserve one credit, call the model, charge with usage, store the brief and announce it.
+ *
+ * The row must be claimed (`claimToken` set) so `finish` lands on the row this run holds. On a
+ * refused reservation nothing is written and the caller decides between recap and 402; on a model
+ * failure the reservation is refunded and the row is left for the caller to retry, fail or unclaim.
+ * `announce.email` is false for a manual write: the recap email for this visit already went, and
+ * the person who clicked is looking at the result.
+ */
+async function generateAndStoreBrief(params: {
+  row: ClaimedRow;
+  stats: SittingStats;
+  link: LinkInfo | null;
+  title: string | null;
+  docId: string | null;
+  projectId: string | null;
+  billingUserId: string;
+  idempotencyKey: string;
+  /** Fields every terminal write carries (the frozen facts, `closedAt`). */
+  base: Record<string, unknown>;
+  now: Date;
+  email?: boolean;
+}): Promise<GenerateAndStoreResult> {
+  const { row, stats, link, title, docId, projectId, now } = params;
   const credits = creditsForRun({ actionType: BRIEF_ACTION, qualityTier: BRIEF_TIER });
   let ledgerId: string | null = null;
   try {
     const reserved = await reserveCreditsOrThrow({
       workspaceId: String(row.orgId),
-      userId: billingUserId,
+      userId: params.billingUserId,
       docId,
       actionType: BRIEF_ACTION,
       qualityTier: BRIEF_TIER,
-      // Per row and per attempt: a refunded reservation must not be handed back on the retry.
-      idempotencyKey: `brief:${String(row._id)}:${row.attempts}`,
+      idempotencyKey: params.idempotencyKey,
     });
     ledgerId = reserved.ledgerId;
   } catch (err) {
-    if (isDailyCapError(err)) {
-      await noteCreditsExhaustedOnce({ orgId: row.orgId, docId, projectId, title, now, code: "daily_cap" });
-      return recap("daily_cap");
-    }
+    if (isDailyCapError(err)) return { ok: false, kind: "daily_cap" };
     if (isOutOfCreditsError(err) || /insufficient credits|limit exceeded|cap exceeded/i.test(err instanceof Error ? err.message : String(err))) {
-      await noteCreditsExhaustedOnce({ orgId: row.orgId, docId, projectId, title, now, code: "out_of_credits" });
-      return recap("out_of_credits");
+      return { ok: false, kind: "out_of_credits" };
     }
     throw err;
   }
@@ -591,7 +716,7 @@ export async function settleVisitBrief(row: ClaimedRow, params: { now: Date; dry
       if (outline) outlineByDoc.set(String(d.docId), outline);
     }
     const record = buildVisitBriefRecord({ row, stats, link, viewerAccountName: await loadAccountName(row.viewerUserId), outlineByDoc });
-    const result = await generateVisitBrief({ record, meta: { userId: billingUserId, docId, projectId } });
+    const result = await generateVisitBrief({ record, meta: { userId: params.billingUserId, docId, projectId } });
     result.output.headline = strongerHeadline({
       headline: result.output.headline,
       interests: result.output.interests,
@@ -601,7 +726,7 @@ export async function settleVisitBrief(row: ClaimedRow, params: { now: Date; dry
 
     await markLedgerCharged({ workspaceId: String(row.orgId), ledgerId, creditsCharged: credits, telemetry: result.telemetry });
     await finish(row, {
-      ...base,
+      ...params.base,
       status: "briefed",
       recapReason: null,
       brief: {
@@ -619,8 +744,8 @@ export async function settleVisitBrief(row: ClaimedRow, params: { now: Date; dry
       aiRunId: result.aiRunId && Types.ObjectId.isValid(result.aiRunId) ? new Types.ObjectId(result.aiRunId) : null,
       lastError: null,
     });
-    await announceAndEnqueue({ row, stats, link, title, docId, projectId, headline: result.output.headline, reason: null, now });
-    return { outcome: "briefed", creditsCharged: credits };
+    await announceAndEnqueue({ row, stats, link, title, docId, projectId, headline: result.output.headline, reason: null, now, email: params.email ?? true });
+    return { ok: true, headline: result.output.headline, creditsCharged: credits };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     try {
@@ -628,16 +753,193 @@ export async function settleVisitBrief(row: ClaimedRow, params: { now: Date; dry
     } catch (refundErr) {
       debugError(1, "[visit-briefs] refund failed", { ledgerId, message: refundErr instanceof Error ? refundErr.message : String(refundErr) });
     }
-    const attempts = (row.attempts ?? 0) + 1;
-    if (attempts >= MAX_ATTEMPTS) {
-      await finish(row, { ...base, status: "failed", recapReason: "model_failed", attempts, lastError: message.slice(0, 500) });
-      await announceAndEnqueue({ row, stats, link, title, docId, projectId, headline: null, reason: "model_failed", now });
-      return { outcome: "failed", reason: "model_failed", creditsCharged: 0 };
-    }
-    const backoff = RETRY_BACKOFF_MS[Math.min(attempts - 1, RETRY_BACKOFF_MS.length - 1)]!;
-    await finish(row, { ...base, status: "scheduled", attempts, lastError: message.slice(0, 500), dueAt: new Date(now.getTime() + backoff) });
-    return { outcome: "retry", reason: "model_failed", creditsCharged: 0 };
+    return { ok: false, kind: "model_failed", message };
   }
+}
+
+export type WriteVisitBriefNowResult =
+  /** Written; `card` is what the reader page shows. */
+  | { status: "briefed"; card: VisitBriefCard; creditsCharged: number }
+  /** No such row in this workspace. */
+  | { status: "not_found" }
+  /** Not a recap or a failed visit: already briefed, still open, skipped, or being written right now. */
+  | { status: "conflict"; current: VisitBriefStatus }
+  /** Free workspace: briefs are a Pro feature (decision 8). */
+  | { status: "plan" }
+  | { status: "out_of_credits" }
+  | { status: "daily_cap" }
+  | { status: "model_failed" };
+
+/**
+ * The "Write the brief" button: a member asks for the brief a recap or failed visit never got.
+ *
+ * Same reserve/generate/charge/store as the cron, billed to the member who clicked, and past the
+ * automatic-briefs and per-day gates on purpose - those exist so credits are not spent without a
+ * click, and this is the click. The credit gates still apply (402s). The row is claimed first, so a
+ * double click or a concurrent cron cannot write it twice; a model failure hands the row back to
+ * its previous state with `lastError` set, so the button stays.
+ */
+export async function writeVisitBriefNow(params: { visitBriefId: string; orgId: string; userId: string; now?: Date }): Promise<WriteVisitBriefNowResult> {
+  const now = params.now ?? new Date();
+  if (!Types.ObjectId.isValid(params.visitBriefId) || !Types.ObjectId.isValid(params.orgId)) return { status: "not_found" };
+  await connectMongo();
+  const orgId = new Types.ObjectId(params.orgId);
+  const existing = (await VisitBriefModel.findOne({ _id: new Types.ObjectId(params.visitBriefId), orgId }).lean()) as ClaimedRow | null;
+  if (!existing) return { status: "not_found" };
+  if (existing.status !== "recap" && existing.status !== "failed") return { status: "conflict", current: existing.status };
+  if (!existing.stats) return { status: "conflict", current: existing.status };
+
+  if ((await getWorkspacePlan(orgId)) !== "pro") return { status: "plan" };
+
+  const claimToken = `manual:${String(params.userId)}:${now.getTime()}`;
+  const claimed = (await VisitBriefModel.findOneAndUpdate(
+    { _id: existing._id, status: existing.status, claimToken: null },
+    { $set: { status: "generating", claimedAt: now, claimToken } },
+    { new: true },
+  ).lean()) as ClaimedRow | null;
+  if (!claimed) return { status: "conflict", current: "generating" };
+
+  const stats = claimed.stats as SittingStats;
+  const link = await loadLink(claimed.shareId);
+  const { title, docId, projectId } = describeSitting(claimed, stats);
+  const attempts = (claimed.attempts ?? 0) + 1;
+  const written = await generateAndStoreBrief({
+    row: claimed,
+    stats,
+    link,
+    title,
+    docId,
+    projectId,
+    billingUserId: params.userId,
+    idempotencyKey: `brief:${String(claimed._id)}:manual:${attempts}`,
+    // The facts were frozen when the visit closed; only the attempt count moves.
+    base: { attempts },
+    now,
+    email: false,
+  });
+  if (written.ok) {
+    const fresh = (await VisitBriefModel.findById(claimed._id).lean()) as ClaimedRow | null;
+    return { status: "briefed", card: visitBriefCard(fresh ?? claimed), creditsCharged: written.creditsCharged };
+  }
+  // Hand the row back as it was, so the button is still there.
+  await finish(claimed, {
+    status: existing.status,
+    attempts,
+    ...(written.kind === "model_failed" ? { lastError: written.message.slice(0, 500) } : {}),
+  });
+  return { status: written.kind };
+}
+
+// ---------------------------------------------------------------------------------------------
+// The card: what the reader page and the MCP show for one sitting
+// ---------------------------------------------------------------------------------------------
+
+export type VisitBriefCard = {
+  id: string;
+  status: Extract<VisitBriefStatus, "briefed" | "recap" | "failed">;
+  recapReason: VisitBriefRecapReason | null;
+  shareId: string;
+  docId: string | null;
+  projectId: string | null;
+  viewerKey: string;
+  viewerUserId: string | null;
+  viewerName: string | null;
+  viewerEmail: string | null;
+  startedAt: string;
+  endedAt: string;
+  closedAt: string | null;
+  timeSpentMs: number;
+  pagesSeen: number;
+  pageCount: number | null;
+  downloads: number;
+  visitNumber: number;
+  docs: Array<{ docId: string; title: string | null; timeSpentMs: number; pagesSeen: number[]; pageCount: number | null; downloads: number }>;
+  brief: { headline: string; body: string; interests: string[]; highlights: string[]; followUp: string | null } | null;
+  /** A recap or a failed visit can be written on demand for one credit. */
+  canWrite: boolean;
+};
+
+/** The statuses a card exists for: a visit that closed with something to say. Skipped visits have nothing. */
+export const VISIT_BRIEF_CARD_STATUSES = ["briefed", "recap", "failed"] as const;
+
+/**
+ *
+ */
+export function visitBriefCard(row: VisitBrief & { _id: Types.ObjectId }): VisitBriefCard {
+  const stats = row.stats;
+  const status = (row.status === "briefed" || row.status === "recap" || row.status === "failed" ? row.status : "recap") as VisitBriefCard["status"];
+  return {
+    id: String(row._id),
+    status,
+    recapReason: row.recapReason ?? null,
+    shareId: row.shareId,
+    docId: row.docId ? String(row.docId) : null,
+    projectId: row.projectId ? String(row.projectId) : null,
+    viewerKey: row.botIdHash,
+    viewerUserId: row.viewerUserId ? String(row.viewerUserId) : null,
+    viewerName: row.viewerName ?? null,
+    viewerEmail: row.viewerEmail ?? null,
+    startedAt: row.startedAt.toISOString(),
+    endedAt: row.lastEventAt.toISOString(),
+    closedAt: row.closedAt ? row.closedAt.toISOString() : null,
+    timeSpentMs: stats?.timeSpentMs ?? 0,
+    pagesSeen: stats?.pagesSeen ?? 0,
+    pageCount: stats?.pageCount ?? null,
+    downloads: stats?.downloads ?? 0,
+    visitNumber: stats?.visitNumber ?? 1,
+    docs: (stats?.docs ?? []).map((d) => ({
+      docId: String(d.docId),
+      title: d.title ?? null,
+      timeSpentMs: d.timeSpentMs ?? 0,
+      pagesSeen: Array.isArray(d.pagesSeen) ? [...d.pagesSeen] : [],
+      pageCount: d.pageCount ?? null,
+      downloads: d.downloads ?? 0,
+    })),
+    brief:
+      status === "briefed" && row.brief
+        ? {
+            headline: row.brief.headline,
+            body: row.brief.body,
+            interests: [...(row.brief.interests ?? [])],
+            highlights: [...(row.brief.highlights ?? [])],
+            followUp: row.brief.followUp ?? null,
+          }
+        : null,
+    canWrite: status !== "briefed",
+  };
+}
+
+export type ListVisitBriefsParams = {
+  orgId: Types.ObjectId;
+  /** Document-link sittings of this document, or ... */
+  docId?: Types.ObjectId | null;
+  /** ... project-link sittings of this room. Exactly one of the two. */
+  projectId?: Types.ObjectId | null;
+  /** One link only. */
+  shareId?: string | null;
+  /** One reader: the bare device digest, or the account. */
+  botIdHash?: string | null;
+  viewerUserId?: Types.ObjectId | null;
+  limit?: number;
+};
+
+/** Finished sittings, newest first, for the reader page (one person) or the MCP (the document). */
+export async function listVisitBriefs(params: ListVisitBriefsParams): Promise<VisitBriefCard[]> {
+  await connectMongo();
+  const query: Record<string, unknown> = {
+    orgId: params.orgId,
+    status: { $in: [...VISIT_BRIEF_CARD_STATUSES] },
+    ...(params.docId ? { docId: params.docId } : {}),
+    ...(params.projectId ? { projectId: params.projectId } : {}),
+    ...(params.shareId ? { shareId: params.shareId } : {}),
+    ...(params.viewerUserId ? { viewerUserId: params.viewerUserId } : params.botIdHash ? { botIdHash: params.botIdHash } : {}),
+  };
+  if (!params.docId && !params.projectId) throw new Error("listVisitBriefs: docId or projectId is required");
+  const rows = (await VisitBriefModel.find(query)
+    .sort({ startedAt: -1 })
+    .limit(Math.min(200, Math.max(1, Math.floor(params.limit ?? 50))))
+    .lean()) as Array<VisitBrief & { _id: Types.ObjectId }>;
+  return rows.map(visitBriefCard);
 }
 
 /**
@@ -707,6 +1009,8 @@ async function announceAndEnqueue(params: {
   headline: string | null;
   reason: VisitBriefRecapReason | null;
   now: Date;
+  /** False for a manual write: the visit's email already went. */
+  email?: boolean;
 }): Promise<void> {
   const { row } = params;
   let projectName: string | null = null;
@@ -734,6 +1038,7 @@ async function announceAndEnqueue(params: {
         visitBriefId: String(row._id),
         headline: params.headline,
         recapReason: params.reason,
+        ...(params.email === false ? { source: "manual" } : null),
         duration: shortDuration(params.stats.timeSpentMs),
         visitNumber: params.stats.visitNumber,
         ...(params.projectId ? { projectId: params.projectId, projectName } : null),
@@ -743,6 +1048,7 @@ async function announceAndEnqueue(params: {
     // best-effort, like every feed row
   }
 
+  if (params.email === false) return;
   const members = (await OrgMembershipModel.find({ orgId: row.orgId, isDeleted: { $ne: true } }).select({ userId: 1 }).lean()) as Array<{ userId?: unknown }>;
   const event = {
     docId: params.docId,
@@ -802,6 +1108,9 @@ export type RunVisitBriefsResult = {
   emails: SendNotificationEmailsResult | null;
 };
 
+/**
+ *
+ */
 export async function runVisitBriefs(params: RunVisitBriefsParams = {}): Promise<RunVisitBriefsResult> {
   const now = params.now ?? new Date();
   const dryRun = Boolean(params.dryRun);

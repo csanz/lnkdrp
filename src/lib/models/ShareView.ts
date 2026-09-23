@@ -1,5 +1,8 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 
+/** How many download instants a (link, viewer) row keeps; the by-day map keeps the count. */
+export const DOWNLOAD_INSTANTS_KEPT = 50;
+
 /**
  * Per-viewer record for a shared doc, keyed by (shareId, botIdHash).
  * Used to dedupe "views" and to count distinct pages viewed.
@@ -80,6 +83,15 @@ const shareViewSchema = new Schema(
      * Example: { "2025-12-24": 2 }
      */
     downloadsByDay: { type: Map, of: Number, default: {} },
+    /**
+     * When each download happened, newest last, capped at `DOWNLOAD_INSTANTS_KEPT`.
+     *
+     * `downloadsByDay` answers the chart; it cannot answer "did they download it during *this*
+     * sitting?", and the visit brief (`src/lib/visits/visitBriefs.ts`) used to attribute a day's
+     * downloads to every sitting that day - two morning reads, both "then downloaded the deck".
+     * The instants let a sitting count the downloads inside its own window.
+     */
+    downloadedAt: { type: [Date], default: [] },
     /**
      * Viewer identity (best-effort):
      * - viewerUserId: present for registered (signed-in) viewers

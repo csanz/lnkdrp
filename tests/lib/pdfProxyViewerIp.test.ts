@@ -51,6 +51,8 @@ vi.mock("@/lib/http/rateLimit", async (importOriginal) => {
   return { ...actual, rateLimit: (...a: unknown[]) => (rateLimit as never as (...x: unknown[]) => unknown)(...a) };
 });
 vi.mock("@/lib/models/ShareView", () => ({
+  // The routes cap the download instants they push; a mocked module without it throws on access.
+  DOWNLOAD_INSTANTS_KEPT: 50,
   ShareViewModel: {
     updateOne: (...a: unknown[]) => (shareViewUpdateOne as never as (...x: unknown[]) => unknown)(...a),
     findOne: () => ({ select: () => ({ lean: () => Promise.resolve(null) }) }),

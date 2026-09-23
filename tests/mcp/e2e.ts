@@ -51,9 +51,14 @@ import { UploadModel } from "@/lib/models/Upload";
 // ---------------------------------------------------------------------------------------------
 
 const MCP_URL = process.env.MCP_URL ?? "http://localhost:8787/mcp";
-/** Local dev workspace (org + the member who owns the key). Override with E2E_ORG_ID / E2E_USER_ID. */
-const ORG_ID = process.env.E2E_ORG_ID ?? "6aa4a3a4b0b9b3a1a769660a";
-const USER_ID = process.env.E2E_USER_ID ?? "6aa4a3a455068178c0fdb804";
+/**
+ * Local dev workspace (org + the member who owns the key). Override with E2E_ORG_ID / E2E_USER_ID.
+ *
+ * The "Personal" workspace of the dev account (Pro). The previous default pointed at a workspace
+ * its owner had since left, so `initialize` answered `owner_removed` on every run with no override.
+ */
+const ORG_ID = process.env.E2E_ORG_ID ?? "6ab2d81f33802709c6aaa173";
+const USER_ID = process.env.E2E_USER_ID ?? "6ab2d81f55068178c044f084";
 const PDF_URL = process.env.E2E_PDF_URL ?? "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
 const TIMEOUT_SECONDS = clamp(Number(process.env.E2E_TIMEOUT_SECONDS ?? 90), 5, 120);
 /** MCP client identity sent at `initialize`; the server records it as the activity agent. Override
@@ -631,6 +636,31 @@ async function main(): Promise<void> {
       assert(typeof st.analyticsTier === "string", "stats.analyticsTier missing");
       assert(!("viewers" in st) || Array.isArray(st.viewers), "stats.viewers present but not an array");
       info("stats", `days=${st.days} tier=${st.analyticsTier} views=${st.totals.views} downloads=${st.totals.downloads} viewerCount=${st.viewerCount} series=${st.series.length}`);
+    });
+
+    // 9b. The stored visit briefs, on request. A document shared seconds ago has no finished
+    // sittings, so the assertion is about the shape and the tier rule: an array on Pro (possibly
+    // empty), and the key absent — never `[]` — on Free, so an agent can tell the two apart.
+    await step("lnkdrp_get_share_stats { docId, includeVisits } returns recentVisits on the deep tier only", async () => {
+      const st = await callTool<ShareStatsResult & { recentVisits?: unknown }>(live, "lnkdrp_get_share_stats", {
+        docId: shared.docId,
+        includeVisits: true,
+        visitsLimit: 5,
+      });
+      if (st.analyticsTier === "deep") {
+        assert(Array.isArray(st.recentVisits), "recentVisits missing on the deep tier with includeVisits");
+        for (const raw of st.recentVisits as unknown[]) {
+          const v = raw as Record<string, unknown>;
+          assert(typeof v.id === "string", "recentVisits[].id missing");
+          assert(v.status === "briefed" || v.status === "recap" || v.status === "failed", `recentVisits[].status unexpected: ${String(v.status)}`);
+          assert(typeof v.timeSpentMs === "number", "recentVisits[].timeSpentMs is not a number");
+          assert(v.brief === null || (typeof v.brief === "object" && v.brief !== null), "recentVisits[].brief is neither null nor an object");
+        }
+        info("recentVisits", `${(st.recentVisits as unknown[]).length} finished sittings on a document shared this run`);
+      } else {
+        assert(!("recentVisits" in st), "recentVisits must be absent on the basic tier, not an empty array");
+        info("recentVisits", "absent on the basic tier, as specified");
+      }
     });
 
     // 10. Idempotent replay: same key => same doc, nothing new created.

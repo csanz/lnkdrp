@@ -59,6 +59,8 @@ vi.mock("@/lib/models/Doc", () => ({
   },
 }));
 vi.mock("@/lib/models/ShareView", () => ({
+  // The routes cap the download instants they push; a mocked module without it throws on access.
+  DOWNLOAD_INSTANTS_KEPT: 50,
   ShareViewModel: { updateOne: (...a: any[]) => (shareViewUpdateOne as any)(...a) },
 }));
 vi.mock("@/lib/models/ShareDownloadRequest", () => ({

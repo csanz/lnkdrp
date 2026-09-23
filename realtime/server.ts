@@ -99,6 +99,9 @@ type Client = WebSocket & {
 /** orgId → sockets. */
 const rooms = new Map<string, Set<Client>>();
 
+/**
+ *
+ */
 function join(client: Client) {
   let room = rooms.get(client.orgId);
   if (!room) {
@@ -108,6 +111,9 @@ function join(client: Client) {
   room.add(client);
 }
 
+/**
+ *
+ */
 function leave(client: Client) {
   const room = rooms.get(client.orgId);
   if (!room) return;
@@ -126,6 +132,9 @@ function leave(client: Client) {
  */
 const MAX_BUFFERED_BYTES = 1 << 20;
 
+/**
+ *
+ */
 function broadcast(orgId: string, frame: Record<string, unknown>) {
   const room = rooms.get(orgId);
   if (!room || room.size === 0) return;
@@ -140,10 +149,125 @@ function broadcast(orgId: string, frame: Record<string, unknown>) {
   }
 }
 
+/**
+ *
+ */
 function log(...args: unknown[]) {
   console.log(new Date().toISOString(), "[realtime]", ...args);
 }
 
+/**
+ * The visit-brief accelerator (docs/prds/lnkdrp-visit-briefs.md, M4).
+ *
+ * A visit is briefed when its `VisitBrief` row falls due — two quiet minutes after the reader's
+ * last write — and the `visit-briefs` cron looks every five minutes, so a closed tab waits two to
+ * seven minutes for its email. This process already sees every one of those writes go by on the
+ * `shareviews` stream. So it keeps one timer per (workspace, link, reader), reset on each write,
+ * and when a reader has been quiet for the window plus a little slack it pokes the cron route for
+ * that workspace. The route does the deciding: it claims only rows that are due, postpones a
+ * reader who came back, and its lease makes an overlapping poke a no-op. This is purely a
+ * "look now" — nothing here knows whether a brief is owed, and the five-minute tick remains the
+ * backstop for every poke that is lost.
+ *
+ * Off unless it can reach the app: `REALTIME_APP_URL` (else the site-URL variables the emails use;
+ * else the local dev server outside production) and, in production, `CRON_SECRET`. Missing either
+ * is logged once at start and the feature stays quiet, so a realtime host that cannot reach the app
+ * never crash-loops over a nicety.
+ */
+const BRIEF_QUIET_MS = 2 * 60 * 1000; // = VISIT_QUIET_MS in src/lib/visits/scheduleVisitBrief.ts; pinned by tests/lib/visitBriefAccelerator.test.ts
+const BRIEF_POKE_SLACK_MS = 15_000;
+/** One poke per workspace per this long, however many readers went quiet together. */
+const BRIEF_POKE_MIN_GAP_MS = 20_000;
+const BRIEF_POKE_TIMEOUT_MS = 60_000;
+/** A ceiling on pending timers, so a client rotating device ids cannot grow this without bound. */
+const BRIEF_POKE_MAX_KEYS = 20_000;
+
+const briefPoker = (() => {
+  const isProduction = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production";
+  const appUrl = (
+    process.env.REALTIME_APP_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.NEXTAUTH_URL ||
+    (isProduction ? "" : "http://localhost:3001")
+  )
+    .trim()
+    .replace(/\/+$/, "");
+  const secret = (process.env.CRON_SECRET || process.env.LNKDRP_CRON_SECRET || "").trim();
+  const enabled = Boolean(appUrl) && (Boolean(secret) || !isProduction);
+  if (!enabled) log("visit-brief accelerator off:", appUrl ? "CRON_SECRET is not set" : "no app URL (REALTIME_APP_URL)");
+  else log("visit-brief accelerator on:", `${appUrl}/api/cron/visit-briefs`, secret ? "(with secret)" : "(dev, no secret)");
+
+  const timers = new Map<string, NodeJS.Timeout>();
+  const orgs = new Map<string, { lastPokeAt: number; inFlight: boolean; again: boolean; timer?: NodeJS.Timeout }>();
+
+  /**
+   *
+   */
+  async function poke(orgId: string): Promise<void> {
+    const state = orgs.get(orgId)!;
+    state.inFlight = true;
+    state.again = false;
+    state.lastPokeAt = Date.now();
+    try {
+      const url = `${appUrl}/api/cron/visit-briefs?workspaceId=${encodeURIComponent(orgId)}&limit=20`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: secret ? { authorization: `Bearer ${secret}` } : {},
+        signal: AbortSignal.timeout(BRIEF_POKE_TIMEOUT_MS),
+      });
+      const body = (await res.json().catch(() => null)) as { skipped?: unknown; claimed?: unknown; briefed?: unknown; recap?: unknown; postponed?: unknown } | null;
+      if (!res.ok) log("visit-brief poke failed", orgId, res.status);
+      // The lease answers `{ skipped: "locked" }`; a run answers with counts, one of them `skipped`.
+      else if (typeof body?.skipped === "string") log("visit-brief poke skipped", orgId, body.skipped);
+      else log("visit-brief poke", orgId, `claimed=${String(body?.claimed ?? "?")} briefed=${String(body?.briefed ?? "?")} recap=${String(body?.recap ?? "?")} postponed=${String(body?.postponed ?? "?")}`);
+    } catch (err) {
+      log("visit-brief poke error", orgId, err instanceof Error ? err.message : String(err));
+    } finally {
+      state.inFlight = false;
+      // Readers who went quiet while this poke ran: one more look, after the gap.
+      if (state.again) schedule(orgId, BRIEF_POKE_MIN_GAP_MS);
+    }
+  }
+
+  /** Poke this workspace once, no sooner than the gap since the last one. */
+  function schedule(orgId: string, delayMs = 0): void {
+    const state = orgs.get(orgId) ?? { lastPokeAt: 0, inFlight: false, again: false };
+    orgs.set(orgId, state);
+    if (state.inFlight) {
+      state.again = true;
+      return;
+    }
+    if (state.timer) return;
+    const wait = Math.max(delayMs, BRIEF_POKE_MIN_GAP_MS - (Date.now() - state.lastPokeAt), 0);
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      void poke(orgId);
+    }, wait);
+    state.timer.unref();
+  }
+
+  return {
+    /** A reader on a link just wrote: their brief, if one is owed, is due `BRIEF_QUIET_MS` from now. */
+    touch(orgId: string, sittingKey: string): void {
+      if (!enabled) return;
+      const key = `${orgId}:${sittingKey}`;
+      const existing = timers.get(key);
+      if (existing) clearTimeout(existing);
+      else if (timers.size >= BRIEF_POKE_MAX_KEYS) return; // full: the five-minute tick still has this one
+      const t = setTimeout(() => {
+        timers.delete(key);
+        schedule(orgId);
+      }, BRIEF_QUIET_MS + BRIEF_POKE_SLACK_MS);
+      t.unref();
+      timers.set(key, t);
+    },
+  };
+})();
+
+/**
+ *
+ */
 async function main() {
   await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 10_000 });
   const db = mongoose.connection.db;
@@ -642,6 +766,8 @@ async function main() {
         ? splitProjectViewerKey(doc.botIdHash).botIdHash
         : null;
     const viewerUserId = doc.viewerUserId ? String(doc.viewerUserId) : null;
+    // Their brief is owed two quiet minutes from this write; make sure something looks then.
+    briefPoker.touch(orgId, `${typeof doc.shareId === "string" ? doc.shareId : "?"}:${viewerUserId ?? viewerKey ?? "?"}`);
     progressThrottle.run(`${orgId}:${docId}:${viewerUserId ?? viewerKey}`, () =>
       broadcast(orgId, {
         type: "reading",

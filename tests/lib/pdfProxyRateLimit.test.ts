@@ -64,6 +64,8 @@ vi.mock("@/lib/http/rateLimit", async (importOriginal) => {
 });
 
 vi.mock("@/lib/models/ShareView", () => ({
+  // The routes cap the download instants they push; a mocked module without it throws on access.
+  DOWNLOAD_INSTANTS_KEPT: 50,
   ShareViewModel: {
     updateOne: (...a: unknown[]) => (shareViewUpdateOne as never as (...x: unknown[]) => unknown)(...a),
     // The activity feed's name lookup: `.select().lean().catch()`.

@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 881 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 890 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -68,6 +68,8 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/dashboard/page.tsx` — `/dashboard` · default
 - `src/app/doc/update/[code]/page.tsx` — `/doc/update/:code` · default, dynamic, runtime
 - `src/app/download/[token]/page.tsx` — `/download/:token` · default
+- `src/app/help/[slug]/page.tsx` — `/help/:slug` · default, dynamicParams, generateMetadata, generateStaticParams
+- `src/app/help/page.tsx` — `/help` · default, metadata
 - `src/app/layout.tsx` · default, metadata
 - `src/app/login/layout.tsx` · default
 - `src/app/login/page.tsx` — `/login` · default
@@ -198,6 +200,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/docs/[docId]/shareviews/route.ts` — `/api/docs/:docId/shareviews` · dynamic, GET, runtime
 - `src/app/api/docs/[docId]/shareviews/visits/[visitId]/route.ts` — `/api/docs/:docId/shareviews/visits/:visitId` · dynamic, GET, runtime
 - `src/app/api/docs/[docId]/shareviews/visits/route.ts` — `/api/docs/:docId/shareviews/visits` · dynamic, GET, runtime
+- `src/app/api/docs/[docId]/visit-briefs/route.ts` — `/api/docs/:docId/visit-briefs` · dynamic, GET, runtime
 - `src/app/api/docs/route.ts` — `/api/docs` · dynamic, GET, POST, runtime
 - `src/app/api/download/[token]/pdf/route.ts` — `/api/download/:token/pdf` · GET, runtime
 - `src/app/api/download/[token]/route.ts` — `/api/download/:token` · GET, runtime
@@ -230,6 +233,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/projects/[projectSlug]/shareviews/viewer-doc/route.ts` — `/api/projects/:projectSlug/shareviews/viewer-doc` · dynamic, GET, runtime
 - `src/app/api/projects/[projectSlug]/shareviews/visits/route.ts` — `/api/projects/:projectSlug/shareviews/visits` · dynamic, GET, runtime
 - `src/app/api/projects/[projectSlug]/suggested-docs/route.ts` — `/api/projects/:projectSlug/suggested-docs` · GET, runtime
+- `src/app/api/projects/[projectSlug]/visit-briefs/route.ts` — `/api/projects/:projectSlug/visit-briefs` · dynamic, GET, runtime
 - `src/app/api/projects/route.ts` — `/api/projects` · dynamic, GET, POST, runtime
 - `src/app/api/realtime/ticket/route.ts` — `/api/realtime/ticket` · dynamic, GET, runtime
 - `src/app/api/replace/[token]/uploads/route.ts` — `/api/replace/:token/uploads` · POST, runtime
@@ -268,6 +272,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/uploads/route.ts` — `/api/uploads` · GET, maxDuration, POST, runtime
 - `src/app/api/users/me/first-run/route.ts` — `/api/users/me/first-run` · POST, runtime
 - `src/app/api/users/me/name/route.ts` — `/api/users/me/name` · POST, runtime
+- `src/app/api/visits/[visitBriefId]/brief/route.ts` — `/api/visits/:visitBriefId/brief` · maxDuration, POST, runtime
 - `src/app/api/waitlist/accept/route.ts` — `/api/waitlist/accept` · dynamic, POST, runtime
 - `src/app/org/switch/route.ts` — `/org/switch` · GET, jsonForScript, runtime
 - `src/app/p/[shareId]/[docId]/pdf/route.ts` — `/p/:shareId/:docId/pdf` · GET, runtime
@@ -354,6 +359,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/s/[shareId]/loading.tsx` · default
 - `src/app/s/not-found.tsx` · default
 - `src/app/share/[shareId]/PasswordGate.tsx`
+- `src/app/sitemap.ts` · default
 - `src/app/waitlist/SignOutLink.tsx` · default
 - `src/app/welcome/WelcomeClient.tsx` · default
 
@@ -437,6 +443,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/doc/DocHeaderActions.tsx` · default, DocHeaderPage
 - `src/components/doc/DocIdentityRow.tsx` · default
 - `src/components/doc/DocReplaceFileButton.tsx` · default
+- `src/components/help/HelpMarkdown.tsx` · default
 - `src/components/history/PageCompareViewer.tsx` · default
 - `src/components/history/PageDiffStrip.tsx` · default, PageChange
 - `src/components/history/useDiffRegions.ts` · DiffState, useDiffRegions
@@ -451,6 +458,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/metrics/ReaderDocuments.tsx` · default, DocDetail, ReaderDoc
 - `src/components/metrics/RecentVisitors.tsx` · default, RecentVisitor
 - `src/components/metrics/ViewerProfile.tsx` · default, viewerRouteKey
+- `src/components/metrics/VisitBriefCards.tsx` · default, ReaderKey, recapReasonCopy, visitOrdinal
 - `src/components/modals/CreateLinkRequestRepositoryModal.tsx` · default
 - `src/components/modals/CreateProjectModal.tsx` · default
 - `src/components/modals/DeleteAccountModal.tsx` · default
@@ -678,6 +686,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/gating/tempUserClient.ts` · captureTempUserFromResponse, clearTempUser, fetchWithTempUser, getTempUser, setTempUser, TEMP_USER_STORAGE_KEY, tempUserHeaders, TempUserStored, …
 - `src/lib/gating/tempUserHeaders.ts` · TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER
 - `src/lib/gating/waitlist.ts` · accessStatusChanged, forbidWaitlisted, isWaitlistedActor, readAccessStatus
+- `src/lib/help/articles.ts` · getHelpArticle, HelpArticle, listHelpArticles
 - `src/lib/history/changedPages.ts` · attachPageContext, ChangedPage, computeChangedPages, extractPdfTextByPage, fetchPdfBytes, loadChangedPages, MAX_PAGE_CONTEXT, pageChangeKind, …
 - `src/lib/history/pageCrops.ts` · cropPairs, cropToDataUrl, cropWindows, MAX_CROPS_PER_PAGE
 - `src/lib/history/pageDiffRegions.ts` · BARE_DELTA, CELL_PX, CELL_THRESHOLD, DiffBox, diffRegions, DiffRegions, MAX_BOXES, MERGE_RADIUS, …
@@ -723,7 +732,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/models/Review.ts` · Review, ReviewModel
 - `src/lib/models/ShareDownloadRequest.ts` · ShareDownloadRequest, ShareDownloadRequestModel
 - `src/lib/models/ShareLink.ts` · DOC_LINK_FILTER, PROJECT_LINK_FILTER, ShareLink, ShareLinkKind, ShareLinkModel
-- `src/lib/models/ShareView.ts` · ShareView, ShareViewModel
+- `src/lib/models/ShareView.ts` · DOWNLOAD_INSTANTS_KEPT, ShareView, ShareViewModel
 - `src/lib/models/ShareViewerEmail.ts` · ShareViewerEmail, ShareViewerEmailModel
 - `src/lib/models/ShareVisit.ts` · ShareVisit, ShareVisitModel
 - `src/lib/models/StarredDoc.ts` · StarredDoc, StarredDocModel

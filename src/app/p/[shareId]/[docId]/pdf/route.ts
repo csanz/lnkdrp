@@ -24,7 +24,7 @@ import crypto from "node:crypto";
 import { recordActivity } from "@/lib/activity/log";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
-import { ShareViewModel } from "@/lib/models/ShareView";
+import { DOWNLOAD_INSTANTS_KEPT, ShareViewModel } from "@/lib/models/ShareView";
 import { touchShareLink } from "@/lib/share/links";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { resolveProjectLink } from "@/lib/share/projectLinks";
@@ -43,6 +43,9 @@ const DOWNLOAD_TRACK_WINDOW_MS = 60_000;
 
 
 
+/**
+ *
+ */
 function utcDayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -106,6 +109,9 @@ function pickHeader(src: Headers, dst: Headers, name: string, opts?: { fallback?
   if (opts?.fallback) dst.set(name, opts.fallback);
 }
 
+/**
+ *
+ */
 function safePdfFilename(input: string | null | undefined): string {
   const base = (input ?? "").toString().trim() || "document";
   const cleaned = base
@@ -168,6 +174,9 @@ async function recordProjectDownloadActivity(input: {
   }
 }
 
+/**
+ *
+ */
 export async function GET(request: Request, ctx: { params: Promise<{ shareId: string; docId: string }> }) {
   const { shareId, docId } = await ctx.params;
   if (!shareId || !docId) return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
@@ -284,6 +293,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
             lastViewedAt: new Date(),
           },
           $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
+            // The instant, for the visit brief: which sitting was this download part of?
+            $push: { downloadedAt: { $each: [new Date()], $slice: -DOWNLOAD_INSTANTS_KEPT } },
         },
         { upsert: true },
       );
@@ -306,6 +317,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
           {
             $set: { shareLinkId: link._id, ...(viewerIp ? { viewerIp } : {}), isOwnerPreview: ownerPreview, lastViewedAt: new Date() },
             $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
+            // The instant, for the visit brief: which sitting was this download part of?
+            $push: { downloadedAt: { $each: [new Date()], $slice: -DOWNLOAD_INSTANTS_KEPT } },
           },
         );
         if (!ownerPreview) void touchShareLink(shareId, "download");
@@ -331,6 +344,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
           },
           $addToSet: { docsOpened: doc._id },
           $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
+            // The instant, for the visit brief: which sitting was this download part of?
+            $push: { downloadedAt: { $each: [new Date()], $slice: -DOWNLOAD_INSTANTS_KEPT } },
         },
         { upsert: true },
       );

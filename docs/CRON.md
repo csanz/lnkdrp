@@ -88,6 +88,7 @@ Frequencies below are from `vercel.json` `"crons"` (production source of truth).
   - **Overlap**: `CronHealth` lease; a row `generating` for 10 minutes is handed back by the next tick. Claims carry a token, so a recovered row cannot be settled twice.
   - **Idempotency**: one row per sitting by unique index, one queue row per member by `dedupeKey`, one ledger row per attempt by idempotency key. Rerunning cannot write a second brief for the same visit.
   - **Latency**: quiet window plus cron interval — 2 to 7 minutes after a closed tab, 7 to 12 after a tab left open (the viewer's idle cut is 5 minutes).
+  - **Accelerator**: the realtime server (`realtime/server.ts`, `briefPoker`) pokes this route for one workspace (`?workspaceId=&limit=20`, bearer `CRON_SECRET`) about 15 s after a reader has been quiet for the window, so a closed tab is usually briefed in 2–3 minutes; the lease makes an overlapping poke `skipped: "locked"`, and this tick remains the backstop. Off without `REALTIME_APP_URL` (or the site-URL variables) and, in production, `CRON_SECRET`.
 - **Plan limits grace sweep (Free workspaces)**
   - **Route**: `GET|POST /api/cron/plan-limits`
   - **Schedule**: `40 * * * *` (hourly)

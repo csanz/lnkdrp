@@ -12,7 +12,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
-import { ShareViewModel } from "@/lib/models/ShareView";
+import { DOWNLOAD_INSTANTS_KEPT, ShareViewModel } from "@/lib/models/ShareView";
 import { shareLinkUnlocked, touchShareLink } from "@/lib/share/links";
 import { resolveClaimLink } from "@/lib/share/claimLink";
 import { recordActivity } from "@/lib/activity/log";
@@ -21,10 +21,16 @@ import { blobFetchUrl, fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 
 export const runtime = "nodejs";
 
+/**
+ *
+ */
 function sha256Hex(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex");
 }
 
+/**
+ *
+ */
 function pickHeader(src: Headers, dst: Headers, name: string, opts?: { fallback?: string }) {
   const v = src.get(name);
   if (typeof v === "string" && v) {
@@ -34,6 +40,9 @@ function pickHeader(src: Headers, dst: Headers, name: string, opts?: { fallback?
   if (opts?.fallback) dst.set(name, opts.fallback);
 }
 
+/**
+ *
+ */
 function safePdfFilename(input: string | null | undefined): string {
   const base = (input ?? "").toString().trim() || "document";
   const cleaned = base
@@ -45,6 +54,9 @@ function safePdfFilename(input: string | null | undefined): string {
   return withExt || "document.pdf";
 }
 
+/**
+ *
+ */
 export async function GET(request: Request, ctx: { params: Promise<{ token: string }> }) {
   try {
     const actor = await resolveActor(request);
@@ -190,6 +202,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
                 lastViewedAt: new Date(),
               },
               $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
+            // The instant, for the visit brief: which sitting was this download part of?
+            $push: { downloadedAt: { $each: [new Date()], $slice: -DOWNLOAD_INSTANTS_KEPT } },
             },
             { upsert: true },
           );
@@ -226,7 +240,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     // (a failed lookup, a refused connection, a Mongo error naming a field) told to whoever holds
     // the claim link, and told in a way they can tell apart from the document's own 404. One fixed
     // answer to the recipient, the detail to the server log, where it is the operator's to read.
-    // eslint-disable-next-line no-console
+     
     console.error("[api/download/:token/pdf] GET failed", {
       name: err instanceof Error ? err.name : typeof err,
       message: err instanceof Error ? err.message : String(err),

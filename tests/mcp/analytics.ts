@@ -67,6 +67,40 @@ async function callTool<T = ToolResult>(client: Client, name: string, args: Reco
   return JSON.parse(text) as T;
 }
 
+/** One finished sitting with its brief, as `lnkdrp_get_share_stats { includeVisits }` returns it. */
+type RecentVisit = {
+  id: string;
+  status: "briefed" | "recap" | "failed";
+  recapReason: string | null;
+  viewerName: { text: string } | null;
+  startedAt: string | null;
+  timeSpentMs: number;
+  pagesSeen: number;
+  pageCount: number | null;
+  downloads: number;
+  visitNumber: number;
+  brief: { headline: { text: string } | null; interests: Array<{ text: string } | null> } | null;
+};
+
+function printRecentVisits(visits: RecentVisit[] | undefined, indent: string): void {
+  if (visits === undefined) {
+    log(`${indent}recentVisits: absent (Free tier, or not requested)`);
+    return;
+  }
+  log(`${indent}recentVisits: ${visits.length} finished ${visits.length === 1 ? "sitting" : "sittings"}`);
+  for (const v of visits) {
+    const who = v.viewerName?.text ?? "Someone";
+    const when = v.startedAt ? new Date(v.startedAt).toISOString().slice(0, 16).replace("T", " ") : "?";
+    const facts = `${Math.round(v.timeSpentMs / 1000)}s · ${v.pagesSeen}${v.pageCount ? `/${v.pageCount}` : ""} pages · ${v.downloads} dl · visit #${v.visitNumber}`;
+    if (v.status === "briefed" && v.brief) {
+      log(`${indent}  ${when}  ${who}: "${v.brief.headline?.text ?? ""}"  (${facts})`);
+      for (const i of v.brief.interests) if (i) log(`${indent}      · ${i.text}`);
+    } else {
+      log(`${indent}  ${when}  ${who}: ${v.status}${v.recapReason ? ` (${v.recapReason})` : ""}  (${facts})`);
+    }
+  }
+}
+
 type Totals = {
   views?: number;
   /** Tab sessions: the count of opens, where `views` counts recipients. */
@@ -200,10 +234,18 @@ async function main(): Promise<void> {
 
     // 1. The document: every link added together.
     await pause(PACING);
-    const all = await callTool<Stats>(client, "lnkdrp_get_share_stats", { docId: String(d._id), days, includeViewers: true });
+    const all = await callTool<Stats & { recentVisits?: RecentVisit[] }>(client, "lnkdrp_get_share_stats", {
+      docId: String(d._id),
+      days,
+      includeViewers: true,
+      // The stored visit briefs, one per finished sitting (Pro only; the key is absent on Free).
+      includeVisits: true,
+      visitsLimit: 10,
+    });
     log(`ALL LINKS (perLink: ${String(all.perLink)}, tier: ${all.analyticsTier})`);
     printTotals("  ", all);
     printViewers(all, "    ");
+    printRecentVisits(all.recentVisits, "  ");
     log();
 
     // 2. Each link on its own. Same tool, one extra argument.

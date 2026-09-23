@@ -62,6 +62,8 @@ const recordActivity = vi.fn(async (..._a: unknown[]) => undefined);
 vi.mock("@/lib/mongodb", () => ({ connectMongo: vi.fn(async () => undefined) }));
 vi.mock("@/lib/debug", () => ({ debugError: vi.fn(), debugLog: vi.fn() }));
 vi.mock("@/lib/models/ShareView", () => ({
+  // The routes cap the download instants they push; a mocked module without it throws on access.
+  DOWNLOAD_INSTANTS_KEPT: 50,
   ShareViewModel: {
     updateOne: (...a: unknown[]) => (shareViewUpdateOne as any)(...a),
     // The activity feed's name lookup: `.select().lean().catch()`.

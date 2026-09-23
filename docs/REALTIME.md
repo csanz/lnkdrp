@@ -32,6 +32,13 @@ socket, so this runs on its own host.
      real boundary, throttled to ~one write per 750ms per upload (first and last exempt), and the
      Activity feed draws it as a bar. The routing key is `progress.orgId`, stamped by the writer so
      this handler needs no lookup per frame. See `src/lib/uploads/progress.ts`.
+   - `shareviews` progress writes also arm the **visit-brief accelerator** (`briefPoker`): one
+     timer per (workspace, link, reader), reset on every write; when a reader has been quiet for
+     the brief's window plus 15 s the server `POST`s the app's `/api/cron/visit-briefs?workspaceId=`
+     with `CRON_SECRET`, so a closed tab is briefed in about 2–3 minutes instead of waiting for the
+     five-minute tick. Needs `REALTIME_APP_URL` (or the site-URL variables the emails use; the local
+     dev server outside production) and, in production, `CRON_SECRET`; without them it logs once at
+     start and stays off. See docs/CRON.md "Visit briefs".
 4. Heartbeat: `{"type":"ping"}` every 25s; the client answers `{"type":"pong"}`; two misses drop
    the socket. The client reconnects with jittered backoff (1s → 30s), re-tickets on a workspace
    switch, and reconnects when a sleeping tab wakes.

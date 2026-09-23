@@ -31,6 +31,7 @@ import DepthBadge, { ReadingLegendButton } from "@/components/metrics/DepthBadge
 import IntroducedBadge from "@/components/metrics/IntroducedBadge";
 import PageReadingDetail from "@/components/metrics/PageReadingDetail";
 import ReaderDocuments, { type DocDetail } from "@/components/metrics/ReaderDocuments";
+import VisitBriefCards from "@/components/metrics/VisitBriefCards";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import { useEntityIdentity } from "@/lib/client/entityIdentity";
@@ -100,6 +101,9 @@ type ViewerRow = {
   lastSeen?: string | null;
 };
 
+/**
+ *
+ */
 export default function ViewerProfile({
   scopeKind,
   scopeId,
@@ -122,6 +126,8 @@ export default function ViewerProfile({
   const [notFound, setNotFound] = useState(false);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [visitsLoading, setVisitsLoading] = useState(true);
+  /** Bumped on every refresh so the visit-brief cards refetch with the rest of the page. */
+  const [briefsTick, setBriefsTick] = useState(0);
   /** Whether this tab's realtime channel is open — the difference between live and merely loaded. */
   const [connected, setConnected] = useState(false);
   /** When this reader last moved, as told by a `reading` frame. Null until one arrives. */
@@ -323,6 +329,7 @@ export default function ViewerProfile({
       timer = window.setTimeout(() => {
         void load(true);
         void loadVisits(true);
+        setBriefsTick((n) => n + 1);
         // The panel open under a document is part of "what they are reading", not a snapshot of
         // when it was opened: refresh it with everything else.
         const open = openDocRef.current;
@@ -378,6 +385,7 @@ export default function ViewerProfile({
       if (document.visibilityState !== "visible") return;
       void load(true);
       void loadVisits(true);
+      setBriefsTick((n) => n + 1);
       const open = openDocRef.current;
       if (open) void loadDocDetail(open, true);
     }, 20_000);
@@ -705,6 +713,11 @@ export default function ViewerProfile({
           />
         </section>
       )}
+
+      {/* What each finished visit amounted to, in the model's words — or the facts and a button
+          when no brief was written. Above the sessions because it is the answer; the sessions
+          below are the evidence. Renders nothing on Free and nothing until a visit has closed. */}
+      <VisitBriefCards apiBase={apiBase} who={who} reloadKey={briefsTick} />
 
       {/* Sessions, on both scopes. On a document a session is a page sequence; on a project it is
           the documents that one sitting touched, which is the sequence that matters there — what

@@ -471,6 +471,9 @@ function asTag(raw: unknown): ApiTag {
   };
 }
 
+/**
+ *
+ */
 function asProject(raw: unknown): ApiProject {
   const p = rec(raw);
   const id = strOrNull(p.id);
@@ -583,6 +586,9 @@ function pageTimeMap(raw: unknown): Record<string, number> {
   return out;
 }
 
+/**
+ *
+ */
 function asViewer(raw: unknown): ShareViewsViewer {
   const v = rec(raw);
   return {
@@ -595,6 +601,77 @@ function asViewer(raw: unknown): ShareViewsViewer {
     pageTimeMsByPage: pageTimeMap(v.pageTimeMsByPage),
     firstSeen: strOrNull(v.firstSeen),
     lastSeen: strOrNull(v.lastSeen),
+  };
+}
+
+/** One finished sitting on a document or a link, from `GET /api/docs/:id/visit-briefs`. */
+export type VisitBriefRow = {
+  id: string;
+  status: "briefed" | "recap" | "failed";
+  recapReason: string | null;
+  shareId: string;
+  docId: string | null;
+  projectId: string | null;
+  viewerName: string | null;
+  viewerEmail: string | null;
+  viewerUserId: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  timeSpentMs: number;
+  pagesSeen: number;
+  pageCount: number | null;
+  downloads: number;
+  visitNumber: number;
+  docs: Array<{ docId: string; title: string | null; timeSpentMs: number; pagesSeen: number[]; downloads: number }>;
+  brief: { headline: string; body: string; interests: string[]; highlights: string[]; followUp: string | null } | null;
+};
+
+/**
+ *
+ */
+function asVisitBrief(raw: unknown): VisitBriefRow {
+  const v = rec(raw);
+  const statusRaw = strOrNull(v.status);
+  const status: VisitBriefRow["status"] = statusRaw === "briefed" || statusRaw === "failed" ? statusRaw : "recap";
+  const b = v.brief && typeof v.brief === "object" ? rec(v.brief) : null;
+  const strings = (x: unknown) => (Array.isArray(x) ? x.filter((s): s is string => typeof s === "string") : []);
+  return {
+    id: strOrNull(v.id) ?? "",
+    status,
+    recapReason: strOrNull(v.recapReason),
+    shareId: strOrNull(v.shareId) ?? "",
+    docId: strOrNull(v.docId),
+    projectId: strOrNull(v.projectId),
+    viewerName: strOrNull(v.viewerName),
+    viewerEmail: strOrNull(v.viewerEmail),
+    viewerUserId: strOrNull(v.viewerUserId),
+    startedAt: strOrNull(v.startedAt),
+    endedAt: strOrNull(v.endedAt),
+    timeSpentMs: num(v.timeSpentMs),
+    pagesSeen: num(v.pagesSeen),
+    pageCount: typeof v.pageCount === "number" ? v.pageCount : null,
+    downloads: num(v.downloads),
+    visitNumber: num(v.visitNumber, 1),
+    docs: (Array.isArray(v.docs) ? v.docs : []).map((raw) => {
+      const d = rec(raw);
+      return {
+        docId: strOrNull(d.docId) ?? "",
+        title: strOrNull(d.title),
+        timeSpentMs: num(d.timeSpentMs),
+        pagesSeen: Array.isArray(d.pagesSeen) ? d.pagesSeen.filter((n): n is number => typeof n === "number") : [],
+        downloads: num(d.downloads),
+      };
+    }),
+    brief:
+      b && status === "briefed"
+        ? {
+            headline: strOrNull(b.headline) ?? "",
+            body: strOrNull(b.body) ?? "",
+            interests: strings(b.interests),
+            highlights: strings(b.highlights),
+            followUp: strOrNull(b.followUp),
+          }
+        : null,
   };
 }
 
@@ -1338,6 +1415,20 @@ export class ApiClient {
       // shareAllowPdfDownload — the divergence the route's own comment says it was written for.
       downloadsEnabled: body.downloadsEnabled === true,
     };
+  }
+
+  /**
+   * Finished sittings on a document (or one of its links) with their stored visit briefs, newest
+   * first — `GET /api/docs/:id/visit-briefs`. Pro only: Free answers `402 plan_limit`, which the
+   * caller maps to "not on this plan" rather than "no visits".
+   */
+  async visitBriefs(docId: string, input: { shareId?: string | undefined; limit?: number | undefined }): Promise<VisitBriefRow[]> {
+    const body = rec(
+      await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/visit-briefs`, {
+        query: { shareId: input.shareId, limit: input.limit },
+      }),
+    );
+    return Array.isArray(body.visits) ? body.visits.map(asVisitBrief) : [];
   }
 }
 

@@ -27,6 +27,9 @@ const {
   strongerHeadline,
   documentShortName,
   utcDayKeysBetween,
+  downloadsDuringSitting,
+  DOWNLOAD_ATTRIBUTION_SLACK_MS,
+  visitBriefCard,
 } = await import("@/lib/visits/visitBriefs");
 const { buildVisitBriefUserPrompt, normalizeVisitBriefOutput, sanitizeRecord, trimHeadline } = await import("@/lib/ai/visitBrief");
 const { outlineEntryFromText } = await import("@/lib/visits/pageOutline");
@@ -37,6 +40,9 @@ const DOC_B = new Types.ObjectId();
 const T0 = new Date("2026-09-23T10:00:00.000Z");
 const at = (s: number) => new Date(T0.getTime() + s * 1000);
 
+/**
+ *
+ */
 function visit(overrides: Record<string, unknown> = {}) {
   return {
     _id: new Types.ObjectId(),
@@ -91,6 +97,28 @@ describe("the snapshot", () => {
     expect(stats.downloads).toBe(1);
     expect(stats.visitNumber).toBe(1);
     expect(stats.previous).toBeNull();
+  });
+
+  test("downloads belong to the sitting they happened in, not to the day", () => {
+    const window = { startedAt: at(0), endedAt: at(380) };
+    // Two sittings the same morning: a download in the first must not show on the second.
+    const morning = { byDay: [["2026-09-23", 2] as [string, number]], at: [at(200), at(-3_600)] };
+    expect(downloadsDuringSitting(morning, window)).toBe(1);
+    // "Read it, clicked download, closed the tab": the click lands after the last page event.
+    expect(downloadsDuringSitting({ byDay: [], at: [at(380 + 30)] }, window)).toBe(1);
+    expect(downloadsDuringSitting({ byDay: [], at: [new Date(at(380).getTime() + DOWNLOAD_ATTRIBUTION_SLACK_MS + 1)] }, window)).toBe(0);
+    // Rows written before instants were recorded still fall back to the day.
+    expect(downloadsDuringSitting({ byDay: [["2026-09-23", 1]], at: [] }, window)).toBe(1);
+    expect(downloadsDuringSitting([["2026-09-23", 1], ["2026-09-01", 4]], window)).toBe(1);
+    expect(downloadsDuringSitting(undefined, window)).toBe(0);
+
+    const stats = buildSittingStats({
+      visits: [visit()],
+      titles: new Map(),
+      downloadsByDoc: new Map([[String(DOC_A), morning]]),
+      previousSittings: [],
+    });
+    expect(stats.downloads).toBe(1);
   });
 
   test("a data-room sitting sums across its documents and keeps each one", () => {
@@ -358,5 +386,62 @@ describe("the outline and the email helpers", () => {
   test("feed durations read like a person would say them", () => {
     expect(shortDuration(40_000)).toBe("40 s");
     expect(shortDuration(380_000)).toBe("6 min");
+  });
+});
+
+describe("the card", () => {
+  const base = {
+    _id: new Types.ObjectId(),
+    orgId: new Types.ObjectId(),
+    docId: DOC_A,
+    projectId: null,
+    shareId: "abc123",
+    visitIdHash: "v1",
+    botIdHash: "a".repeat(64),
+    viewerUserId: null,
+    viewerName: "Priya",
+    viewerEmail: null,
+    startedAt: at(0),
+    lastEventAt: at(380),
+    closedAt: at(500),
+    stats: {
+      timeSpentMs: 380_000,
+      pagesSeen: 4,
+      pageCount: 12,
+      downloads: 1,
+      visitNumber: 2,
+      docs: [{ docId: DOC_A, title: "Deck", timeSpentMs: 380_000, pagesSeen: [1, 2, 3, 7], pageCount: 12, downloads: 1 }],
+      previous: null,
+    },
+  } as unknown as Parameters<typeof visitBriefCard>[0];
+
+  test("a briefed visit carries the brief and cannot be written again", () => {
+    const card = visitBriefCard({
+      ...base,
+      status: "briefed",
+      recapReason: null,
+      brief: { headline: "Priya spent 5 min on pricing", body: "Body.", interests: ["Pricing tiers (p. 7)"], highlights: ["Downloaded the deck"], followUp: null },
+    } as unknown as Parameters<typeof visitBriefCard>[0]);
+    expect(card.status).toBe("briefed");
+    expect(card.brief?.headline).toBe("Priya spent 5 min on pricing");
+    expect(card.canWrite).toBe(false);
+    expect(card.visitNumber).toBe(2);
+    expect(card.docs[0]).toMatchObject({ docId: String(DOC_A), title: "Deck", pagesSeen: [1, 2, 3, 7] });
+    expect(card.startedAt).toBe(at(0).toISOString());
+  });
+
+  test("a recap keeps the facts, names its reason, has no brief, and offers the button", () => {
+    const card = visitBriefCard({ ...base, status: "recap", recapReason: "out_of_credits", brief: null } as unknown as Parameters<typeof visitBriefCard>[0]);
+    expect(card.brief).toBeNull();
+    expect(card.recapReason).toBe("out_of_credits");
+    expect(card.canWrite).toBe(true);
+    expect(card.timeSpentMs).toBe(380_000);
+    expect(card.downloads).toBe(1);
+  });
+
+  test("a failed visit is offered the button too", () => {
+    const card = visitBriefCard({ ...base, status: "failed", recapReason: "model_failed", brief: null } as unknown as Parameters<typeof visitBriefCard>[0]);
+    expect(card.status).toBe("failed");
+    expect(card.canWrite).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 # PRD — Visit briefs (the summary of a visit, after it ends)
 
-**Status:** Approved and built 2026-09-23 (M1–M3, plus the pricing/preferences/welcome surfaces of M4). Decisions 1–12 locked with the recommended defaults; open questions 1–4 resolved as (a), 2 minutes, 1 credit, Pro-only. See FEATURES.md "Visit briefs" for what shipped and what did not (reader-page cards, MCP field, realtime accelerator).
+**Status:** Approved and built 2026-09-23, M1–M4 complete: reader-page cards with "Write the brief", `recentVisits` on `lnkdrp_get_share_stats`, downloads attributed to the sitting, and the realtime accelerator. Decisions 1–12 locked with the recommended defaults; open questions 1–4 resolved as (a), 2 minutes, 1 credit, Pro-only. See FEATURES.md "Visit briefs". Left: the cron body moving to a queue and worker.
 **Owner:** chrissanz
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-view-notifications](./lnkdrp-view-notifications.md) · [lnkdrp-notification-queue](./lnkdrp-notification-queue.md) · [lnkdrp-credit-features](./lnkdrp-credit-features.md) (M1, "follow-up brief per viewer") · [CRON](../CRON.md) · [METRICS](../METRICS.md)

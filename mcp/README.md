@@ -384,13 +384,21 @@ thing it just blamed:
 Case 2 is the dangerous one: an agent told "sharing is on" reports a live document that opens for nobody.
 
 ### `lnkdrp_get_share_stats`
-In `{ docId?, shareId?, days? 1–60 = 15, includeViewers? = false }` (at least one id). A `shareId` scopes every number to that
+In `{ docId?, shareId?, days? 1–60 = 15, includeViewers? = false, includeVisits? = false, visitsLimit? 1–50 = 20 }` (at least one id). A `shareId` scopes every number to that
 one link (`perLink: true`, `GET /api/docs/:id/shareviews?shareId=`); a `docId` covers the document and all of its links. Pass
 both for a non-default link: a bare `shareId` goes through `GET /api/docs?q=`, which only matches a document's default link.
 Out `{ docId, shareId, perLink, days, analyticsDaysLimit, analyticsTier, viewerCount, totals: { views, ownerPreviews,
 opens, opensPartial, downloads, pagesViewed, timeSpentMs, authenticatedViewers, anonymousViewers },
 totalsAllTime?, lastViewedAt?, downloadsEnabled, series: [{ date, views, opens, downloads }], viewers?,
-anonymousViewers?, projectLinkTraffic?, isArchived?, warnings? }`.
+anonymousViewers?, projectLinkTraffic?, recentVisits?, isArchived?, warnings? }`.
+`recentVisits` (with `includeVisits`, Pro only, absent otherwise) is one row per finished *sitting* on the document or
+the one link, newest first and not bounded by `days`: `{ id, status: briefed|recap|failed, recapReason, shareId,
+projectId?, viewerName: untrusted, viewerEmail: untrusted, viewerSignedIn, startedAt, endedAt, timeSpentMs, pagesSeen,
+pageCount, downloads (during that visit), visitNumber, docs: [{ docId, title: untrusted, timeSpentMs, pagesSeen,
+downloads }], brief: { headline, body, interests[], highlights[], followUp } | null }` - the AI visit brief the
+workspace was emailed (`GET /api/docs/:id/visit-briefs`, docs/prds/lnkdrp-visit-briefs.md), every text field wrapped
+as untrusted. A `recap`/`failed` row has `brief: null` and a `recapReason` (`auto_off`, `daily_cap`,
+`out_of_credits`, `model_failed`); the owner can write it from the reader's page for one credit.
 `isArchived: true` and the `warnings` line beside it appear on an archived document, and only there. The numbers
 stay as they are, because they are true: they are what happened while the document was live. But every one of them
 is history: no link resolves while it is archived, so nobody can open or download it now, and

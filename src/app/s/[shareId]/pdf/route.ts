@@ -4,7 +4,7 @@ import { recordActivity } from "@/lib/activity/log";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { resolveShareLink, touchShareLink } from "@/lib/share/links";
 import { DocModel } from "@/lib/models/Doc";
-import { ShareViewModel } from "@/lib/models/ShareView";
+import { DOWNLOAD_INSTANTS_KEPT, ShareViewModel } from "@/lib/models/ShareView";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
@@ -34,6 +34,9 @@ const DOWNLOAD_TRACK_WINDOW_MS = 60_000;
  */
 
 
+/**
+ *
+ */
 function utcDayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
@@ -42,6 +45,9 @@ function utcDayKey(d: Date): string {
  */
 
 
+/**
+ *
+ */
 function pickFirstForwardedIp(v: string): string {
   return v.split(",")[0]?.trim() ?? "";
 }
@@ -108,6 +114,9 @@ function getClientIp(request: Request): string | null {
  */
 
 
+/**
+ *
+ */
 function getCookie(request: Request, name: string): string | null {
   const raw = request.headers.get("cookie");
   if (!raw) return null;
@@ -123,6 +132,9 @@ function getCookie(request: Request, name: string): string | null {
  */
 
 
+/**
+ *
+ */
 function pickHeader(src: Headers, dst: Headers, name: string, opts?: { fallback?: string }) {
   const v = src.get(name);
   if (typeof v === "string" && v) {
@@ -136,6 +148,9 @@ function pickHeader(src: Headers, dst: Headers, name: string, opts?: { fallback?
  */
 
 
+/**
+ *
+ */
 function safePdfFilename(input: string | null | undefined): string {
   const base = (input ?? "").toString().trim() || "document";
   const cleaned = base
@@ -249,6 +264,9 @@ async function recordDownloadActivity(
   }
 }
 
+/**
+ *
+ */
 export async function GET(request: Request, ctx: { params: Promise<{ shareId: string }> }) {
   const { shareId } = await ctx.params;
   if (!shareId) return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
@@ -380,6 +398,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
             lastViewedAt: new Date(),
           },
           $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
+            // The instant, for the visit brief: which sitting was this download part of?
+            $push: { downloadedAt: { $each: [new Date()], $slice: -DOWNLOAD_INSTANTS_KEPT } },
         },
         { upsert: true },
       );
@@ -408,6 +428,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
               lastViewedAt: new Date(),
             },
             $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
+            // The instant, for the visit brief: which sitting was this download part of?
+            $push: { downloadedAt: { $each: [new Date()], $slice: -DOWNLOAD_INSTANTS_KEPT } },
           },
         );
         // The retry used to increment `ShareView.downloads` and stop there, so the link's
