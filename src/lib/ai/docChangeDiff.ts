@@ -19,6 +19,8 @@ const USER_PROMPT_PATH = path.join(PROMPTS_DIR, "docChangeDiff-user.md");
 
 const MAX_SUMMARY_CHARS = 400;
 const MAX_PAGE_SUMMARY_CHARS = 220;
+/** Enough for the sentence or the figure that changed, not the whole page. */
+const MAX_PAGE_WORDING_CHARS = 300;
 const MAX_PAGES_THAT_CHANGED = 30;
 
 /** Output schema for doc change diffs. */
@@ -40,6 +42,21 @@ export const DocChangeDiffSchema = z
           .object({
             pageNumber: z.number().int().min(1),
             summary: z.string().max(MAX_PAGE_SUMMARY_CHARS),
+            /**
+             * What the changed part of the page said before, and what it says now, read off the
+             * images.
+             *
+             * Exists because the extracted text layer is not always readable. A PDF stores glyph
+             * indices, and recovering characters needs the font's ToUnicode map; fonts subset
+             * without one are routine, and the extractor then returns the indices - valid Unicode
+             * that renders as symbols. On one real deck that was 15-26% ASCII-printable, which is
+             * unusable for a word diff.
+             *
+             * The model is looking at the page either way, so it can simply read it. Nullable
+             * because on a purely visual change there is no wording to quote.
+             */
+            previousWording: z.string().max(MAX_PAGE_WORDING_CHARS).nullable().optional(),
+            newWording: z.string().max(MAX_PAGE_WORDING_CHARS).nullable().optional(),
           })
           .strict(),
       )

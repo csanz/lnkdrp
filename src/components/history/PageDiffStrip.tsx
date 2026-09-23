@@ -29,6 +29,9 @@ export type PageChange = {
   /** This page's text in each version, for the word diff. Empty on rows written before it was stored. */
   previousText: string;
   newText: string;
+  /** The same before and after, read off the images by the model, for pages with no usable text layer. */
+  previousWording: string | null;
+  newWording: string | null;
 };
 
 /** "v4" for a real version number, otherwise the caller's word for that side. */

@@ -128,20 +128,48 @@ function PageNote({ text }: { text: string }) {
  *
  * The colours are the ones on the page marks, so red and green mean the same thing throughout.
  */
-function WordDiff({ previous, next }: { previous: string; next: string }) {
+function WordDiff({
+  previous,
+  next,
+  previousWording,
+  newWording,
+}: {
+  previous: string;
+  next: string;
+  previousWording: string | null;
+  newWording: string | null;
+}) {
   /**
-   * A page whose fonts were subset without a character map extracts as glyph indices, not words.
-   * Nothing errors - they are valid Unicode - so it only shows up on screen, as a wall of symbols.
-   * The images still compare fine, so say that rather than printing the noise.
+   * When the PDF's own text layer is unusable, use what the model read off the page.
+   *
+   * A PDF stores glyph indices, and recovering characters needs the font's ToUnicode map; fonts
+   * subset without one are routine, and the extractor then returns the indices - valid Unicode
+   * that renders as symbols. An earlier version of this said so, in those words, which was an
+   * explanation of our problem rather than an answer to the reader's. The model is looking at the
+   * page image regardless, so it reads the wording instead and that is what gets shown.
    */
-  if (!isReadableText(previous) || !isReadableText(next)) {
+  const extractionUnusable = !isReadableText(previous) || !isReadableText(next);
+  const readFromPage = extractionUnusable && Boolean(previousWording || newWording);
+
+  if (readFromPage) {
     return (
-      <div className="text-[11px] leading-relaxed text-[var(--muted)]">
-        This page&apos;s text could not be read: its fonts were embedded without a character map, so the PDF stores shapes
-        rather than letters. The page images above are still compared in full.
+      <div className="space-y-2">
+        <div className="text-[11px] text-[var(--muted)]">Read from the page, because this PDF stores its text as shapes.</div>
+        <div className="grid gap-2 lg:grid-cols-2">
+          <p className="m-0 rounded-md bg-rose-500/10 px-3 py-2 text-xs leading-relaxed text-rose-700 dark:text-rose-200">
+            {previousWording?.trim() || "(nothing here before)"}
+          </p>
+          <p className="m-0 rounded-md bg-emerald-500/10 px-3 py-2 text-xs leading-relaxed text-emerald-800 dark:text-emerald-200">
+            {newWording?.trim() || "(nothing here now)"}
+          </p>
+        </div>
       </div>
     );
   }
+
+  // No usable text layer and nothing read off the page either: say nothing rather than print
+  // symbols or apologise. The comparison above is the answer in that case.
+  if (extractionUnusable) return null;
 
   const result = diffPresentation(previous, next);
 
@@ -308,6 +336,16 @@ export default function PageCompareViewer({
   if (!page) return null;
 
   const note = page.summary?.trim() || "";
+
+  /**
+   * Is there anything to put in the text panel at all?
+   *
+   * Either a readable text layer on both sides, or wording the model read off the page when the
+   * layer was unusable. Neither means no panel, rather than a panel explaining its own absence.
+   */
+  const hasWords =
+    Boolean(page.previousWording || page.newWording) ||
+    ((page.previousText || page.newText) && isReadableText(page.previousText) && isReadableText(page.newText));
 
 
   /** What the marks are currently saying, in one line, including when they say nothing. */
@@ -520,14 +558,19 @@ export default function PageCompareViewer({
             words, which is the question the reader actually arrived with. Empty on rows written
             before the per-page text was stored, and it simply does not render there.
           */}
-          {page.previousText || page.newText ? (
+          {hasWords ? (
             <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
               <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">Text on this page</span>
-                <Swatch tone="removed">removed</Swatch>
-                <Swatch tone="added">added</Swatch>
+                <Swatch tone="removed">before</Swatch>
+                <Swatch tone="added">now</Swatch>
               </div>
-              <WordDiff previous={page.previousText} next={page.newText} />
+              <WordDiff
+                previous={page.previousText}
+                next={page.newText}
+                previousWording={page.previousWording}
+                newWording={page.newWording}
+              />
             </div>
           ) : null}
 

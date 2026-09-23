@@ -390,6 +390,8 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                   imageChanged: typeof p?.imageChanged === "boolean" ? p.imageChanged : null,
                   previousText: typeof p?.previousText === "string" ? p.previousText : "",
                   newText: typeof p?.newText === "string" ? p.newText : "",
+                  previousWording: typeof p?.previousWording === "string" && p.previousWording.trim() ? p.previousWording : null,
+                  newWording: typeof p?.newWording === "string" && p.newWording.trim() ? p.newWording : null,
                 }))
                 .filter((p) => p.pageNumber >= 1)
             : [],

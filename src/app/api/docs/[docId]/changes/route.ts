@@ -419,6 +419,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                           imageChanged: typeof p?.imageChanged === "boolean" ? p.imageChanged : null,
                           previousText: typeof p?.previousText === "string" ? p.previousText : "",
                           newText: typeof p?.newText === "string" ? p.newText : "",
+                          previousWording: typeof p?.previousWording === "string" && p.previousWording.trim() ? p.previousWording : null,
+                          newWording: typeof p?.newWording === "string" && p.newWording.trim() ? p.newWording : null,
                         }))
                         .filter((p: any) => typeof p.pageNumber === "number" && p.pageNumber >= 1)
                     : [],

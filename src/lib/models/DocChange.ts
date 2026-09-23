@@ -86,6 +86,17 @@ const docChangeSchema = new Schema(
              */
             previousText: { type: String, default: "" },
             newText: { type: String, default: "" },
+            /**
+             * The same before and after, read off the page images by the model.
+             *
+             * The extracted text layer is not always usable: a PDF stores glyph indices, and
+             * recovering characters needs the font's ToUnicode map, which plenty of decks are
+             * subset without. The extractor then returns the indices - valid Unicode that renders
+             * as symbols - and a word diff of that is noise. The model is looking at the page
+             * anyway, so it reads the wording instead.
+             */
+            previousWording: { type: String, trim: true, default: null },
+            newWording: { type: String, trim: true, default: null },
           },
         ],
         default: [],
