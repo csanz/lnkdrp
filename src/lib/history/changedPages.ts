@@ -395,6 +395,27 @@ function capPageText(input: unknown): string {
 }
 
 /**
+ * What kind of change this page carries, decided from the wordings rather than from the prose.
+ *
+ * The model kept writing "Added 'the next 18 months'" directly above its own evidence that "the
+ * coming years" used to stand there - a replacement described as an addition. Two prompt revisions
+ * failed to shift it, which is the signal that this is not the model's job: with both wordings in
+ * hand the answer is a comparison, not a judgement, and a reader deciding whether to re-send a
+ * document needs to know whether a claim was withdrawn or merely expanded.
+ *
+ * Null when there is nothing to compare - a purely visual change, or a row from before the
+ * wordings were captured - and the UI then says nothing rather than guessing.
+ */
+export function pageChangeKind(previousWording: unknown, newWording: unknown): "added" | "removed" | "replaced" | null {
+  const before = typeof previousWording === "string" ? previousWording.trim() : "";
+  const after = typeof newWording === "string" ? newWording.trim() : "";
+  if (!before && !after) return null;
+  if (!before) return "added";
+  if (!after) return "removed";
+  return before.toLowerCase() === after.toLowerCase() ? null : "replaced";
+}
+
+/**
  * Attach thumbnails and image-change hints to a diff's `pagesThatChanged`, and add pages whose
  * graphics changed but that the model did not list. Returns the diff unchanged when it has none.
  */
@@ -423,6 +444,7 @@ export function attachPageContext<T extends DocChangeDiff | null>(diff: T, chang
       imageChanged: ctx?.imageChanged ?? null,
       previousText: capPageText(ctx?.previousText),
       newText: capPageText(ctx?.newText),
+      changeKind: pageChangeKind((p as Record<string, unknown>)?.previousWording, (p as Record<string, unknown>)?.newWording),
     };
   });
   const imageOnly = changedPages
@@ -436,6 +458,8 @@ export function attachPageContext<T extends DocChangeDiff | null>(diff: T, chang
       imageChanged: true,
       previousText: capPageText(p.previousText),
       newText: capPageText(p.newText),
+      // Pages the model did not list carry no wordings, so there is nothing to derive a kind from.
+      changeKind: null,
     }));
   return { ...diff, pagesThatChanged: [...augmented, ...imageOnly].slice(0, MAX_PAGES_THAT_CHANGED) } as T;
 }

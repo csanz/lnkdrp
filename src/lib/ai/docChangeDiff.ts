@@ -21,6 +21,10 @@ const MAX_SUMMARY_CHARS = 400;
 const MAX_PAGE_SUMMARY_CHARS = 220;
 /** Enough for the sentence or the figure that changed, not the whole page. */
 const MAX_PAGE_WORDING_CHARS = 300;
+/** One line against one highlight, so it has to fit beside it. */
+const MAX_REGION_NOTE_CHARS = 160;
+/** Matches `MAX_CROPS_PER_PAGE` in `@/lib/history/pageCrops`. */
+const MAX_REGION_NOTES = 3;
 const MAX_PAGES_THAT_CHANGED = 30;
 
 /** Output schema for doc change diffs. */
@@ -57,6 +61,16 @@ export const DocChangeDiffSchema = z
              */
             previousWording: z.string().max(MAX_PAGE_WORDING_CHARS).nullable().optional(),
             newWording: z.string().max(MAX_PAGE_WORDING_CHARS).nullable().optional(),
+            /**
+             * One line per attached close-up, in the order they were attached.
+             *
+             * A page can carry more than one change, and the marks drawn over it are otherwise
+             * unexplained: a band whose wording is identical in both versions gets the same
+             * highlight as a rewritten sentence, and the reader is left asking what changed there.
+             * The honest answer is often "only its appearance", which is a thing the model can see
+             * and the page cannot say for itself.
+             */
+            regionNotes: z.array(z.string().max(MAX_REGION_NOTE_CHARS)).max(MAX_REGION_NOTES).nullable().optional(),
           })
           .strict(),
       )

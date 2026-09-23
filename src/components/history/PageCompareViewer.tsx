@@ -58,25 +58,65 @@ function versionLabel(v: number | null, fallback: string): string {
  *
  * Coordinates are page fractions, so the same numbers hold at any display size.
  */
-function Marks({ boxes, tone }: { boxes: DiffBox[]; tone: "removed" | "added" }) {
+function Marks({ boxes, tone, notes }: { boxes: DiffBox[]; tone: "removed" | "added"; notes?: string[] }) {
   const style =
     tone === "removed"
       ? "bg-rose-500/10 ring-rose-400/80 dark:bg-rose-400/10 dark:ring-rose-400/70"
       : "bg-emerald-500/10 ring-emerald-500/80 dark:bg-emerald-400/10 dark:ring-emerald-400/70";
+  const badge = tone === "removed" ? "bg-rose-500 text-white" : "bg-emerald-600 text-white";
   return (
     <div className="pointer-events-none absolute inset-0">
-      {boxes.map((b, i) => (
-        <div
-          key={i}
-          className={["absolute rounded-[3px] ring-2", style].join(" ")}
-          style={{
-            left: `${b.x * 100}%`,
-            top: `${b.y * 100}%`,
-            width: `${b.width * 100}%`,
-            height: `${b.height * 100}%`,
-          }}
-        />
-      ))}
+      {boxes.map((b, i) => {
+        const note = notes?.[i]?.trim() || "";
+        /**
+         * Captions sit under their mark, or above it when the mark is near the foot of the page
+         * and there is no room below. Anchored to the box's own left edge, so the caption reads as
+         * belonging to that mark rather than to the page.
+         */
+        const below = b.y + b.height < 0.82;
+        return (
+          <div
+            key={i}
+            className={["absolute rounded-[3px] ring-2", style].join(" ")}
+            style={{
+              left: `${b.x * 100}%`,
+              top: `${b.y * 100}%`,
+              width: `${b.width * 100}%`,
+              height: `${b.height * 100}%`,
+            }}
+          >
+            {/* Numbered only when there is more than one: a lone mark needs no label to be found. */}
+            {boxes.length > 1 ? (
+              <span
+                className={[
+                  "absolute -left-1.5 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-bold leading-none",
+                  badge,
+                ].join(" ")}
+              >
+                {i + 1}
+              </span>
+            ) : null}
+
+            {note ? (
+              <span
+                className="absolute left-0 w-[min(30rem,60vw)] max-w-[100vw]"
+                style={below ? { top: "calc(100% + 6px)" } : { bottom: "calc(100% + 6px)" }}
+              >
+                <span className="inline-flex items-start gap-1.5 rounded-md border border-[var(--border)] bg-[var(--panel)]/95 px-2 py-1 text-[10px] leading-snug text-[var(--fg)] shadow-md backdrop-blur-sm">
+                  {boxes.length > 1 ? (
+                    <span
+                      className={["mt-px flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-1 text-[8px] font-bold leading-none", badge].join(" ")}
+                    >
+                      {i + 1}
+                    </span>
+                  ) : null}
+                  <span>{note}</span>
+                </span>
+              </span>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -97,16 +137,16 @@ function Swatch({ tone, children }: { tone: "removed" | "added"; children: React
 }
 
 /**
- * What the model said about this page, laid over it.
+ * What the model said about this page, laid over the version it describes.
  *
  * The boxes are geometry and the note is language, and each is only good at its own half: a pixel
  * difference knows exactly where something moved and nothing about what it means, while the model
  * reads the page well and places things on it badly - which is why it is never asked for
  * coordinates. Pairing them keeps each to what it can be trusted for.
  *
- * Docked to a corner rather than pinned to a region for the same reason. An arrow into a specific
- * box would be claiming the note describes that box, which is more than the data supports: the
- * model returns one summary per page.
+ * On the new version only. It was on both, and on the previous page it was describing something
+ * that had not happened yet - "Added 'the next 18 months' to timeline" stamped over a page whose
+ * timeline still said something else.
  */
 function PageNote({ text }: { text: string }) {
   return (
@@ -116,6 +156,18 @@ function PageNote({ text }: { text: string }) {
       </div>
     </div>
   );
+}
+
+/** What kind of change this page carries, stated plainly. See `pageChangeKind`. */
+function KindChip({ kind }: { kind: "added" | "removed" | "replaced" }) {
+  const label = kind === "added" ? "Added" : kind === "removed" ? "Removed" : "Replaced";
+  const style =
+    kind === "added"
+      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+      : kind === "removed"
+        ? "bg-rose-500/15 text-rose-700 dark:text-rose-300"
+        : "bg-[var(--panel-hover)] text-[var(--fg)]";
+  return <span className={["rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", style].join(" ")}>{label}</span>;
 }
 
 /**
@@ -383,6 +435,7 @@ export default function PageCompareViewer({
                   · {index + 1} of {pages.length} changed
                 </span>
               ) : null}
+              {page.changeKind ? <KindChip kind={page.changeKind} /> : null}
               {marksNote ? <span className="text-xs text-[var(--muted)]">· {marksNote}</span> : null}
             </div>
             {showMarks && boxes.length ? (
@@ -469,7 +522,6 @@ export default function PageCompareViewer({
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={prev} alt={`Page ${page.pageNumber}, ${fromLabel}`} className="block h-auto w-full" />
                       {showMarks && boxes.length ? <Marks boxes={boxes} tone="removed" /> : null}
-                      {showNotes && note ? <PageNote text={note} /> : null}
                     </>
                   ) : (
                     <div className="px-4 py-10 text-center text-xs text-[var(--muted)]">No render stored for this version</div>
@@ -483,9 +535,8 @@ export default function PageCompareViewer({
                     <>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={next} alt={`Page ${page.pageNumber}, ${toLabel}`} className="block h-auto w-full" />
-                      {showMarks && boxes.length ? <Marks boxes={boxes} tone="added" /> : null}
+                      {showMarks && boxes.length ? <Marks boxes={boxes} tone="added" notes={showNotes ? page.regionNotes : undefined} /> : null}
                       {authorName ? <AuthorBadge name={authorName} when={changedAt} /> : null}
-                      {showNotes && note ? <PageNote text={note} /> : null}
                     </>
                   ) : (
                     <div className="px-4 py-10 text-center text-xs text-[var(--muted)]">No render stored for this version</div>
@@ -504,7 +555,7 @@ export default function PageCompareViewer({
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={prev} alt={`Page ${page.pageNumber}, ${fromLabel}`} className="block h-full w-full object-cover object-left-top" />
                 </div>
-                {showMarks && boxes.length ? <Marks boxes={boxes} tone="added" /> : null}
+                {showMarks && boxes.length ? <Marks boxes={boxes} tone="added" notes={showNotes ? page.regionNotes : undefined} /> : null}
                 {authorName ? <AuthorBadge name={authorName} when={changedAt} /> : null}
                 {showNotes && note ? <PageNote text={note} /> : null}
                 <div className="pointer-events-none absolute inset-y-0 w-px bg-[var(--fg)]/70" style={{ left: `${wipe}%` }} />
@@ -532,7 +583,7 @@ export default function PageCompareViewer({
                 <img src={prev} alt={`Page ${page.pageNumber}, ${fromLabel}`} className="block h-auto w-full" />
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={next} alt={`Page ${page.pageNumber}, ${toLabel}`} className="absolute inset-0 block h-full w-full" style={{ opacity: fade / 100 }} />
-                {showMarks && boxes.length ? <Marks boxes={boxes} tone="added" /> : null}
+                {showMarks && boxes.length ? <Marks boxes={boxes} tone="added" notes={showNotes ? page.regionNotes : undefined} /> : null}
                 {authorName ? <AuthorBadge name={authorName} when={changedAt} /> : null}
                 {showNotes && note ? <PageNote text={note} /> : null}
               </div>

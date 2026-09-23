@@ -421,6 +421,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                           newText: typeof p?.newText === "string" ? p.newText : "",
                           previousWording: typeof p?.previousWording === "string" && p.previousWording.trim() ? p.previousWording : null,
                           newWording: typeof p?.newWording === "string" && p.newWording.trim() ? p.newWording : null,
+                          changeKind:
+                            p?.changeKind === "added" || p?.changeKind === "removed" || p?.changeKind === "replaced"
+                              ? p.changeKind
+                              : null,
+                          regionNotes: Array.isArray(p?.regionNotes)
+                            ? p.regionNotes.filter((n: unknown) => typeof n === "string" && n.trim()).slice(0, 3)
+                            : [],
                         }))
                         .filter((p: any) => typeof p.pageNumber === "number" && p.pageNumber >= 1)
                     : [],

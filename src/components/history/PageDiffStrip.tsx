@@ -32,6 +32,10 @@ export type PageChange = {
   /** The same before and after, read off the images by the model, for pages with no usable text layer. */
   previousWording: string | null;
   newWording: string | null;
+  /** added / removed / replaced, computed from the wordings. See `pageChangeKind`. */
+  changeKind: "added" | "removed" | "replaced" | null;
+  /** One caption per highlight on the page, in the order the regions were measured. */
+  regionNotes: string[];
 };
 
 /** "v4" for a real version number, otherwise the caller's word for that side. */

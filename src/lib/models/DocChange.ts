@@ -97,6 +97,14 @@ const docChangeSchema = new Schema(
              */
             previousWording: { type: String, trim: true, default: null },
             newWording: { type: String, trim: true, default: null },
+            /**
+             * added / removed / replaced, worked out from the two wordings rather than taken from
+             * the model's prose, which kept calling a replacement an addition. See
+             * `pageChangeKind`. Null when there is nothing to compare.
+             */
+            changeKind: { type: String, trim: true, default: null },
+            /** One caption per highlight drawn on the page, in the order the close-ups were sent. */
+            regionNotes: { type: [String], default: undefined },
           },
         ],
         default: [],

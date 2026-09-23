@@ -58,6 +58,8 @@ describe("changed pages", () => {
         imageChanged: false,
         previousText: "Pricing: three tiers",
         newText: "Pricing: one tier",
+        // Derived from the wordings, which this entry has none of. See `pageChangeKind`.
+        changeKind: null,
       },
       {
         pageNumber: 5,
@@ -67,6 +69,7 @@ describe("changed pages", () => {
         imageChanged: true,
         previousText: "",
         newText: "",
+        changeKind: null,
       },
     ]);
     expect(attachPageContext(null, [])).toBeNull();

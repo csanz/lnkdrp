@@ -392,6 +392,11 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                   newText: typeof p?.newText === "string" ? p.newText : "",
                   previousWording: typeof p?.previousWording === "string" && p.previousWording.trim() ? p.previousWording : null,
                   newWording: typeof p?.newWording === "string" && p.newWording.trim() ? p.newWording : null,
+                  changeKind:
+                    p?.changeKind === "added" || p?.changeKind === "removed" || p?.changeKind === "replaced" ? p.changeKind : null,
+                  regionNotes: Array.isArray(p?.regionNotes)
+                    ? (p.regionNotes as unknown[]).filter((n): n is string => typeof n === "string" && Boolean(n.trim()))
+                    : [],
                 }))
                 .filter((p) => p.pageNumber >= 1)
             : [],
