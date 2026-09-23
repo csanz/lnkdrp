@@ -28,6 +28,25 @@
  *
  *   --dry       stop before the write and the send; print the link it would have mailed
  *   --console   print the email instead of sending, for looking at the body
+ *
+ * ## Approving somebody in production
+ *
+ *   vercel env pull --environment=production .env.production.local
+ *   npm run waitlist:invite:prod -- --to=someone@example.com --dry   # look first
+ *   npm run waitlist:invite:prod -- --to=someone@example.com
+ *
+ * It has to be production's own environment, not just its database. Three of the values decide
+ * whether the invitation works at all:
+ *
+ *   - `MONGODB_URI` is the account you are approving. `.env.local` points somewhere else.
+ *   - `NEXTAUTH_SECRET` keys the HMAC on the accept token. Mint the link with a different secret
+ *     and production rejects its own invitation — the link looks right and fails on click, which
+ *     is the worst way for this to break.
+ *   - `NEXT_PUBLIC_SITE_URL` is the host in the link. Wrong here and you mail somebody a localhost
+ *     URL.
+ *
+ * `.env.production.local` is covered by `.gitignore`'s `.env*`. Delete it when you are done rather
+ * than leaving production credentials in the repo root.
  */
 import "dotenv/config";
 import { Types } from "mongoose";

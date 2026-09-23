@@ -53,6 +53,7 @@
     "test:account-deletion": "tsx --env-file=.env.local scripts/test-account-deletion.ts",
     "reset": "tsx --env-file=.env.local scripts/reset-local.ts",
     "waitlist:invite": "tsx --env-file=.env.local scripts/waitlist-invite.ts",
+    "waitlist:invite:prod": "tsx --env-file=.env.production.local scripts/waitlist-invite.ts",
     "admin:add": "tsx --env-file=.env.local scripts/admin-add.ts",
     "admin:list": "tsx --env-file=.env.local scripts/admin-add.ts --list"
   },
