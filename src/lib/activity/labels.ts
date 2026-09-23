@@ -47,7 +47,7 @@ export const ACTIVITY_FILTERS = [
   {
     id: "views",
     label: "Views",
-    types: ["share.viewed", "share.downloaded", "project.landed", "viewer.introduced", "share.unlocked"],
+    types: ["share.viewed", "share.downloaded", "project.landed", "viewer.introduced", "share.unlocked", "share.visit_briefed"],
   },
   {
     id: "members",
@@ -386,6 +386,19 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
     case "share.downloaded": {
       const who = user || metaString(item.meta, "viewerName") || metaString(item.meta, "viewerEmail") || "Someone";
       return { subject: who, verb: "downloaded", object: docTitle, suffix: linkSuffix(item.meta) };
+    }
+    case "share.visit_briefed": {
+      const who = user || metaString(item.meta, "viewerName") || metaString(item.meta, "viewerEmail") || "Someone";
+      // The object is whatever they sat with: a document, or the whole room.
+      const what = item.doc?.title?.trim() ? docTitle : item.project?.name?.trim() || metaString(item.meta, "projectName") || "a shared link";
+      const headline = metaString(item.meta, "headline");
+      const duration = metaString(item.meta, "duration");
+      return {
+        subject: who,
+        verb: "finished reading",
+        object: what,
+        suffix: headline ? `— ${headline}` : duration ? `(${duration})` : linkSuffix(item.meta),
+      };
     }
     case "download_request.created":
       return { subject: email || "Someone", verb: "requested to download", object: docTitle, suffix: linkSuffix(item.meta) };

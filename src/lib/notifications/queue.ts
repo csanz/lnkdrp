@@ -52,6 +52,8 @@ export type NotificationEvent = {
   viewerName?: string | null;
   viewerEmail?: string | null;
   version?: number | null;
+  /** The stored `VisitBrief` a `visit_briefs` row renders. */
+  visitBriefId?: string | Types.ObjectId | null;
 };
 
 export type EnqueueNotificationInput = {
@@ -64,7 +66,7 @@ export type EnqueueNotificationInput = {
   event?: NotificationEvent;
   /** When the underlying thing happened; defaults to now. */
   occurredAt?: Date;
-  /** Hold the row back until this instant (nothing does yet; the digest groups at send time). */
+  /** Hold the row back until this instant. Unused by the four event kinds; the digest groups at send time. */
   notBefore?: Date;
 };
 
@@ -198,6 +200,7 @@ function normalizeEvent(event: NotificationEvent | undefined): Record<string, un
     viewerName: name || null,
     viewerEmail: email || null,
     version,
+    visitBriefId: toObjectId(e.visitBriefId),
   };
 }
 
@@ -427,6 +430,7 @@ function toClaimed(row: unknown): ClaimedNotification {
       viewerName: (e.viewerName as string | null) ?? null,
       viewerEmail: (e.viewerEmail as string | null) ?? null,
       version: typeof e.version === "number" ? e.version : null,
+      visitBriefId: str(e.visitBriefId),
     },
     occurredAt: r.occurredAt,
     attempts: Number.isFinite(Number(r.attempts)) ? Number(r.attempts) : 0,

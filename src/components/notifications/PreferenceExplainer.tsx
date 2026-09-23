@@ -51,6 +51,30 @@ const EXPLAINERS: Record<string, Explainer> = {
     note:
       "Who the reader is can only be shown on Pro. On Free the email says which link was opened and when, without naming anyone.",
   },
+  briefs: {
+    title: "When someone finishes reading",
+    trigger:
+      "A recipient stops reading one of this workspace's links and stays away for a couple of minutes. The visit is then written up by the AI: what held them, what they skipped, how it compares with their last visit. One credit per brief, on Pro, and only while automatic briefs are on under AI defaults.",
+    options: [
+      { label: "Off", what: "Nothing is sent. The brief is still written and stored on the reader's page." },
+      {
+        label: "Daily digest",
+        what: "One email at the end of the UTC day with every visit since the last one and its brief.",
+      },
+      {
+        label: "After each visit",
+        what: "Within about five minutes of the reader leaving. One email per visit, with the brief's headline as the subject.",
+      },
+    ],
+    contains: [
+      "Who read it, through which link, and for how long",
+      "The AI brief: a paragraph and a few facts about the visit",
+      "The pages that held them longest, and the ones they skipped",
+      "A link straight to that reader's activity",
+    ],
+    note:
+      "A glance — under twenty seconds on one page — is not written up and sends nothing immediately; it shows in the digest. When credits run out you still get the facts of the visit, without the write-up. Most people keep either this or the link-open email, not both.",
+  },
   docUploads: {
     title: "When a teammate adds a document",
     trigger:

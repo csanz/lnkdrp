@@ -2,8 +2,8 @@
  * Dashboard Limits card: AI Quality Defaults.
  *
  * Two questions, in the order they matter: whether the automatic runs happen at all, then how
- * deeply they run. The switches cover only the summary on upload and the compare on replacement —
- * the two runs that start without anyone asking. Everything else waits to be asked, and not asking
+ * deeply they run. The switches cover the summary on upload, the compare on replacement and the
+ * brief after a recipient's visit — the three runs that start without anyone asking. Everything else waits to be asked, and not asking
  * is already its off switch.
  *
  * Lets workspace owners/admins set default quality tiers per credit-metered action. The summary is
@@ -26,7 +26,7 @@ type Tier = "standard" | "advanced";
 const FEATURE_REQUESTS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
 
 type ApiResponse =
-  | { ok: true; review: Tier; history: Tier; autoSummary?: boolean; autoCompare?: boolean }
+  | { ok: true; review: Tier; history: Tier; autoSummary?: boolean; autoCompare?: boolean; autoBrief?: boolean }
   | { error: string };
 
 type TierAll = "basic" | "standard" | "advanced";
@@ -39,7 +39,7 @@ function normalizeTier(v: unknown): TierAll {
 }
 
 /**
- * The only two AI runs that start on their own, so the only two a switch can turn off.
+ * The only three AI runs that start on their own, so the only three a switch can turn off.
  *
  * Worded as what happens rather than what it costs: someone turning the summary off is usually
  * reacting to noise on a busy day, not to credits, and a line about credits would read as a nudge
@@ -55,6 +55,11 @@ const AUTOMATIC_RUNS = [
     key: "compare" as const,
     title: "Compare every replacement",
     body: "When you replace a document, an explanation of what changed between the old version and the new one. Off, you can still run a compare from version history.",
+  },
+  {
+    key: "brief" as const,
+    title: "Brief every visit",
+    body: "A few minutes after a recipient stops reading, a short account of the visit: what held them, what they skipped, whether they came back. One credit per visit, on Pro. Off, the email still carries the facts of the visit, without the write-up.",
   },
 ];
 
@@ -81,11 +86,13 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
     history: TierAll;
     autoSummary: boolean;
     autoCompare: boolean;
+    autoBrief: boolean;
   } | null>(null);
   // Same rule as the tiers: null until the server answers, so an unchecked box never claims the
   // workspace turned something off.
   const [autoSummary, setAutoSummary] = useState<boolean | null>(null);
   const [autoCompare, setAutoCompare] = useState<boolean | null>(null);
+  const [autoBrief, setAutoBrief] = useState<boolean | null>(null);
 
   const dirty = useMemo(
     () =>
@@ -93,8 +100,9 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
       (reviewTier !== loaded.review ||
         historyTier !== loaded.history ||
         autoSummary !== loaded.autoSummary ||
-        autoCompare !== loaded.autoCompare),
-    [loaded, reviewTier, historyTier, autoSummary, autoCompare],
+        autoCompare !== loaded.autoCompare ||
+        autoBrief !== loaded.autoBrief),
+    [loaded, reviewTier, historyTier, autoSummary, autoCompare, autoBrief],
   );
 
   async function load() {
@@ -110,11 +118,13 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
       // Absent reads as on, matching `isAutomationOn` on the server.
       const summaryOn = (json as any).autoSummary !== false;
       const compareOn = (json as any).autoCompare !== false;
+      const briefOn = (json as any).autoBrief !== false;
       setReviewTier(review);
       setHistoryTier(history);
       setAutoSummary(summaryOn);
       setAutoCompare(compareOn);
-      setLoaded({ review, history, autoSummary: summaryOn, autoCompare: compareOn });
+      setAutoBrief(briefOn);
+      setLoaded({ review, history, autoSummary: summaryOn, autoCompare: compareOn, autoBrief: briefOn });
     } catch (e) {
       // Leave the tiers null: the card shows the error with nothing selected rather than a guess.
       setError(e instanceof Error ? e.message : "Failed to load defaults");
@@ -130,7 +140,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
   async function save() {
     // Belt and braces: the button is disabled in these states, but a save with nothing loaded would
     // be exactly the overwrite this card used to do, so refuse it here too.
-    if (!dirty || !reviewTier || !historyTier || autoSummary === null || autoCompare === null) return;
+    if (!dirty || !reviewTier || !historyTier || autoSummary === null || autoCompare === null || autoBrief === null) return;
     setSaveBusy(true);
     setSaveError(null);
     setSaved(null);
@@ -143,13 +153,14 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
           historyQualityTier: historyTier,
           autoSummary,
           autoCompare,
+          autoBrief,
         }),
       });
       const json = (await res.json().catch(() => null)) as ApiResponse | null;
       if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
       if (!json || (json as any).ok !== true) throw new Error("Invalid response");
       // The saved values are now the server's values, so the card goes clean and Save re-disables.
-      setLoaded({ review: reviewTier, history: historyTier, autoSummary, autoCompare });
+      setLoaded({ review: reviewTier, history: historyTier, autoSummary, autoCompare, autoBrief });
       setSaved("Saved.");
       // Best-effort refresh so other UI that reads snapshot/usage stays up-to-date.
       dispatchCreditsSnapshotRefresh();
@@ -197,8 +208,8 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
 
       <div className="mt-5 space-y-2">
         {AUTOMATIC_RUNS.map((run) => {
-          const on = run.key === "summary" ? autoSummary : autoCompare;
-          const set = run.key === "summary" ? setAutoSummary : setAutoCompare;
+          const on = run.key === "summary" ? autoSummary : run.key === "compare" ? autoCompare : autoBrief;
+          const set = run.key === "summary" ? setAutoSummary : run.key === "compare" ? setAutoCompare : setAutoBrief;
           return (
             <label
               key={run.key}

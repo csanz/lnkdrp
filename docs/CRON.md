@@ -59,7 +59,7 @@ Frequencies below are from `vercel.json` `"crons"` (production source of truth).
   - **Reads**: `CreditLedger(status="charged", eventType="ai_run")`
   - **Writes**: `UsageAggDaily`, `UsageAggCycle`, `CronHealth(jobKey="usage-agg-reconcile")`
   - **Idempotency**: deterministic recompute via upserts; safe to re-run for the same date range.
-- **Notification emails (views + doc updates + request repos)**
+- **Notification emails (views + doc updates + new documents + visit briefs + request repos)**
   - **Route**: `GET|POST /api/cron/notification-emails`
   - **Schedule**: `*/5 * * * *` (every 5 minutes)
   - **Purpose**: drain the **notification queue** (`notificationqueue`, see docs/prds/lnkdrp-notification-queue.md). One row is one email owed to one member, written when the thing happened (a `ShareView` created, a replacement upload completed, a request upload received). The tick delivers what is written down, retries what fails, and stops retrying what cannot succeed. Nothing here scans source collections behind a cursor any more, and `NotificationEmailCursor` is neither read nor written.
@@ -78,6 +78,16 @@ Frequencies below are from `vercel.json` `"crons"` (production source of truth).
   - **Dry run**: `?dryRun=1` (and the CLI, which is dry unless `--send`) is completely side-effect free: it does not claim, mark, or send. It reports what the next real tick would take.
   - **Overlap**: holds a `CronHealth` lease (see "Overlap lease" below); returns `200 { skipped: "locked" }` if a run is already in progress.
   - **Idempotency**: safe under retries. The queue's unique `dedupeKey` (`<kind>:<userId>:<source row id>`) means an event can only ever be owed once, and the claim filter (`status: "pending"`) means two runners cannot take the same row.
+- **Visit briefs (close quiet visits, write the brief, send the visit emails)**
+  - **Route**: `GET|POST /api/cron/visit-briefs`
+  - **Schedule**: `*/5 * * * *` (every 5 minutes)
+  - **Purpose**: the `VisitBrief` row is a debounce (docs/prds/lnkdrp-visit-briefs.md): every `POST /api/share/:shareId/stats` upserts one row per sitting (`{shareId, visitIdHash}`, unique) with `dueAt = lastEventAt + 2 min`. This tick claims rows whose `dueAt` has passed, re-reads the sitting's `ShareVisit` rows, and either pushes `dueAt` out again (the reader came back) or closes the visit: freezes the stats, applies the gates in order (owner preview and glances under 20 s on one page are `skipped`; Free workspaces are `skipped`; automatic briefs off, 100 briefs already today, or no credits give a `recap`), reserves one credit (`actionType: "brief"`), calls the model, charges with usage on the ledger row, stores the brief, records `share.visit_briefed`, enqueues one `visit_briefs` queue row per member, and drains that kind of the queue so the mail leaves in this tick. Model failures refund, retry after 1 m and 5 m, and give up on the third with the recap still sent.
+  - **Reads**: `VisitBrief`, `ShareVisit`, `ShareView` (downloads), `ShareLink`, `Doc` (titles, the stored `pageOutline`, or the PDF once to build it), `Project`, `OrgMembership`, `WorkspaceCreditBalance` (`autoBriefEnabled`), the workspace plan
+  - **Writes**: `VisitBrief`, `Doc.pageOutline` (once per upload version), `CreditLedger`, `AiRun`, `ActivityEvent` (`share.visit_briefed`, and `credits.exhausted` once per workspace per day), `NotificationQueue` (`visit_briefs`), the emails, `CronHealth(jobKey="visit-briefs")`
+  - **Bounds**: `?limit=` rows claimed per tick (default 50, three model calls at a time); stops claiming after 240 s and hands the rest back. `?workspaceId=` scopes a run. `?dryRun=1` claims and writes nothing and reports what the next tick would take.
+  - **Overlap**: `CronHealth` lease; a row `generating` for 10 minutes is handed back by the next tick. Claims carry a token, so a recovered row cannot be settled twice.
+  - **Idempotency**: one row per sitting by unique index, one queue row per member by `dedupeKey`, one ledger row per attempt by idempotency key. Rerunning cannot write a second brief for the same visit.
+  - **Latency**: quiet window plus cron interval — 2 to 7 minutes after a closed tab, 7 to 12 after a tab left open (the viewer's idle cut is 5 minutes).
 - **Plan limits grace sweep (Free workspaces)**
   - **Route**: `GET|POST /api/cron/plan-limits`
   - **Schedule**: `40 * * * *` (hourly)

@@ -22,7 +22,7 @@ const aiRunSchema = new Schema(
 
     kind: {
       type: String,
-      enum: ["reviewDocText", "analyzePdfText", "requestReviewInvestorFocused"],
+      enum: ["reviewDocText", "analyzePdfText", "requestReviewInvestorFocused", "visitBrief"],
       required: true,
       index: true,
     },

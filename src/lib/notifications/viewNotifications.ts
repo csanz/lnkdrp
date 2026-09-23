@@ -86,6 +86,8 @@ export const FIRST_VIEW_HONESTY_LINE =
   "If this was you checking the link, sign in first next time and we'll know not to count it.";
 
 export const PRO_IDENTITY_LINE = "Pro shows who opened it and how long they stayed.";
+/** The second thing Free does not get: the brief of the whole visit, minutes after it ends. */
+export const PRO_BRIEF_LINE = "Pro also sends you a short brief of every visit once the reader is done.";
 
 export const VIEW_EMAIL_FOOTER_REASON = "You get this because someone opened a link to a document in your workspace.";
 
@@ -805,7 +807,10 @@ export function composeImmediateEmail(params: {
     blocks.push({ kind: "muted", text: FIRST_VIEW_HONESTY_LINE });
   }
   blocks.push({ kind: "action", label: actionLabel, url: actionUrl });
-  if (!pro) blocks.push({ kind: "muted", text: PRO_IDENTITY_LINE });
+  if (!pro) {
+    blocks.push({ kind: "muted", text: PRO_IDENTITY_LINE });
+    blocks.push({ kind: "muted", text: PRO_BRIEF_LINE });
+  }
 
   return composed(subject, immediatePreheader(doc, events, links, ctx.plan), blocks, ctx);
 }

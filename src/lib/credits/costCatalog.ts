@@ -81,12 +81,16 @@ export const COST_CATALOG: readonly CostCatalogEntry[] = [
     released: false,
   },
   {
-    action: null,
-    label: "Viewer follow-up briefs",
-    detail: "A short brief on one viewer: the pages they lingered on, whether they came back, and a suggested next step.",
-    costs: { basic: 1, standard: 1, advanced: 1 },
-    notes: ["Priced per brief."],
-    released: false,
+    action: "brief",
+    label: "Visit brief",
+    detail: "A short account of one recipient's visit, written a few minutes after they stop reading: what held them, what they skipped, and how it compares with their last visit.",
+    costs: costsFor("brief"),
+    notes: [
+      "Runs automatically on Pro, a few minutes after each visit ends. One price; there is no quality level to choose.",
+      "Skipped for a glance (under 20 seconds on one page) and for your own opens. Out of credits? You still get the facts of the visit, without the write-up.",
+      "Turn it off under AI defaults, or set how you hear about it under Notifications.",
+    ],
+    released: true,
   },
   {
     action: null,

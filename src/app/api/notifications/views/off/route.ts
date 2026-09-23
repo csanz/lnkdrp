@@ -113,6 +113,17 @@ const OFF_COPY: Record<
       immediate: "New document emails arrive immediately",
     },
   },
+  visit_briefs: {
+    title: "Visit brief emails are off",
+    line: (w) => `You won't get emails when a recipient finishes reading a document in ${w}.`,
+    confirmTitle: "Turn off visit brief emails",
+    confirmLabel: "Turn off visit brief emails",
+    sentence: {
+      off: "Visit brief emails are already off",
+      daily: "Visit brief emails are set to a daily digest",
+      immediate: "Visit brief emails arrive after each visit",
+    },
+  },
   doc_updates: {
     title: "Document update emails are off",
     line: (w) => `You won't get emails when a document is replaced in ${w}.`,

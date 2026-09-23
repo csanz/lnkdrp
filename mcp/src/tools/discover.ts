@@ -72,6 +72,8 @@ const ACTIVITY_TYPES = [
   "project.landed",
   "share.unlocked",
   "viewer.introduced",
+  // A recipient's visit ended and was written up; `meta.headline` carries the brief's one line.
+  "share.visit_briefed",
   // Filing, so an agent can ask what has been tagged lately — including by itself.
   "tag.applied",
   "tag.removed",

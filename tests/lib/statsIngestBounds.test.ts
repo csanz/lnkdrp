@@ -112,6 +112,8 @@ vi.mock("@/lib/share/viewerIdentity", () => ({
   propagateViewerIdentity: vi.fn(async () => undefined),
 }));
 vi.mock("@/lib/activity/log", () => ({ recordActivity }));
+// The visit brief's clock is one best-effort upsert after the visit write; not under test here.
+vi.mock("@/lib/visits/scheduleVisitBrief", () => ({ scheduleVisitBrief: vi.fn(async () => undefined) }));
 vi.mock("@/lib/notifications/queue", () => ({
   enqueueNotifications,
   notificationDedupeKey: (...parts: unknown[]) => parts.map(String).join(":"),

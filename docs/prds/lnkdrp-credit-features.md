@@ -67,6 +67,10 @@ Each milestone is independent and can ship in any order. Ordered here by expecte
 
 ### M1 — Recipient-side intelligence
 
+> **Shipped in part (2026-09-23):** the per-viewer follow-up brief became the **visit brief** —
+> written automatically a few minutes after each visit ends, 1 credit, Pro, `actionType: "brief"` —
+> see `docs/prds/lnkdrp-visit-briefs.md`. The `who_is_warm` ranking and the MCP tool remain open.
+
 - Define "engagement signals" from ShareView/ShareVisit: attention pages, return visits, time-on-deck, download intent.
 - Add an `lnkdrp_who_is_warm` MCP tool and a dashboard panel that ranks viewers by engagement for one doc or a project.
 - Generate a short natural-language follow-up brief per viewer ("spent 4 min on pricing, came back twice") priced as one credit per brief.

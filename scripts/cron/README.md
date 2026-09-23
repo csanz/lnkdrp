@@ -13,6 +13,7 @@ automatically — there is no CI workflow in this repo — so run `npm run tests
 | `credits-cycle-reconcile` | `10 * * * *` (hourly at :10) | `/api/cron/credits-cycle-reconcile` | `npm run cron:credits-cycle-reconcile` |
 | `usage-agg-reconcile` | `20 * * * *` (hourly at :20) | `/api/cron/usage-agg-reconcile` | `npm run cron:usage-agg-reconcile` |
 | `notification-emails` | `*/5 * * * *` (every 5 minutes) | `/api/cron/notification-emails` | `npm run cron:notification-emails` |
+| `visit-briefs` | `*/5 * * * *` (every 5 minutes) | `/api/cron/visit-briefs` | `npm run cron:visit-briefs` |
 | `plan-limits` | `40 * * * *` (hourly at :40) | `/api/cron/plan-limits` | `npm run cron:plan-limits` |
 | `analytics-reconcile` | `50 3 * * *` (nightly at 03:50 UTC) | `/api/cron/analytics-reconcile` | `npm run cron:analytics-reconcile` |
 | `credits-purchase-expiry` | `5 4 * * *` (nightly at 04:05 UTC) | `/api/cron/credits-purchase-expiry` | `npm run cron:credits-purchase-expiry` |
@@ -56,6 +57,7 @@ CRON_SECRET=…  CRON_TARGET_URL=https://lnkdrp.com
 10 * * * *   cd /srv/lnkdrp && npm run -s cron:credits-cycle-reconcile
 20 * * * *   cd /srv/lnkdrp && npm run -s cron:usage-agg-reconcile
 */5 * * * *  cd /srv/lnkdrp && npm run -s cron:notification-emails
+*/5 * * * *  cd /srv/lnkdrp && npm run -s cron:visit-briefs
 40 * * * *   cd /srv/lnkdrp && npm run -s cron:plan-limits
 25 * * * *   cd /srv/lnkdrp && npm run -s cron:credits-stale-reservations
 50 3 * * *   cd /srv/lnkdrp && npm run -s cron:analytics-reconcile

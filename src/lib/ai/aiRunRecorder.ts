@@ -9,7 +9,7 @@ import { AiRunModel } from "@/lib/models/AiRun";
  * even if logging fails.
  */
 
-export type AiRunKind = "reviewDocText" | "analyzePdfText" | "requestReviewInvestorFocused";
+export type AiRunKind = "reviewDocText" | "analyzePdfText" | "requestReviewInvestorFocused" | "visitBrief";
 
 export type AiRunMeta = {
   userId?: string | null;

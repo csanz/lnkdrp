@@ -44,22 +44,24 @@ describe("what counts as off", () => {
 
 describe("resolving a balance row", () => {
   test("no row at all means both on: the workspace has never run anything", () => {
-    expect(resolveAiAutomation(null)).toEqual({ summary: true, compare: true });
+    expect(resolveAiAutomation(null)).toEqual({ summary: true, compare: true, brief: true });
     expect(resolveAiAutomation(null)).toEqual(AI_AUTOMATION_DEFAULT);
   });
 
   test("an empty row means both on", () => {
-    expect(resolveAiAutomation({})).toEqual({ summary: true, compare: true });
+    expect(resolveAiAutomation({})).toEqual({ summary: true, compare: true, brief: true });
   });
 
   test("the two switches are independent", () => {
     expect(resolveAiAutomation({ autoSummaryEnabled: false, autoCompareEnabled: true })).toEqual({
       summary: false,
       compare: true,
+      brief: true,
     });
     expect(resolveAiAutomation({ autoSummaryEnabled: true, autoCompareEnabled: false })).toEqual({
       summary: true,
       compare: false,
+      brief: true,
     });
   });
 
@@ -67,6 +69,12 @@ describe("resolving a balance row", () => {
     expect(resolveAiAutomation({ autoSummaryEnabled: false, autoCompareEnabled: false })).toEqual({
       summary: false,
       compare: false,
+      brief: true,
+    });
+    expect(resolveAiAutomation({ autoSummaryEnabled: false, autoCompareEnabled: false, autoBriefEnabled: false })).toEqual({
+      summary: false,
+      compare: false,
+      brief: false,
     });
   });
 });

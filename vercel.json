@@ -25,6 +25,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/visit-briefs",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/plan-limits",
       "schedule": "40 * * * *"
     },

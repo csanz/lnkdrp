@@ -19,9 +19,20 @@ import type { Types } from "mongoose";
  * that one is an existing document being replaced. Nothing fired when a teammate added something
  * new, which in a shared workspace is the thing colleagues most want to hear about.
  */
-export type NotificationQueueKind = "share_views" | "doc_updates" | "doc_uploads" | "repo_link_requests";
+/**
+ * `visit_briefs` is the account of one recipient's whole visit, written minutes after it ends
+ * (docs/prds/lnkdrp-visit-briefs.md). `share_views` fires at the first page; this one fires when
+ * there is something to say. The row's `event.visitBriefId` points at the stored `VisitBrief`.
+ */
+export type NotificationQueueKind = "share_views" | "doc_updates" | "doc_uploads" | "repo_link_requests" | "visit_briefs";
 
-export const NOTIFICATION_QUEUE_KINDS: NotificationQueueKind[] = ["share_views", "doc_updates", "doc_uploads", "repo_link_requests"];
+export const NOTIFICATION_QUEUE_KINDS: NotificationQueueKind[] = [
+  "share_views",
+  "doc_updates",
+  "doc_uploads",
+  "repo_link_requests",
+  "visit_briefs",
+];
 
 export type NotificationQueueStatus = "pending" | "sending" | "sent" | "skipped" | "dead";
 
@@ -60,6 +71,8 @@ const notificationEventSchema = new Schema(
 
     /** Document version this event is about (`doc_updates`). */
     version: { type: Number, default: null },
+    /** The stored brief this email renders (`visit_briefs`). */
+    visitBriefId: { type: Schema.Types.ObjectId, ref: "VisitBrief", default: null },
   },
   { _id: false },
 );

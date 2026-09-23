@@ -52,7 +52,7 @@ describe("every email we send is described", () => {
   });
 
   test("the settings named are ones the preferences UI actually offers", () => {
-    const offered = new Set(["views", "docUpdates", "docUploads", "repoRequests", null]);
+    const offered = new Set(["views", "briefs", "docUpdates", "docUploads", "repoRequests", null]);
     for (const [id, c] of Object.entries(EMAIL_COPY)) {
       expect(offered.has(c.setting), `${id} names a setting that does not exist`).toBe(true);
     }

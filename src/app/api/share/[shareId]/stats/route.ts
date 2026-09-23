@@ -41,6 +41,7 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
 import { UserModel } from "@/lib/models/User";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
+import { scheduleVisitBrief } from "@/lib/visits/scheduleVisitBrief";
 import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
@@ -1133,6 +1134,29 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               if (Object.keys(inc).length) update.$inc = inc;
 
               await ShareVisitModel.updateOne({ shareId, botIdHash, visitIdHash }, update, { upsert: true });
+
+              /**
+               * The visit brief's clock (docs/prds/lnkdrp-visit-briefs.md, decision 4). One upsert
+               * per event moves this sitting's `dueAt` to two minutes from now; the `visit-briefs`
+               * cron looks at it then and writes the brief once nothing has moved it further.
+               * Keyed by the person (`viewerBotIdHash`), not the `<digest>.<docId>` row key, and by
+               * the tab (`visitIdHash`), which on a data room is shared across every document —
+               * so one row covers the whole sitting. Best-effort, after the visit row it describes.
+               */
+              await scheduleVisitBrief({
+                orgId: shareOrgId ?? "",
+                docId: String(docId),
+                projectId: projectTarget ? String(projectTarget.project._id) : null,
+                shareLinkId,
+                shareId,
+                visitIdHash,
+                botIdHash: viewerBotIdHash,
+                isOwnerPreview: ownerPreview,
+                viewerUserId,
+                viewerName: viewerNameIntro ?? null,
+                viewerEmail: viewerEmail ?? null,
+                at: viewedAt,
+              });
             } catch (e) {
               // Loud on purpose: an operator-path conflict here silently emptied this collection
               // for months, and the symptom (no visits anywhere) looks identical to "no traffic".

@@ -57,6 +57,12 @@ const workspaceCreditBalanceSchema = new Schema(
      */
     autoSummaryEnabled: { type: Boolean, default: true },
     autoCompareEnabled: { type: Boolean, default: true },
+    /**
+     * The third automatic run: a brief of every recipient visit, one credit each, written minutes
+     * after the reader leaves (docs/prds/lnkdrp-visit-briefs.md). Pro only — on Free the flag is
+     * stored but nothing reads it. Same default and same "absent is on" reading as the two above.
+     */
+    autoBriefEnabled: { type: Boolean, default: true },
   },
   {
     timestamps: { createdAt: "createdDate", updatedAt: "updatedDate" },

@@ -108,7 +108,9 @@ export default async function PricingPage() {
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
               You pay for links, projects, and the people you work with. Every link opens with an AI
-              summary, one credit each, or free when your agent writes it. Version history and AI compare run on credits too.
+              summary, one credit each, or free when your agent writes it. On Pro, every finished visit gets a
+              brief: what held the reader, what they came back to, what they skipped. Version history and AI
+              compare run on credits too.
             </p>
           </div>
 
@@ -245,8 +247,10 @@ export default async function PricingPage() {
                   {comparesFor(INCLUDED_CREDITS_PER_CYCLE, "basic")} basic compares,{" "}
                   {comparesFor(INCLUDED_CREDITS_PER_CYCLE)} standard, or{" "}
                   {comparesFor(INCLUDED_CREDITS_PER_CYCLE, "advanced")} advanced. Higher levels run a deeper analysis and cost more per run. The summary on every
-                  link is one credit, so a busy month of uploads still leaves most of the allowance. Links,
-                  uploads, replacements and stats never need credits.
+                  link is one credit, and so is the brief written after each visit, so a busy month still leaves
+                  most of the allowance. Links, uploads, replacements and stats never need credits. When credits
+                  run out, uploads and links keep working; the AI runs pause until you add credits, and a visit
+                  brief email says so rather than going quiet.
                 </p>
                 <p className="mt-3 max-w-md text-[12px] leading-5 text-white/45">
                   Need more?{" "}

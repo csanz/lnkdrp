@@ -34,6 +34,9 @@ import type { EmailWorkspace } from "@/lib/email/layout";
 import { composeDocUpdateEmail } from "@/lib/notifications/docUpdateEmail";
 import { composeDocUploadEmail } from "@/lib/notifications/docUploadEmail";
 import { composeRepoLinkRequestEmail } from "@/lib/notifications/repoLinkRequestEmail";
+import { composeVisitBriefEmail, pageRanges, RECAP_LINES, type VisitBriefEntry } from "@/lib/notifications/visitBriefEmail";
+import { VisitBriefModel } from "@/lib/models/VisitBrief";
+import { ShareLinkModel } from "@/lib/models/ShareLink";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
@@ -78,6 +81,9 @@ import {
   type ViewLinkInfo,
   type WorkspacePlan,
   buildPreferencesUrl,
+  buildMetricsUrl,
+  buildReaderUrl,
+  sanitizeInline,
   TURN_OFF_LABEL,
   CHANGE_HOW_OFTEN_LABEL,
 } from "@/lib/notifications/viewNotifications";
@@ -161,6 +167,11 @@ export type SendNotificationEmailsParams = {
   limitEventsPerMember?: number;
   /** Force digest sends even if it is not the end-of-day UTC tick. */
   forceDigest?: boolean;
+  /**
+   * Only these kinds. The `visit-briefs` cron drains the rows it just wrote so the mail leaves in
+   * the same tick; claims are atomic per row, so two drains beside each other are safe.
+   */
+  kinds?: readonly NotificationQueueKind[];
   /** Override "now" for deterministic testing. */
   now?: Date;
 };
@@ -197,6 +208,8 @@ export type SendNotificationEmailsResult = {
   docUpdate: { immediate: NotificationBucketTotals; daily: NotificationDigestTotals };
   docUpload: { immediate: NotificationBucketTotals; daily: NotificationDigestTotals };
   repoLinkRequests: { immediate: NotificationBucketTotals; daily: NotificationDigestTotals };
+  /** Visit briefs: one email per finished visit, or the day's visits in one (docs/prds/lnkdrp-visit-briefs.md). */
+  visitBriefs: { immediate: NotificationBucketTotals; daily: NotificationDigestTotals };
   views: {
     immediate: NotificationBucketTotals;
     /**
@@ -475,7 +488,7 @@ async function loadRecipients(groups: readonly DueGroup[]): Promise<Map<string, 
     orgId: { $in: orgIds },
     userId: { $in: userIds },
   })
-    .select({ _id: 1, orgId: 1, userId: 1, docUpdateEmailMode: 1, docUploadEmailMode: 1, repoLinkRequestEmailMode: 1, viewEmailMode: 1 })
+    .select({ _id: 1, orgId: 1, userId: 1, docUpdateEmailMode: 1, docUploadEmailMode: 1, repoLinkRequestEmailMode: 1, viewEmailMode: 1, briefEmailMode: 1 })
     .lean();
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -492,6 +505,8 @@ async function loadRecipients(groups: readonly DueGroup[]): Promise<Map<string, 
         doc_uploads: (m?.docUploadEmailMode ?? "daily") as Mode,
         repo_link_requests: (m?.repoLinkRequestEmailMode ?? "daily") as Mode,
         share_views: normalizeViewEmailMode(m?.viewEmailMode),
+        // Missing means `immediate`, the schema default: the brief is the per-visit email.
+        visit_briefs: normalizeViewEmailMode(m?.briefEmailMode),
       },
     });
   }
@@ -705,6 +720,169 @@ type DocUpdateItem = {
  * rather than trusted from the event snapshot, because a rename between the upload and the send
  * should show the name the recipient will see when they click through.
  */
+/**
+ * The round for "a recipient finished reading".
+ *
+ * Everything the email says is on the `VisitBrief` row the queue row points at — the facts were
+ * frozen when the visit closed and the brief was written then or not at all — so this round loads
+ * those rows, resolves the current titles and link labels, and composes. A brief whose row is gone
+ * is skipped, never retried. Immediate mode is one email per visit, because each has its own
+ * headline for a subject; daily mode is one email for the day.
+ */
+async function buildVisitBriefRound(params: {
+  orgId: Types.ObjectId;
+  orgIdStr: string;
+  rows: ClaimedNotification[];
+  mode: SendMode;
+  membershipId: string;
+  appUrl: string;
+  now: Date;
+  workspace: EmailWorkspace | null;
+}): Promise<Round> {
+  const skipped: Round["skipped"] = [];
+  const idByRow = new Map<string, string>();
+  for (const row of params.rows) {
+    const id = String(toObjectIdOrNull(row.event.visitBriefId) ?? sourceIdOf(row) ?? "");
+    if (Types.ObjectId.isValid(id)) idByRow.set(row.id, id);
+    else skipped.push({ id: row.id, reason: SKIP_SOURCE_GONE });
+  }
+  const ids = Array.from(new Set(idByRow.values()));
+  if (!ids.length) return { deliveries: [], skipped };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const briefs = (await VisitBriefModel.find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) }, orgId: params.orgId }).lean()) as any[];
+  const briefById = new Map(briefs.map((b) => [String(b._id), b]));
+
+  const docIds = new Set<string>();
+  const projectIds = new Set<string>();
+  const shareIds = new Set<string>();
+  for (const b of briefs) {
+    if (b.docId) docIds.add(String(b.docId));
+    if (b.projectId) projectIds.add(String(b.projectId));
+    if (typeof b.shareId === "string") shareIds.add(b.shareId);
+    for (const d of Array.isArray(b.stats?.docs) ? b.stats.docs : []) if (d?.docId) docIds.add(String(d.docId));
+  }
+  const [docTitles, projects, links] = await Promise.all([
+    loadDocTitles(params.orgId, Array.from(docIds)),
+    projectIds.size
+      ? (ProjectModel.find({ _id: { $in: Array.from(projectIds).map((id) => new Types.ObjectId(id)) } }).select({ _id: 1, name: 1 }).lean() as Promise<any[]>)
+      : Promise.resolve([] as any[]),
+    shareIds.size
+      ? (ShareLinkModel.find({ shareId: { $in: Array.from(shareIds) } }).select({ shareId: 1, label: 1, audience: 1, isDefault: 1, projectId: 1 }).lean() as Promise<any[]>)
+      : Promise.resolve([] as any[]),
+  ]);
+  const projectName = new Map(projects.map((p) => [String(p._id), typeof p.name === "string" && p.name.trim() ? p.name.trim() : "Data room"]));
+  const linkByShareId = new Map(links.map((l) => [String(l.shareId), l]));
+
+  const items: Array<{ row: ClaimedNotification; entry: VisitBriefEntry }> = [];
+  for (const row of params.rows) {
+    const id = idByRow.get(row.id);
+    const b = id ? briefById.get(id) : null;
+    if (!b) {
+      if (id) skipped.push({ id: row.id, reason: SKIP_SOURCE_GONE });
+      continue;
+    }
+    const stats = b.stats ?? {};
+    const docs: any[] = Array.isArray(stats.docs) ? stats.docs : [];
+    const primaryDocId = b.docId ? String(b.docId) : docs.length === 1 ? String(docs[0]?.docId ?? "") : "";
+    const projectId = b.projectId ? String(b.projectId) : null;
+    const title = projectId
+      ? projectName.get(projectId) ?? "Data room"
+      : docTitles.get(primaryDocId) ?? (typeof docs[0]?.title === "string" ? docs[0].title : null) ?? "Untitled";
+    if (!projectId && primaryDocId && !docTitles.has(primaryDocId)) {
+      skipped.push({ id: row.id, reason: SKIP_DOCUMENT_GONE });
+      continue;
+    }
+    const link = linkByShareId.get(String(b.shareId));
+
+    // Pages by time, longest first, with how many separate times each was opened — the returns
+    // are the thing the owner asked to see. The reading order is the path, every turn included.
+    const mapEntries = (m: unknown): Array<[string, number]> => (!m ? [] : m instanceof Map ? Array.from(m.entries()) : Object.entries(m as Record<string, number>));
+    const pageLines: Array<{ page: number; heading: string | null; ms: number; opened: number }> = [];
+    const path: number[] = [];
+    for (const d of docs) {
+      const opened = new Map(mapEntries(d?.pageVisitCountByPage).map(([k, n]) => [Number(k), Number(n) || 0]));
+      for (const [k, ms] of mapEntries(d?.pageTimeMsByPage)) {
+        const page = Number(k);
+        if (Number.isFinite(page) && page >= 1 && Number(ms) > 0) pageLines.push({ page, heading: null, ms: Number(ms), opened: Math.max(1, opened.get(page) ?? 1) });
+      }
+      for (const e of Array.isArray(d?.pageEvents) ? d.pageEvents : []) {
+        if (path[path.length - 1] !== e.pageNumber) path.push(e.pageNumber);
+        if (e.toPage && path[path.length - 1] !== e.toPage) path.push(e.toPage);
+      }
+    }
+    pageLines.sort((a, c) => c.ms - a.ms);
+    const topPages = pageLines.slice(0, 6);
+    const skippedPages =
+      docs.length === 1 && docs[0]?.pageCount
+        ? pageRanges(Array.from({ length: Number(docs[0].pageCount) }, (_, i) => i + 1).filter((p) => !(docs[0].pagesSeen ?? []).map(Number).includes(p)))
+        : [];
+
+    const viewerLabel =
+      sanitizeInline(b.viewerName, 120) || sanitizeInline(b.viewerEmail, 120) || sanitizeInline(row.event.viewerName, 120) || null;
+    const readerUrl = buildReaderUrl(
+      params.appUrl,
+      { viewerUserId: b.viewerUserId ? String(b.viewerUserId) : null, docId: primaryDocId || String(docs[0]?.docId ?? ""), botIdHash: String(b.botIdHash ?? "") },
+      link ? { shareId: String(link.shareId), label: null, audience: null, isDefault: Boolean(link.isDefault), createdDate: null, projectId } : null,
+    );
+    const entry: VisitBriefEntry = {
+      viewerLabel,
+      linkLabel: link && !link.isDefault ? sanitizeInline(link.label, 80) || null : null,
+      audience: link ? sanitizeInline(link.audience, 120) || null : null,
+      title,
+      docsOpened: docs.length > 1 ? docs.map((d) => docTitles.get(String(d.docId)) ?? (typeof d.title === "string" ? d.title : "Untitled")) : [],
+      startedAt: b.startedAt instanceof Date ? b.startedAt : new Date(b.startedAt),
+      endedAt: b.lastEventAt instanceof Date ? b.lastEventAt : new Date(b.lastEventAt),
+      timeSpentMs: Number(stats.timeSpentMs) || 0,
+      pagesSeen: Number(stats.pagesSeen) || 0,
+      pageCount: typeof stats.pageCount === "number" ? stats.pageCount : null,
+      downloads: Number(stats.downloads) || 0,
+      visitNumber: Number(stats.visitNumber) || 1,
+      lastVisitMs: typeof stats.previous?.lastVisitTimeSpentMs === "number" ? stats.previous.lastVisitTimeSpentMs : null,
+      lastVisitAt: stats.previous?.lastVisitStartedAt ? new Date(stats.previous.lastVisitStartedAt) : null,
+      topPages,
+      path: path.slice(0, 24),
+      skipped: skippedPages,
+      brief: b.brief?.headline && b.brief?.body
+        ? {
+            headline: String(b.brief.headline),
+            body: String(b.brief.body),
+            interests: Array.isArray(b.brief.interests) ? b.brief.interests.map(String) : [],
+            highlights: Array.isArray(b.brief.highlights) ? b.brief.highlights.map(String) : [],
+            followUp: typeof b.brief.followUp === "string" && b.brief.followUp ? b.brief.followUp : null,
+          }
+        : null,
+      recapLine: b.brief?.headline ? null : (RECAP_LINES[String(b.recapReason ?? "")] ?? null),
+      recapReason: b.brief?.headline ? null : (typeof b.recapReason === "string" ? b.recapReason : null),
+      url: readerUrl ?? (primaryDocId ? buildMetricsUrl(params.appUrl, primaryDocId, String(b.shareId)) : `${params.appUrl}/dashboard`),
+      docUrl: projectId ? `${params.appUrl}/project/${projectId}` : primaryDocId ? `${params.appUrl}/doc/${primaryDocId}` : null,
+    };
+    items.push({ row, entry });
+  }
+  if (!items.length) return { deliveries: [], skipped };
+  items.sort((a, c) => a.entry.startedAt.getTime() - c.entry.startedAt.getTime());
+
+  const common = {
+    workspace: params.workspace,
+    offUrl: emailsOffUrl(params.appUrl, "visit_briefs", params.membershipId, { now: params.now }),
+    preferencesUrl: buildPreferencesUrl(params.appUrl),
+    turnOffLabel: TURN_OFF_LABEL,
+    changeHowOftenLabel: CHANGE_HOW_OFTEN_LABEL,
+    metricsUrl: null,
+    creditsUrl: `${params.appUrl}/credits`,
+  };
+  if (params.mode === "immediate") {
+    return {
+      deliveries: items.map((i) => ({ ...composeVisitBriefEmail({ ...common, entries: [i.entry], daily: false }), rows: [i.row] })),
+      skipped,
+    };
+  }
+  const rendered = items.slice(0, DIGEST_MAX_DOCUMENTS);
+  const deferred = items.slice(DIGEST_MAX_DOCUMENTS).map((i) => i.row);
+  const email = composeVisitBriefEmail({ ...common, entries: rendered.map((i) => i.entry), daily: true });
+  return { deliveries: [{ ...email, rows: rendered.map((i) => i.row) }], skipped, deferred };
+}
+
 /** One newly added document, resolved from its queue rows. */
 type DocUploadItem = {
   row: ClaimedNotification;
@@ -1225,6 +1403,7 @@ function bucketFor(
     doc_updates: totals.docUpdate,
     doc_uploads: totals.docUpload,
     repo_link_requests: totals.repoLinkRequests,
+    visit_briefs: totals.visitBriefs,
   };
   const group = groups[kind];
   return mode === "immediate" ? group.immediate : group.daily;
@@ -1345,6 +1524,7 @@ function emptyTotals(now: Date, dryRun: boolean, allowDaily: boolean): SendNotif
     docUpdate: { immediate: bucket(), daily: digest() },
     docUpload: { immediate: bucket(), daily: digest() },
     repoLinkRequests: { immediate: bucket(), daily: digest() },
+    visitBriefs: { immediate: bucket(), daily: digest() },
     views: { immediate: bucket(), daily: { ...digest(), returns: 0 }, off: { members: 0 }, errors: 0 },
     queue: { recovered: 0, claimed: 0, sent: 0, skipped: 0, retried: 0, dead: 0, deferred: 0 },
   };
@@ -1380,18 +1560,19 @@ export async function sendNotificationEmails(
   // first and truncates at `limitMembers`, so a kind that can never be delivered would sit at the
   // head of every tick's budget forever, crowding out mail that can. They are counted instead.
   const deliverableKinds = NOTIFICATION_QUEUE_KINDS.filter(
-    (k) => k !== "repo_link_requests" || FEATURE_REQUESTS_ENABLED,
+    (k) => (k !== "repo_link_requests" || FEATURE_REQUESTS_ENABLED) && (!params.kinds || params.kinds.includes(k)),
   );
   const scope = {
     orgId: workspaceId ? new Types.ObjectId(workspaceId) : null,
     userId: userId ? new Types.ObjectId(userId) : null,
   };
-  if (deliverableKinds.length < NOTIFICATION_QUEUE_KINDS.length) {
-    totals.queue.deferred += await countDueRows({
-      ...scope,
-      kinds: NOTIFICATION_QUEUE_KINDS.filter((k) => !deliverableKinds.includes(k)),
-      now,
-    });
+  // Flag-gated kinds are counted as deferred; kinds outside a `kinds` scope are simply not this
+  // run's business and are neither gathered nor counted.
+  const gatedKinds = NOTIFICATION_QUEUE_KINDS.filter(
+    (k) => !deliverableKinds.includes(k) && (!params.kinds || params.kinds.includes(k)),
+  );
+  if (gatedKinds.length) {
+    totals.queue.deferred += await countDueRows({ ...scope, kinds: gatedKinds, now });
   }
 
   const groups = await loadDueGroups({
@@ -1604,6 +1785,17 @@ async function renderAndSend(params: {
     });
   } else if (kind === "doc_uploads") {
     round = await buildDocUploadRound({
+      orgId,
+      orgIdStr,
+      rows,
+      mode,
+      membershipId: params.membershipId,
+      appUrl: params.appUrl,
+      now,
+      workspace: await loadWorkspace(orgId, orgIdStr, params.workspaces),
+    });
+  } else if (kind === "visit_briefs") {
+    round = await buildVisitBriefRound({
       orgId,
       orgIdStr,
       rows,

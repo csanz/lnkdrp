@@ -54,7 +54,7 @@ export async function GET(request: Request) {
       await connectMongo();
       const [membership, bal, plan] = await Promise.all([
         OrgMembershipModel.findOne({ orgId: ctx.orgId, userId: ctx.userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
-        WorkspaceCreditBalanceModel.findOne({ workspaceId: ctx.orgId }).select({ defaultReviewQualityTier: 1, defaultHistoryQualityTier: 1, autoSummaryEnabled: 1, autoCompareEnabled: 1 }).lean(),
+        WorkspaceCreditBalanceModel.findOne({ workspaceId: ctx.orgId }).select({ defaultReviewQualityTier: 1, defaultHistoryQualityTier: 1, autoSummaryEnabled: 1, autoCompareEnabled: 1, autoBriefEnabled: 1 }).lean(),
         getWorkspacePlan(ctx.orgId),
       ]);
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
@@ -67,7 +67,7 @@ export async function GET(request: Request) {
       // The two automatic runs. Absent fields read as on; see `aiAutomation.ts`.
       const automation = resolveAiAutomation(bal as any);
 
-      const payload = { ok: true, review, history, autoSummary: automation.summary, autoCompare: automation.compare };
+      const payload = { ok: true, review, history, autoSummary: automation.summary, autoCompare: automation.compare, autoBrief: automation.brief };
       qualityDefaultsCache.set(cacheKey, { at: Date.now(), payload });
       if (qualityDefaultsCache.size > 200) {
         // Best-effort eviction: drop an arbitrary entry (avoid full scan).
@@ -110,6 +110,7 @@ export async function POST(request: Request) {
       // card, which predates them) must not be read as switching both runs off.
       const autoSummary = parseAutomationFlag(body?.autoSummary);
       const autoCompare = parseAutomationFlag(body?.autoCompare);
+      const autoBrief = parseAutomationFlag(body?.autoBrief);
 
       // Upsert: when this is the first write to the balance row, seed it the same way the reserve
       // and snapshot paths do so the Free starter grant / daily cap are not silently skipped.
@@ -122,6 +123,7 @@ export async function POST(request: Request) {
             defaultHistoryQualityTier: history,
             ...(autoSummary === null ? {} : { autoSummaryEnabled: autoSummary }),
             ...(autoCompare === null ? {} : { autoCompareEnabled: autoCompare }),
+            ...(autoBrief === null ? {} : { autoBriefEnabled: autoBrief }),
           },
           $setOnInsert: { workspaceId: ctx.orgId, ...seed },
         },
@@ -141,7 +143,14 @@ export async function POST(request: Request) {
       }
 
       return NextResponse.json(
-        { ok: true, review, history, ...(autoSummary === null ? {} : { autoSummary }), ...(autoCompare === null ? {} : { autoCompare }) },
+        {
+          ok: true,
+          review,
+          history,
+          ...(autoSummary === null ? {} : { autoSummary }),
+          ...(autoCompare === null ? {} : { autoCompare }),
+          ...(autoBrief === null ? {} : { autoBrief }),
+        },
         { headers: { "cache-control": "no-store" } },
       );
     } catch (e) {

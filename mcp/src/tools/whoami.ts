@@ -21,9 +21,9 @@ function costsFor(actionType: ActionType): number[] {
   return COST_TIERS.map((qualityTier) => creditsForRun({ actionType, qualityTier }));
 }
 
-/** Credit costs by quality tier (basic, standard, advanced); `compare` is the `history` action. */
-export function creditCosts(): { summary: number[]; compare: number[] } {
-  return { summary: costsFor("summary"), compare: costsFor("history") };
+/** Credit costs by quality tier (basic, standard, advanced); `compare` is the `history` action, `brief` the visit brief. */
+export function creditCosts(): { summary: number[]; compare: number[]; brief: number[] } {
+  return { summary: costsFor("summary"), compare: costsFor("history"), brief: costsFor("brief") };
 }
 
 /** One product surface no tool covers yet — named so an agent learns it exists at all. */

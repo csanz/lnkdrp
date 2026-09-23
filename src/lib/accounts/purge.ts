@@ -36,6 +36,7 @@ import { DocPageTimingModel } from "@/lib/models/DocPageTiming";
 import { ErrorEventModel } from "@/lib/models/ErrorEvent";
 import { NotificationEmailCursorModel } from "@/lib/models/NotificationEmailCursor";
 import { NotificationQueueModel } from "@/lib/models/NotificationQueue";
+import { VisitBriefModel } from "@/lib/models/VisitBrief";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
 import { ProjectModel } from "@/lib/models/Project";
 import { AiRunModel } from "@/lib/models/AiRun";
@@ -383,6 +384,8 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
         ErrorEventModel.deleteMany(workspaceFilter),
         NotificationEmailCursorModel.deleteMany(orgFilter),
         NotificationQueueModel.deleteMany(orgFilter),
+        // The stored account of every recipient visit, brief included (docs/prds/lnkdrp-visit-briefs.md).
+        VisitBriefModel.deleteMany(orgFilter),
         OrgInviteModel.deleteMany(orgFilter),
         ProjectModel.deleteMany(orgFilter),
         ProjectLinkViewModel.deleteMany(orgFilter),

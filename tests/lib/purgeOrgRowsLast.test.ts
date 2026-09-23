@@ -86,6 +86,7 @@ vi.mock("@/lib/models/Project", () => ({ ProjectModel: stub("Project") }));
 vi.mock("@/lib/models/ShareLink", () => ({ ShareLinkModel: stub("ShareLink") }));
 vi.mock("@/lib/models/ShareView", () => ({ ShareViewModel: stub("ShareView") }));
 vi.mock("@/lib/models/ShareVisit", () => ({ ShareVisitModel: stub("ShareVisit") }));
+vi.mock("@/lib/models/VisitBrief", () => ({ VisitBriefModel: stub("VisitBrief") }));
 vi.mock("@/lib/models/ActivityEvent", () => ({ ActivityEventModel: stub("ActivityEvent") }));
 vi.mock("@/lib/models/ApiKey", () => ({ ApiKeyModel: stub("ApiKey") }));
 vi.mock("@/lib/models/CreditLedger", () => ({ CreditLedgerModel: stub("CreditLedger") }));

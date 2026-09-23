@@ -14,6 +14,7 @@
  */
 import { composeRepoLinkRequestEmail } from "@/lib/notifications/repoLinkRequestEmail";
 import { composeDocUploadEmail } from "@/lib/notifications/docUploadEmail";
+import { composeVisitBriefEmail, RECAP_LINES, type VisitBriefEntry } from "@/lib/notifications/visitBriefEmail";
 import { composeDocUpdateEmail } from "@/lib/notifications/docUpdateEmail";
 import type { EmailContent } from "@/lib/email/templates/compose";
 import {
@@ -204,6 +205,94 @@ export function buildPreviews(): PreviewRow[] {
       html: mail.html,
       headers: Object.entries(mail.headers).map(([name, value]) => ({ name, value })),
     });
+  }
+
+  // A recipient finishing a visit: the brief, and the day's briefs.
+  {
+    const briefed: VisitBriefEntry = {
+      viewerLabel: "Priya Natarajan",
+      linkLabel: "Sequoia",
+      audience: "Sequoia Capital",
+      title: SAMPLE_TITLE,
+      docsOpened: [],
+      startedAt: new Date("2026-09-22T15:02:00Z"),
+      endedAt: new Date("2026-09-22T15:08:30Z"),
+      timeSpentMs: 6 * 60_000 + 20_000,
+      pagesSeen: 9,
+      pageCount: 12,
+      downloads: 1,
+      visitNumber: 2,
+      lastVisitMs: 95_000,
+      lastVisitAt: new Date("2026-09-19T09:12:00Z"),
+      topPages: [
+        { page: 7, heading: "Pricing", ms: 160_000, opened: 2 },
+        { page: 4, heading: "Traction", ms: 71_000, opened: 1 },
+        { page: 9, heading: "The ask", ms: 48_000, opened: 1 },
+      ],
+      path: [1, 2, 3, 4, 5, 6, 7, 8, 9, 7, 8],
+      skipped: ["10–12"],
+      brief: {
+        headline: "spent most of six minutes on pricing, then downloaded the deck",
+        body:
+          "Priya Natarajan came back for a second look and stayed six minutes, four times longer than last time. Pricing (p. 7) held her for close to three minutes and she returned to it once; traction (p. 4) was next. She never opened the last three pages, and downloaded the deck before leaving.",
+        interests: [
+          "Pricing tiers and the enterprise minimum commitment — nearly 3 minutes on p. 7, opened twice",
+          "Net revenue retention and the cohort chart — over a minute on p. 4",
+        ],
+        highlights: ["Nearly 3 minutes on pricing (p. 7), opened twice", "Downloaded the PDF", "Skipped the appendix (p. 10–12)"],
+        followUp: "Pricing is the question. Lead with it when you follow up.",
+      },
+      recapLine: null,
+      url: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/metrics`,
+      docUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}`,
+    };
+    const recap: VisitBriefEntry = {
+      ...briefed,
+      viewerLabel: null,
+      linkLabel: null,
+      audience: null,
+      visitNumber: 1,
+      lastVisitMs: null,
+      lastVisitAt: null,
+      path: [1, 2, 3, 4, 5],
+      downloads: 0,
+      brief: null,
+      recapLine: RECAP_LINES.out_of_credits!,
+      startedAt: new Date("2026-09-22T18:40:00Z"),
+      endedAt: new Date("2026-09-22T18:43:00Z"),
+      timeSpentMs: 2 * 60_000 + 50_000,
+      pagesSeen: 5,
+      topPages: [{ page: 2, heading: null, ms: 80_000, opened: 1 }],
+      skipped: ["6–12"],
+    };
+    for (const [key, label, daily, entries] of [
+      ["visit_brief.immediate", "When someone finishes reading", false, [briefed]],
+      ["visit_brief.daily", "When someone finishes reading \u2014 daily digest", true, [briefed, recap]],
+    ] as const) {
+      const mail = composeVisitBriefEmail({
+        entries,
+        daily,
+        workspace: { name: "Acme", avatarUrl: null },
+        offUrl: SAMPLE_OFF_URL,
+        preferencesUrl: `${SITE_URL}/dashboard?tab=notifications#email-preferences`,
+        turnOffLabel: "Turn off these emails",
+        changeHowOftenLabel: "Change how often",
+        metricsUrl: daily ? `${SITE_URL}/dashboard?tab=analytics` : null,
+      });
+      rows.push({
+        key,
+        catalogId: key,
+        label,
+        inputs: [
+          { label: "visits", value: String(entries.length) },
+          { label: "mode", value: daily ? "daily" : "immediate" },
+        ],
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+        headers: Object.entries(mail.headers).map(([name, value]) => ({ name, value })),
+      });
+    }
   }
 
   // A teammate adding a document — the new kind, shown both ways.

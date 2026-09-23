@@ -78,6 +78,8 @@ const RECIPIENT_TYPES: ReadonlySet<string> = new Set([
   // An introduction is a recipient's row like any other: it carries their name, it must follow the
   // identity gate, and the person it names has a reader page worth reaching.
   "viewer.introduced",
+  // The end of a visit is the reader's row too: same identity gate, same reader page.
+  "share.visit_briefed",
 ]);
 
 /**

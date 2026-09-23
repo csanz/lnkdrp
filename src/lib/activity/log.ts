@@ -79,7 +79,11 @@ export type ActivityType =
   // A recipient put a name to their visit. Unlike the other recipient events this one is not
   // identity-gated: the name was volunteered *to* this workspace, and hiding it on Free would be
   // hiding a message its sender meant them to have.
-  | "viewer.introduced";
+  | "viewer.introduced"
+  // A recipient's visit ended and the account of it is stored (`VisitBrief`); `meta.headline`
+  // carries the model's one line when a brief was written, `meta.recapReason` says why not when
+  // it was not. Written by the `visit-briefs` cron, never in the ingest path.
+  | "share.visit_briefed";
 
 export type ActivityAgent = { client: string; version: string | null } | null;
 

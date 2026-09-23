@@ -365,8 +365,10 @@ describe("ranking", () => {
       readingTimeMs: ms,
       docs,
       lastSeenAt: null,
-      // Ranking is by reading time; how deep any one sitting went is not part of that question.
+      // Ranking is by reading time; none of what a row *displays* is part of that question.
       depthSample: null,
+      docTitle: null,
+      readerHref: null,
     });
     const ranked = rankPeople([person("a", 10, 50), person("b", 900, 1), person("c", 900, 4)], 2);
     expect(ranked.map((r) => r.key)).toEqual(["c", "b"]);

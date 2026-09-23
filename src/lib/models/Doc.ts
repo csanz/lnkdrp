@@ -77,6 +77,29 @@ const docSchema = new Schema(
     // AI results (store JSON like public/sample/sample-ai-output.json)
     aiOutput: { type: Schema.Types.Mixed, default: null },
 
+    /**
+     * One line per page — the heading and the first words — so a visit brief can say "the pricing
+     * page (p. 7)" instead of "page 7" (docs/prds/lnkdrp-visit-briefs.md). `extractedText` is one
+     * string with no page boundaries, which is why this exists. Built lazily by
+     * `src/lib/visits/pageOutline.ts` the first time a brief needs it and keyed to the upload it was
+     * read from, so a replacement invalidates it without a write in the upload path.
+     */
+    pageOutline: {
+      type: [
+        {
+          pageNumber: { type: Number, min: 1 },
+          heading: { type: String, trim: true, default: null },
+          excerpt: { type: String, trim: true, default: null },
+          /** The page's text, capped (`PAGE_TEXT_MAX_CHARS`), so a brief can say what held them. */
+          text: { type: String, default: null },
+        },
+      ],
+      default: [],
+    },
+    pageOutlineUploadId: { type: Schema.Types.ObjectId, ref: "Upload", default: null },
+    /** Shape of the stored outline; below `PAGE_OUTLINE_VERSION` it is rebuilt on next use. */
+    pageOutlineVersion: { type: Number, default: null },
+
     // AI-derived per-page slugs (kebab-case)
     pageSlugs: {
       type: [

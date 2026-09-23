@@ -167,6 +167,21 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
     previewNote: null,
     flagGated: null,
   },
+  "visit_brief.immediate": {
+    trace: "run_totals",
+    traceNote:
+      "Recorded per member as a NotificationQueue row (kind visit_briefs), enqueued by the visit-briefs cron once a visit has gone quiet and its VisitBrief row is settled; the row's status is the delivery record. The brief itself, and whether a credit was charged, is on the VisitBrief row.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
+  "visit_brief.daily": {
+    trace: "run_totals",
+    traceNote: "The same queue rows folded into one end-of-day email; each row still carries its own sent/skipped/dead.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
   "doc_upload.immediate": {
     trace: "run_totals",
     traceNote:

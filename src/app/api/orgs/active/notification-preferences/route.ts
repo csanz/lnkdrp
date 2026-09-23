@@ -6,6 +6,8 @@
  *
  * Three email modes live on the membership, each `off | daily | immediate`:
  * - `viewEmailMode`: someone opened one of the workspace's share links
+ * - `briefEmailMode`: a recipient finished reading and the visit was written up (Pro; a missing
+ *   value reads as `immediate`, the schema default, because the brief is the per-visit email)
  * - `docUpdateEmailMode`: a doc was replaced and changes were introduced
  * - `docUploadEmailMode`: a teammate added a new document to this workspace
  * - `repoLinkRequestEmailMode`: a repository link was requested / needs review
@@ -25,7 +27,7 @@ export const dynamic = "force-dynamic";
 type Mode = "off" | "daily" | "immediate";
 
 /** The per-member email mode fields this route reads and writes. */
-const MODE_KEYS = ["viewEmailMode", "docUpdateEmailMode", "docUploadEmailMode", "repoLinkRequestEmailMode"] as const;
+const MODE_KEYS = ["viewEmailMode", "briefEmailMode", "docUpdateEmailMode", "docUploadEmailMode", "repoLinkRequestEmailMode"] as const;
 type ModeKey = (typeof MODE_KEYS)[number];
 
 function isMode(v: unknown): v is Mode | "immediately" {
@@ -56,6 +58,7 @@ export async function GET(request: Request) {
   })
     .select({
       viewEmailMode: 1,
+      briefEmailMode: 1,
       docUpdateEmailMode: 1,
       docUploadEmailMode: 1,
       repoLinkRequestEmailMode: 1,
@@ -72,6 +75,7 @@ export async function GET(request: Request) {
       orgId: actor.orgId,
       userId: actor.userId,
       viewEmailMode: readMode(m.viewEmailMode),
+      briefEmailMode: isMode(m.briefEmailMode) ? normalizeMode(m.briefEmailMode) : "immediate",
       docUpdateEmailMode: readMode(m.docUpdateEmailMode),
       docUploadEmailMode: readMode(m.docUploadEmailMode),
       repoLinkRequestEmailMode: readMode(m.repoLinkRequestEmailMode),

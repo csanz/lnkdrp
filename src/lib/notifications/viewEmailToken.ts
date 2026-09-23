@@ -38,6 +38,7 @@ export const EMAIL_OFF_KINDS = {
   doc_updates: { purpose: "doc_update_emails_off", field: "docUpdateEmailMode" },
   doc_uploads: { purpose: "doc_upload_emails_off", field: "docUploadEmailMode" },
   repo_link_requests: { purpose: "repo_link_request_emails_off", field: "repoLinkRequestEmailMode" },
+  visit_briefs: { purpose: "visit_brief_emails_off", field: "briefEmailMode" },
 } as const;
 
 export type EmailOffKind = keyof typeof EMAIL_OFF_KINDS;

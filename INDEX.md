@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 875 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 881 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -92,6 +92,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/s/[shareId]/page.tsx` — `/s/:shareId` · default, dynamic, generateMetadata, runtime
 - `src/app/share/[shareId]/page.tsx` — `/share/:shareId` · default, dynamic, runtime
 - `src/app/share/verify/page.tsx` — `/share/verify` · default, dynamic, runtime
+- `src/app/support/page.tsx` — `/support` · default, metadata
 - `src/app/tos/page.tsx` — `/tos` · default
 - `src/app/waitlist/page.tsx` — `/waitlist` · default, dynamic, metadata, runtime
 - `src/app/welcome/page.tsx` — `/welcome` · default, dynamic, metadata, runtime
@@ -170,6 +171,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/cron/stripe-credits-reconcile/route.ts` — `/api/cron/stripe-credits-reconcile` · GET, maxDuration, POST, runtime
 - `src/app/api/cron/stripe-credits-report/route.ts` — `/api/cron/stripe-credits-report` · GET, maxDuration, POST, runtime
 - `src/app/api/cron/usage-agg-reconcile/route.ts` — `/api/cron/usage-agg-reconcile` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/visit-briefs/route.ts` — `/api/cron/visit-briefs` · GET, maxDuration, POST, runtime
 - `src/app/api/dashboard/stats/route.ts` — `/api/dashboard/stats` · dynamic, GET, runtime
 - `src/app/api/dashboard/usage-daily/route.ts` — `/api/dashboard/usage-daily` · dynamic, GET, runtime
 - `src/app/api/dashboard/usage/route.ts` — `/api/dashboard/usage` · dynamic, GET, runtime
@@ -475,6 +477,9 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/people/ContributorsCard.tsx` · default
 - `src/components/project/ProjectHeaderActions.tsx` · default, ProjectHeaderPage
 - `src/components/project/ProjectIdentityRow.tsx` · default
+- `src/components/support/PlainChat.tsx` · default, isViewerPath, openSupportChat, PLAIN_CHAT_SCRIPT, SUPPORT_PATH
+- `src/components/support/SupportLink.tsx` · default, SUPPORT_EMAIL
+- `src/components/support/SupportOpener.tsx` · default
 - `src/components/tags/TagDot.tsx` · default, TAG_COLOR_HEX
 - `src/components/tags/TagDots.tsx` · default
 - `src/components/tags/TagPickerModal.tsx` · default, TagTargetKind
@@ -540,6 +545,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/ai/openaiProviderOptions.ts` · OPENAI_PROVIDER_OPTIONS
 - `src/lib/ai/requestReviewInvestorFocused.ts` · RequestReviewInvestorFocusedOutput, RequestReviewInvestorFocusedSchema, runRequestReviewInvestorFocused
 - `src/lib/ai/reviewDocText.ts` · buildReviewPrompt, reviewDocText
+- `src/lib/ai/visitBrief.ts` · buildVisitBriefUserPrompt, generateVisitBrief, GenerateVisitBriefParams, normalizeVisitBriefOutput, sanitizeRecord, trimHeadline, VISIT_BRIEF_MODEL, VisitBriefDocument, …
 - `src/lib/analytics/docAnalyticsAccess.ts` · DocAnalyticsAccess, DocAnalyticsDoc, resolveDocAnalyticsAccess
 - `src/lib/analytics/docScope.ts` · docOnlyShareIdMatch, projectLinkSlugsForDocs, projectLinkSlugsForOrg
 - `src/lib/analytics/loadReading.ts` · loadPersonStub, loadReadingCore
@@ -729,6 +735,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/models/UsageAggCycle.ts` · UsageAggCycle, UsageAggCycleModel
 - `src/lib/models/UsageAggDaily.ts` · UsageAggDaily, UsageAggDailyModel
 - `src/lib/models/User.ts` · createTempUser, User, UserModel, verifyTempUserSecret
+- `src/lib/models/VisitBrief.ts` · VISIT_BRIEF_RECAP_REASONS, VISIT_BRIEF_STATUSES, VisitBrief, VisitBriefModel, VisitBriefRecapReason, VisitBriefStatus
 - `src/lib/models/WorkspaceCreditBalance.ts` · WorkspaceCreditBalance, WorkspaceCreditBalanceModel
 - `src/lib/mongodb.ts` · connectMongo
 - `src/lib/notifications/docUpdateEmail.ts` · ComposedDocUpdateEmail, composeDocUpdateEmail, DocUpdateEntry, docUpdateSubject
@@ -739,6 +746,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/notifications/sendNotificationEmailsCli.ts` · NotificationEmailsCliDeps, parseNotificationEmailsArgs, runNotificationEmailsCli
 - `src/lib/notifications/viewEmailToken.ts` · createEmailsOffToken, createViewEmailsOffToken, EMAIL_OFF_KINDS, EmailOffKind, emailsOffUrl, verifyAnyEmailsOffToken, VerifyAnyResult, verifyViewEmailsOffToken, …
 - `src/lib/notifications/viewNotifications.ts` · buildMetricsUrl, buildPreferencesUrl, buildReaderUrl, capAtTimestampBoundary, CHANGE_HOW_OFTEN_LABEL, combineHorizons, ComposeContext, ComposedEmail, …
+- `src/lib/notifications/visitBriefEmail.ts` · ComposedVisitBriefEmail, composeVisitBriefEmail, headlineSubject, ordinal, pageRanges, RECAP_LINES, VISIT_BRIEF_ACTION_LABEL, VISIT_BRIEF_DOC_LABEL, …
 - `src/lib/og/imageResponse.tsx` · DEFAULT_OG_SIZE, imageResponseFromBytes, mimeFromPath, OgDims, parseJpegDims, parsePngDims, sniffImageDims
 - `src/lib/onboarding/firstRun.ts` · FIRST_RUN_PATH, FIRST_RUN_SINCE, FirstRunState, markFirstRunDone, needsFirstRun, userNeedsFirstRun
 - `src/lib/onboarding/termsGate.ts` · needsTermsAcceptance, TERMS_ACCEPT_PATH, TERMS_GATE_SINCE, TermsState, userNeedsTermsAcceptance
@@ -777,6 +785,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/sidebarCache.ts` · ACTIVE_ORG_CHANGED_EVENT, ACTIVE_ORG_STORAGE_KEY, clearSidebarCache, DOC_LEAVING_EVENT, DocLeavingDetail, DOCS_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocLeaving, …
 - `src/lib/starredDocs.ts` · getStarredDocs, isDocStarred, moveStarredDoc, refreshStarredDocsFromServer, STARRED_DOCS_CHANGED_EVENT, StarredDoc, toggleStarredDoc, upsertStarredDocMeta, …
 - `src/lib/support/plain/cards.ts` · buildAccountCard, buildCards, buildErrorsCard, CARD_KEYS, CardKey, CustomerContext, ErrorContext, loadCustomerContext, …
+- `src/lib/support/plain/chat.ts` · plainChatAppId, plainChatCustomer, PlainChatCustomer, plainChatEmailHash
 - `src/lib/support/plain/signature.ts` · configuredPlainSigningSecret, PLAIN_SIGNATURE_HEADER, signPlainBody, verifyPlainSignature
 - `src/lib/tags/palette.ts` · asTagColorKey, DEFAULT_TAG_COLOR, nextTagColor, TAG_COLOR_KEYS, TAG_COLORS, TagColorKey
 - `src/lib/tags/service.ts` · attachTag, deleteTag, detachTag, findOrCreateTag, listTags, listTagsPage, mergeTags, removeAllTagsFromTarget, …
@@ -791,6 +800,9 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/urls.ts` · buildPublicProjectUrl, buildPublicReplaceUrl, buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getMetadataBaseUrl, getPublicSiteBase, resolveConfiguredSiteUrl
 - `src/lib/usage/reconcile.ts` · reconcileUsageAggsFromLedger, ReconcileUsageAggsResult
 - `src/lib/vercel/client.ts` · getDeployment, getProject, isVercelConfigured, listDeployments, VERCEL_TIMEOUT_MS, vercelConfig, VercelConfig, VercelDeployment, …
+- `src/lib/visits/pageOutline.ts` · getPageOutline, outlineEntryFromText, PAGE_OUTLINE_MAX_PAGES, PAGE_OUTLINE_VERSION, PAGE_TEXT_MAX_CHARS, PageOutlineEntry
+- `src/lib/visits/scheduleVisitBrief.ts` · dueAtFor, scheduleVisitBrief, ScheduleVisitBriefInput, VISIT_QUIET_MS
+- `src/lib/visits/visitBriefs.ts` · BRIEF_MIN_PAGES, BRIEF_MIN_VISIT_MS, BRIEFS_PER_DAY, buildSittingStats, buildVisitBriefRecord, CLAIM_STALE_MS, claimDueVisitBriefs, DEFAULT_CLAIM_LIMIT, …
 - `src/lib/waitlist/acceptToken.ts` · AcceptTokenFailure, createAcceptToken, verifyAcceptToken, VerifyAcceptTokenResult, WAITLIST_ACCEPT_PURPOSE, WAITLIST_ACCEPT_TTL_MS
 - `src/lib/waitlist/waitlist.ts` · AccessStatus, accessStatusOf, approveUser, initialAccessStatus, isAllowlistedEmail, readWaitlistState, waitlistBlockedNotice, WaitlistBlockedReason, …
 
@@ -854,12 +866,14 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `scripts/cron/cron.stripe-credits-reconcile.ts`
 - `scripts/cron/cron.stripe-credits-report.ts`
 - `scripts/cron/cron.usage-agg-reconcile.ts`
+- `scripts/cron/cron.visit-briefs.ts`
 - `scripts/cron/lib.ts` · runCronJob
 - `scripts/dev-session-token.ts`
 - `scripts/doc-received-via-request-backfill.mjs`
 - `scripts/doc-view-counters-recount.ts`
 - `scripts/docchange-from-upload-repair.ts`
 - `scripts/gen-env-secrets.mjs`
+- `scripts/home-shot-brief.ts`
 - `scripts/lib/time.mjs` · safeTimestamp
 - `scripts/measure-image-tokens.ts`
 - `scripts/mongo-clear-ai-runs-and-requests.ts`

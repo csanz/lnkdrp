@@ -75,6 +75,23 @@ const orgMembershipSchema = new Schema(
       default: "immediate",
       index: true,
     },
+    /**
+     * Notification preferences (workspace-scoped).
+     *
+     * Used for visit brief emails: a recipient finished reading and the model wrote up the visit
+     * (docs/prds/lnkdrp-visit-briefs.md). `off | daily | immediate`, default **`immediate`** and a
+     * missing value reads as `immediate` — the brief *is* the per-visit email this category is
+     * known for, and it only ever exists on a Pro workspace that has left automatic briefs on.
+     * A member who finds the open email and the brief too much together turns the open email off;
+     * the preferences copy says so.
+     */
+    briefEmailMode: {
+      type: String,
+      trim: true,
+      enum: ["off", "daily", "immediate"],
+      default: "immediate",
+      index: true,
+    },
     // Optional: future expansion for per-user digest scheduling.
     docUpdateDigestTimezone: { type: String, trim: true, default: null },
     docUpdateDigestTimeLocal: { type: String, trim: true, default: null }, // e.g. "17:00"

@@ -1,13 +1,13 @@
 /**
  * Whether a workspace wants the AI runs that start without anyone asking.
  *
- * Two of them exist: the summary written for every upload, and the compare run when a document is
- * replaced. Everything else in the product — review, a compare rerun, a summary written later from
+ * Three of them exist: the summary written for every upload, the compare run when a document is
+ * replaced, and (on Pro) the brief written after a recipient's visit ends. Everything else in the product — review, a compare rerun, a summary written later from
  * the document page — begins with a click, and not clicking is already the off switch. These two do
  * not, so they are the only ones that can spend credits while someone is doing something else, and
  * the only ones that need a setting.
  *
- * That is the whole reason this is two booleans and not a switchboard with a row per feature. A
+ * That is the whole reason this is three booleans and not a switchboard with a row per feature. A
  * toggle next to "AI review" would imply the feature does something when left on, which it does
  * not; it waits to be asked either way.
  *
@@ -26,9 +26,11 @@ export type AiAutomation = {
   summary: boolean;
   /** The compare run when a document is replaced. */
   compare: boolean;
+  /** The brief written after a recipient's visit ends (Pro; docs/prds/lnkdrp-visit-briefs.md). */
+  brief: boolean;
 };
 
-export const AI_AUTOMATION_DEFAULT: AiAutomation = { summary: true, compare: true };
+export const AI_AUTOMATION_DEFAULT: AiAutomation = { summary: true, compare: true, brief: true };
 
 /**
  * Read one stored flag.
@@ -42,10 +44,13 @@ export function isAutomationOn(stored: unknown): boolean {
 }
 
 /** Turn a balance row (or its absence) into the pair of flags. */
-export function resolveAiAutomation(bal: { autoSummaryEnabled?: unknown; autoCompareEnabled?: unknown } | null): AiAutomation {
+export function resolveAiAutomation(
+  bal: { autoSummaryEnabled?: unknown; autoCompareEnabled?: unknown; autoBriefEnabled?: unknown } | null,
+): AiAutomation {
   return {
     summary: isAutomationOn(bal?.autoSummaryEnabled),
     compare: isAutomationOn(bal?.autoCompareEnabled),
+    brief: isAutomationOn(bal?.autoBriefEnabled),
   };
 }
 
@@ -61,9 +66,11 @@ export async function getAiAutomation(orgId: string | Types.ObjectId): Promise<A
   const id = orgId instanceof Types.ObjectId ? orgId : new Types.ObjectId(String(orgId).trim());
   await connectMongo();
   const bal = await WorkspaceCreditBalanceModel.findOne({ workspaceId: id })
-    .select({ autoSummaryEnabled: 1, autoCompareEnabled: 1 })
+    .select({ autoSummaryEnabled: 1, autoCompareEnabled: 1, autoBriefEnabled: 1 })
     .lean();
-  return resolveAiAutomation(bal as { autoSummaryEnabled?: unknown; autoCompareEnabled?: unknown } | null);
+  return resolveAiAutomation(
+    bal as { autoSummaryEnabled?: unknown; autoCompareEnabled?: unknown; autoBriefEnabled?: unknown } | null,
+  );
 }
 
 /** Parse an untrusted value into a flag, or `null` when it is not a boolean. */

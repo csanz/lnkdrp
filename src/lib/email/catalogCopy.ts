@@ -32,7 +32,7 @@ export type EmailCopy = {
    *
    * `null` is a claim that needs justifying, so `why` says why for every one of them.
    */
-  setting: "views" | "docUpdates" | "docUploads" | "repoRequests" | null;
+  setting: "views" | "briefs" | "docUpdates" | "docUploads" | "repoRequests" | null;
   /** Why there is no switch. Required whenever `setting` is null. */
   why?: string;
   /** Hidden until the feature that sends it is switched on. */
@@ -94,6 +94,18 @@ export const EMAIL_COPY: Record<string, EmailCopy> = {
     when: "One email at the end of the day, covering every reader since the last.",
     audience: "you",
     setting: "views",
+  },
+  "visit_brief.immediate": {
+    label: "When someone finishes reading",
+    when: "A few minutes after a recipient stops reading: what they read, for how long, what they skipped, written up by the AI (one credit; Pro).",
+    audience: "you",
+    setting: "briefs",
+  },
+  "visit_brief.daily": {
+    label: "When someone finishes reading — daily digest",
+    when: "One email at the end of the day, with every visit since the last and its brief.",
+    audience: "you",
+    setting: "briefs",
   },
   "doc_upload.immediate": {
     label: "A teammate added a document",

@@ -31,9 +31,13 @@ type Shot = {
 };
 
 /**
- * Four shots, in the order the product actually happens: the agent is given the tools, it sends the
- * link, you see what one recipient did with it, and then the whole workspace's stream — teammates,
- * agents and readers together.
+ * Five shots, in the order the product actually happens: the agent is given the tools, it sends the
+ * link, you see what one recipient did with it, the brief of that visit arrives by email, and then
+ * the whole workspace's stream — teammates, agents and readers together.
+ *
+ * The brief (`public/images/home/brief.png`) is not a screenshot of a page but three real emails
+ * composed by `composeVisitBriefEmail` and captured by `scripts/home-shot-brief.ts`; rerun that
+ * script when the email changes rather than editing the image.
  *
  * The agent comes first because it is the premise — the headline above says "built for AI agents"
  * and the section used to open on a metrics dashboard, so the page argued for itself backwards.
@@ -71,6 +75,14 @@ const SHOTS: Shot[] = [
     title: "See how far they got",
     body: "Time on every page, session by session. The difference between a deck that was opened and a deck that was read.",
     alt: "One reader's detail view: sessions, time spent, pages viewed, and a bar of seconds spent on each page.",
+  },
+  {
+    src: "/images/home/brief.png",
+    width: 3640,
+    height: 2120,
+    title: "Know what caught their eye",
+    body: "A few minutes after a reader leaves, an email says what held them, what they came back to, and what they skipped. Read off the pages themselves, not just the page numbers.",
+    alt: "Three visit brief emails: one reader who spent two minutes on the pricing tiers and downloaded the deck, the same reader back the next day on the efficiency claim, and another who held on DDoS protection and the vendor terms.",
   },
   {
     src: "/images/home/activity.png",

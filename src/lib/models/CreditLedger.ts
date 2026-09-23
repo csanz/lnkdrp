@@ -16,7 +16,7 @@ const creditLedgerSchema = new Schema(
 
     actionType: {
       type: String,
-      enum: ["summary", "review", "history", "unknown"],
+      enum: ["summary", "review", "history", "brief", "unknown"],
       required: true,
       index: true,
     },

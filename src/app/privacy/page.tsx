@@ -103,7 +103,7 @@ export default function PrivacyPolicyPage() {
               <li>Create and manage your account, workspaces, memberships, and settings</li>
               <li>Generate share links and enforce the access controls you set on them</li>
               <li>Meter credits, process payments, and manage subscriptions</li>
-              <li>Send service emails: workspace invitations; document activity notifications and digests, which are on by default and which you can turn off at any time in your settings (view notifications can also be turned off from the email itself); and download-request and approval messages</li>
+              <li>Send service emails: workspace invitations; document activity notifications and digests, which are on by default and which you can turn off at any time in your settings (view notifications can also be turned off from the email itself); visit briefs, the written account of a viewer's visit, which follow the same rule; and download-request and approval messages</li>
               <li>Detect, prevent, and address technical issues, abuse, and security threats, including rate limiting</li>
               <li>Comply with legal obligations and enforce our Terms of Service</li>
             </ul>
@@ -173,6 +173,9 @@ export default function PrivacyPolicyPage() {
               The document owner and members of their workspace may be emailed when you open it, and that email can include the details above that are shown to the owner.
             </p>
             <p className="mb-4 leading-6">
+              <strong>Visit briefs, effective September 23, 2026:</strong> a few minutes after you stop reading, the details above (pages, time on each page, returns, downloads, and your name if you gave one) may be summarised by automated processing into a short written account of your visit for the document owner and their workspace. No content you typed is sent to the AI provider; only the record of the visit and the document's own page headings are.
+            </p>
+            <p className="mb-4 leading-6">
               To tell repeat visits apart we store a random identifier in your browser's local storage. On our side we keep only a hash of it. It is not shared with anyone else and is not linked across different owners' documents. Clearing your browser storage removes it.
             </p>
             <p className="mb-4 leading-6">
@@ -190,6 +193,7 @@ export default function PrivacyPolicyPage() {
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-6">
               <li>A summary is generated automatically when a document finishes uploading. Comparisons run when you or someone in your workspace asks for them.</li>
+              <li>On Pro workspaces, a visit brief is generated automatically a few minutes after a viewer stops reading a shared document, unless the workspace turns automatic briefs off. It is written from the record of the visit (pages, time per page, returns, downloads, the viewer's name if given) and the document's page headings, never from anything the viewer typed.</li>
               <li>AI output is stored with the document and shown to you; summaries and key points are also shown to viewers of the share link.</li>
               <li>We keep the prompt and response of each run to display results, meter credits, and investigate failures.</li>
               <li>We do not train AI models. Under OpenAI's API data usage policy, content sent through the API is not used to train OpenAI's models. We have not opted in to any data-sharing program.</li>

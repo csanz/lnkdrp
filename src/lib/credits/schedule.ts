@@ -47,7 +47,17 @@ export function creditsForRun(params: { actionType: ActionType; qualityTier: Qua
     return 5; // standard (default)
   }
 
+  // brief (automatic after a recipient's visit ends; one price, there is no tier to choose)
+  if (a === "brief") return BRIEF_CREDITS;
+
   return 0;
 }
+
+/**
+ * A visit brief costs one credit at every tier. The run is always short — a few hundred tokens of
+ * structured visit data in, eighty words out — so there is nothing a higher tier would buy, and one
+ * flat number is what the pricing page and the AI defaults card can print without a table.
+ */
+export const BRIEF_CREDITS = 1;
 
 
