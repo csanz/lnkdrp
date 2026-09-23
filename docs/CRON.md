@@ -177,6 +177,9 @@ Jobs that must not run concurrently (`notification-emails`, `stripe-credits-reco
 
 ### Recommended production schedules
 
+All eleven, matching `vercel.json`. `scripts/cron/README.md` carries the same table with the
+manual-run command for each, and `tests/lib/cronMap.test.ts` pins that one to `vercel.json`.
+
 - `/api/cron/doc-metrics` — **every 6 hours**
 - `/api/cron/credits-cycle-reconcile` — **hourly** (backstop for missed/delayed webhooks; ensures included credits grant exists)
 - `/api/cron/stripe-credits-reconcile` — **every 6 hours** (heavier Stripe sync + grant backstop)
@@ -184,6 +187,10 @@ Jobs that must not run concurrently (`notification-emails`, `stripe-credits-reco
 - `/api/cron/usage-agg-reconcile` — **hourly** (recomputes usage aggregates from ledger)
 - `/api/cron/notification-emails` — **every 5 minutes** (view, doc update + request repo notification emails)
 - `/api/cron/plan-limits` — **hourly** (Free plan-limit grace period: start / remind / block + owner emails)
+- `/api/cron/credits-stale-reservations` — **hourly** (releases credit reservations whose run never finished, so the balance is not held hostage by a crashed job)
+- `/api/cron/analytics-reconcile` — **nightly, 03:50 UTC** (repairs `ShareLink`'s denormalized counters from the analytics rows, and *reports* — never repairs — rows whose per-page time exceeds their total, the signature of an ingest double count. This is the one job whose output you read rather than just check for a 200)
+- `/api/cron/credits-purchase-expiry` — **nightly, 04:05 UTC** (expires prepaid credit packs 12 months after purchase)
+- `/api/cron/account-purge` — **nightly, 04:30 UTC** (hard-deletes accounts past their 30-day purge window after a self-service account deletion)
 
 If you deploy on Vercel, these are configured in `vercel.json` under `"crons"` so schedules are committed in-repo (recommended).
 You can also manage schedules from Vercel UI (Project → Settings → Cron Jobs), but `vercel.json` is the source of truth for production in this repo.

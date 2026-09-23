@@ -1,9 +1,10 @@
 # Cursor rules & repo maps
 
-This repo uses **Cursor rules** plus two human-maintained maps:
+This repo uses **Cursor rules** plus two maps:
 
-- `@INDEX.md` — **code map** (file map + exported APIs/components/pages/routes)
-- `@docs/FEATURES.md` — **product map** (user-facing behavior and flows)
+- `@INDEX.md` — **code map**, *generated* from the filesystem: every source file, the URL it serves
+  where it is a route, and its exported names. Never hand-edit it; run `npm run index`.
+- `@docs/FEATURES.md` — **product map** (user-facing behavior and flows), maintained by hand
 
 The goal is to keep changes **intentional**, **reviewable**, and **easy to navigate**.
 
@@ -16,7 +17,7 @@ The active Cursor rules live in `.cursorrules` and are intentionally opinionated
 - **Keep scope tight**: prefer small, localized diffs over broad refactors.
 - **Start with the maps**: to find where something lives, open `@INDEX.md` first, then `@docs/FEATURES.md` for user-facing intent.
 - **Keep the maps accurate**:
-  - When adding/removing/moving files, or changing exported APIs/components/pages/routes, update `INDEX.md` in the same change.
+  - After adding, removing or moving files, run `npm run index` to regenerate `INDEX.md`.
   - When changing user-facing behavior/flows, update `docs/FEATURES.md` in the same change.
 - **Route/page doc header**: when editing/adding pages or API routes under `src/app/**`, include a short top-of-file comment describing purpose and route.
 - **Library doc comments**: when editing/adding libraries under `src/lib/**`, add short doc comments for exported symbols when non-obvious.
@@ -55,12 +56,18 @@ The active Cursor rules live in `.cursorrules` and are intentionally opinionated
 
 ### What “keep it up to date” means
 
-Update `INDEX.md` whenever you:
+Run `npm run index`. That is the whole procedure — the file is generated from the filesystem, so
+adding, moving or deleting a file, or changing what it exports, is picked up automatically.
 
-- add/remove/rename/move a file that’s part of the app’s surface area
-- add/remove/rename a meaningful export from a component or library
-- add/remove a page route or API route
-- change an API route’s supported methods or shape in a way that affects callers
+It was not always so. The map was maintained by hand under a rule that said to update it "in the
+same change (no exceptions)"; it was last updated on 2026-03-05 and then not again, and by
+2026-09-23 it listed 413 paths against 762 files in `src/` alone, 36 of them gone, including a
+whole deleted invite-code subsystem — while this document told everyone to open it first. A rule
+that depends on remembering is the rule that breaks, so it does not depend on remembering any
+more: `npm run index -- --check` and `tests/lib/indexMap.test.ts` fail when it drifts.
+
+What the generator cannot produce is *why a file exists*. That belongs in the file's own header
+comment, next to the code it describes, and in `docs/FEATURES.md` for user-facing intent.
 
 ## `@docs/FEATURES.md` format (product map)
 
@@ -94,48 +101,32 @@ Update `docs/FEATURES.md` whenever you change **user-facing behavior** such as:
 - **Understanding intent**: cross-check `@docs/FEATURES.md` for expected UX/flow.
 - **Making changes**:
   - implement the requested change
-  - update `INDEX.md` and/or `docs/FEATURES.md` if required by the rules
+  - run `npm run index` if you added, moved or removed a file; update `docs/FEATURES.md` if the
+    change is user-facing
   - keep diffs small and explainable
 
-## Prompt: initialize/refresh `INDEX.md` and `docs/FEATURES.md`
+## Prompt: refresh `docs/FEATURES.md`
 
-Copy/paste this prompt into Cursor when you want an agent to (re)initialize or do a cleanup pass on the two documents. Adjust the “Scope” section as needed.
+`INDEX.md` needs no prompt — run `npm run index`. This one is for the product map, which is
+written by hand because it describes intent, and intent cannot be read off the filesystem.
 
 ```text
-You are working in the repo `www_lnkdrp`. Your job is to initialize or refresh two human-maintained docs:
-
-1) `INDEX.md` — code map (file map + exported APIs/components/pages/routes)
-2) `docs/FEATURES.md` — product map (user-facing behavior and flows)
+You are working in the repo `www_lnkdrp`. Refresh `docs/FEATURES.md`, the product map.
 
 Constraints:
 - Follow `.cursorrules` strictly.
-- Do not change application code unless explicitly asked. This task is docs-only.
-- Keep edits narrowly scoped; do not invent features or exports that are not present.
+- Docs only: do not change application code.
+- Do not invent features. If something is unclear, read the code; if it is still unclear, omit it.
 
-Scope:
-- Target directories to map: `src/`, `docs/`, `scripts/`, `db/migration/`, root config files.
-- Exclude: `node_modules/`, `.git/`, `.next/`, build outputs, dot-dirs, `.env*`, `.DS_Store`, `tmp/` (unless explicitly asked).
+Method:
+- Work from the code, not from the existing text — the failure mode of this document is a
+  sentence that was true once. Where it states a number (plan caps, credit grants, day counts),
+  check it against the constant and cite the constant by name rather than restating the digit.
+- Where a page or route is named, confirm it exists and that something in the product links to it.
 
-Deliverables:
-## A) Update `INDEX.md`
-- Keep the existing high-level section structure (e.g. Components, Lib, Pages, Deployment, Libraries, Files).
-- Use one bullet per file where possible:
-  - `path` — short description.
-- For files that export multiple public symbols, use sub-bullets:
-  - exportName (function/type/const) — one-line purpose.
-- For `src/app/**` pages, use: “Page for `/route`”.
-- For `src/app/api/**/route.ts`, use: “API route for `/api/...`” plus method sub-bullets (GET/POST/PATCH/DELETE) when present.
-- Prefer “exports: X” on component bullets when that’s the primary value.
-- Do not list every internal helper if it’s not part of the useful surface area; prioritize navigability.
-
-## B) Update `docs/FEATURES.md`
-- Keep it product-oriented and organized by `##` feature areas.
-- Describe user-visible behavior, flows, constraints, and gating.
-- Reference key routes explicitly (e.g. `/dashboard`, `/s/:shareId`, `/api/...`) but avoid implementation details.
-- Do not add features that aren’t implemented; if something is unclear, omit it.
-
-Output requirements:
-- Make the smallest reasonable diffs that bring both docs up to date.
-- If you add a new docs file, ensure `INDEX.md` references it in the docs list.
+Shape:
+- Product-oriented, organized by `##` feature area.
+- Describe user-visible behavior, flows, constraints and gating; name routes (`/dashboard`,
+  `/s/:shareId`, `/api/…`) but stay out of implementation detail.
+- Smallest reasonable diff.
 ```
-

@@ -24,6 +24,7 @@
     "mcp": "tsx --env-file=.env.local mcp/src/main.ts",
     "mcp:prod": "node --import tsx mcp/src/main.ts",
     "lint": "eslint",
+    "index": "node scripts/build-index.mjs",
     "blob:test": "node scripts/test-vercel-blob.mjs",
     "sharelinks:backfill": "tsx --env-file=.env.local scripts/sharelinks-backfill.ts",
     "mongo:clear:ai-runs-requests": "tsx --env-file=.env.local scripts/mongo-clear-ai-runs-and-requests.ts",

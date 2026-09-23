@@ -51,6 +51,38 @@ describe("cron jobs are declared consistently", () => {
     expect(existsSync(join(ROOT, "scripts/cron/lib.ts"))).toBe(true);
   });
 
+  /**
+   * The docs are the fourth copy, and they were the one that drifted.
+   *
+   * `vercel.json` scheduled eleven jobs while `scripts/cron/README.md` listed eight and its
+   * "if the app ever leaves Vercel Cron" crontab block listed seven. The code stayed in sync
+   * because the tests above pinned it; the docs had nothing pinning them, so the four jobs
+   * nobody watches — account purge, credit-purchase expiry, stale reservations,
+   * analytics-reconcile — quietly fell out of the block an operator would paste during a
+   * migration. Deleted accounts would never be purged and nobody would get an error.
+   */
+  const readme = readFileSync(join(ROOT, "scripts/cron/README.md"), "utf8");
+
+  test("scripts/cron/README.md's table lists every scheduled job, with its real schedule", () => {
+    for (const c of vercel.crons) {
+      const job = c.path.replace(/^\/api\/cron\//, "");
+      expect(readme, `README row for ${job}`).toContain(`| \`${job}\` | \`${c.schedule}\``);
+    }
+  });
+
+  test("the README's table has no rows for jobs that no longer exist", () => {
+    const rows = [...readme.matchAll(/^\| `([a-z0-9-]+)` \| `/gm)].map((m) => m[1]);
+    expect(rows.length, "README table rows").toBeGreaterThan(0);
+    for (const job of rows) expect(scheduled, `stale README row for ${job}`).toContain(job);
+  });
+
+  test("the fallback crontab block can run every job, not just the ones someone remembered", () => {
+    // The block is what an operator pastes on a non-Vercel host. A job missing from it is a job
+    // that silently never runs there.
+    const block = readme.slice(readme.indexOf("If the app ever leaves Vercel Cron"));
+    for (const job of scheduled) expect(block, `crontab line for ${job}`).toContain(`cron:${job}`);
+  });
+
   // A deployed function cannot read vercel.json, so `src/lib/cron/jobs.ts` repeats the schedules
   // for the monitor to judge lateness against. This is what stops the copy from drifting.
   test("src/lib/cron/jobs.ts lists exactly the scheduled jobs, with the same schedules", () => {

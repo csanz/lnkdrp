@@ -723,57 +723,102 @@ API_TEST_BYPASS_AUTH=1 API_TEST_USER_ID=<test-user-mongo-id> npm run dev
 
 ## NPM Scripts Reference
 
-All available scripts from `package.json`:
+Every script in `package.json`, all 53 of them. The `:prod` variants differ from their siblings in
+one thing only — `--env-file=.env.production.local` instead of `.env.local` — so they act on
+production. Read the command column before running one.
 
-### Core Development
-
-| Script | Command | Description |
-|--------|---------|-------------|
-| `npm run dev` | `next dev -p 3001` | Start development server with hot reload |
-| `npm run build` | `next build` | Build for production |
-| `npm run start` | `next start -p 3001` | Start production server |
-| `npm run lint` | `eslint` | Run ESLint |
-
-### Database & Data
+### Core development
 
 | Script | Command | Description |
 |--------|---------|-------------|
-| `npm run reset` | `tsx scripts/reset-local.ts` | Empty the local database (refuses anything but localhost) |
-| `npm run mongo:clear:ai-runs-requests` | `tsx scripts/mongo-clear-ai-runs-and-requests.ts` | Clear AI runs and request repos only (same guard) |
+| `npm run dev` | `next dev -p 3001` | Dev server with hot reload |
+| `npm run dev:webpack` | `next dev --webpack -p 3001`, polling on | Same, for filesystems where watching does not fire (a network share) |
+| `npm run build` | `next build` | Production build |
+| `npm run start` | `next start -p 3001` | Serve a production build |
+| `npm run lint` | `eslint` | Lint |
+| `npm run index` | `node scripts/build-index.mjs` | Regenerate `INDEX.md`, the code map (`-- --check` to verify) |
+| `npm run preflight:env` | `tsx scripts/preflight-env.ts` | Check the local env for what the app needs |
+| `npm run preflight:env:prod` | same, against `.env.production.local` | Check production's env |
 
-### Metrics & Background Jobs
+### The other two services
 
 | Script | Command | Description |
 |--------|---------|-------------|
-| `npm run metrics:rollup:once` | `tsx scripts/rollup-doc-metrics.ts --once` | Run doc metrics rollup once |
-| `npm run metrics:rollup:dev` | `tsx scripts/rollup-doc-metrics.ts --interval 10000` | Run metrics continuously (every 10s) |
+| `npm run realtime` | `tsx realtime/server.ts` | WebSocket server on :8788 |
+| `npm run realtime:prod` | `node --import tsx realtime/server.ts` | Same, no `.env.local` — the host supplies the env |
+| `npm run mcp` | `tsx mcp/src/main.ts` | MCP server on :8787 |
+| `npm run mcp:prod` | `node --import tsx mcp/src/main.ts` | Same, no `.env.local` |
+
+### Database and data
+
+| Script | Command | Description |
+|--------|---------|-------------|
+| `npm run reset` | `tsx scripts/reset-local.ts` | Empty the local database. Refuses anything but localhost; no `--force` |
+| `npm run reset -- --dry` | | List what is in there, changing nothing |
+| `npm run mongo:clear:ai-runs-requests` | `tsx scripts/mongo-clear-ai-runs-and-requests.ts` | Clear AI runs and request repos only; same guard |
+| `npm run sharelinks:backfill` | `tsx scripts/sharelinks-backfill.ts` | Give pre-multi-link documents a share link row |
+| `npm run sharelinks:analytics-backfill` | `tsx scripts/sharelinks-analytics-backfill.ts` | Attribute old analytics rows to their share link |
+| `npm run audit:blob-urls` | `tsx scripts/audit-stored-blob-urls.ts` | Find stored blob URLs that no longer resolve |
+| `npm run verify:analytics` | `tsx scripts/verify-share-analytics.ts` | Check a share's analytics against the raw rows |
+
+### Admin and the waitlist
+
+| Script | Command | Description |
+|--------|---------|-------------|
+| `npm run admin:list` | `tsx scripts/admin-add.ts --list` | Who can reach `/a` |
+| `npm run admin:add -- --to=<email>` | `tsx scripts/admin-add.ts` | Make someone an admin |
+| `npm run admin:list:prod` / `npm run admin:add:prod` | same, against `.env.production.local` | The production admin list |
+| `npm run waitlist:invite -- --to=<email>` | `tsx scripts/waitlist-invite.ts` | Let someone out of the queue and mail them |
+| `npm run waitlist:invite:prod -- --to=<email>` | same, against `.env.production.local` | The same, in production |
+
+### Metrics and background jobs
+
+| Script | Command | Description |
+|--------|---------|-------------|
+| `npm run metrics:rollup:once` | `tsx scripts/rollup-doc-metrics.ts --once` | Run the doc-metrics rollup once |
+| `npm run metrics:rollup:dev` | `tsx scripts/rollup-doc-metrics.ts --interval 10000` | Run it every 10s |
+
+### Cron jobs
+
+One per scheduled job; each calls its route rather than re-implementing it. `scripts/cron/README.md`
+is the table of schedules, and `tests/lib/cronMap.test.ts` keeps it honest. All take `--dry-run`,
+`--limit=` and `--target=` where the route supports them.
+
+| Script | Script |
+|--------|--------|
+| `npm run cron:doc-metrics` | `npm run cron:analytics-reconcile` |
+| `npm run cron:stripe-credits-reconcile` | `npm run cron:credits-purchase-expiry` |
+| `npm run cron:stripe-credits-report` | `npm run cron:credits-stale-reservations` |
+| `npm run cron:credits-cycle-reconcile` | `npm run cron:account-purge` |
+| `npm run cron:usage-agg-reconcile` | `npm run cron:notification-emails` |
+| `npm run cron:plan-limits` | |
 
 ### Testing
 
 | Script | Command | Description |
 |--------|---------|-------------|
-| `npm run tests:agent` | `tsx tests/agent/agent.cli.ts` | Agent tests (CLI mode) |
-| `npm run tests:agent:cli` | `tsx tests/agent/agent.cli.ts` | Agent tests (CLI mode) |
-| `npm run tests:agent:vitest` | `vitest run --config tests/agent/vitest.config.ts` | Agent tests (Vitest) |
-| `npm run tests:upload:vitest` | `vitest run --config tests/upload/vitest.config.ts` | Upload pipeline tests |
-| `npm run tests:credits:vitest` | `vitest run --config tests/credits/vitest.config.ts` | Credits/billing tests |
-| `npm run tests:routes` | `node scripts/tests-routes.mjs` | Route tests |
-| `npm run tests:benchmark` | `tsx scripts/tests-benchmark.ts` | Benchmark tests |
+| `npm run tests:lib:vitest` | `vitest run --config tests/lib/vitest.config.ts` | The big one — ~219 files, and the suite that guards the cron map |
+| `npm run tests:agent` / `:cli` | `tsx tests/agent/agent.cli.ts` | Agent tests, CLI mode |
+| `npm run tests:agent:vitest` | `vitest run --config tests/agent/vitest.config.ts` | Agent tests |
+| `npm run tests:upload:vitest` | `vitest run --config tests/upload/vitest.config.ts` | Upload pipeline |
+| `npm run tests:credits:vitest` | `vitest run --config tests/credits/vitest.config.ts` | Credits and billing |
+| `npm run tests:routes` | `node scripts/tests-routes.mjs` | Route tests (needs the dev server) |
+| `npm run tests:benchmark` | `tsx scripts/tests-benchmark.ts` | Benchmarks |
 
-### PDF & AI Testing
+Nothing runs any of these automatically: there is no CI workflow in this repo.
 
-| Script | Command | Description |
-|--------|---------|-------------|
-| `npm run test:pdf2png` | `node scripts/pdf-first-page-to-png.mjs` | Test PDF to PNG conversion |
-| `npm run test:pdf2txt` | `node scripts/pdf-to-text.mjs` | Test PDF text extraction |
-| `npm run test:ai-extract` | `tsx scripts/test-ai-extract.ts` | Test AI extraction |
-| `npm run test:notification-emails` | `tsx scripts/notifications-send-emails.ts` | Test notification emails (dry-run) |
-
-### Vercel Blob
+### One-off checks
 
 | Script | Command | Description |
 |--------|---------|-------------|
-| `npm run blob:test` | `node scripts/test-vercel-blob.mjs` | Test Vercel Blob upload |
+| `npm run test:pdf2png` | `node scripts/pdf-first-page-to-png.mjs` | PDF page to PNG |
+| `npm run test:pdf2txt` | `node scripts/pdf-to-text.mjs` | PDF text extraction |
+| `npm run test:ai-extract` | `tsx scripts/test-ai-extract.ts` | Run the real `analyzePdfText()` over a file |
+| `npm run test:notification-emails` | `tsx scripts/notifications-send-emails.ts` | Notification emails, dry-run |
+| `npm run test:emails` | `tsx scripts/send-test-emails.ts` | Send one of each template to yourself |
+| `npm run test:account-deletion` | `tsx scripts/test-account-deletion.ts` | Walk the account-deletion flow |
+| `npm run measure:image-tokens` | `tsx scripts/measure-image-tokens.ts` | Measure what an image really costs per model |
+| `npm run blob:test` | `node scripts/test-vercel-blob.mjs` | Vercel Blob upload |
 
 ### Usage Examples
 

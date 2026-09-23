@@ -1,8 +1,9 @@
 # Cron jobs
 
 One job = one HTTP route under `src/app/api/cron/<job>` + one schedule in `vercel.json` + one
-runner here named `cron.<job>.ts`. `tests/lib/cronMap.test.ts` fails the build if any of the three
-is added without the others.
+runner here named `cron.<job>.ts`. `tests/lib/cronMap.test.ts` fails if any of the three is added
+without the others, and also if the table below drifts from `vercel.json`. Nothing runs it
+automatically — there is no CI workflow in this repo — so run `npm run tests:lib:vitest` yourself.
 
 | Job | Vercel schedule | Route | Manual run |
 |---|---|---|---|
@@ -14,6 +15,9 @@ is added without the others.
 | `notification-emails` | `*/5 * * * *` (every 5 minutes) | `/api/cron/notification-emails` | `npm run cron:notification-emails` |
 | `plan-limits` | `40 * * * *` (hourly at :40) | `/api/cron/plan-limits` | `npm run cron:plan-limits` |
 | `analytics-reconcile` | `50 3 * * *` (nightly at 03:50 UTC) | `/api/cron/analytics-reconcile` | `npm run cron:analytics-reconcile` |
+| `credits-purchase-expiry` | `5 4 * * *` (nightly at 04:05 UTC) | `/api/cron/credits-purchase-expiry` | `npm run cron:credits-purchase-expiry` |
+| `credits-stale-reservations` | `25 * * * *` (hourly at :25) | `/api/cron/credits-stale-reservations` | `npm run cron:credits-stale-reservations` |
+| `account-purge` | `30 4 * * *` (nightly at 04:30 UTC) | `/api/cron/account-purge` | `npm run cron:account-purge` |
 
 `analytics-reconcile` is the one job whose output you should read rather than just check for a 200.
 It repairs `ShareLink`'s denormalized counters from the analytics rows, and separately *reports*
@@ -53,7 +57,14 @@ CRON_SECRET=…  CRON_TARGET_URL=https://lnkdrp.com
 20 * * * *   cd /srv/lnkdrp && npm run -s cron:usage-agg-reconcile
 */5 * * * *  cd /srv/lnkdrp && npm run -s cron:notification-emails
 40 * * * *   cd /srv/lnkdrp && npm run -s cron:plan-limits
+25 * * * *   cd /srv/lnkdrp && npm run -s cron:credits-stale-reservations
+50 3 * * *   cd /srv/lnkdrp && npm run -s cron:analytics-reconcile
+5 4 * * *    cd /srv/lnkdrp && npm run -s cron:credits-purchase-expiry
+30 4 * * *   cd /srv/lnkdrp && npm run -s cron:account-purge
 ```
+
+All eleven, deliberately: this block once listed seven, and the four it left out were the
+ones nobody notices missing — deleted accounts never purged, credit purchases never expired.
 
 Keep the two schedules identical; the leases make an accidental double-scheduler harmless.
 
@@ -62,4 +73,5 @@ Keep the two schedules identical; the leases make an accidental double-scheduler
 1. `src/app/api/cron/<job>/route.ts` with `runtime = "nodejs"`, `maxDuration`, `requireCronAuth`, a lease.
 2. Add `{ "path": "/api/cron/<job>", "schedule": "…" }` to `vercel.json`.
 3. `scripts/cron/cron.<job>.ts` (copy any sibling) and `"cron:<job>"` in `package.json`.
-4. Document it in `docs/CRON.md`. Run `npm run tests:lib:vitest`.
+4. Document it in `docs/CRON.md`, in the table above and in the crontab block. Run
+   `npm run tests:lib:vitest` — the table and `vercel.json` are pinned to each other.

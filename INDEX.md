@@ -1,1063 +1,911 @@
-# Components
-- `src/components/AboutCopy.tsx` — exports: AboutCopy
-- `src/components/AccountMenu.tsx` — exports: AccountMenu. Props: `variant?` ("sidebar" | "topbar").
-- `src/components/ActiveWorkspacePill.tsx` — exports: ActiveWorkspacePill (default). Props: `planBadgeText?` to optionally show a small plan badge (e.g. “PRO”); `disableNetwork?` to avoid network calls on mount (header fast-path).
-- `src/components/WorkspacePill.tsx` — exports: WorkspacePill (default). Presentational pill used by `ActiveWorkspacePill` for consistent header styling across app + dashboard.
-- `src/components/BlobClientUploadTest.tsx` — exports: BlobClientUploadTest
-- `src/components/CopyButton.tsx` — exports: CopyButton
-- `src/components/DocActionsMenu.tsx` — exports: DocActionsMenu
-- `src/components/DocDebugModal.tsx` — exports: DocDebugModal
-- `src/components/DocSharePanel.tsx` — exports: DocSharePanel
-- `src/components/StripePricingTable.tsx` — exports: StripePricingTable. Renders Stripe pricing table embed (requires NEXT_PUBLIC_STRIPE_* env vars).
-- `src/components/StandaloneBrandedHeader.tsx` — exports: StandaloneBrandedHeader. Shared top branding for standalone flow pages.
-- `src/components/StandaloneBrandedShell.tsx` — exports: StandaloneBrandedShell. Branded standalone shell for public-ish pages (billing redirects, request links).
-- `src/app/(app)/AppShellLayout.tsx` — exports: AppShellLayout
-- `src/app/preferences/NotificationPreferences.tsx` — exports: NotificationPreferences (default). Workspace-level notification preferences UI (doc update emails).
-- `src/components/notifications/NotificationPreferences.tsx` — exports: NotificationPreferences (default). Workspace-level notification preferences UI (doc update emails; used by dashboard + preferences).
-- `src/app/dashboard/SubscriptionCard.tsx` — exports: SubscriptionCard (default)
-- `src/app/dashboard/SpendLimitModule.tsx` — exports: SpendLimitModule (default), SPEND_LIMIT_UPDATED_EVENT, getCachedSpendStatus, refreshSpendStatus
-- `src/app/dashboard/CreditsSummaryCard.tsx` — exports: CreditsSummaryCard (default)
-- `src/app/dashboard/OnDemandUsageCard.tsx` — exports: OnDemandUsageCard (default)
-- `src/app/dashboard/AiQualityDefaultsCard.tsx` — exports: AiQualityDefaultsCard (default)
-- `src/app/dashboard/UsageTable.tsx` — exports: UsageTable (default), (type) UsageRow
-- `src/app/dashboard/DailyUsageChart.tsx` — exports: DailyUsageChart (default)
-- `src/app/dashboard/DailyUsageChartRenderer.tsx` — exports: DailyUsageChartRenderer (default), DailyUsageChartRow (type)
-- `src/app/dashboard/MultiLineChart30d.tsx` — exports: MultiLineChart30d (default). Overview chart (code-split: imports Recharts).
-- `src/app/dashboard/BillingInvoicesTab.tsx` — exports: BillingInvoicesTab (default). Billing & Invoices tab content (3 cards: Included Usage, On-Demand Usage, Invoices).
-- `src/admin/components/CacheToolsClient.tsx` — exports: CacheToolsClient
-- `src/app/s/[shareId]/ShareViewerClient.tsx` — exports: ShareViewerClient (default). Client wrapper to code-split `PdfJsViewer` for `/s/:shareId`.
-- `src/components/LeftSidebar.tsx` — exports: LeftSidebar
-- `src/components/SidebarProjectsSection.tsx` — exports: SidebarProjectsSection
-- `src/components/Markdown.tsx` — exports: Markdown
-- `src/components/PasswordGate.tsx` — exports: PasswordGate
-- `src/components/ProjectSharePanel.tsx` — exports: ProjectSharePanel
-- `src/components/SwitchingOverlay.tsx` — exports: SWITCHING_OVERLAY_ID, DOC_NAV_OVERLAY_ID, PROJECT_NAV_OVERLAY_ID, SWITCHING_OVERLAY_Y_KEY, SWITCHING_OVERLAY_STARTED_AT_KEY, PENDING_ACTIVE_ORG_ID_KEY, DEFAULT_SWITCHING_OVERLAY_MIN_MS, showSwitchingOverlay, hideSwitchingOverlay, waitForNextPaint, waitForMinOverlayTime, fetchOrgSwitchRedirectTo, switchWorkspaceWithOverlay
-- `src/components/modals/CreateLinkRequestRepositoryModal.tsx` — exports: CreateLinkRequestRepositoryModal
-- `src/components/modals/CreateProjectModal.tsx` — exports: CreateProjectModal
-- `src/components/modals/DeleteDocModal.tsx` — exports: DeleteDocModal
-- `src/components/modals/DeleteProjectModal.tsx` — exports: DeleteProjectModal
-- `src/components/modals/DocProjectsModal.tsx` — exports: DocProjectsModal
-- `src/components/modals/Modal.tsx` — exports: Modal
-- `src/components/modals/ReviewPerspectiveModal.tsx` — exports: ReviewPerspectiveModal
-- `src/components/modals/SidebarDocsModal.tsx` — exports: SidebarDocsModal
-- `src/components/modals/SidebarProjectsModal.tsx` — exports: SidebarProjectsModal
-- `src/components/modals/SidebarRequestsModal.tsx` — exports: SidebarRequestsModal
-- `src/components/modals/SidebarStarredModal.tsx` — exports: SidebarStarredModal
-- `src/components/modals/TempUserGateModal.tsx` — exports: TempUserGateModal
-- `src/components/PdfJsViewer.tsx` — exports: PdfJsViewer. Share viewer: records view stats; supports optional "Introduce yourself" (name/email) for anonymous viewer labeling.
-- `src/components/RelevanceChecklist.tsx` — exports: RelevanceChecklist
-- `src/components/OutOfCreditsModal.tsx` — exports: OutOfCreditsModal (default)
-- `src/components/OutOfCreditsListener.tsx` — exports: OutOfCreditsListener (default)
-- `src/components/UploadButton.tsx` — exports: UploadButton, UploadIcon
-- `src/components/UploadCompletionPanel.tsx` — exports: UploadCompletionPanel
-- `src/components/ui/Alert.tsx` — exports: Alert (default)
-- `src/components/ui/IconButton.tsx` — exports: IconButton (default)
-- `src/components/ui/IconLink.tsx` — exports: IconLink (default)
-- `src/components/ui/Button.tsx` — exports: Button (default), ButtonProps (type)
-- `src/components/ui/Input.tsx` — exports: Input (default), InputProps (type)
-- `src/components/ui/Select.tsx` — exports: Select (default), SelectProps (type)
-- `src/components/ui/Panel.tsx` — exports: Panel (default), PanelProps (type)
-- `src/components/ui/Pill.tsx` — exports: Pill (default)
-- `src/components/ui/DotsLoader.tsx` — exports: DotsLoader (default), DotsLoaderProps (type). Centered "Loading…" label + animated dots.
-- `src/components/ui/Spinner.tsx` — exports: Spinner (default), SpinnerProps (type). Minimal rotating circle spinner (theme-aware via `currentColor`).
-- `src/components/ui/SpinnerLoader.tsx` — exports: SpinnerLoader (default), SpinnerLoaderProps (type). Centered spinner loader with optional title.
-- `src/components/ui/HelpTooltip.tsx` — exports: HelpTooltip (default)
-- `src/components/ui/DataTable.tsx` — exports: DataTable (default), DataTableProps (type)
-- `src/components/ui/CopyTextButton.tsx` — exports: CopyTextButton (default)
+# Code map
 
-# Lib
-- `src/lib/admin/localStorageTools.ts` — exports: LocalStorageRow, byteSizeUtf8, readLocalStorageSnapshot, removeLocalStorageKey, clearLocalStorageKeysByPrefix
-- `src/lib/admin/format.ts` — exports: fmtDate, fmtDuration
-- `src/lib/format/initials.ts` — exports: initialsFromNameOrEmail
-- `src/lib/orgsCache.ts` — exports: OrgsCacheOrg, OrgsCacheSnapshot, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, writeOrgsCacheSnapshot, clearOrgsCache, refreshOrgsCache, setCachedActiveOrgId
-- `src/lib/orgs/activeOrgCookie.ts` — exports: ACTIVE_ORG_COOKIE. Shared cookie name for the active workspace/org.
-- `src/lib/orgs/orgsClient.ts` — exports: OrgRow (type), stableSortOrgs, initials
-- `src/lib/orgs/useOrgsSnapshot.ts` — exports: useOrgsSnapshot
-- `src/lib/client/outOfCredits.ts` — exports: OUT_OF_CREDITS_EVENT, dispatchOutOfCredits
-- `src/lib/client/creditsSnapshotRefresh.ts` — exports: CREDITS_SNAPSHOT_REFRESH_EVENT, dispatchCreditsSnapshotRefresh
-- `src/lib/credits/grants.ts` — exports: INCLUDED_CREDITS_PER_CYCLE, buildCycleKey, grantCycleIncludedCredits
-- `src/lib/credits/adminMutations.ts` — exports: AdminCreditMutationAction (type), adminMutateCredits, adminSimulateNewBillingCycle
-- `src/lib/credits/errors.ts` — exports: OUT_OF_CREDITS_CODE, isOutOfCreditsError
-- `src/lib/credits/snapshot.ts` — exports: CreditsSnapshot (type), getCreditsSnapshot
-- `src/lib/credits/stripeReporting.ts` — exports: StripeReportableLedger (type), batchIdempotencyKey, groupOnDemandLedgersForStripe
-- `src/lib/billing/pricing.ts` — exports: USD_CENTS_PER_CREDIT
-- `src/lib/billing/usageAggregation.ts` — exports: BillingLedgerRow (type), aggregateBillingUsage, onDemandCostCentsOrNull
-- `src/lib/billing/proPriceLabel.ts` — exports: getBillingProPriceLabel, revalidateBillingProPriceLabel
-- `src/lib/metrics/rollupDocMetrics.ts` — exports: rollupDocMetrics
-- `src/lib/email/sendTextEmail.ts` — exports: sendTextEmail. Plain-text email sender with `EMAIL_TRANSPORT=console` support.
-- `src/lib/notifications/sendNotificationEmails.ts` — exports: sendNotificationEmails. Cron/worker helper for notification emails (doc updates + request repos).
-- `src/lib/models/CronHealth.ts` — exports: CronHealthModel, (type) CronHealth
-- `src/lib/models/NotificationEmailCursor.ts` — exports: NotificationEmailCursorModel, (type) NotificationEmailCursor. Per-user email cursors for cron idempotency.
-- `src/lib/models/AiRun.ts` — exports: AiRunModel, (type) AiRun
-- `src/lib/models/ErrorEvent.ts` — exports: ErrorEventModel, (type) ErrorEvent
+**Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
+file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-# Pages
-- `src/app/(app)/doc/[docId]/ai/page.tsx` — Page for \`/doc/:docId/ai\`.
-- `src/app/(app)/doc/[docId]/page.tsx` — Page for \`/doc/:docId\`.
-- `src/app/(app)/doc/[docId]/metrics/page.tsx` — Page for \`/doc/:docId/metrics\` (includes per-viewer details modal).
-- `src/app/(app)/doc/[docId]/history/page.tsx` — Page for \`/doc/:docId/history\`.
-- `src/app/(app)/doc/[docId]/review/page.tsx` — Page for \`/doc/:docId/review\`.
-- `src/app/(app)/layout.tsx` — Layout for \`/\`.
-- `src/app/(app)/project/[projectSlug]/page.tsx` — Page for \`/project/:projectId\`.
-- `src/app/(app)/requests/page.tsx` — Page for \`/requests\` (list request repositories).
-- `src/app/preferences/layout.tsx` — Layout for \`/preferences\` (standalone; no app sidebar).
-- `src/app/preferences/page.tsx` — Page for \`/preferences\` (preferences hub).
-- `src/app/preferences/[tab]/page.tsx` — Page for \`/preferences/:tab\` (redirects to query-param tab).
-- `src/app/dashboard/page.tsx` — Page for \`/dashboard\` (standalone dashboard hub; includes Overview/Account/Workspace/Teams/Usage/Spending/Billing tabs; mobile uses a hamburger menu to open the tab nav).
-- `src/app/billing/success/page.tsx` — Page for \`/billing/success\` (post-Checkout redirect; polls server until webhooks activate Pro).
-- `src/app/billing/cancel/page.tsx` — Page for \`/billing/cancel\` (Checkout canceled).
-- `src/app/p/[shareId]/page.tsx` — Page for \`/p/:shareId\`.
-- `src/app/p/[shareId]/loading.tsx` — Loading skeleton for \`/p/:shareId\`.
-- `src/app/r/[token]/page.tsx` — Page for \`/r/:token\` (request upload link).
-- `src/app/request/[token]/page.tsx` — Page for \`/request/:token\` (request upload link).
-- `src/app/request-view/[token]/page.tsx` — Page for \`/request-view/:token\` (request repo viewer; read-only capability link).
-- `src/app/doc/update/[code]/page.tsx` — Page for \`/doc/update/:code\` (public doc update/upload link).
-- `src/app/replace/[token]/page.tsx` — Page for \`/replace/:token\` (legacy alias → \`/doc/update/:code\`).
-- `src/app/a/invitecodes/page.tsx` — Page for \`/a/invitecodes\`.
-- `src/app/a/cron-health/page.tsx` — Page for \`/a/cron-health\`.
-- `src/app/a/ai-runs/page.tsx` — Page for \`/a/ai-runs\`.
-- `src/app/a/credits/page.tsx` — Page for \`/a/credits\` (admin credits tools).
-- `src/app/a/shareviews/[docId]/page.tsx` — Page for \`/a/shareviews/:docId\`.
-- `src/app/a/shareviews/page.tsx` — Page for \`/a/shareviews\`.
-- `src/app/a/data/workspaces/page.tsx` — Page for \`/a/data/workspaces\`.
-- `src/app/a/data/workspaces/[workspaceId]/page.tsx` — Page for \`/a/data/workspaces/:workspaceId\`.
-- `src/app/a/data/users/page.tsx` — Page for \`/a/data/users\`.
-- `src/app/a/data/users/[userId]/page.tsx` — Page for \`/a/data/users/:userId\`.
-- `src/app/a/data/docs/page.tsx` — Page for \`/a/data/docs\`.
-- `src/app/a/data/projects/page.tsx` — Page for \`/a/data/projects\`.
-- `src/app/a/data/projects/[projectId]/page.tsx` — Page for \`/a/data/projects/:projectId\`.
-- `src/app/a/data/requests/page.tsx` — Page for \`/a/data/requests\`.
-- `src/app/a/data/requests/[requestId]/page.tsx` — Page for \`/a/data/requests/:requestId\`.
-- `src/app/a/data/uploads/page.tsx` — Page for \`/a/data/uploads\`.
-- `src/app/a/tools/cache/page.tsx` — Page for \`/a/tools/cache\` (admin cache inspector).
-- `src/app/a/tools/billing/page.tsx` — Page for \`/a/tools/billing\` (admin billing config tools).
-- `src/app/about/page.tsx` — About page.
-- `src/app/tos/page.tsx` — Terms of Service page.
-- `src/app/privacy/page.tsx` — Privacy Policy page.
+Covers 863 source files. Each entry is a path, the URL it serves where it is a route,
+and its exported names. For *what a thing is for*, read the file's own header comment, or
+`docs/FEATURES.md` for the product map.
 
-# Deployment
-- `vercel.json` — Vercel project configuration (includes `"crons"` schedules for production cron jobs).
-- `src/app/api/admin/shareviews/doc/[docId]/route.ts` — API route for \`/api/admin/shareviews/doc/:docId\`.
-  - GET (function) — Handle GET requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/shareviews/recent/route.ts` — API route for \`/api/admin/shareviews/recent\`.
-  - GET (function) — Handle GET requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/cron-health/route.ts` — API route for \`/api/admin/cron-health\`.
-  - GET (function) — Return cron health snapshots for admin UI.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/errors/route.ts` — Admin API route for \`/api/admin/errors\`.
-  - GET (function) — Query ErrorEvent logs with filters + cursor pagination (admin-only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/ai-runs/route.ts` — API route for \`/api/admin/ai-runs\`.
-  - GET (function) — List AI run logs for admin inspection (paged).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/ai-runs/[runId]/route.ts` — API route for \`/api/admin/ai-runs/:runId\`.
-  - GET (function) — Fetch a single AI run log record (prompt + output).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/credits/snapshot/route.ts` — Admin API route for \`/api/admin/credits/snapshot\`.
-  - GET (function) — Return a credits snapshot for a workspace (admin-only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/credits/mutate/route.ts` — Admin API route for \`/api/admin/credits/mutate\`.
-  - POST (function) — Ledger-based credit mutation tools (grant/burn) for a workspace (admin-only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/credits/simulate-cycle/route.ts` — Admin API route for \`/api/admin/credits/simulate-cycle\`.
-  - POST (function) — Simulate a new billing cycle (updates stored period boundaries; idempotent cycle grant; admin-only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/billing/pro-price/route.ts` — Admin API route for \`/api/admin/billing/pro-price\`.
-  - GET (function) — Read current Pro price label (Mongo).
-  - POST (function) — Refresh Pro price label from Stripe and persist to Mongo (invalidates cache).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/users/route.ts` — API route for \`/api/admin/data/users\`.
-  - GET (function) — List users for admin inspection (paged).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/users/[userId]/route.ts` — API route for \`/api/admin/data/users/:userId\`.
-  - GET (function) — Fetch a user record plus org memberships for admin inspection.
-  - DELETE (function) — Deactivate a user (sets `isActive=false`).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/users/[userId]/plan/route.ts` — API route for \`/api/admin/users/:userId/plan\`.
-  - POST (function) — Admin override: set `User.plan` to `free` or `pro`.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/orgs/route.ts` — API route for \`/api/admin/data/orgs\`.
-  - GET (function) — List orgs for admin inspection (and org member tooling).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/orgs/[orgId]/members/route.ts` — API route for \`/api/admin/data/orgs/:orgId/members\`.
-  - GET (function) — List org members (user + membership role) for admin inspection.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/workspaces/route.ts` — API route for \`/api/admin/data/workspaces\`.
-  - GET (function) — List workspaces (team orgs) for admin inspection (paged).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/workspaces/[workspaceId]/members/route.ts` — API route for \`/api/admin/data/workspaces/:workspaceId/members\`.
-  - GET (function) — List workspace members (user + membership role) for admin inspection.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/workspaces/[workspaceId]/route.ts` — API route for \`/api/admin/data/workspaces/:workspaceId\`.
-  - DELETE (function) — Soft-delete a workspace (sets `isDeleted=true`).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/docs/route.ts` — API route for \`/api/admin/data/docs\`.
-  - GET (function) — List docs across all users for admin inspection (paged).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/docs/[docId]/route.ts` — API route for \`/api/admin/data/docs/:docId\`.
-  - GET (function) — Return full doc JSON plus related uploads (admin drilldown).
-  - DELETE (function) — Soft-delete a doc (sets `isDeleted=true` and `deletedDate`).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/projects/route.ts` — API route for \`/api/admin/data/projects\`.
-  - GET (function) — List projects across all users for admin inspection (paged).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/requests/route.ts` — API route for \`/api/admin/data/requests\`.
-  - GET (function) — List request link repos across all users for admin inspection (paged).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/requests/[requestId]/route.ts` — API route for \`/api/admin/data/requests/:requestId\`.
-  - GET (function) — Return a request repo (Project) plus related docs/uploads for admin inspection.
-  - DELETE (function) — Soft-delete a request repo (sets `isDeleted=true`).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/projects/[projectId]/route.ts` — API route for \`/api/admin/data/projects/:projectId\`.
-  - GET (function) — Return a project (raw) for admin inspection.
-  - POST (function) — Update a project (admin tool; e.g. set `isRequest=true`).
-  - DELETE (function) — Soft-delete a project (sets `isDeleted=true`).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/uploads/route.ts` — API route for \`/api/admin/data/uploads\`.
-  - GET (function) — List uploads across all users for admin inspection (paged; supports `docId` filter).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/admin/data/uploads/[uploadId]/route.ts` — API route for \`/api/admin/data/uploads/:uploadId\`.
-  - GET (function) — Return full upload JSON (including `error.details`) for admin drilldown.
-  - DELETE (function) — Soft-delete an upload (sets `isDeleted=true` and `deletedDate`).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/auth/[...nextauth]/route.ts` — API route for \`/api/auth/:nextauth*\`.
-  - GET (function) — Handle GET requests.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Force Node.js runtime (Mongoose isn't compatible with Edge runtime).
-- `src/app/api/auth/claim-temp/route.ts` — API route for \`/api/auth/claim-temp\`.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/dashboard/stats/route.ts` — API route for \`/api/dashboard/stats\`.
-  - GET (function) — Dashboard Overview stats (counts + share view aggregates).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/dashboard/usage/route.ts` — API route for \`/api/dashboard/usage\`.
-  - GET (function) — Usage rows for the dashboard Usage tab (scaffold; returns empty list until usage tracking is wired).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/dashboard/usage-daily/route.ts` — API route for \`/api/dashboard/usage-daily\`.
-  - GET (function) — Daily usage series for the dashboard Usage tab chart.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/billing/subscription/route.ts` — API route for \`/api/billing/subscription\`.
-  - GET (function) — Return current org subscription status for dashboard UI.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/billing/subscription/manage/route.ts` — API route for \`/api/billing/subscription/manage\`.
-  - POST (function) — Create Stripe billing portal session URL for the current org customer.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/billing/status/route.ts` — API route for \`/api/billing/status\`.
-  - GET (function) — Return current user's plan + Stripe subscription fields (used for success-page polling).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/billing/spend/route.ts` — API route for \`/api/billing/spend\` (workspace on-demand spend limit).
-  - GET (function) — Return on-demand limit + used spend for the current billing cycle.
-  - POST (function) — Update on-demand limit for the active workspace (owner/admin only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/billing/summary/route.ts` — API route for \`/api/billing/summary\`.
-  - GET (function) — Billing summary for Billing & Invoices page (cycle, plan, on-demand, balances).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/billing/usage/route.ts` — API route for \`/api/billing/usage\`.
-  - GET (function) — Included + on-demand usage tables for a selected billing cycle.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/billing/invoices/route.ts` — API route for \`/api/billing/invoices\`.
-  - GET (function) — List recent invoices for a selected month (Stripe; customer id never returned).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/credits/snapshot/route.ts` — API route for \`/api/credits/snapshot\`.
-  - GET (function) — Return a single credits snapshot for the active workspace (customer-facing; no telemetry).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/credits/quality-defaults/route.ts` — API route for \`/api/credits/quality-defaults\`.
-  - GET (function) — Read workspace default quality tiers for Review/History (owner/admin only).
-  - POST (function) — Update workspace default quality tiers for Review/History (owner/admin only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/stripe/checkout/route.ts` — API route for \`/api/stripe/checkout\`.
-  - POST (function) — Create a Stripe Checkout Session (subscription mode) for the signed-in user.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/stripe/webhook/route.ts` — API route for \`/api/stripe/webhook\`.
-  - POST (function) — Stripe webhook handler (signature-verified; webhook-driven access control).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/stripe/portal/route.ts` — API route for \`/api/stripe/portal\`.
-  - POST (function) — Create Stripe billing portal session URL for the signed-in user.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/blob/upload/route.ts` — Vercel Blob client-upload route (App Router).
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/cron/doc-metrics/route.ts` — Cron route for rolling up cached doc metrics.
-  - POST (function) — Roll up per-doc metrics into `Doc.metricsSnapshot`.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/cron/credits-cycle-reconcile/route.ts` — Cron route for hourly credit-cycle grant backstop.
-  - POST (function) — Ensure included credits grant exists for current billing cycle (idempotent).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/cron/stripe-credits-reconcile/route.ts` — Cron route for Stripe billing-cycle backstop + included credit resets.
-  - POST (function) — Sync subscription period boundaries and idempotently grant cycle credits.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/cron/stripe-credits-report/route.ts` — Cron route for reporting metered AI credits usage to Stripe.
-  - POST (function) — Report aggregated credits and mark ledger rows as reported (idempotent).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/cron/usage-agg-reconcile/route.ts` — Cron route for recomputing usage aggregates from CreditLedger.
-  - POST (function) — Recompute daily/cycle usage aggregates for a date range (idempotent).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/cron/notification-emails/route.ts` — Cron route for sending notification emails (doc updates + request repos).
-  - POST (function) — Send emails based on OrgMembership preferences (idempotent via cursors).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/debug/route.ts` — API route for \`/api/debug\`.
-  - GET (function) — Debug endpoint to confirm server-side env wiring.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/debug/cookie/route.ts` — API route for \`/api/debug/cookie\`.
-  - GET (function) — Dev-only: echo request Cookie header and write it to `scripts/cookie.json` (auth required; disabled in prod by default).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/metrics/events/route.ts` — API route for \`/api/metrics/events\`.
-  - POST (function) — Ingest metrics events (project views, in-project clicks, session page timing).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/starred/route.ts` — API route for \`/api/starred\`.
-  - GET (function) — List starred docs for the current user + active org.
-  - POST (function) — Toggle starred state for a doc.
-  - PATCH (function) — Reorder starred docs.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/starred/bootstrap/route.ts` — API route for \`/api/starred/bootstrap\`.
-  - POST (function) — One-time helper to migrate localStorage starred cache into MongoDB.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/orgs/route.ts` — API route for \`/api/orgs\`.
-  - GET (function) — List orgs for the signed-in user (includes active org id).
-  - POST (function) — Create a new team org and owner membership.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/orgs/active/route.ts` — API route for \`/api/orgs/active\`.
-  - GET (function) — Get current active org id for the signed-in user.
-  - POST (function) — Set active org id (membership validated; persisted in httpOnly cookie).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/orgs/active/members/route.ts` — API route for \`/api/orgs/active/members\`.
-  - GET (function) — List members of the active org (any member; internal-only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/orgs/active/notification-preferences/route.ts` — API route for \`/api/orgs/active/notification-preferences\`.
-  - GET (function) — Read current user's notification preferences for the active org.
-  - POST (function) — Update current user's notification preferences for the active org.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/orgs/[orgId]/avatar/route.ts` — API route for \`/api/orgs/:orgId/avatar\`.
-  - POST (function) — Update org avatar URL (owner/admin only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/orgs/[orgId]/members/route.ts` — API route for \`/api/orgs/:orgId/members\`.
-  - GET (function) — List org members (owner/admin only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/orgs/[orgId]/members/[userId]/revoke/route.ts` — API route for \`/api/orgs/:orgId/members/:userId/revoke\`.
-  - POST (function) — Revoke (remove) an org membership (owner/admin permissions).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/orgs/[orgId]/leave/route.ts` — API route for \`/api/orgs/:orgId/leave\`.
-  - POST (function) — Leave a team org (membership soft-delete; switches to personal org if leaving active org).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/orgs/claim-join/route.ts` — API route for \`/api/orgs/claim-join\`.
-  - POST (function) — Claim a one-time join cookie to add the signed-in user to the org.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/org-invites/route.ts` — API route for \`/api/org-invites\`.
-  - GET (function) — List existing org invite links (owner/admin only). Includes recipient email for email-sent invites and redeemed-by user info for used invites (when available).
-  - POST (function) — Create a new org invite link (owner/admin only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/org-invites/email/route.ts` — API route for \`/api/org-invites/email\`.
-  - POST (function) — Create an org invite link and email it to a recipient (owner/admin only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/org-invites/revoke/route.ts` — API route for \`/api/org-invites/revoke\`.
-  - POST (function) — Revoke (invalidate) an org invite link (owner/admin only).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/org-invites/bootstrap/route.ts` — API route for \`/api/org-invites/bootstrap\`.
-  - GET (function) — Validate an org invite token and set invite-gating cookie so sign-in can proceed.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/org-invites/claim/route.ts` — API route for \`/api/org-invites/claim\`.
-  - POST (function) — Redeem an invite token into an org membership (auth required).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/pdf/route.ts` — API route for \`/api/docs/:docId/pdf\`.
-  - GET (function) — Same-origin cached PDF proxy for the owner doc page.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/report/route.ts` — API route for \`/api/docs/:docId/report\`.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/reviews/route.ts` — API route for \`/api/docs/:docId/reviews\`.
-  - GET (function) — List reviews for a doc (paged).
-  - runtime (const) — Next.js route configuration.
-  - Note: review payload includes \`intel\` (legacy structured output) and \`agentOutput\` (request review output) when available.
-- `src/app/api/docs/[docId]/route.ts` — API route for \`/api/docs/:docId\`.
-  - GET (function) — Handle GET requests.
-  - PATCH (function) — Handle PATCH requests.
-  - DELETE (function) — Handle DELETE requests.
-  - runtime (const) — Next.js route configuration.
-  - Note: doc payload includes `primaryProjectId` (canonical primary project pointer). `projectId` remains as a backward-compat alias during migration.
-  - Note: GET response doc payload includes \`receivedViaRequestProjectId\` (request uploads) and \`guideForRequestProjectId\` (request guide docs) to relate docs back to their request repo.
-  - Note: GET supports \`lite=1\` polling and still includes \`lastUpdate\` (uploadedAt + uploadedBy) so the doc header can show who last replaced the file.
-- `src/app/api/docs/[docId]/shareviews/route.ts` — API route for \`/api/docs/:docId/shareviews\`.
-  - GET (function) — Owner-only share metrics (views, downloads, viewers + per-viewer pages seen).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/shareviews/visits/route.ts` — API route for \`/api/docs/:docId/shareviews/visits\`.
-  - GET (function) — Owner-only per-visit list for a specific viewer (authed/anon).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/shareviews/visits/[visitId]/route.ts` — API route for \`/api/docs/:docId/shareviews/visits/:visitId\`.
-  - GET (function) — Owner-only per-visit detail (time per page + revisits + page sequence).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/share-password/route.ts` — API route for \`/api/docs/:docId/share-password\`.
-  - POST (function) — Handle POST requests.
-  - GET (function) — Handle GET requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/changes/route.ts` — API route for \`/api/docs/:docId/changes\`.
-  - GET (function) — List replacement change history records for a doc (access-gated).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/changes/[changeId]/route.ts` — API route for \`/api/docs/:docId/changes/:changeId\`.
-  - GET (function) — Fetch a single change (includes large text fields) for on-demand History viewing.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/history/[version]/recipients/route.ts` — API route for \`/api/docs/:docId/history/:version/recipients\`.
-  - GET (function) — List org members and whether each opened the given doc version.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/[docId]/history/[version]/viewer/[userId]/route.ts` — API route for \`/api/docs/:docId/history/:version/viewer/:userId\`.
-  - GET (function) — Per-page timing aggregates for a viewer on a specific doc version.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/docs/route.ts` — API route for \`/api/docs\`.
-  - GET (function) — List docs (paged; supports `q` search; supports `ids` for direct lookup).
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-  - Note: GET list items can include \`receivedViaRequestProjectId\` and \`guideForRequestProjectId\` for request context indicators in doc lists.
-- `src/app/api/sidebar/route.ts` — API route for \`/api/sidebar\`.
-  - GET (function) — Return a single snapshot payload for the main app left sidebar (docs/projects/requests).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/invites/codes/[inviteId]/toggle-active/route.ts` — API route for \`/api/invites/codes/:inviteId/toggle-active\`.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/invites/codes/route.ts` — API route for \`/api/invites/codes\`.
-  - GET (function) — Handle GET requests.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/invites/request/route.ts` — API route for \`/api/invites/request\`.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/invites/requests/[requestId]/approve/route.ts` — API route for \`/api/invites/requests/:requestId/approve\`.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/invites/requests/route.ts` — API route for \`/api/invites/requests\`.
-  - GET (function) — Handle GET requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/invites/status/route.ts` — API route for \`/api/invites/status\`.
-  - GET (function) — Handle GET requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/invites/verify/route.ts` — API route for \`/api/invites/verify\`.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/projects/[projectSlug]/docs/route.ts` — API route for \`/api/projects/:projectSlug/docs\`.
-  - GET (function) — Handle GET requests.
-  - runtime (const) — Next.js route configuration.
-  - Note: response project payload can include request repo settings under \`project.request\` when \`project.isRequest\` is true.
-  - Note: for request repos, doc list items can include \`reviewScore\` (mapped from latest agent relevancy, with legacy fallback) to support sorting.
-- `src/app/api/projects/[projectSlug]/suggested-docs/route.ts` — API route for \`/api/projects/:projectSlug/suggested-docs\`.
-  - GET (function) — Handle GET requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/projects/[projectSlug]/route.ts` — API route for \`/api/projects/:projectSlug\`.
-  - PATCH (function) — Handle PATCH requests.
-  - DELETE (function) — Handle DELETE requests.
-  - runtime (const) — Next.js route configuration.
-  - Note: PATCH accepts \`requestReviewEnabled\` + optional \`requestReviewPrompt\` (reviewer notes) for request repos.
-- `src/app/api/projects/route.ts` — API route for \`/api/projects\`.
-  - GET (function) — Handle GET requests.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-  - Note: GET returns only non-request projects; request repositories are listed via \`/api/requests\`.
-- `src/app/api/requests/route.ts` — API route for \`/api/requests\`.
-  - GET (function) — List request repositories (paged).
-  - POST (function) — Create a new "request" (inbound upload folder).
-  - runtime (const) — Next.js route configuration.
-  - Note: POST accepts \`reviewEnabled\` + optional \`reviewPrompt\` (reviewer notes) to enable the review agent for this request link.
-- `src/app/api/requests/[token]/guide/route.ts` — API route for \`/api/requests/:requestId/guide\`.
-  - POST (function) — Attach a "guide doc" to a request folder (auth required; requestId is a Project ObjectId).
-  - runtime (const) — Next.js route configuration.
-  - Note: POST also sets/clears a doc-level backlink (\`Doc.guideForRequestProjectId\`) so guide docs can be related back to the request repo in list/detail UIs.
-- `src/app/api/requests/[token]/uploads/route.ts` — API route for \`/api/requests/:token/uploads\`.
-  - POST (function) — Start an upload for a request link (creates doc+upload under the owner).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/doc/update/[code]/route.ts` — API route for \`/api/doc/update/:code\`.
-  - GET (function) — Resolve a doc update code to doc metadata (title/preview/share/version).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/doc/update/[code]/uploads/route.ts` — API route for \`/api/doc/update/:code/uploads\`.
-  - POST (function) — Start a replacement upload for a specific doc using `Doc.replaceUploadToken`.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/replace/[token]/uploads/route.ts` — API route for \`/api/replace/:token/uploads\` (legacy alias → \`/api/doc/update/:code/uploads\`).
-  - POST (function) — Legacy alias handler.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/share/[shareId]/stats/route.ts` — API route for \`/api/share/:shareId/stats\`.
-  - GET (function) — Handle GET requests.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-  - Note: POST records per-viewer share view state (pages seen + best-effort time spent + best-effort \`viewerIp\`) keyed by (shareId, botIdHash).
-- `src/app/api/share/[shareId]/download-requests/route.ts` — API route for \`/api/share/:shareId/download-requests\`.
-  - POST (function) — Create a download request and email the owner approve/deny links.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/share/[shareId]/download-requests/[token]/approve/route.ts` — API route for \`/api/share/:shareId/download-requests/:token/approve\`.
-  - GET (function) — Approve a download request (token-based) and email the requester a claim link.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/share/[shareId]/download-requests/[token]/deny/route.ts` — API route for \`/api/share/:shareId/download-requests/:token/deny\`.
-  - GET (function) — Deny a download request (token-based).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/share/[shareId]/changes/route.ts` — API route for \`/api/share/:shareId/changes\`.
-  - GET (function) — Return a light revision history for a shared doc (gated by doc settings + share password).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/share/[shareId]/unlock/route.ts` — API route for \`/api/share/:shareId/unlock\`.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/download/bootstrap/route.ts` — API route for \`/api/download/bootstrap\`.
-  - GET (function) — Validate an approved download claim token and set invite-gating cookie for sign-in.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/download/[token]/route.ts` — API route for \`/api/download/:token\`.
-  - GET (function) — Return metadata for an approved download claim (auth required).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/download/[token]/pdf/route.ts` — API route for \`/api/download/:token/pdf\`.
-  - GET (function) — Download PDF for an approved claim (auth required).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/download/[token]/save/route.ts` — API route for \`/api/download/:token/save\`.
-  - POST (function) — Save the shared doc into the signed-in user's account (auth required).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/tags/[tag]/docs/route.ts` — API route for \`/api/tags/:tag/docs\`.
-  - GET (function) — List docs that contain a specific AI tag (paged).
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/uploads/[uploadId]/process/route.ts` — API route for \`/api/uploads/:uploadId/process\`.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-  - Note: supports \`?forceReview=1\` to re-run the review agent for the current upload version (owner-only intent).
-  - Note: for request repos, the request review agent only runs when \`requestReviewEnabled\` is true AND a guide doc is attached (\`requestReviewGuideDocId\`).
-- `src/app/api/uploads/[uploadId]/route.ts` — API route for \`/api/uploads/:uploadId\`.
-  - GET (function) — Fetch upload status; supports \`x-upload-secret\` for request-link uploads.
-  - PATCH (function) — Handle PATCH requests.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/request-view/[token]/docs/[docId]/pdf/route.ts` — API route for \`/api/request-view/:token/docs/:docId/pdf\`.
-  - GET (function) — View-token authorized PDF proxy for request repo viewing links.
-  - runtime (const) — Next.js route configuration.
-- `src/app/api/uploads/route.ts` — API route for \`/api/uploads\`.
-  - GET (function) — Generate a short public identifier for `/s/:shareId`.
-  - POST (function) — Handle POST requests.
-  - runtime (const) — Next.js route configuration.
-  - Note: POST supports \`skipReview\` (used for request guide documents).
-  - Note: when \`skipReview\` is true, \`sizeBytes\` is limited to 1MB (guide-doc safety).
-- `src/app/api/users/me/name/route.ts` — API route for \`/api/users/me/name\`.
-  - POST (function) — Update the signed-in user's display name.
-  - runtime (const) — Next.js route configuration.
-- `src/app/client-upload/page.tsx` — Page for \`/client-upload\`.
-- `src/app/layout.tsx` — Layout for \`/\`.
-- `src/app/login/page.tsx` — Page for \`/login\`.
-- `src/app/download/[token]/page.tsx` — Page for \`/download/:token\` (approved share-download claim link; sign-in required).
-- `src/app/org/switch/route.ts` — Route for \`/org/switch\` (sets active org cookie + redirects).
-- `src/app/org/join/[token]/page.tsx` — Page for \`/org/join/:token\` (accept an org invite and join a workspace).
-- `src/app/page.tsx` — Page for \`/\`.
-- `src/app/s/[shareId]/og.png/route.tsx` — API route for \`/s/:shareId/og.png\`.
-  - GET (function) — Dynamic OG image route for a share page.
-  - runtime (const) — Next.js route configuration.
-- `src/app/s/not-found.tsx` — Not-found UI for \`/s/*\` (share disabled / invalid links).
-- `src/app/s/[shareId]/page.tsx` — Page for \`/s/:shareId\`.
-- `src/app/s/[shareId]/changes/route.ts` — API route for \`/s/:shareId/changes\`.
-  - GET (function) — Return a light revision history for a shared doc (version + date + summary + page hints).
-    - Supports cursor pagination via `?limit=` and `?cursor=` and returns `{ nextCursor }` when more results are available.
-    - Public caching is enabled when the share is not password-protected; password-protected shares use `no-store`.
-  - runtime (const) — Next.js route configuration.
-  - dynamic (const) — Next.js route configuration.
-- `src/app/s/[shareId]/pdf/route.ts` — API route for \`/s/:shareId/pdf\`.
-  - GET (function) — Same-origin PDF proxy for `/s/:shareId`.
-  - runtime (const) — Next.js route configuration.
-- `src/app/share/[shareId]/og.png/route.tsx` — API route for \`/share/:shareId/og.png\`.
-  - GET (function) — Legacy route: `/share/:shareId/og.png` → `/s/:shareId/og.png`
-  - runtime (const) — Next.js route configuration.
-- `src/app/share/[shareId]/page.tsx` — Page for \`/share/:shareId\`.
-- `src/app/test/client-upload/page.tsx` — Test route: Vercel Blob "client uploads"
-- `src/app/test/animation/page.tsx` — Test route: loading dots + overlay preview (\`/test/animation\`).
-- `src/app/test/share-document/og.png/route.tsx` — API route for \`/test/share-document/og.png\`.
-  - GET (function) — Load the sample AI output JSON bundled under /public for testing.
-  - runtime (const) — Next.js route configuration.
-- `src/app/test/share-document/opengraph-image.tsx` — OpenGraph image handler for \`/test/share-document\`.
-- `src/app/test/share-document/page.tsx` — Page for \`/test/share-document\`.
-- `src/app/test/share-document/twitter-image.tsx` — Twitter image handler for \`/test/share-document\`.
+## Pages
 
-# Libraries
-- `src/lib/ai/analyzePdfText.ts`
-  - AiDocAnalysis (type) — Type: AI doc analysis.
-  - analyzePdfText (function) — Analyze PDF text.
-- `src/lib/ai/docChangeDiff.ts`
-  - DocChangeDiffSchema (const) — Zod schema for doc replacement change diffs.
-  - DocChangeDiff (type) — Output type inferred from schema.
-  - runDocChangeDiff (function) — Generate summary + change list from previous vs new extracted text.
-- `src/lib/ai/aiRunRecorder.ts`
-  - AiRunKind (type) — Union of supported AI run kinds.
-  - AiRunMeta (type) — Optional linkage ids for associating runs to app entities.
-  - startAiRun (function) — Best-effort create an `AiRun` record.
-  - completeAiRun (function) — Best-effort mark an `AiRun` as completed.
-  - failAiRun (function) — Best-effort mark an `AiRun` as failed.
-- `src/lib/botId.ts`
-  - BOT_ID_HEADER (const) — Request header name used to pass a lightweight bot/device id.
-  - BOT_ID_STORAGE_KEY (const) — localStorage key for the bot/device id.
-  - getOrCreateBotId (function) — Client-only helper to get/create the id.
-  - AiDocAnalysisSchema (const) — Zod schema for AI doc analysis.
-- `src/lib/ai/reviewDocText.ts`
-  - buildReviewPrompt (function) — Build review prompt.
-  - reviewDocText (function) — Review doc text.
-- `src/lib/ai/requestReviewInvestorFocused.ts`
-  - RequestReviewInvestorFocusedSchema (const) — Zod schema for request review agent output (investor focused).
-  - RequestReviewInvestorFocusedOutput (type) — Output type inferred from schema.
-  - runRequestReviewInvestorFocused (function) — Run the request review agent (Guide vs Deck relevancy).
-- `src/lib/auth.ts`
-  - authOptions (const) — Constant: auth options.
-- `src/lib/blob/clientUpload.ts`
-  - safeTimestamp (function) — Create a filesystem-safe timestamp string.
-  - buildTestBlobPathname (function) — Build test blob pathname.
-  - buildDocBlobPathname (function) — Build doc blob pathname.
-  - buildDocPreviewPngPathname (function) — Build doc preview PNG pathname.
-  - buildDocExtractedTextPathname (function) — Build doc extracted-text pathname.
-  - buildDocPageImagePathname (function) — Build per-page (slide) image pathname.
-  - buildDocPageThumbPathname (function) — Build per-page (slide) thumbnail pathname.
-  - buildOrgAvatarPathname (function) — Build org avatar blob pathname.
-  - fetchPublicFileAsFile (function) — Fetch public file as file.
-  - BLOB_HANDLE_UPLOAD_URL (const) — URL constant.
-  - TEST_BLOB_PREFIX (const) — Prefix constant.
-  - DOC_BLOB_PREFIX (const) — Prefix constant.
-  - ORG_AVATAR_PREFIX (const) — Prefix constant.
-  - SAMPLE_UPLOADS (const) — Constant: sample uploads.
-- `src/lib/blob/serverClientUploadRoute.ts`
-  - assertAllowedTestPathname (function) — Assert allowed test pathname.
-  - CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES (const) — Constant: client upload allowed content types.
-  - CLIENT_UPLOAD_MAX_SIZE_BYTES (const) — Byte-size limit constant.
-- `src/lib/client/docUploadPipeline.ts`
-  - CreateDocResponse (type) — Type: create doc response.
-  - CreateUploadResponse (type) — Type: create upload response.
-  - CreateUploadInput (type) — Type: create upload input.
-  - apiCreateDoc (function) — Create doc via API.
-  - apiCreateUpload (function) — Create upload via API.
-  - startBlobUploadAndProcess (function) — Client-side helpers for starting the "upload → process" pipeline.
-- `src/lib/db/mongoose.ts`
-  - connectMongoose (function) — Connect to Mongoose.
-- `src/lib/db/mongoRequestLogger.ts`
-  - withMongoRequestLogging (function) — Dev-only: log Mongo command count + time per request (request-scoped via AsyncLocalStorage).
-- `src/lib/debug.ts`
-  - debugEnabled (function) — Check if debug logging is enabled.
-  - debugLog (function) — Log a debug message.
-  - debugWarn (function) — Log a debug warning.
-  - debugError (function) — Log a debug error.
-- `src/lib/errors/types.ts`
-  - ErrorSeverity (type) — `"error" | "warn" | "info"`.
-  - ErrorCategory (type) — Error categories (api/cron/worker/stripe/db/auth/ai/credits/unknown).
-- `src/lib/errors/classifyError.ts`
-  - classifyErrorSource (function) — Deterministic mapping from source → category.
-  - classifyErrorCode (function) — Deterministic mapping from error → code (`VALIDATION_ERROR`, `AUTH_ERROR`, fallback `UNHANDLED_EXCEPTION`).
-- `src/lib/errors/logger.ts`
-  - isErrorLoggingEnabled (function) — Check whether MongoDB ErrorEvent logging is enabled (safe-by-default).
-  - shouldLogErrorEvent (function) — Severity threshold + sampling decision.
-  - sanitizeMeta (function) — Sanitize meta payloads (redact secrets/JWTs; truncate).
-  - logErrorEvent (function) — Best-effort persist a sanitized ErrorEvent (never throws).
-  - ERROR_CODE_* (consts) — Stable error codes for common cases.
-- `src/lib/errors/serializeErrorEvent.ts`
-  - serializeErrorEventForAdmin (function) — Defense-in-depth serializer for admin ErrorEvent responses.
-- `src/lib/errors/withApiErrorLogging.ts`
-  - withApiErrorLogging (function) — Wrap Next.js App Router route handlers to capture unhandled exceptions.
-- `src/lib/errors/runTaskWithErrorLogging.ts`
-  - runTaskWithErrorLogging (function) — Wrap cron/worker execution to capture thrown errors.
-- `src/lib/email/sendInviteApprovalEmail.ts`
-  - sendInviteApprovalEmail (function) — Send invite approval email.
-- `src/lib/gating/actor.ts`
-  - Actor (type) — Type: actor.
-  - applyTempUserHeaders (function) — Apply temp user headers.
-  - tryResolveAuthUserId (function) — Fast path: resolve authenticated user id + activeOrgId claim without DB access.
-  - tryResolveUserActor (function) — Best-effort resolve authenticated user actor without creating temp users.
-  - tryResolveUserActorFast (function) — Fast path: resolve signed-in user actor with one membership check (personalOrgId is a placeholder; use only when personal-org legacy scoping isn’t required).
-  - tryResolveUserActorFastWithPersonalOrg (function) — Fast path: resolve signed-in user actor with one membership check and a cached real personalOrgId (safe for legacy personal-doc scoping).
-  - resolveActor (function) — Resolve actor.
-  - resolveActorForStats (function) — Faster actor resolution for stats endpoints (single membership check + request cache).
-  - TEMP_USER_ID_HEADER (const) — HTTP header name constant.
-  - TEMP_USER_SECRET_HEADER (const) — HTTP header name constant.
-- `src/lib/gating/tempUserHeaders.ts`
-  - TEMP_USER_ID_HEADER (const) — Temp-user id header name (shared server/client).
-  - TEMP_USER_SECRET_HEADER (const) — Temp-user secret header name (shared server/client).
-- `src/lib/gating/tempUserClient.ts`
-  - TempUserStored (type) — Type: temp user stored.
-  - getTempUser (function) — Get temp user.
-  - setTempUser (function) — Set temp user.
-  - clearTempUser (function) — Clear temp user.
-  - withTempUserHeaders (function) — With temp user headers.
-  - captureTempUserFromResponse (function) — Capture temp user from response.
-  - fetchWithTempUser (function) — Fetch with temp user.
-  - TEMP_USER_STORAGE_KEY (const) — Constant: temp user storage key.
-- `src/lib/http/fetchJson.ts`
-  - ApiErrorShape (type) — Type: API error shape.
-  - extractErrorMessage (function) — Extract error message.
-- `src/lib/cn.ts`
-  - cn (function) — Tiny className join helper (no dependency).
-- `src/lib/metrics/client.ts`
-  - getSessionId (function) — Get/create per-tab session ID (stored in sessionStorage).
-  - trackProjectView (function) — Track a project view (deduped server-side per session).
-  - trackProjectClick (function) — Track a click from within a project.
-  - trackPageTiming (function) — Track time spent on a route within a session.
-- `src/lib/usage/reconcile.ts`
-  - reconcileUsageAggsFromLedger (function) — Recompute deterministic usage aggregates from CreditLedger for a UTC date range.
-- `src/lib/models/Doc.ts` — Data model for the docs collection.
-  - Doc (type) — Mongoose document type for the docs collection.
-  - DocModel (function) — Doc model.
-- `src/lib/models/DocChange.ts` — Data model for the docChanges collection.
-  - DocChange (type) — Mongoose document type for the docChanges collection.
-  - DocChangeModel (const) — Mongoose model for doc change history records.
-- `src/lib/models/DocReport.ts` — Data model for the docreports collection.
-  - DocReport (type) — Mongoose document type for the docreports collection.
-  - DocReportModel (const) — Mongoose model for the docreports collection.
-- `src/lib/models/Invite.ts` — Data model for the invites collection.
-  - Invite (type) — Mongoose document type for the invites collection.
-  - InviteModel (function) — Invite model.
-- `src/lib/models/Org.ts` — Data model for the orgs collection.
-  - Org (type) — Mongoose document type for the orgs collection.
-  - OrgModel (const) — Mongoose model for the orgs collection.
-  - ensurePersonalOrgForUserId (function) — Ensure a user has a personal org + membership.
-- `src/lib/models/OrgMembership.ts` — Data model for the orgmemberships collection.
-  - OrgMembership (type) — Mongoose document type for the orgmemberships collection.
-  - OrgMembershipModel (const) — Mongoose model for the orgmemberships collection.
-  - Note: includes workspace-scoped notification preferences (`docUpdateEmailMode`, `repoLinkRequestEmailMode`).
-- `src/lib/models/OrgInvite.ts` — Data model for org invite links (token-based membership grants).
-  - OrgInvite (type) — Mongoose document type for org invites.
-  - OrgInviteModel (const) — Mongoose model for org invites.
-- `src/lib/models/Project.ts` — Data model for the projects collection.
-  - Project (type) — Mongoose document type for the projects collection.
-  - ProjectModel (const) — Mongoose model for the projects collection.
-- `src/lib/models/PageTiming.ts` — Data model for per-session page timing records.
-  - PageTiming (type) — Mongoose document type for the pagetimings collection.
-  - PageTimingModel (const) — Mongoose model for the pagetimings collection.
-- `src/lib/models/DocPageTiming.ts` — Data model for per-page timing on internal doc versions.
-  - DocPageTiming (type) — Mongoose document type for the docpagetimings collection.
-  - DocPageTimingModel (const) — Mongoose model for the docpagetimings collection.
-- `src/lib/models/ProjectClick.ts` — Data model for project navigation click events.
-  - ProjectClick (type) — Mongoose document type for the projectclicks collection.
-  - ProjectClickModel (const) — Mongoose model for the projectclicks collection.
-- `src/lib/models/ProjectView.ts` — Data model for per-session project views.
-  - ProjectView (type) — Mongoose document type for the projectviews collection.
-  - ProjectViewModel (const) — Mongoose model for the projectviews collection.
-- `src/lib/models/Review.ts` — Data model for the reviews collection.
-  - Review (type) — Mongoose document type for the reviews collection.
-  - ReviewModel (const) — Mongoose model for the reviews collection.
-- `src/lib/models/ShareDownloadRequest.ts` — Data model for share download requests collection.
-  - ShareDownloadRequest (type) — Mongoose document type for share download requests.
-  - ShareDownloadRequestModel (const) — Mongoose model for share download requests.
-- `src/lib/models/ShareView.ts` — Data model for the shareviews collection.
-  - ShareView (type) — Mongoose document type for the shareviews collection.
-  - ShareViewModel (const) — Mongoose model for the shareviews collection.
-  - Note: includes best-effort `viewerIp` captured from request proxy headers.
-- `src/lib/models/ShareVisit.ts` — Data model for per-visit share viewer sessions (per-tab).
-  - ShareVisit (type) — Mongoose document type for the sharevisits collection.
-  - ShareVisitModel (const) — Mongoose model for the sharevisits collection.
-- `src/lib/models/StarredDoc.ts` — Data model for persisted starred docs (per user + workspace).
-  - StarredDocModel (const) — Mongoose model for the starredDocs collection.
-- `src/lib/models/UsageAggDaily.ts` — Data model for pre-aggregated daily usage totals (derived from CreditLedger).
-  - UsageAggDaily (type) — Mongoose document type for daily usage aggregates.
-  - UsageAggDailyModel (const) — Mongoose model for daily usage aggregates.
-- `src/lib/models/UsageAggCycle.ts` — Data model for pre-aggregated per-cycle usage totals (derived from CreditLedger).
-  - UsageAggCycle (type) — Mongoose document type for cycle usage aggregates.
-  - UsageAggCycleModel (const) — Mongoose model for cycle usage aggregates.
-- `src/lib/models/BillingConfig.ts` — Data model for singleton billing UI config (e.g. Pro price label).
-- `src/lib/models/Subscription.ts` — Data model for org subscriptions (Stripe customer/subscription pointers).
-  - Subscription (type) — Mongoose document type for subscriptions collection.
-  - SubscriptionModel (const) — Mongoose model for subscriptions collection.
-- `src/lib/models/StripeEvent.ts` — Minimal Stripe webhook idempotency ledger.
-  - StripeEvent (type) — Mongoose document type for Stripe webhook events (dedupe).
-  - StripeEventModel (const) — Mongoose model for Stripe webhook events.
-- `src/lib/models/Upload.ts` — Data model for the uploads collection.
-  - Upload (type) — Mongoose document type for the uploads collection.
-  - UploadModel (const) — Mongoose model for the uploads collection.
-- `src/lib/models/User.ts` — Backwards-compatible re-export.
-  - UserModel (re-export) — Re-export: UserModel.
-  - User (type) — Mongoose document type for the users collection.
-- `src/lib/mongodb.ts`
-  - connectMongo (function) — Re-export a single "MongoDB connect" entrypoint for auth and other server code.
-- `src/lib/og/imageResponse.tsx`
-  - OgDims (type) — Type: OG dims.
-  - mimeFromPath (function) — Infer MIME type from a file path.
-  - parsePngDims (function) — Parse PNG dims.
-  - parseJpegDims (function) — Parse jpeg dims.
-  - sniffImageDims (function) — Utilities for building Open Graph images using `next/og`.
-  - imageResponseFromBytes (function) — Utilities for building Open Graph images using `next/og`.
-  - DEFAULT_OG_SIZE (const) — Constant: default OG size.
+Files under `src/app` that render. Route groups `(name)` are not URL segments.
+
+- `src/app/(app)/activity/page.tsx` — `/activity` · default
+- `src/app/(app)/connect/page.tsx` — `/connect` · default
+- `src/app/(app)/doc/[docId]/history/page.tsx` — `/doc/:docId/history` · default
+- `src/app/(app)/doc/[docId]/links/page.tsx` — `/doc/:docId/links` · default
+- `src/app/(app)/doc/[docId]/metrics/page.tsx` — `/doc/:docId/metrics` · default
+- `src/app/(app)/doc/[docId]/metrics/viewer/[viewerKey]/page.tsx` — `/doc/:docId/metrics/viewer/:viewerKey` · default, dynamic, metadata, runtime
+- `src/app/(app)/doc/[docId]/page.tsx` — `/doc/:docId` · default
+- `src/app/(app)/doc/[docId]/review/page.tsx` — `/doc/:docId/review` · default
+- `src/app/(app)/layout.tsx` · default
+- `src/app/(app)/metrics/page.tsx` — `/metrics` · default, metadata
+- `src/app/(app)/project/[projectSlug]/links/page.tsx` — `/project/:projectSlug/links` · default
+- `src/app/(app)/project/[projectSlug]/metrics/page.tsx` — `/project/:projectSlug/metrics` · default
+- `src/app/(app)/project/[projectSlug]/metrics/viewer/[viewerKey]/page.tsx` — `/project/:projectSlug/metrics/viewer/:viewerKey` · default, dynamic, metadata, runtime
+- `src/app/(app)/project/[projectSlug]/page.tsx` — `/project/:projectSlug` · default
+- `src/app/(app)/requests/page.tsx` — `/requests` · default
+- `src/app/(app)/search/page.tsx` — `/search` · default
+- `src/app/(app)/tag/[slug]/page.tsx` — `/tag/:slug` · default, dynamic, metadata, runtime
+- `src/app/(app)/tags/page.tsx` — `/tags` · default, dynamic, metadata, runtime
+- `src/app/(app)/upload/page.tsx` — `/upload` · default
+- `src/app/a/ai-runs/page.tsx` — `/a/ai-runs` · default
+- `src/app/a/credits/page.tsx` — `/a/credits` · default
+- `src/app/a/cron-health/page.tsx` — `/a/cron-health` · default
+- `src/app/a/data/docs/page.tsx` — `/a/data/docs` · default
+- `src/app/a/data/links/page.tsx` — `/a/data/links` · default
+- `src/app/a/data/projects/[projectId]/page.tsx` — `/a/data/projects/:projectId` · default
+- `src/app/a/data/projects/page.tsx` — `/a/data/projects` · default
+- `src/app/a/data/requests/[requestId]/page.tsx` — `/a/data/requests/:requestId` · default
+- `src/app/a/data/requests/page.tsx` — `/a/data/requests` · default
+- `src/app/a/data/uploads/page.tsx` — `/a/data/uploads` · default
+- `src/app/a/data/users/[userId]/page.tsx` — `/a/data/users/:userId` · default
+- `src/app/a/data/users/page.tsx` — `/a/data/users` · default
+- `src/app/a/data/workspaces/[workspaceId]/page.tsx` — `/a/data/workspaces/:workspaceId` · default
+- `src/app/a/data/workspaces/page.tsx` — `/a/data/workspaces` · default
+- `src/app/a/deletions/page.tsx` — `/a/deletions` · default
+- `src/app/a/deployments/page.tsx` — `/a/deployments` · default
+- `src/app/a/emails/page.tsx` — `/a/emails` · default
+- `src/app/a/env/page.tsx` — `/a/env` · default
+- `src/app/a/layout.tsx` · default
+- `src/app/a/page.tsx` — `/a` · default
+- `src/app/a/shareviews/[docId]/page.tsx` — `/a/shareviews/:docId` · default
+- `src/app/a/shareviews/page.tsx` — `/a/shareviews` · default
+- `src/app/a/tools/billing/page.tsx` — `/a/tools/billing` · default
+- `src/app/a/tools/cache/page.tsx` — `/a/tools/cache` · default
+- `src/app/a/waitlist/page.tsx` — `/a/waitlist` · default
+- `src/app/about/page.tsx` — `/about` · default
+- `src/app/accept/page.tsx` — `/accept` · default, dynamic, metadata, runtime
+- `src/app/billing/cancel/page.tsx` — `/billing/cancel` · default
+- `src/app/billing/success/page.tsx` — `/billing/success` · default
+- `src/app/costs/page.tsx` — `/costs` · default, metadata
+- `src/app/credits/page.tsx` — `/credits` · default, dynamic, metadata, runtime
+- `src/app/dashboard/[tab]/page.tsx` — `/dashboard/:tab` · default
+- `src/app/dashboard/account/page.tsx` — `/dashboard/account` · default
+- `src/app/dashboard/layout.tsx` · default
+- `src/app/dashboard/page.tsx` — `/dashboard` · default
+- `src/app/doc/update/[code]/page.tsx` — `/doc/update/:code` · default, dynamic, runtime
+- `src/app/download/[token]/page.tsx` — `/download/:token` · default
+- `src/app/layout.tsx` · default, metadata
+- `src/app/login/layout.tsx` · default
+- `src/app/login/page.tsx` — `/login` · default
+- `src/app/mcp/[client]/page.tsx` — `/mcp/:client` · default, dynamicParams, generateMetadata, generateStaticParams
+- `src/app/mcp/page.tsx` — `/mcp` · default, metadata
+- `src/app/org/join/[token]/page.tsx` — `/org/join/:token` · default
+- `src/app/p/[shareId]/(room)/page.tsx` — `/p/:shareId` · default, dynamic, generateMetadata, runtime
+- `src/app/p/[shareId]/[docId]/layout.tsx` · default, dynamic
+- `src/app/p/[shareId]/[docId]/page.tsx` — `/p/:shareId/:docId` · default, dynamic, generateMetadata, runtime
+- `src/app/p/[shareId]/layout.tsx` · default, dynamic
+- `src/app/page.tsx` · default
+- `src/app/preferences/[tab]/page.tsx` — `/preferences/:tab` · default
+- `src/app/preferences/layout.tsx` · default
+- `src/app/preferences/page.tsx` — `/preferences` · default
+- `src/app/pricing/page.tsx` — `/pricing` · default, dynamic, metadata, runtime
+- `src/app/privacy/page.tsx` — `/privacy` · default
+- `src/app/r/[token]/page.tsx` — `/r/:token` · default, dynamic, runtime
+- `src/app/replace/[token]/page.tsx` — `/replace/:token` · default, dynamic, runtime
+- `src/app/request-view/[token]/page.tsx` — `/request-view/:token` · default, dynamic, runtime
+- `src/app/request/[token]/page.tsx` — `/request/:token` · default, dynamic, runtime
+- `src/app/s/[shareId]/layout.tsx` · default, dynamic
+- `src/app/s/[shareId]/page.tsx` — `/s/:shareId` · default, dynamic, generateMetadata, runtime
+- `src/app/share/[shareId]/page.tsx` — `/share/:shareId` · default, dynamic, runtime
+- `src/app/share/verify/page.tsx` — `/share/verify` · default, dynamic, runtime
+- `src/app/tos/page.tsx` — `/tos` · default
+- `src/app/waitlist/page.tsx` — `/waitlist` · default, dynamic, metadata, runtime
+- `src/app/welcome/page.tsx` — `/welcome` · default, dynamic, metadata, runtime
+
+## API routes
+
+`route.ts` handlers, with the path each one answers on.
+
+- `src/app/api/account/delete/route.ts` — `/api/account/delete` · POST, runtime
+- `src/app/api/activity/route.ts` — `/api/activity` · dynamic, GET, runtime
+- `src/app/api/activity/summary/route.ts` — `/api/activity/summary` · dynamic, GET, runtime
+- `src/app/api/admin/ai-runs/[runId]/route.ts` — `/api/admin/ai-runs/:runId` · GET, runtime
+- `src/app/api/admin/ai-runs/route.ts` — `/api/admin/ai-runs` · GET, runtime
+- `src/app/api/admin/billing/pro-price/route.ts` — `/api/admin/billing/pro-price` · GET, POST, runtime
+- `src/app/api/admin/credits/anomalies/route.ts` — `/api/admin/credits/anomalies` · GET, runtime
+- `src/app/api/admin/credits/balances/route.ts` — `/api/admin/credits/balances` · GET, runtime
+- `src/app/api/admin/credits/ledger/route.ts` — `/api/admin/credits/ledger` · GET, runtime
+- `src/app/api/admin/credits/mutate/route.ts` — `/api/admin/credits/mutate` · POST, runtime
+- `src/app/api/admin/credits/purchases/route.ts` — `/api/admin/credits/purchases` · GET, runtime
+- `src/app/api/admin/credits/release/route.ts` — `/api/admin/credits/release` · POST, runtime
+- `src/app/api/admin/credits/simulate-cycle/route.ts` — `/api/admin/credits/simulate-cycle` · POST, runtime
+- `src/app/api/admin/credits/snapshot/route.ts` — `/api/admin/credits/snapshot` · GET, runtime
+- `src/app/api/admin/cron-health/route.ts` — `/api/admin/cron-health` · GET, runtime
+- `src/app/api/admin/data/docs/[docId]/route.ts` — `/api/admin/data/docs/:docId` · DELETE, GET, runtime
+- `src/app/api/admin/data/docs/route.ts` — `/api/admin/data/docs` · GET, runtime
+- `src/app/api/admin/data/links/route.ts` — `/api/admin/data/links` · GET, runtime
+- `src/app/api/admin/data/projects/[projectId]/route.ts` — `/api/admin/data/projects/:projectId` · DELETE, GET, POST, runtime
+- `src/app/api/admin/data/projects/route.ts` — `/api/admin/data/projects` · GET, runtime
+- `src/app/api/admin/data/requests/[requestId]/route.ts` — `/api/admin/data/requests/:requestId` · DELETE, GET, runtime
+- `src/app/api/admin/data/requests/route.ts` — `/api/admin/data/requests` · GET, runtime
+- `src/app/api/admin/data/uploads/[uploadId]/route.ts` — `/api/admin/data/uploads/:uploadId` · DELETE, GET, runtime
+- `src/app/api/admin/data/uploads/route.ts` — `/api/admin/data/uploads` · GET, runtime
+- `src/app/api/admin/data/users/[userId]/route.ts` — `/api/admin/data/users/:userId` · DELETE, GET, runtime
+- `src/app/api/admin/data/users/route.ts` — `/api/admin/data/users` · GET, runtime
+- `src/app/api/admin/data/workspaces/[workspaceId]/hub/route.ts` — `/api/admin/data/workspaces/:workspaceId/hub` · GET, runtime
+- `src/app/api/admin/data/workspaces/[workspaceId]/members/route.ts` — `/api/admin/data/workspaces/:workspaceId/members` · GET, runtime
+- `src/app/api/admin/data/workspaces/[workspaceId]/route.ts` — `/api/admin/data/workspaces/:workspaceId` · DELETE, runtime
+- `src/app/api/admin/data/workspaces/route.ts` — `/api/admin/data/workspaces` · GET, runtime
+- `src/app/api/admin/deletions/route.ts` — `/api/admin/deletions` · dynamic, GET, runtime
+- `src/app/api/admin/deployments/route.ts` — `/api/admin/deployments` · dynamic, GET, runtime
+- `src/app/api/admin/emails/download-requests/route.ts` — `/api/admin/emails/download-requests` · GET, runtime
+- `src/app/api/admin/emails/overview/route.ts` — `/api/admin/emails/overview` · GET, runtime
+- `src/app/api/admin/emails/previews/route.ts` — `/api/admin/emails/previews` · GET, runtime
+- `src/app/api/admin/env/route.ts` — `/api/admin/env` · dynamic, GET, runtime
+- `src/app/api/admin/errors/route.ts` — `/api/admin/errors` · GET, runtime
+- `src/app/api/admin/overview/route.ts` — `/api/admin/overview` · dynamic, GET, runtime
+- `src/app/api/admin/revenue/route.ts` — `/api/admin/revenue` · dynamic, GET, runtime
+- `src/app/api/admin/shareviews/doc/[docId]/route.ts` — `/api/admin/shareviews/doc/:docId` · GET, runtime
+- `src/app/api/admin/shareviews/recent/route.ts` — `/api/admin/shareviews/recent` · GET, runtime
+- `src/app/api/admin/users/[userId]/plan/route.ts` — `/api/admin/users/:userId/plan` · POST, runtime
+- `src/app/api/admin/waitlist/[userId]/approve/route.ts` — `/api/admin/waitlist/:userId/approve` · dynamic, POST, runtime
+- `src/app/api/admin/waitlist/route.ts` — `/api/admin/waitlist` · dynamic, GET, runtime
+- `src/app/api/agent/keys/[keyId]/route.ts` — `/api/agent/keys/:keyId` · DELETE, dynamic, runtime
+- `src/app/api/agent/keys/route.ts` — `/api/agent/keys` · dynamic, GET, POST, runtime
+- `src/app/api/agent/status/route.ts` — `/api/agent/status` · dynamic, GET, runtime
+- `src/app/api/agent/whoami/route.ts` — `/api/agent/whoami` · dynamic, GET, runtime
+- `src/app/api/auth/[...nextauth]/route.ts` — `/api/auth/:nextauth*` · GET, POST, runtime
+- `src/app/api/auth/claim-temp/route.ts` — `/api/auth/claim-temp` · POST, runtime
+- `src/app/api/billing/invoices/route.ts` — `/api/billing/invoices` · dynamic, GET, runtime
+- `src/app/api/billing/spend/route.ts` — `/api/billing/spend` · dynamic, GET, POST, runtime
+- `src/app/api/billing/status/route.ts` — `/api/billing/status` · dynamic, GET, runtime
+- `src/app/api/billing/summary/route.ts` — `/api/billing/summary` · dynamic, GET, runtime
+- `src/app/api/billing/usage/route.ts` — `/api/billing/usage` · dynamic, GET, runtime
+- `src/app/api/blob/upload/route.ts` — `/api/blob/upload` · POST, runtime
+- `src/app/api/credits/purchase/route.ts` — `/api/credits/purchase` · GET, POST, runtime
+- `src/app/api/credits/quality-defaults/route.ts` — `/api/credits/quality-defaults` · dynamic, GET, POST, runtime
+- `src/app/api/credits/snapshot/route.ts` — `/api/credits/snapshot` · dynamic, GET, runtime
+- `src/app/api/cron/account-purge/route.ts` — `/api/cron/account-purge` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/analytics-reconcile/route.ts` — `/api/cron/analytics-reconcile` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/credits-cycle-reconcile/route.ts` — `/api/cron/credits-cycle-reconcile` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/credits-purchase-expiry/route.ts` — `/api/cron/credits-purchase-expiry` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/credits-stale-reservations/route.ts` — `/api/cron/credits-stale-reservations` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/doc-metrics/route.ts` — `/api/cron/doc-metrics` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/notification-emails/route.ts` — `/api/cron/notification-emails` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/plan-limits/route.ts` — `/api/cron/plan-limits` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/stripe-credits-reconcile/route.ts` — `/api/cron/stripe-credits-reconcile` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/stripe-credits-report/route.ts` — `/api/cron/stripe-credits-report` · GET, maxDuration, POST, runtime
+- `src/app/api/cron/usage-agg-reconcile/route.ts` — `/api/cron/usage-agg-reconcile` · GET, maxDuration, POST, runtime
+- `src/app/api/dashboard/stats/route.ts` — `/api/dashboard/stats` · dynamic, GET, runtime
+- `src/app/api/dashboard/usage-daily/route.ts` — `/api/dashboard/usage-daily` · dynamic, GET, runtime
+- `src/app/api/dashboard/usage/route.ts` — `/api/dashboard/usage` · dynamic, GET, runtime
+- `src/app/api/debug/cookie/route.ts` — `/api/debug/cookie` · dynamic, GET, runtime
+- `src/app/api/debug/route.ts` — `/api/debug` · dynamic, GET, runtime
+- `src/app/api/doc/update/[code]/route.ts` — `/api/doc/update/:code` · GET, runtime
+- `src/app/api/doc/update/[code]/uploads/route.ts` — `/api/doc/update/:code/uploads` · POST, runtime
+- `src/app/api/docs/[docId]/changes/[changeId]/rerun/route.ts` — `/api/docs/:docId/changes/:changeId/rerun` · maxDuration, POST, runtime
+- `src/app/api/docs/[docId]/changes/[changeId]/route.ts` — `/api/docs/:docId/changes/:changeId` · dynamic, GET, runtime
+- `src/app/api/docs/[docId]/changes/route.ts` — `/api/docs/:docId/changes` · dynamic, GET, runtime
+- `src/app/api/docs/[docId]/contributors/route.ts` — `/api/docs/:docId/contributors` · dynamic, GET
+- `src/app/api/docs/[docId]/history/[version]/recipients/route.ts` — `/api/docs/:docId/history/:version/recipients` · GET, runtime
+- `src/app/api/docs/[docId]/history/[version]/viewer/[userId]/route.ts` — `/api/docs/:docId/history/:version/viewer/:userId` · GET, runtime
+- `src/app/api/docs/[docId]/links/[linkId]/password/route.ts` — `/api/docs/:docId/links/:linkId/password` · dynamic, GET, runtime
+- `src/app/api/docs/[docId]/links/[linkId]/password/verify/route.ts` — `/api/docs/:docId/links/:linkId/password/verify` · dynamic, POST, runtime
+- `src/app/api/docs/[docId]/links/[linkId]/route.ts` — `/api/docs/:docId/links/:linkId` · DELETE, dynamic, PATCH, runtime
+- `src/app/api/docs/[docId]/links/route.ts` — `/api/docs/:docId/links` · dynamic, GET, POST, runtime
+- `src/app/api/docs/[docId]/pages/person/route.ts` — `/api/docs/:docId/pages/person` · dynamic, GET, runtime
+- `src/app/api/docs/[docId]/pages/route.ts` — `/api/docs/:docId/pages` · dynamic, GET, runtime
+- `src/app/api/docs/[docId]/pdf/route.ts` — `/api/docs/:docId/pdf` · GET, runtime
+- `src/app/api/docs/[docId]/report/route.ts` — `/api/docs/:docId/report` · POST, runtime
+- `src/app/api/docs/[docId]/reviews/route.ts` — `/api/docs/:docId/reviews` · dynamic, GET, runtime
+- `src/app/api/docs/[docId]/route.ts` — `/api/docs/:docId` · DELETE, dynamic, GET, PATCH, runtime
+- `src/app/api/docs/[docId]/share-password/route.ts` — `/api/docs/:docId/share-password` · dynamic, GET, POST, runtime
+- `src/app/api/docs/[docId]/shareviews/route.ts` — `/api/docs/:docId/shareviews` · dynamic, GET, runtime
+- `src/app/api/docs/[docId]/shareviews/visits/[visitId]/route.ts` — `/api/docs/:docId/shareviews/visits/:visitId` · dynamic, GET, runtime
+- `src/app/api/docs/[docId]/shareviews/visits/route.ts` — `/api/docs/:docId/shareviews/visits` · dynamic, GET, runtime
+- `src/app/api/docs/route.ts` — `/api/docs` · dynamic, GET, POST, runtime
+- `src/app/api/download/[token]/pdf/route.ts` — `/api/download/:token/pdf` · GET, runtime
+- `src/app/api/download/[token]/route.ts` — `/api/download/:token` · GET, runtime
+- `src/app/api/download/[token]/save/route.ts` — `/api/download/:token/save` · POST, runtime
+- `src/app/api/health/route.ts` — `/api/health` · dynamic, GET, runtime
+- `src/app/api/metrics/events/route.ts` — `/api/metrics/events` · POST, runtime
+- `src/app/api/metrics/workspace/route.ts` — `/api/metrics/workspace` · dynamic, GET, runtime
+- `src/app/api/monitor/crons/route.ts` — `/api/monitor/crons` · dynamic, GET, runtime
+- `src/app/api/notifications/views/off/route.ts` — `/api/notifications/views/off` · dynamic, GET, HEAD, POST, runtime
+- `src/app/api/org-invites/claim/route.ts` — `/api/org-invites/claim` · POST, runtime
+- `src/app/api/org-invites/email/route.ts` — `/api/org-invites/email` · POST, runtime
+- `src/app/api/org-invites/revoke/route.ts` — `/api/org-invites/revoke` · POST, runtime
+- `src/app/api/org-invites/route.ts` — `/api/org-invites` · GET, POST, runtime
+- `src/app/api/orgs/[orgId]/avatar/route.ts` — `/api/orgs/:orgId/avatar` · POST, runtime
+- `src/app/api/orgs/[orgId]/leave/route.ts` — `/api/orgs/:orgId/leave` · POST, runtime
+- `src/app/api/orgs/[orgId]/members/[userId]/revoke/route.ts` — `/api/orgs/:orgId/members/:userId/revoke` · POST, runtime
+- `src/app/api/orgs/[orgId]/members/route.ts` — `/api/orgs/:orgId/members` · GET, runtime
+- `src/app/api/orgs/[orgId]/route.ts` — `/api/orgs/:orgId` · DELETE, GET, PATCH, runtime
+- `src/app/api/orgs/active/notification-preferences/route.ts` — `/api/orgs/active/notification-preferences` · dynamic, GET, PATCH, POST, runtime
+- `src/app/api/orgs/active/route.ts` — `/api/orgs/active` · dynamic, GET, POST, runtime
+- `src/app/api/orgs/claim-join/route.ts` — `/api/orgs/claim-join` · POST, runtime
+- `src/app/api/orgs/route.ts` — `/api/orgs` · dynamic, GET, POST, runtime
+- `src/app/api/plan/route.ts` — `/api/plan` · dynamic, GET, runtime
+- `src/app/api/projects/[projectSlug]/docs/route.ts` — `/api/projects/:projectSlug/docs` · GET, runtime
+- `src/app/api/projects/[projectSlug]/links/[linkId]/password/route.ts` — `/api/projects/:projectSlug/links/:linkId/password` · dynamic, GET, runtime
+- `src/app/api/projects/[projectSlug]/links/[linkId]/route.ts` — `/api/projects/:projectSlug/links/:linkId` · DELETE, dynamic, PATCH, runtime
+- `src/app/api/projects/[projectSlug]/links/route.ts` — `/api/projects/:projectSlug/links` · dynamic, GET, POST, runtime
+- `src/app/api/projects/[projectSlug]/route.ts` — `/api/projects/:projectSlug` · DELETE, PATCH, runtime
+- `src/app/api/projects/[projectSlug]/shareviews/route.ts` — `/api/projects/:projectSlug/shareviews` · dynamic, GET, runtime
+- `src/app/api/projects/[projectSlug]/shareviews/viewer-doc/route.ts` — `/api/projects/:projectSlug/shareviews/viewer-doc` · dynamic, GET, runtime
+- `src/app/api/projects/[projectSlug]/shareviews/visits/route.ts` — `/api/projects/:projectSlug/shareviews/visits` · dynamic, GET, runtime
+- `src/app/api/projects/[projectSlug]/suggested-docs/route.ts` — `/api/projects/:projectSlug/suggested-docs` · GET, runtime
+- `src/app/api/projects/route.ts` — `/api/projects` · dynamic, GET, POST, runtime
+- `src/app/api/realtime/ticket/route.ts` — `/api/realtime/ticket` · dynamic, GET, runtime
+- `src/app/api/replace/[token]/uploads/route.ts` — `/api/replace/:token/uploads` · POST, runtime
+- `src/app/api/request-view/[token]/docs/[docId]/pdf/route.ts` — `/api/request-view/:token/docs/:docId/pdf` · GET, runtime
+- `src/app/api/requests/[token]/guide/route.ts` — `/api/requests/:token/guide` · POST, runtime
+- `src/app/api/requests/[token]/uploads/route.ts` — `/api/requests/:token/uploads` · POST, runtime
+- `src/app/api/requests/route.ts` — `/api/requests` · GET, POST, runtime
+- `src/app/api/share-links/route.ts` — `/api/share-links` · dynamic, GET, runtime
+- `src/app/api/share/[shareId]/changes/route.ts` — `/api/share/:shareId/changes` · GET, runtime
+- `src/app/api/share/[shareId]/download-requests/[token]/approve/route.ts` — `/api/share/:shareId/download-requests/:token/approve` · GET, POST, runtime
+- `src/app/api/share/[shareId]/download-requests/[token]/deny/route.ts` — `/api/share/:shareId/download-requests/:token/deny` · GET, POST, runtime
+- `src/app/api/share/[shareId]/download-requests/route.ts` — `/api/share/:shareId/download-requests` · POST, runtime
+- `src/app/api/share/[shareId]/landing/route.ts` — `/api/share/:shareId/landing` · dynamic, POST, runtime
+- `src/app/api/share/[shareId]/stats/route.ts` — `/api/share/:shareId/stats` · dynamic, GET, POST, runtime
+- `src/app/api/share/[shareId]/unlock/route.ts` — `/api/share/:shareId/unlock` · POST, runtime
+- `src/app/api/sidebar/route.ts` — `/api/sidebar` · dynamic, GET, runtime
+- `src/app/api/starred/bootstrap/route.ts` — `/api/starred/bootstrap` · dynamic, POST, runtime
+- `src/app/api/starred/route.ts` — `/api/starred` · dynamic, GET, PATCH, POST, runtime
+- `src/app/api/stripe/checkout/route.ts` — `/api/stripe/checkout` · POST, runtime
+- `src/app/api/stripe/portal/route.ts` — `/api/stripe/portal` · POST, runtime
+- `src/app/api/stripe/subscription/resume/route.ts` — `/api/stripe/subscription/resume` · POST, runtime
+- `src/app/api/stripe/webhook/route.ts` — `/api/stripe/webhook` · POST, runtime
+- `src/app/api/tags/[tag]/docs/route.ts` — `/api/tags/:tag/docs` · GET, runtime
+- `src/app/api/tags/[tag]/route.ts` — `/api/tags/:tag` · DELETE, dynamic, PATCH, runtime
+- `src/app/api/tags/assignments/route.ts` — `/api/tags/assignments` · DELETE, dynamic, GET, POST, runtime
+- `src/app/api/tags/by-slug/[slug]/items/route.ts` — `/api/tags/by-slug/:slug/items` · dynamic, GET, runtime
+- `src/app/api/tags/route.ts` — `/api/tags` · dynamic, GET, POST, runtime
+- `src/app/api/tags/targets/route.ts` — `/api/tags/targets` · dynamic, GET, runtime
+- `src/app/api/uploads/[uploadId]/import-bytes/route.ts` — `/api/uploads/:uploadId/import-bytes` · maxDuration, POST, runtime
+- `src/app/api/uploads/[uploadId]/import-url/route.ts` — `/api/uploads/:uploadId/import-url` · maxDuration, POST, runtime
+- `src/app/api/uploads/[uploadId]/process/route.ts` — `/api/uploads/:uploadId/process` · maxDuration, POST, runtime
+- `src/app/api/uploads/[uploadId]/route.ts` — `/api/uploads/:uploadId` · GET, PATCH, runtime
+- `src/app/api/uploads/[uploadId]/summary/route.ts` — `/api/uploads/:uploadId/summary` · POST, runtime
+- `src/app/api/uploads/in-progress/route.ts` — `/api/uploads/in-progress` · dynamic, GET, runtime
+- `src/app/api/uploads/route.ts` — `/api/uploads` · GET, maxDuration, POST, runtime
+- `src/app/api/users/me/first-run/route.ts` — `/api/users/me/first-run` · POST, runtime
+- `src/app/api/users/me/name/route.ts` — `/api/users/me/name` · POST, runtime
+- `src/app/api/waitlist/accept/route.ts` — `/api/waitlist/accept` · dynamic, POST, runtime
+- `src/app/org/switch/route.ts` — `/org/switch` · GET, jsonForScript, runtime
+- `src/app/p/[shareId]/[docId]/pdf/route.ts` — `/p/:shareId/:docId/pdf` · GET, runtime
+- `src/app/p/[shareId]/[docId]/preview/route.ts` — `/p/:shareId/:docId/preview` · GET, runtime
+- `src/app/s/[shareId]/changes/route.ts` — `/s/:shareId/changes` · dynamic, GET, runtime
+- `src/app/s/[shareId]/og.png/route.tsx` — `/s/:shareId/og.png` · GET, runtime
+- `src/app/s/[shareId]/page-image/route.ts` — `/s/:shareId/page-image` · dynamic, GET, runtime
+- `src/app/s/[shareId]/pdf/route.ts` — `/s/:shareId/pdf` · GET, runtime
+- `src/app/s/[shareId]/preview/route.ts` — `/s/:shareId/preview` · GET, runtime
+- `src/app/share/[shareId]/og.png/route.tsx` — `/share/:shareId/og.png` · GET, runtime
+
+## App-local modules
+
+Clients, helpers and components that live beside the page that uses them.
+
+- `src/app/(app)/AppShellLayout.tsx` · default
+- `src/app/(app)/activity/StatsHeader.tsx` · default
+- `src/app/(app)/activity/pageClient.tsx` · default
+- `src/app/(app)/connect/pageClient.tsx` · default
+- `src/app/(app)/doc/[docId]/history/pageClient.tsx` · default
+- `src/app/(app)/doc/[docId]/links/pageClient.tsx` · default
+- `src/app/(app)/doc/[docId]/metrics/pageClient.tsx` · default, MetricsHeaderPlaceholder
+- `src/app/(app)/doc/[docId]/metrics/viewer/[viewerKey]/pageClient.tsx` · default
+- `src/app/(app)/doc/[docId]/pageClient.tsx` · default, REMOTE_DOC_CHANGE_ACTIVITY
+- `src/app/(app)/doc/[docId]/review/pageClient.tsx` · default
+- `src/app/(app)/metrics/pageClient.tsx` · default
+- `src/app/(app)/project/[projectSlug]/links/pageClient.tsx` · default
+- `src/app/(app)/project/[projectSlug]/metrics/pageClient.tsx` · default, MetricsHeaderPlaceholder
+- `src/app/(app)/project/[projectSlug]/metrics/viewer/[viewerKey]/pageClient.tsx` · default
+- `src/app/(app)/project/[projectSlug]/pageClient.tsx` · default
+- `src/app/(app)/requests/pageClient.tsx` · default
+- `src/app/(app)/search/SearchResultRow.tsx` · DocResultRow, formatRelativeShort, Highlight, ProjectResultRow, SearchDoc, SearchProject, SearchSkeleton, STAGGER_CAP
+- `src/app/(app)/search/loading.tsx` · default
+- `src/app/(app)/search/pageClient.tsx` · default
+- `src/app/(app)/search/searchUrl.ts` · buildSearch, FEATURE_REQUESTS_ENABLED, parsePage, parseScope, parseSort, readUrlState, Scope, SCOPES, …
+- `src/app/(app)/tag/[slug]/pageClient.tsx` · default
+- `src/app/(app)/tags/pageClient.tsx` · default
+- `src/app/(app)/upload/pageClient.tsx` · default
+- `src/app/HomeAuthedClient.tsx` · default, UploadHome
+- `src/app/HomeUnauthedClient.tsx` · default
+- `src/app/accept/AcceptClient.tsx` · default
+- `src/app/api/docs/[docId]/links/shared.ts` · accessDocForLinks, DocAccess, DocAccessResult, linkErrorResponse, PlanWarning, planWarningOf
+- `src/app/api/projects/[projectSlug]/links/shared.ts` · accessProjectForLinks, linkErrorResponse, planWarningOf, ProjectAccess, ProjectAccessResult
+- `src/app/billing/success/successClient.tsx` · default
+- `src/app/credits/CreditsPurchaseClient.tsx` · default
+- `src/app/dashboard/AgentsCard.tsx` · default
+- `src/app/dashboard/AiQualityDefaultsCard.tsx` · default
+- `src/app/dashboard/BillingInvoicesTab.tsx` · default
+- `src/app/dashboard/CreditsSummaryCard.tsx` · default
+- `src/app/dashboard/DailyUsageChart.tsx` · default
+- `src/app/dashboard/DailyUsageChartRenderer.tsx` · default, DailyUsageChartRow
+- `src/app/dashboard/MultiLineChart30d.tsx` · default
+- `src/app/dashboard/SpendLimitModule.tsx` · default, getCachedSpendStatus, refreshSpendStatus, SPEND_LIMIT_UPDATED_EVENT
+- `src/app/dashboard/SubscriptionCard.tsx` · default
+- `src/app/dashboard/TeamsManager.tsx` · default
+- `src/app/dashboard/UsageTable.tsx` · default, UsageRow
+- `src/app/dashboard/WorkspaceManager.tsx` · default
+- `src/app/dashboard/dashboardShell.tsx` · default
+- `src/app/dashboard/loading.tsx` · default
+- `src/app/doc/update/[code]/pageClient.tsx` · default
+- `src/app/error.tsx` · default
+- `src/app/login/EarlyAccessNotice.tsx` · EarlyAccessNotice
+- `src/app/not-found.tsx` · default
+- `src/app/p/[shareId]/(room)/loading.tsx` · default
+- `src/app/p/[shareId]/IntroduceYourself.tsx` · default
+- `src/app/p/[shareId]/LandingBeacon.tsx` · default
+- `src/app/p/[shareId]/RefusalNotice.tsx` · default, ProjectRefusalKind
+- `src/app/p/[shareId]/[docId]/loading.tsx` · default
+- `src/app/p/[shareId]/shareTheme.ts` · PROJECT_SHARE_THEME
+- `src/app/p/not-found.tsx` · default
+- `src/app/preferences/NotificationPreferences.tsx`
+- `src/app/preferences/WorkspaceManager.tsx` · default
+- `src/app/preferences/preferencesShell.tsx` · default
+- `src/app/pricing/PricingCta.tsx` · default
+- `src/app/project/[projectSlug]/pageClient.tsx` · default
+- `src/app/providers.tsx` · default, useAuthEnabled, useNavigationLocked, useNavigationLockWhile
+- `src/app/r/[token]/pageClient.tsx` · default
+- `src/app/replace/[token]/pageClient.tsx` · default
+- `src/app/robots.ts` · default
+- `src/app/s/[shareId]/PasswordGate.tsx`
+- `src/app/s/[shareId]/ShareViewerClient.tsx` · default
+- `src/app/s/[shareId]/error.tsx` · default
+- `src/app/s/[shareId]/loading.tsx` · default
+- `src/app/s/not-found.tsx` · default
+- `src/app/share/[shareId]/PasswordGate.tsx`
+- `src/app/waitlist/SignOutLink.tsx` · default
+- `src/app/welcome/WelcomeClient.tsx` · default
+
+## Components
+
+- `src/components/AboutCopy.tsx` · default
+- `src/components/AccountMenu.tsx` · default
+- `src/components/ActiveWorkspacePill.tsx` · default
+- `src/components/AdminLeftSidebar.tsx` · default
+- `src/components/AgentHintNotice.tsx` · default
+- `src/components/AgentMark.tsx` · default, agentMarkSrc
+- `src/components/AppPageHeader.tsx` · default, APP_PAGE_GUTTER
+- `src/components/BrandHeader.tsx` · default
+- `src/components/CopyButton.tsx` · CopyButton
+- `src/components/DocActionsMenu.tsx` · default
+- `src/components/DocDebugModal.tsx` · default
+- `src/components/DocSharePanel.tsx` · default
+- `src/components/HeaderIdentity.tsx` · default, CrumbSkeleton, EntityHeaderName, HeaderNameSkeleton, useHeaderName
+- `src/components/LeftSidebar.tsx` · default
+- `src/components/Markdown.tsx` · default
+- `src/components/McpInstallExample.tsx` · default
+- `src/components/OutOfCreditsListener.tsx` · default
+- `src/components/OutOfCreditsModal.tsx` · default
+- `src/components/PasswordGate.tsx` · default
+- `src/components/PdfJsViewer.tsx` · AiOutput, HISTORY_ERROR_FALLBACK, historyErrorForStatus, HistoryMessageError, PdfJsViewer, RECIPIENT_HISTORY_VERSIONS
+- `src/components/PlanLimitNotice.tsx` · default
+- `src/components/PlanUsageMeter.tsx` · default
+- `src/components/ProPill.tsx` · default
+- `src/components/ProjectSharePanel.tsx` · default
+- `src/components/PublicFooter.tsx` · default
+- `src/components/PublicHeader.tsx` · default
+- `src/components/RelevanceChecklist.tsx` · default
+- `src/components/RouteLoadingScreen.tsx` · default
+- `src/components/ScopeTile.tsx` · default, ScopeKind
+- `src/components/ShareWorkspaceBrand.tsx` · default
+- `src/components/SidebarCredits.tsx` · default
+- `src/components/SidebarProjectsSection.tsx` · default
+- `src/components/SidebarTagsSection.tsx` · default
+- `src/components/StandaloneBrandedShell.tsx` · StandaloneBrandedShell
+- `src/components/StripePricingTable.tsx` · StripePricingTable, StripePricingTableProps
+- `src/components/SubPageHeader.tsx` · default, Crumb, SubPageAction
+- `src/components/SwitchingOverlay.tsx` · DEFAULT_SWITCHING_OVERLAY_MIN_MS, DOC_NAV_OVERLAY_ID, fetchOrgSwitchRedirectTo, hideSwitchingOverlay, PENDING_ACTIVE_ORG_ID_KEY, PROJECT_NAV_OVERLAY_ID, showSwitchingOverlay, SWITCHING_OVERLAY_ID, …
+- `src/components/UpgradeModal.tsx` · default, splitPriceLabel
+- `src/components/UpgradeModalProvider.tsx` · OpenUpgradeOptions, UpgradeModalApi, UpgradeModalProvider, useUpgradeModal
+- `src/components/UploadButton.tsx` · default, UploadIcon
+- `src/components/UploadCompletionPanel.tsx` · default
+- `src/components/WorkspaceIcon.tsx` · default
+- `src/components/WorkspacePill.tsx` · default
+- `src/components/activity/ChangePreviewModal.tsx` · default
+- `src/components/admin/AdminAccessState.tsx` · default, AdminAccessStateProps
+- `src/components/admin/AdminAlert.tsx` · default, AdminAlertProps
+- `src/components/admin/AdminDetail.tsx` · default, DetailGrid, DetailGridProps, DetailPanelProps, DetailRow, DetailRowProps, DetailSection, DetailSectionProps, …
+- `src/components/admin/AdminFilterBar.tsx` · default, AdminFilterBarProps
+- `src/components/admin/AdminPageHeader.tsx` · default, AdminPageHeaderProps
+- `src/components/admin/AdminSearchInput.tsx` · default, AdminSearchInputProps
+- `src/components/admin/AdminSection.tsx` · default, AdminSectionProps
+- `src/components/admin/AdminSelect.tsx` · default, AdminSelectProps
+- `src/components/admin/AdminShell.tsx` · default
+- `src/components/admin/AdminTable.tsx` · default, AdminTableEmpty, AdminTableMessage, AdminTableProps, AdminTd, AdminTdProps, AdminTh, AdminThProps, …
+- `src/components/admin/AdminTrendChart.tsx` · default, TrendMetric, TrendPoint
+- `src/components/admin/IdCell.tsx` · default, IdCellProps
+- `src/components/admin/RevenueChart.tsx` · default
+- `src/components/admin/RowActions.tsx` · default, RowAction, RowActionLink, RowActionLinkProps, RowActionProps, RowActionsProps
+- `src/components/admin/SegmentedAction.tsx` · default, SegmentedActionProps, SegmentedOption
+- `src/components/admin/StatusPill.tsx` · default, BoolState, BoolStateProps, StatusPillProps
+- `src/components/admin/TimeCell.tsx` · default, TimeCellProps
+- `src/components/admin/index.ts` · AdminAccessState, AdminAlert, AdminFilterBar, AdminPageHeader, AdminSearchInput, AdminSection, AdminSelect, AdminTable, …
+- `src/components/charts/ChartValueLabel.tsx` · valueLabels
+- `src/components/connect/ClientTabs.tsx` · default
+- `src/components/connect/CodeBlock.tsx` · default
+- `src/components/connect/KeysPanel.tsx` · default
+- `src/components/connect/Panel.tsx` · default
+- `src/components/connect/PublicGuideShell.tsx` · default
+- `src/components/connect/StatusPill.tsx` · default
+- `src/components/connect/StepsRail.tsx` · default
+- `src/components/connect/ToolCatalogTable.tsx` · default
+- `src/components/connect/Troubleshooting.tsx` · default
+- `src/components/connect/VerifyPanel.tsx` · default
+- `src/components/connect/format.ts` · formatDate, formatRelative
+- `src/components/connect/publicTokens.ts` · PUBLIC_DARK_TOKENS
+- `src/components/doc/DocHeaderActions.tsx` · default, DocHeaderPage
+- `src/components/doc/DocIdentityRow.tsx` · default
+- `src/components/doc/DocReplaceFileButton.tsx` · default
+- `src/components/history/PageCompareViewer.tsx` · default
+- `src/components/history/PageDiffStrip.tsx` · default, PageChange
+- `src/components/history/useDiffRegions.ts` · DiffState, useDiffRegions
+- `src/components/home/ProductShots.tsx` · default
+- `src/components/icons/StarIcon.tsx` · default
+- `src/components/links/LinksManager.tsx` · default, LinksManagerHandle, LinksScope
+- `src/components/metrics/DepthBadge.tsx` · default, ReadingLegendButton
+- `src/components/metrics/IntroducedBadge.tsx` · default
+- `src/components/metrics/MetricsView.tsx` · default, docMetricsScope, formatDateTime, formatDurationShort, formatPageRanges, formatShortId, METRICS_STALE_FLOOR_MS, MetricsScope, …
+- `src/components/metrics/PageReadingDetail.tsx` · default
+- `src/components/metrics/QuickStats.tsx` · default, QuickStatsScope
+- `src/components/metrics/ReaderDocuments.tsx` · default, DocDetail, ReaderDoc
+- `src/components/metrics/RecentVisitors.tsx` · default, RecentVisitor
+- `src/components/metrics/ViewerProfile.tsx` · default, viewerRouteKey
+- `src/components/modals/CreateLinkRequestRepositoryModal.tsx` · default
+- `src/components/modals/CreateProjectModal.tsx` · default
+- `src/components/modals/DeleteAccountModal.tsx` · default
+- `src/components/modals/DeleteDocModal.tsx` · default
+- `src/components/modals/DeleteProjectModal.tsx` · default
+- `src/components/modals/DeleteRequestRepoModal.tsx` · default, RequestRepoDeleteMode
+- `src/components/modals/DocMetricsModal.tsx` · default
+- `src/components/modals/DocProjectsModal.tsx` · default, DocProjectListItem
+- `src/components/modals/Modal.tsx` · default
+- `src/components/modals/RemoveMemberModal.tsx` · default
+- `src/components/modals/ReviewPerspectiveModal.tsx` · default
+- `src/components/modals/ShareLinkModal.tsx` · default, ShareLinkFormValues
+- `src/components/modals/SidebarDocsModal.tsx` · default, SidebarDocsView
+- `src/components/modals/SidebarProjectsModal.tsx` · default
+- `src/components/modals/SidebarRequestsModal.tsx` · default
+- `src/components/modals/SidebarStarredModal.tsx` · default
+- `src/components/modals/TempUserGateModal.tsx` · default
+- `src/components/notifications/EmailCatalogList.tsx` · default
+- `src/components/notifications/NotificationPreferences.tsx` · default
+- `src/components/notifications/PreferenceExplainer.tsx` · default
+- `src/components/people/ContributorsCard.tsx` · default
+- `src/components/project/ProjectHeaderActions.tsx` · default, ProjectHeaderPage
+- `src/components/project/ProjectIdentityRow.tsx` · default
+- `src/components/tags/TagDot.tsx` · default, TAG_COLOR_HEX
+- `src/components/tags/TagDots.tsx` · default
+- `src/components/tags/TagPickerModal.tsx` · default, TagTargetKind
+- `src/components/tags/TagsManager.tsx` · default, readCreateResult
+- `src/components/tags/TagsRow.tsx` · default, TagTargetKind
+- `src/components/ui/Alert.tsx` · default
+- `src/components/ui/Button.tsx` · default, ButtonProps
+- `src/components/ui/CopyTextButton.tsx` · default
+- `src/components/ui/DataTable.tsx` · default, DataTableProps
+- `src/components/ui/DotsLoader.tsx` · default, DotsLoaderProps
+- `src/components/ui/EmptyState.tsx` · default
+- `src/components/ui/HelpTooltip.tsx` · default
+- `src/components/ui/IconButton.tsx` · default
+- `src/components/ui/IconLink.tsx` · default
+- `src/components/ui/Input.tsx` · default, InputProps
+- `src/components/ui/NotAvailable.tsx` · default
+- `src/components/ui/OverflowMenu.tsx` · default
+- `src/components/ui/Panel.tsx` · default, PanelProps
+- `src/components/ui/Pill.tsx` · default
+- `src/components/ui/Select.tsx` · default, SelectProps
+- `src/components/ui/Spinner.tsx` · default, SpinnerProps
+- `src/components/ui/SpinnerLoader.tsx` · default, SpinnerLoaderProps
+- `src/components/workspaceMetrics/HeadlineStrip.tsx` · default
+- `src/components/workspaceMetrics/HeroChart.tsx` · default
+- `src/components/workspaceMetrics/MetricsSkeleton.tsx` · default, MetricsEmptyWorkspace
+- `src/components/workspaceMetrics/RangeControl.tsx` · default
+- `src/components/workspaceMetrics/Sections.tsx` · ContributorsSection, PeopleSection, QuietDocsSection, TopDocsSection, TopLinksSection
+- `src/components/workspaceMetrics/format.ts` · changeChip, ChangeChip, ChangeTone, formatMetricCompact, formatMetricPoint, formatMetricValue, isDurationMetric, linkDisplayName, …
+
+## Libraries
+
+`src/lib` — models, services and pure helpers.
+
+- `src/lib/accounts/deletion.ts` · confirmPhraseMatches, daysUntilPurge, DELETION_CONFIRM_PHRASE, DELETION_GRACE_DAYS, DELETION_REASONS, DeletionReasonCode, DeletionRequestInput, ParsedDeletionRequest, …
+- `src/lib/accounts/purge.ts` · blobUrlsOf, findAccountsDueForPurge, planPurge, purgeAccount, PurgePlan, PurgeResult, UPLOAD_BLOB_SELECT
+- `src/lib/activity/labels.ts` · ACTIVITY_FILTERS, ActivityFilterId, ActivityItem, ActivitySentence, actorDisplayName, describeActivity
+- `src/lib/activity/log.ts` · ACTIVITY_AGENT_HEADER, ActivityActorKind, ActivityAgent, ActivityType, agentFromRequest, agentLabel, recordActivity, RecordActivityInput
+- `src/lib/activity/summary.ts` · ACTIVITY_SUMMARY_BUCKETS, ACTIVITY_WORK_TYPES, ActivityDayPoint, ActivityDayRow, ActivityGroupRow, ActivitySummary, ActivitySummaryBucket, ActivitySummaryCountKey, …
+- `src/lib/admin/creditsAdmin.ts` · AdminCreditAnomaly, AdminCreditAnomalyCode, AdminCreditAnomalySeverity, AdminCreditBuckets, AdminCreditBucketSplit, AdminCreditPlan, asNumber, balanceAnomalies, …
+- `src/lib/admin/cronHealth.ts` · CronHealthItem, CronStat, cronStatsFigures, cronTone, formatCronStatsLine
+- `src/lib/admin/cronSchedule.ts` · buildCronRows, CronRow, CronState, cronStateLabel, cronStateTone, describeSchedule, HeartbeatLike, nextRunAt, …
+- `src/lib/admin/docPrivacy.ts` · ADMIN_NO_CONTENT_NOTE, ADMIN_NO_SECRETS_NOTE, AI_RUN_CONTENT_FIELDS, AiRunContentField, describeAiRunContent, DOC_CONTENT_FIELDS, DocContentField, redactDocRow, …
+- `src/lib/admin/emailsAdmin.ts` · buildEmailCatalogRows, DeadNotificationRow, describeCronSchedule, EMAIL_CRON_SCHEDULES, EmailAudience, EmailCatalogEntry, EmailCatalogRow, EmailTrace, …
+- `src/lib/admin/format.ts` · fmtDate, fmtDuration
+- `src/lib/admin/layout.ts` · ADMIN_PAGE_CONTAINER
+- `src/lib/admin/linksAdmin.ts` · ADMIN_LINK_STATE_FILTERS, AdminLinkState, AdminLinkStateFilter, AdminLinkStateInput, deriveLinkState, DocTitleSource, isAdminLinkStateFilter, linkStateFilterFragment, …
+- `src/lib/admin/localStorageTools.ts` · byteSizeUtf8, clearLocalStorageKeysByPrefix, LocalStorageRow, readLocalStorageSnapshot, removeLocalStorageKey
+- `src/lib/admin/notificationQueueAdmin.ts` · DEAD_LETTER_LIMIT, readDeadNotifications, readNotificationQueueSummary
+- `src/lib/admin/revenue.ts` · fillDays, fmtMoney, onDemandCents, priceLabelToCents, RevenueDay, RevenueSubscriptions, RevenueSummary, trendPct
+- `src/lib/admin/shareViews.tsx` · buildDailySeriesFromDayMap, buildDailySeriesFromItems, DaySeries, docInfo, PAGES_BUCKETS, pagesBucket, PagesDistribution, safeDate, …
+- `src/lib/admin/statusTones.ts` · pipelineStatusTone
+- `src/lib/admin/ui.ts` · ADMIN_ACTIONS_CELL_Y, ADMIN_CELL_TEXT, ADMIN_CELL_X, ADMIN_CELL_Y, ADMIN_CODE_BLOCK, ADMIN_DASH, ADMIN_FIELD_LABEL, ADMIN_FIELD_VALUE, …
+- `src/lib/admin/useAdminAccess.ts` · AdminAccess, useAdminAccess
+- `src/lib/admin/workspaceHub.ts` · billableLabel, cancelText, creditSummary, CreditSummary, fmtCap, fmtCents, fmtCount, graceState, …
+- `src/lib/agents/apiKeys.ts` · API_KEY_DISPLAY_PREFIX_LENGTH, API_KEY_LENGTH, API_KEY_LIST_LIMIT, API_KEY_MAX_ACTIVE_PER_ORG, API_KEY_NAME_MAX_LENGTH, API_KEY_PREFIX, API_KEY_SECRET_LENGTH, API_KEY_TOUCH_THROTTLE_MS, …
+- `src/lib/ai/agentSummary.ts` · AGENT_KEY_POINT_MAX_CHARS, AGENT_KEY_POINTS_MAX, AGENT_KEY_POINTS_MIN, AGENT_SUMMARY_MAX_CHARS, AGENT_SUMMARY_MIN_CHARS, AgentSummary, agentSummaryToAnalysis, cleanAgentText, …
+- `src/lib/ai/aiRunRecorder.ts` · AiRunKind, AiRunMeta, completeAiRun, failAiRun, startAiRun
+- `src/lib/ai/analyzePdfText.ts` · AiDocAnalysis, AiDocAnalysisSchema, analysisTelemetry, AnalysisTelemetry, analyzePdfText, isFallbackAnalysis, normalizeAiDocAnalysis
+- `src/lib/ai/askFromText.ts` · extractAskDetailFromText, extractDollarAmounts, findRaiseAmount, resolveAsk
+- `src/lib/ai/constants.ts` · CATEGORY_LABELS, CATEGORY_VALUES, CategoryValue, CONFIDENCE_VALUES, ConfidenceValue, INTENDED_AUDIENCE_LABELS, INTENDED_AUDIENCE_VALUES, IntendedAudienceValue, …
+- `src/lib/ai/docChangeDiff.ts` · DocChangeDiff, DocChangeDiffSchema, DocChangeDiffUsage, isNoChangeSummary, NO_CHANGE_SUMMARY, normalizeForCompare, runDocChangeDiff
+- `src/lib/ai/docChangeSummary.ts` · isNoChangeSummary, NO_CHANGE_SUMMARY
+- `src/lib/ai/openaiProviderOptions.ts` · OPENAI_PROVIDER_OPTIONS
+- `src/lib/ai/requestReviewInvestorFocused.ts` · RequestReviewInvestorFocusedOutput, RequestReviewInvestorFocusedSchema, runRequestReviewInvestorFocused
+- `src/lib/ai/reviewDocText.ts` · buildReviewPrompt, reviewDocText
+- `src/lib/analytics/docAnalyticsAccess.ts` · DocAnalyticsAccess, DocAnalyticsDoc, resolveDocAnalyticsAccess
+- `src/lib/analytics/docScope.ts` · docOnlyShareIdMatch, projectLinkSlugsForDocs, projectLinkSlugsForOrg
+- `src/lib/analytics/loadReading.ts` · loadPersonStub, loadReadingCore
+- `src/lib/analytics/project/pipelines.ts` · byDocPipeline, ByDocRow, LandingRollup, landingsPipeline, RawByDocRow, RawLandingRollup, readLandingRollup, shapeByDoc, …
+- `src/lib/analytics/project/viewerKey.ts` · PROJECT_ANON_KEY_EXPR, PROJECT_LINK_VIEWER_KEY_EXPR, PROJECT_VIEW_KEY_SEP, splitProjectViewerKey
+- `src/lib/analytics/reading/attention.ts` · awaitingFirstOpen, buildAttention, compareHot, computeHot, coverSummedAcrossVisits, hotCutoff, hotReasonText, largestReturn, …
+- `src/lib/analytics/reading/constants.ts` · ACTIVE_WINDOW_MS, ALLOWED_DAYS, ATTENTION_LIST_MAX, ATTENTION_MAX_ROWS, CALLOUT_MIN_COUNT, CALLOUT_MIN_PEOPLE, HOT_DWELL_MIN_PEERS, HOT_DWELL_MULTIPLIER, …
+- `src/lib/analytics/reading/currentPage.ts` · currentPageFromRow, PageEventLike
+- `src/lib/analytics/reading/days.ts` · dayKeyInZone, dayKeysBetween, parseDaysParam, parseTimeZoneParam
+- `src/lib/analytics/reading/format.ts` · calendarDaysBetween, dwellRatio, formatCountOf, formatDwell, formatDwellCompact, formatGap, formatRelative, formatReturnGap, …
+- `src/lib/analytics/reading/identity.ts` · decodePersonId, encodePersonId, PersonIdParts
+- `src/lib/analytics/reading/index.ts`
+- `src/lib/analytics/reading/normalize.ts` · normalizeVisit, toMs
+- `src/lib/analytics/reading/pageLabels.ts` · DocPagesInput, pageLabel, pageLabelParts, pageMetaFromDoc
+- `src/lib/analytics/reading/pageTable.ts` · buildReadPairs, calloutGateText, computeCallouts, computePageTable, median, ReadPairs, typicalFromPairs, typicalPageMs
+- `src/lib/analytics/reading/people.ts` · buildPeople, rankAnonymousKeys
+- `src/lib/analytics/reading/response.ts` · buildMatrixRow, buildPeopleSeries, buildPersonResponse, buildReadingCore, buildReadingResponse, toBasicReading, visitSteps
+- `src/lib/analytics/reading/types.ts` · AllTimePerson, AttentionRow, BASIC_LINK_KEYS, BASIC_READING_KEYS, Callouts, Cell, CellState, HotReason, …
+- `src/lib/analytics/reading/verdict.ts` · buildVerdict, PageTypical, VerdictOptions
+- `src/lib/analytics/reconcileLinkCounters.ts` · CounterDrift, LAST_VIEWED_TOLERANCE_MS, ReconcileResult, reconcileShareLinkCounters
+- `src/lib/analytics/shareTiming.ts` · countsAsPageRevisit, FLUSH_REASONS, FlushReasonWire, isPageExit, pageTimeIncrement, parseFlushReason, parsePageBound, parseTimingVersion, …
+- `src/lib/analytics/shareViewAggregates.ts` · ACTIVITY_DAY_KEY_EXPR, activityInWindowExpr, activityWindowMatch, intersectShareIds, LAST_ACTIVITY_EXPR, LINK_VIEWER_KEY_EXPR, mergePageTimeMaps, OWNER_PREVIEW_MATCH, …
+- `src/lib/analytics/workspace/contributors.ts` · loadContributors
+- `src/lib/analytics/workspace/index.ts`
+- `src/lib/analytics/workspace/match.ts` · activityBetweenMatch, LAST_SEEN_MAX_EXPR, linkReaderKeyExpr, liveShareLinkExpr, presenceBetweenMatch, VISIT_DAY_KEY_EXPR, VISIT_TIME_SUM_EXPR, visitBetweenMatch, …
+- `src/lib/analytics/workspace/query.ts` · loadWorkspaceMetrics, previousVisitTotalsPipeline, visitSessionStages, WorkspaceMetricsInput
+- `src/lib/analytics/workspace/range.ts` · dayKeysFrom, parseWorkspaceRangeKey, ResolvedWorkspaceRange, resolveWorkspaceRange, utcDayKey, WORKSPACE_PREVIOUS_ON_FREE, workspacePlanInfo
+- `src/lib/analytics/workspace/shape.ts` · avgReadingTimeMs, buildSeries, buildTopLink, buildTopLinks, changePct, DayBuckets, delta, docMetricsHref, …
+- `src/lib/analytics/workspace/types.ts` · WORKSPACE_CONTRIBUTORS_LIMIT, WORKSPACE_DEFAULT_RANGE, WORKSPACE_PEOPLE_LIMIT, WORKSPACE_QUIET_DOCS_LIMIT, WORKSPACE_RANGE_DAYS, WORKSPACE_RANGE_KEYS, WORKSPACE_RECENT_PEOPLE_LIMIT, WORKSPACE_TOP_DOCS_LIMIT, …
+- `src/lib/auth.ts` · authOptions
+- `src/lib/billing/clientActions.ts` · openBillingPortal, resumeSubscription, startCheckout
+- `src/lib/billing/limits.ts` · ALLOWED_LIMITS, DEFAULT_LIMIT, UNLIMITED_LIMIT_CENTS
+- `src/lib/billing/planGrace.ts` · OrgPlanGrace, PlanLimitsGraceSweepOptions, PlanLimitsGraceSweepResult, runPlanLimitsGraceSweep
+- `src/lib/billing/planLimits.ts` · AnalyticsTier, analyticsTierForPlan, checkLimit, clampAnalyticsDays, CountedLimitKey, FeatureGateKey, FREE_ANALYTICS_DAYS, FREE_DOCUMENTS, …
+- `src/lib/billing/pricing.ts` · USD_CENTS_PER_CREDIT
+- `src/lib/billing/proPriceLabel.ts` · getBillingProPriceLabel, revalidateBillingProPriceLabel
+- `src/lib/billing/stripePeriods.ts` · getInvoiceSubscriptionId, getSubscriptionPeriod, parseStripeUnixSeconds
+- `src/lib/billing/subscriptionState.ts` · isBillableStatus, isBillableSubscription, isPaygSubscription, isProSubscription, PAYG_DEFAULT_SPEND_LIMIT_CENTS, PRO_KIND_FILTER, subscriptionKind, SubscriptionKind, …
+- `src/lib/billing/usageAggregation.ts` · aggregateBillingUsage, BillingIncludedRow, BillingLedgerRow, BillingOnDemandRow, onDemandCostCentsOrNull
+- `src/lib/billing/workspaceCustomer.ts` · ensureWorkspaceStripeCustomer, WorkspaceCustomer
+- `src/lib/blob/clientUpload.ts` · BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname, buildDocExtractedTextPathname, buildDocPageImagePathname, buildDocPageThumbPathname, buildDocPreviewPngPathname, buildOrgAvatarPathname, buildTestBlobPathname, …
+- `src/lib/blob/fetchStoredBlob.ts` · blobFetchUrl, fetchStoredBlob
+- `src/lib/blob/serverClientUploadRoute.ts` · allowedContentTypesForPathname, assertAllowedTestPathname, AVATAR_UPLOAD_ALLOWED_CONTENT_TYPES, CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES, CLIENT_UPLOAD_MAX_SIZE_BYTES, DOC_PREVIEW_ALLOWED_CONTENT_TYPES, DOC_UPLOAD_ALLOWED_CONTENT_TYPES, getBlobStoreHost, …
+- `src/lib/botId.ts` · BOT_ID_HEADER, BOT_ID_STORAGE_KEY, getOrCreateBotId
+- `src/lib/charts/donut.ts` · formatShare
+- `src/lib/client/agentHintCopy.ts` · AGENT_HINT_COPY, AgentHintCopy, AgentHintKey
+- `src/lib/client/creditsSnapshotRefresh.ts` · CREDITS_SNAPSHOT_REFRESH_EVENT, dispatchCreditsSnapshotRefresh
+- `src/lib/client/docUploadPipeline.ts` · apiCreateDoc, apiCreateUpload, CreateDocResponse, CreateUploadInput, CreateUploadResponse, isPdfFile, isPdfMeta, PDF_ONLY_MESSAGE, …
+- `src/lib/client/entityIdentity.ts` · EntityIdentity, EntityIdentityState, EntityProjectPill, loadEntityIdentity, noteEntityName, useEntityIdentity
+- `src/lib/client/entityTitles.ts` · clearEntityTitles, EntityKind, forgetEntityTitle, recallEntityTitle, rememberEntityTitle, rememberEntityTitles, resolveEntityTitle, useEntityTitle
+- `src/lib/client/outOfCredits.ts` · dispatchOutOfCredits, OUT_OF_CREDITS_EVENT, OutOfCreditsReason, outOfCreditsReasonFromCode
+- `src/lib/client/planLimit.ts` · clearPlanLimitHit, comparesFor, CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, markPlanLimitHit, parsePlanLimitError, PLAN_LIMIT_HIT_EVENT, …
+- `src/lib/client/planNumbers.ts` · COMPARE_CREDITS, comparesFor, CREDITS_COPY, FREE_PLAN_LIMITS_COPY
+- `src/lib/client/realtime.ts` · REALTIME_STATE_EVENT, RealtimeFrame, realtimeState, RealtimeState, subscribeRealtime
+- `src/lib/client/sessionMemory.ts` · forgetSignedIn, hadSession, rememberSignedIn
+- `src/lib/client/upsellCopy.ts` · PRO_PRICE_FALLBACK, UPSELL_COPY, UpsellCopy, UpsellKey, upsellKeyForLimit
+- `src/lib/client/useAgentStatus.ts` · AGENT_STATUS_CHANGED_EVENT, AgentClient, AgentKeyRow, AgentStatus, peekAgentStatus, refreshAgentStatus, useAgentStatus
+- `src/lib/client/usePlan.ts` · peekPlan, PLAN_CHANGED_EVENT, PlanSnapshot, refreshPlan, usePlan
+- `src/lib/client/useSkeletonDelay.ts` · DEFAULT_SKELETON_DELAY_MS, useSkeletonDelay
+- `src/lib/client/useTargetTags.ts` · RowTag, useTargetTags
+- `src/lib/cn.ts` · cn
+- `src/lib/credits/adminMutations.ts` · AdminCreditMutationAction, adminMutateCredits, adminSimulateNewBillingCycle
+- `src/lib/credits/aiAutomation.ts` · AI_AUTOMATION_DEFAULT, AiAutomation, getAiAutomation, isAutomationOn, parseAutomationFlag, resolveAiAutomation
+- `src/lib/credits/costCatalog.ts` · COST_CATALOG, costAnchorId, CostCatalogEntry, costEntryForAction, FREE_ACTIONS, QUALITY_BLURBS, QUALITY_LABELS, QUALITY_TIERS
+- `src/lib/credits/creditService.ts` · defaultBalanceForWorkspace, failAndRefundLedger, FREE_DAILY_CREDIT_CAP, markLedgerCharged, recordUnbilledRun, reserveCreditsOrThrow, starterCreditsForWorkspace
+- `src/lib/credits/errors.ts` · DAILY_CAP_CODE, isDailyCapError, isOutOfCreditsError, OUT_OF_CREDITS_CODE
+- `src/lib/credits/grants.ts` · buildCycleKey, FREE_STARTER_CREDITS, grantCycleIncludedCredits, INCLUDED_CREDITS_PER_CYCLE
+- `src/lib/credits/idempotency.ts` · generateIdempotencyKey, idempotencyKeyFromRequest
+- `src/lib/credits/mongooseStore.ts` · createMongooseCreditStore
+- `src/lib/credits/packs.ts` · CREDIT_PACK_CURRENCY, CREDIT_PACKS, CreditPack, findCreditPack, formatPackPrice, formatPerCredit, planPurchaseExpiry, PURCHASED_CREDITS_EXPIRY_MONTHS, …
+- `src/lib/credits/purchases.ts` · expireCreditPurchases, grantCreditPack
+- `src/lib/credits/qualityDefaults.ts` · defaultHistoryQualityTierForPlan, getDefaultHistoryQualityTier, parseQualityTier, resolveHistoryQualityTier
+- `src/lib/credits/schedule.ts` · creditsForRun, INCLUDED_ACTIONS_AT_LAUNCH
+- `src/lib/credits/serviceCore.ts` · createCreditService
+- `src/lib/credits/snapshot.ts` · CreditsSnapshot, getCreditsSnapshot
+- `src/lib/credits/staleReservations.ts` · releaseStaleReservations, ReleaseStaleReservationsResult, StaleReservationRow
+- `src/lib/credits/store.ts` · CreditLedgerFull, CreditLedgerStub, CreditStore, CreditsUsageSums, WorkspaceBalanceSnapshot
+- `src/lib/credits/stripeReporting.ts` · batchIdempotencyKey, buildMeterEventParams, DEFAULT_CREDITS_METER_EVENT_NAME, getAiCreditsPriceId, getCreditsMeterEventName, groupClaimedLedgersByBatch, groupOnDemandLedgersForStripe, REPORT_CLAIM_TTL_MS, …
+- `src/lib/credits/summaryRequeue.ts` · requeueSkippedSummaries
+- `src/lib/credits/types.ts` · ActionType, CreditBucket, LedgerStatus, QualityTier
+- `src/lib/cron/auth.ts` · requireCronAuth, requireCronMonitorAuth
+- `src/lib/cron/dryRun.ts` · refuseUnsupportedDryRun
+- `src/lib/cron/jobs.ts` · CRON_JOBS, CronHealthRowLike, CronJobHealth, CronJobSpec, judgeCronHealth, LATE_AFTER_INTERVALS, RUNNING_STUCK_AFTER_MS, STUCK_MARGIN_MS, …
+- `src/lib/cron/lease.ts` · acquireCronLease, AcquireCronLeaseParams, CronLease, releaseCronLease
+- `src/lib/crypto/randomBase62.ts` · newSecretToken, newShareId, newShareIdWithRetry, randomBase62
+- `src/lib/db/localTarget.ts` · isLocalMongoTarget, LocalTargetVerdict, mongoHosts
+- `src/lib/db/mongoRequestLogger.ts` · __getLastMongoRequestLog, withMongoRequestLogging
+- `src/lib/db/mongoose.ts` · connectMongoose
+- `src/lib/debug.ts` · debugEnabled, debugError, debugLog, debugWarn
+- `src/lib/docs/docMatch.ts` · buildDocMatch
+- `src/lib/email/catalog.ts` · EMAIL_CATALOG
+- `src/lib/email/catalogCopy.ts` · EMAIL_COPY, EmailAudience, EmailCopy
+- `src/lib/email/layout.ts` · Block, EmailFooter, EmailWorkspace, escapeHtml, renderHtml, renderText
+- `src/lib/email/previews.ts` · buildPreviews, PreviewRow
+- `src/lib/email/sendMemberRemovedEmail.ts` · sendMemberRemovedEmail
+- `src/lib/email/sendOrgInviteEmail.ts` · sendOrgInviteEmail
+- `src/lib/email/sendPlanLimitEmail.ts` · buildPlanLimitEmail, PlanLimitEmailKind, sendPlanLimitEmail, SendPlanLimitEmailParams
+- `src/lib/email/sendTextEmail.ts` · sendEmailContent, sendTextEmail
+- `src/lib/email/sendViewerVerifyEmail.ts` · sendViewerIntroducedEmail, sendViewerVerifyEmail
+- `src/lib/email/sendWaitlistApprovedEmail.ts` · sendWaitlistApprovedEmail
+- `src/lib/email/sendWelcomeEmail.ts` · sendWelcomeEmail
+- `src/lib/email/templates/compose.ts` · blocks, EmailContent, transactional
+- `src/lib/email/templates/downloadRequest.ts` · downloadRequestApprovedEmail, downloadRequestOwnerEmail, downloadRequestReceivedEmail
+- `src/lib/email/templates/index.ts` · EMAIL_CATALOG
+- `src/lib/email/templates/memberRemoved.ts` · memberRemovedEmail
+- `src/lib/email/templates/orgInvite.ts` · orgInviteEmail
+- `src/lib/email/templates/signature.ts` · EMAIL_SIGNATURE, emailBody
+- `src/lib/email/templates/viewerIntroduction.ts` · viewerIntroducedEmail, viewerVerifyEmail
+- `src/lib/email/templates/waitlistApproved.ts` · waitlistApprovedEmail
+- `src/lib/email/templates/welcome.ts` · welcomeEmail
+- `src/lib/email/unroutableRecipient.ts` · recipientDomain, unroutableRecipientReason
+- `src/lib/email/workspaceIdentity.ts` · workspaceForEmail, workspaceFromName
+- `src/lib/errors/classifyError.ts` · classifyErrorCode, classifyErrorSource
+- `src/lib/errors/logger.ts` · buildFingerprint, ERROR_CODE_CRON_JOB_FAILED, ERROR_CODE_STRIPE_WEBHOOK_INVALID_SIGNATURE, ERROR_CODE_STRIPE_WEBHOOK_PROCESSING_FAILED, ERROR_CODE_UNHANDLED_EXCEPTION, ERROR_CODE_WORKER_TASK_FAILED, isErrorLoggingEnabled, logErrorEvent, …
+- `src/lib/errors/runTaskWithErrorLogging.ts` · runTaskWithErrorLogging, RunTaskWithErrorLoggingOptions
+- `src/lib/errors/serializeErrorEvent.ts` · serializeErrorEventForAdmin
+- `src/lib/errors/types.ts` · ErrorCategory, ErrorSeverity
+- `src/lib/errors/withApiErrorLogging.ts` · ApiErrorLoggingOptions, withApiErrorLogging
+- `src/lib/format/bytes.ts` · formatBytes, formatPageCount, formatSizeChangeLine, sizeDelta, SizeDelta, toBytes
+- `src/lib/format/date.ts` · formatDateRange, formatDayKey, formatMonthLabel, formatShortDate, FormatShortDateInvalidBehavior
+- `src/lib/format/initials.ts` · initialsFromNameOrEmail
+- `src/lib/format/money.ts` · formatUsdFromCents, formatUsdOrNotAvailable
+- `src/lib/format/number.ts` · clampNonNegInt, formatInt
+- `src/lib/gating/actor.ts` · accountDisabledChanged, activeOrgCandidateOrder, activeOrgChanged, Actor, applyTempUserHeaders, isActiveMember, membershipChanged, resolveActor, …
+- `src/lib/gating/actorRateLimit.ts` · ActorRateLimitError, actorRateLimitResponse, API_KEY_REQUEST_LIMIT, API_KEY_REQUEST_WINDOW_MS, guardApiKeyRequest, guardTempWorkspaceCreation, TEMP_WORKSPACE_CREATE_LIMIT, TEMP_WORKSPACE_CREATE_WINDOW_MS
+- `src/lib/gating/apiKeyActor.ts` · ApiKeyAuthError, bearerTokenFromRequest, clientLabelFromRequest, tryResolveApiKeyActor, UNKNOWN_AGENT_CLIENT, VerifiedApiKey, verifyBearer, VerifyBearerFailureCode, …
+- `src/lib/gating/entryGate.ts` · enforceEntryGates
+- `src/lib/gating/forbidApiKey.ts` · forbidApiKey
+- `src/lib/gating/requireAdmin.ts` · AdminGate, requireAdmin
+- `src/lib/gating/tempUserClient.ts` · captureTempUserFromResponse, clearTempUser, fetchWithTempUser, getTempUser, setTempUser, TEMP_USER_STORAGE_KEY, tempUserHeaders, TempUserStored, …
+- `src/lib/gating/tempUserHeaders.ts` · TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER
+- `src/lib/gating/waitlist.ts` · accessStatusChanged, forbidWaitlisted, isWaitlistedActor, readAccessStatus
+- `src/lib/history/changedPages.ts` · attachPageContext, ChangedPage, computeChangedPages, extractPdfTextByPage, fetchPdfBytes, loadChangedPages, MAX_PAGE_CONTEXT, pageChangeKind, …
+- `src/lib/history/pageCrops.ts` · cropPairs, cropToDataUrl, cropWindows, MAX_CROPS_PER_PAGE
+- `src/lib/history/pageDiffRegions.ts` · BARE_DELTA, CELL_PX, CELL_THRESHOLD, DiffBox, diffRegions, DiffRegions, MAX_BOXES, MERGE_RADIUS, …
+- `src/lib/history/pageFingerprint.ts` · computePageFingerprint, fingerprintDistance, fingerprintsDiffer, normalizeFingerprint, PAGE_FINGERPRINT_BITS, PAGE_FINGERPRINT_HEX_LENGTH, PAGE_FINGERPRINT_MAX_DISTANCE
+- `src/lib/history/textReadability.ts` · isReadableText, MIN_READABLE_RATIO, readableRatio
+- `src/lib/history/visualPageSweep.ts` · regionsMeanChanged, SweepCandidate, sweepVisualChanges
+- `src/lib/history/wordDiff.ts` · changedFraction, diffPresentation, DiffPresentation, DiffSpan, INLINE_MAX_CHANGED, INLINE_MAX_RUNS, tokenize, wordDiff
+- `src/lib/http/errorResponse.ts` · authOrRateLimitResponse, errorJson, ErrorJsonOptions, errorMessage
+- `src/lib/http/fetchJson.ts` · ApiErrorShape, extractErrorMessage, fetchJson
+- `src/lib/http/rateLimit.ts` · clientIpFromRequest, rateLimit, rateLimitedResponse, RateLimitInput, RateLimitResult
+- `src/lib/http/safeFetchUrl.ts` · assertSafeOutboundUrl, isPrivateAddress, resolveSafeOutboundAddresses, SafeFetchError, SafeFetchOptions, SafeFetchResult, safeFetchUrl
+- `src/lib/legal/terms.ts` · CURRENT_TERMS_VERSION, PRIVACY_URL, TERMS_URL
+- `src/lib/limits/uploads.ts` · BROWSER_DIRECT_UPLOAD_MAX_BYTES, formatMaxBytesMb, UPLOAD_BASE64_SCHEMA_MAX_CHARS, UPLOAD_MAX_BASE64_CHARS, UPLOAD_MAX_BYTES, UPLOAD_MAX_LABEL
+- `src/lib/loadingOverlay.ts` · LOADING_OVERLAY_SHOW_TEXT_DEFAULT, LOADING_OVERLAY_TITLE_TO_DOTS_GAP_PX
+- `src/lib/mcp/clientSetups.ts` · ASK_YOUR_AGENT, CLIENT_SETUPS, ClientKey, ClientSetup, ClientSetupKind, DEFAULT_SERVER_NAME, DEV_MCP_URL, findClientSetup, …
+- `src/lib/metrics/client.ts` · getSessionId, trackDocPageTiming, trackPageTiming, trackProjectClick, trackProjectView
+- `src/lib/metrics/readingDepth.ts` · READING_DEPTH_CLASS, READING_DEPTH_LABEL, readingDepth, ReadingDepth
+- `src/lib/metrics/rollupDocMetrics.ts` · rollupDocMetrics
+- `src/lib/metrics/viewerRouteKey.ts` · parseViewerRouteKey, viewerPageHref, viewerRouteKey, ViewerRouteKind
+- `src/lib/models/ActivityEvent.ts` · ActivityEvent, ActivityEventModel
+- `src/lib/models/AiRun.ts` · AiRun, AiRunModel
+- `src/lib/models/ApiKey.ts` · API_KEY_SCOPES, ApiKey, ApiKeyModel, ApiKeyScope
+- `src/lib/models/BillingConfig.ts` · BillingConfig, BillingConfigModel
+- `src/lib/models/CreditLedger.ts` · CreditLedger, CreditLedgerModel
+- `src/lib/models/CreditPurchase.ts` · CreditPurchase, CreditPurchaseModel
+- `src/lib/models/CronHealth.ts` · CronHealth, CronHealthModel
+- `src/lib/models/Doc.ts` · allocateDocUploadVersion, Doc, DocModel
+- `src/lib/models/DocChange.ts` · DocChange, DocChangeModel
+- `src/lib/models/DocPageTiming.ts` · DocPageTiming, DocPageTimingModel
+- `src/lib/models/DocReport.ts` · DocReport, DocReportModel
+- `src/lib/models/ErrorEvent.ts` · ErrorEvent, ErrorEventModel
+- `src/lib/models/NotificationEmailCursor.ts` · NotificationEmailCursor, NotificationEmailCursorKey, NotificationEmailCursorModel
+- `src/lib/models/NotificationQueue.ts` · NOTIFICATION_QUEUE_KINDS, NOTIFICATION_QUEUE_STATUSES, NotificationQueue, NotificationQueueKind, NotificationQueueModel, NotificationQueueStatus
+- `src/lib/models/Org.ts` · ensurePersonalOrgForUserId, Org, OrgModel
+- `src/lib/models/OrgInvite.ts` · OrgInvite, OrgInviteModel
+- `src/lib/models/OrgMembership.ts` · OrgMembership, OrgMembershipModel, ViewEmailMode
+- `src/lib/models/PageTiming.ts` · PageTiming, PageTimingModel
+- `src/lib/models/Project.ts` · Project, ProjectModel
+- `src/lib/models/ProjectClick.ts` · ProjectClick, ProjectClickModel
+- `src/lib/models/ProjectLinkView.ts` · ProjectLinkView, ProjectLinkViewModel, VISIT_ID_HASH_CAP
+- `src/lib/models/ProjectView.ts` · ProjectView, ProjectViewModel
+- `src/lib/models/RateLimit.ts` · RateLimit, RateLimitModel
+- `src/lib/models/Review.ts` · Review, ReviewModel
+- `src/lib/models/ShareDownloadRequest.ts` · ShareDownloadRequest, ShareDownloadRequestModel
+- `src/lib/models/ShareLink.ts` · DOC_LINK_FILTER, PROJECT_LINK_FILTER, ShareLink, ShareLinkKind, ShareLinkModel
+- `src/lib/models/ShareView.ts` · ShareView, ShareViewModel
+- `src/lib/models/ShareViewerEmail.ts` · ShareViewerEmail, ShareViewerEmailModel
+- `src/lib/models/ShareVisit.ts` · ShareVisit, ShareVisitModel
+- `src/lib/models/StarredDoc.ts` · StarredDoc, StarredDocModel
+- `src/lib/models/StripeEvent.ts` · StripeEvent, StripeEventModel
+- `src/lib/models/Subscription.ts` · Subscription, SubscriptionModel
+- `src/lib/models/Tag.ts` · Tag, TagModel
+- `src/lib/models/TagAssignment.ts` · TAG_TARGET_KINDS, TagAssignment, TagAssignmentModel, TagTargetKind
+- `src/lib/models/Upload.ts` · Upload, UploadModel
+- `src/lib/models/UsageAggCycle.ts` · UsageAggCycle, UsageAggCycleModel
+- `src/lib/models/UsageAggDaily.ts` · UsageAggDaily, UsageAggDailyModel
+- `src/lib/models/User.ts` · createTempUser, User, UserModel, verifyTempUserSecret
+- `src/lib/models/WorkspaceCreditBalance.ts` · WorkspaceCreditBalance, WorkspaceCreditBalanceModel
+- `src/lib/mongodb.ts` · connectMongo
+- `src/lib/notifications/docUpdateEmail.ts` · ComposedDocUpdateEmail, composeDocUpdateEmail, DocUpdateEntry, docUpdateSubject
+- `src/lib/notifications/docUploadEmail.ts` · ComposedDocUploadEmail, composeDocUploadEmail, DocUploadEntry, docUploadSubject
+- `src/lib/notifications/queue.ts` · BACKOFF_MS, backoffMs, CLAIM_STALE_MS, claimBatch, ClaimBatchParams, ClaimedNotification, claimTokenOf, enqueueNotification, …
+- `src/lib/notifications/repoLinkRequestEmail.ts` · ComposedRepoLinkRequestEmail, composeRepoLinkRequestEmail, RepoLinkRequestEntry, repoLinkRequestSubject
+- `src/lib/notifications/sendNotificationEmails.ts` · LOCAL_DEV_EMAIL_BASE_URL, NotificationBucketTotals, NotificationDigestTotals, publicBaseUrl, sendNotificationEmails, SendNotificationEmailsParams, SendNotificationEmailsResult
+- `src/lib/notifications/sendNotificationEmailsCli.ts` · NotificationEmailsCliDeps, parseNotificationEmailsArgs, runNotificationEmailsCli
+- `src/lib/notifications/viewEmailToken.ts` · createEmailsOffToken, createViewEmailsOffToken, EMAIL_OFF_KINDS, EmailOffKind, emailsOffUrl, verifyAnyEmailsOffToken, VerifyAnyResult, verifyViewEmailsOffToken, …
+- `src/lib/notifications/viewNotifications.ts` · buildMetricsUrl, buildPreferencesUrl, buildReaderUrl, capAtTimestampBoundary, CHANGE_HOW_OFTEN_LABEL, combineHorizons, ComposeContext, ComposedEmail, …
+- `src/lib/og/imageResponse.tsx` · DEFAULT_OG_SIZE, imageResponseFromBytes, mimeFromPath, OgDims, parseJpegDims, parsePngDims, sniffImageDims
+- `src/lib/onboarding/firstRun.ts` · FIRST_RUN_PATH, FIRST_RUN_SINCE, FirstRunState, markFirstRunDone, needsFirstRun, userNeedsFirstRun
+- `src/lib/onboarding/termsGate.ts` · needsTermsAcceptance, TERMS_ACCEPT_PATH, TERMS_GATE_SINCE, TermsState, userNeedsTermsAcceptance
+- `src/lib/orgs/activeOrgCookie.ts` · ACTIVE_ORG_COOKIE
+- `src/lib/orgs/orgsClient.ts` · initials, OrgRow, stableSortOrgs
+- `src/lib/orgs/requireOrgEditor.ts` · forbidUnlessOrgRole
+- `src/lib/orgs/requireOrgRole.ts` · isOrgRole, OrgRole, requireOrgRole, RequireOrgRoleInput, RequireOrgRoleResult, roleAtLeast
+- `src/lib/orgs/useOrgsSnapshot.ts` · useOrgsSnapshot
+- `src/lib/orgsCache.ts` · clearOrgsCache, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, OrgsCacheOrg, OrgsCacheSnapshot, readOrgsCacheSnapshot, refreshOrgsCache, setCachedActiveOrgId, …
+- `src/lib/pdf/renderPage.ts` · getPdfJsLib, openPdfDocument, PdfJsDocument, PdfJsGetDocumentOptions, PdfJsLib, PdfJsPage, renderPdfPageToPng
 - `src/lib/pendingUpload.tsx`
-  - PendingUploadProvider (function) — Pending upload provider.
-  - usePendingUpload (function) — Use pending upload.
-- `src/lib/sharePassword.ts`
-  - shareAuthCookieName (function) — Share auth cookie name.
-  - hashSharePassword (function) — Hash share password.
-  - verifySharePassword (function) — Verify share password.
-  - shareAuthCookieValue (function) — Produce a per-shareId auth cookie value.
-  - encryptSharePassword (function) — Encrypt share password.
-  - decryptSharePassword (function) — Decrypt share password.
-- `src/lib/sidebarCache.ts`
-  - SidebarDocListItem (type) — Type: sidebar doc list item.
-  - SidebarProjectListItem (type) — Type: sidebar project list item.
-  - SidebarCacheSnapshot (type) — Type: sidebar cache snapshot.
-  - getSidebarCacheSnapshot (function) — Get sidebar cache snapshot.
-  - setSidebarCacheSnapshot (function) — Set sidebar cache snapshot.
-  - clearSidebarCache (function) — Clear sidebar cache (memory + localStorage).
-  - notifyProjectsChanged (function) — Notify about projects changed.
-  - notifyDocsChanged (function) — Notify about docs changed.
-  - optimisticallyAddProjectToSidebarCache (function) — Best-effort: insert a newly-created project into the cached sidebar snapshot for instant UI updates.
-  - refreshSidebarCache (function) — Refresh sidebar cache.
-  - PROJECTS_CHANGED_EVENT (const) — Constant: projects changed event.
-  - DOCS_CHANGED_EVENT (const) — Constant: docs changed event.
-  - SIDEBAR_CACHE_UPDATED_EVENT (const) — Constant: sidebar cache updated event.
-  - ACTIVE_ORG_CHANGED_EVENT (const) — Constant: active org changed event (client caches should re-key).
-- `src/lib/starredDocs.ts`
-  - StarredDoc (type) — Type: starred doc.
-  - getStarredDocs (function) — Get starred docs.
-  - isDocStarred (function) — Check whether doc starred.
-  - refreshStarredDocsFromServer (function) — Sync local cache from MongoDB source-of-truth (best-effort).
-  - toggleStarredDoc (function) — Toggle starred doc.
-  - upsertStarredDocTitle (function) — Upsert starred doc title.
-  - moveStarredDoc (function) — Move starred doc (manual ordering).
-  - STARRED_DOCS_CHANGED_EVENT (const) — Constant: starred docs changed event.
-- `src/lib/urls.ts`
-  - getPublicSiteBase (function) — Get public site base.
-  - buildPublicShareUrl (function) — URL helpers shared by client components.
-  - buildPublicRequestUrl (function) — Build a public `/request/:token` URL.
-  - buildPublicRequestViewUrl (function) — Build a public `/request-view/:token` URL.
-  - buildPublicReplaceUrl (function) — Build a public `/doc/update/:code` URL.
+- `src/lib/people/contributors.ts` · Authorship, Contributor, loadAuthorship
+- `src/lib/preflight/env.ts` · Group, Result, runEnvPreflight, Status, summarise
+- `src/lib/projects/scope.ts` · liveProjectByIdMatch, liveProjectFilter
+- `src/lib/realtime/ticket.ts` · REALTIME_TICKET_TTL_SECONDS, realtimeSecret, RealtimeTicket, signRealtimeTicket, verifyRealtimeTicket
+- `src/lib/share/anonymousNoticeAudience.ts` · AlreadyToldLookup, AlreadyToldQuery, cursorBackedAlreadyTold, queueBackedAlreadyTold
+- `src/lib/share/brand.ts` · brandInitials, ShareWorkspaceBrand
+- `src/lib/share/claimLink.ts` · resolveClaimLink, ResolvedClaimLink
+- `src/lib/share/createdVia.ts` · createdViaFor
+- `src/lib/share/links.ts` · archiveShareLink, createShareLink, CreateShareLinkResult, DEFAULT_LINK_LABEL, ensureDefaultLink, isExpired, isLinkActive, listShareLinks, …
+- `src/lib/share/ownerPlan.ts` · ownerCanShowVersionHistory
+- `src/lib/share/ownerSide.ts` · isOwnerSideViewer, OwnedDocLike
+- `src/lib/share/passwordPolicy.ts` · SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, SHARE_PASSWORD_RANGE_TEXT
+- `src/lib/share/projectLinks.ts` · archiveProjectLink, createProjectLink, CreateProjectLinkResult, ensureDefaultProjectLink, listProjectLinks, listProjectLinksPage, ProjectLike, ProjectLinkDTO, …
+- `src/lib/share/projectPublic.ts` · findProjectDocument, isExpired, listProjectDocuments, PROJECT_DOC_LIST_FIELDS, PROJECT_VIEW_KEY_SEP, projectDocIdFromReferer, projectLinkPasswordEnabled, projectViewerKey, …
+- `src/lib/share/readingClock.ts` · ANTI_STORM_MS, buildSeenPayload, buildTimingPayload, Flush, FlushReason, HEARTBEAT_MS, IDLE_AFTER_MS, IDLE_CHECK_MS, …
+- `src/lib/share/shareBrand.ts` · brandInitials, workspaceBrandForOrg
+- `src/lib/share/shareMetadata.ts` · buildShareMetadata
+- `src/lib/share/statsBeacon.ts` · createStatsBeacon, shouldRetryStatus, StatsBeaconPoster
+- `src/lib/share/viewerEmailToken.ts` · createViewerEmailToken, verifyViewerEmailToken, VerifyViewerEmailTokenResult, VIEWER_EMAIL_TOKEN_TTL_MS, ViewerEmailTokenPayload, viewerEmailVerifyUrl
+- `src/lib/share/viewerEmailVerification.ts` · IntroductionRecord, isViewerEmailVerified, markViewerEmailVerified, noteVerifyEmailSent, recordViewerIntroduction, shouldSendVerifyEmail, VERIFY_EMAIL_MAX_PER_ADDRESS, VERIFY_EMAIL_MIN_INTERVAL_MS
+- `src/lib/share/viewerIdentity.ts` · propagateViewerIdentity, PropagateViewerIdentityArgs, viewerIdentityNews
+- `src/lib/share/viewerIntroductionEmails.ts` · sendViewerIntroductionEmails, viewerIntroductionAppUrl, ViewerIntroductionEmailArgs, ViewerIntroductionEmailResult
+- `src/lib/share/viewerProfile.ts` · clearShareViewerProfile, LEGACY_SHARE_VIEWER_PROFILE_KEY, normalizeShareViewerEmail, normalizeShareViewerName, readShareViewerProfile, readShareViewerProfilePrefill, SHARE_VIEWER_PROFILE_PREFILL_KEY, shareBrandOwnerKey, …
+- `src/lib/sharePassword.ts` · decryptSharePassword, encryptSharePassword, hashSharePassword, shareAuthCookieName, shareAuthCookieValue, verifySharePassword
+- `src/lib/sidebarCache.ts` · ACTIVE_ORG_CHANGED_EVENT, ACTIVE_ORG_STORAGE_KEY, clearSidebarCache, DOC_LEAVING_EVENT, DocLeavingDetail, DOCS_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocLeaving, …
+- `src/lib/starredDocs.ts` · getStarredDocs, isDocStarred, moveStarredDoc, refreshStarredDocsFromServer, STARRED_DOCS_CHANGED_EVENT, StarredDoc, toggleStarredDoc, upsertStarredDocMeta, …
+- `src/lib/tags/palette.ts` · asTagColorKey, DEFAULT_TAG_COLOR, nextTagColor, TAG_COLOR_KEYS, TAG_COLORS, TagColorKey
+- `src/lib/tags/service.ts` · attachTag, deleteTag, detachTag, findOrCreateTag, listTags, listTagsPage, mergeTags, removeAllTagsFromTarget, …
+- `src/lib/tags/slug.ts` · isUsableTagName, normalizeTagName, TAG_NAME_MAX, tagSlug
+- `src/lib/uploads/abandonUpload.ts` · abandonUpload, abandonUploadIfImportFailed
+- `src/lib/uploads/inFlight.ts` · InFlightUpload, markDocFinished, mergeInFlightSnapshot, mergeUploadFrame, pruneUploads, UPLOAD_SETTLE_MS, UploadFramePayload
+- `src/lib/uploads/internalProcess.ts` · INTERNAL_PROCESS_HEADER, signInternalProcessToken, triggerUploadProcessing, verifyInternalProcessToken
+- `src/lib/uploads/progress.ts` · IN_FLIGHT_UPLOAD_STATUSES, isTerminalUploadStatus, PROGRESS_MIN_INTERVAL_MS, RENDER_PERCENT_END, RENDER_PERCENT_START, shouldWriteProgress, UPLOAD_STAGE_PERCENT, UploadProgress, …
+- `src/lib/uploads/progressWriter.ts` · createUploadProgressReporter, ReportOptions, UploadProgressReporter
+- `src/lib/uploads/recipientCaps.ts` · checkRecipientUploadCap, FREE_RECIPIENT_UPLOADS_PER_WORKSPACE_PER_DAY, RECIPIENT_UPLOAD_LIMIT_CODE, RECIPIENT_UPLOADS_PER_TOKEN_PER_DAY, RecipientCapResult
+- `src/lib/uploads/summaryRerun.ts` · queueSummaryRerun, SummaryRerunResult
+- `src/lib/urls.ts` · buildPublicProjectUrl, buildPublicReplaceUrl, buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getMetadataBaseUrl, getPublicSiteBase, resolveConfiguredSiteUrl
+- `src/lib/usage/reconcile.ts` · reconcileUsageAggsFromLedger, ReconcileUsageAggsResult
+- `src/lib/vercel/client.ts` · getDeployment, getProject, isVercelConfigured, listDeployments, VERCEL_TIMEOUT_MS, vercelConfig, VercelConfig, VercelDeployment, …
+- `src/lib/waitlist/acceptToken.ts` · AcceptTokenFailure, createAcceptToken, verifyAcceptToken, VerifyAcceptTokenResult, WAITLIST_ACCEPT_PURPOSE, WAITLIST_ACCEPT_TTL_MS
+- `src/lib/waitlist/waitlist.ts` · AccessStatus, accessStatusOf, approveUser, initialAccessStatus, isAllowlistedEmail, readWaitlistState, waitlistBlockedNotice, WaitlistBlockedReason, …
 
-# Files
-- Excludes: `node_modules`, `.git`, `.next`, build outputs, dot-dirs, `.env*`, `.DS_Store`
-- `.cursorrules`
-- `.gitignore`
-- `.github/pull_request_template.md` — Short PR checklist guardrails (docs, security, duplication, repo maps).
-- `eslint.config.mjs`
-- `next-env.d.ts`
-- `next.config.ts`
-- `package-lock.json`
-- `package.json`
-- `prod.sh` — Local production runner (build + start) to validate non-dev performance behavior.
-- `tests/agent/agent.cli.ts`
-- `tests/agent/vitest.config.ts`
-- `tests/agent/vitest.reporter.concise.ts`
-- `tests/agent/vitest.setup.ts`
-- `tests/credits/vitest.config.ts`
-- `tests/credits/errors.test.ts`
-- `tests/credits/grants.test.ts`
-- `tests/credits/serviceCore.test.ts`
-- `tests/credits/statsMongoOps.test.ts`
-- `tests/credits/stripeReporting.test.ts`
-- `tests/credits/billingUsageAggregation.test.ts`
-- `tests/credits/billingInvoicesRoute.test.ts`
-- `tests/upload/vitest.config.ts`
-- `tests/upload/clientUpload.test.ts`
-- `tests/upload/serverClientUploadRoute.test.ts`
-- `tests/upload/docUploadPipeline.test.ts`
-- `tests/lib/vitest.config.ts`
-- `tests/lib/orgsClient.test.ts`
-- `tests/agent/review/review.tests.json`
-- `tests/agent/review/review.tests.ts`
-- `tests/agent/review/review.vitest.test.ts`
-- `tests/agent/review/promps/investor_focused/thesis_example_2.md`
-- `postcss.config.mjs`
-- `public/icon-black.svg`
-- `public/icon-white.svg`
-- `public/images/archive/icon.svg`
-- `public/paperplane/boot.js`
-- `public/paperplane/index-dark.html`
-- `public/paperplane/index.html`
-- `public/paperplane/land-110m.json`
-- `public/paperplane/main.js`
-- `public/paperplane/overlay.js`
-- `public/pdfjs/pdf.min.mjs` — PDF.js ESM bundle (served as static asset; used by `PdfJsViewer` to avoid Next bundling issues).
-- `public/pdfjs/pdf.worker.min.mjs` — PDF.js module worker (served as static asset; used by `PdfJsViewer`).
-- `public/sample/sample-ai-output.json`
-- `public/sample/skycatch.jpg`
-- `public/sample/usavx_op.pdf`
-- `public/sample/usavx.pdf`
-- `docs/BENCHMARK.md`
-- `docs/CURSOR.md` — How we use Cursor rules and maintain `INDEX.md` / `docs/FEATURES.md`.
-- `docs/CODE_QUALITY.md` — Enforceable rules: required JSDoc, extraction heuristics, guardrails.
-- `docs/FEATURES.md`
-- `docs/METRICS.md` — How doc/share metrics tracking works (models, endpoints, best-effort semantics).
-- `docs/SUBSCRIPTION.md`
-- `docs/ERROR_LOGGING.md`
-- `README.md`
-- `DEV.md` — Development guide: setup, environment variables, Stripe testing, cron jobs, ngrok, npm scripts.
-- `docs/CRON.md`
-- `docs/deploy/Deploy_1.md` — First production deployment checklist + deployment plan.
-- `docs/REQUEST.md`
-- `db/migration/run.mjs`
-- `db/migration/20251226_0001_backfill_deletedDate_from_isDeletedDate.mjs`
-- `db/migration/20251227_0002_backfill_project_isRequest_from_requestUploadToken.mjs`
-- `db/migration/20251229_0003_dedupe_personal_orgs.mjs`
-- `db/migration/20251229_0004_backfill_orgId_to_personal_org.mjs`
-- `db/migration/20251229_0005_create_org_invite_indexes.mjs`
-- `db/migration/20260105_0001_usage_aggs_and_indexes.mjs`
-- `db/migration/20260107_0001_teams_query_indexes.mjs`
-- `db/migration/20260107_0002_creditledger_on_demand_cyclekey_index.mjs`
-- `db/migration/20260109_0001_docs_project_list_indexes.mjs`
-- `db/migration/20260120_0001_fix_docs_replaceUploadToken_index.mjs`
-- `db/migration/20260121_0001_projects_list_indexes.mjs`
-- `db/migration/20260122_0001_share_visit_indexes.mjs`
-- `db/migration/20260129_0001_sharedownloadrequests_claimTokenHash_index.mjs`
-- `scripts/lib/time.mjs`
-- `scripts/mongo-clear.mjs`
-- `scripts/mongo-clear-ai-runs-and-requests.mjs`
+## Other source
+
+- `src/admin/components/CacheToolsClient.tsx` · default
+
+## Realtime server
+
+- `realtime/server.ts`
+
+## MCP server
+
+- `mcp/src/agent.ts` · agentHeaderFrom, normalizeClientName, normalizeClientVersion
+- `mcp/src/api.ts` · ApiActivityItem, ApiActivityPage, ApiClient, ApiClientOptions, ApiDoc, ApiDocListItem, ApiDocsPage, ApiDocsPageItem, …
+- `mcp/src/config.ts` · API_TIMEOUT_MS, Config, DEFAULT_AGENT_HEADER, IDEMPOTENCY_MAX_ENTRIES, IDEMPOTENCY_TTL_MS, loadConfig, log, MCP_SERVER_NAME, …
+- `mcp/src/confirm.ts` · clientSupportsElicitation, confirmationsEnforced, confirmationsSkipRequestedButUnsafe, DestructivePreview, requireHumanConfirmation, setConfirmationWorkspace, severityFromTraffic
+- `mcp/src/context.ts` · ToolContext
+- `mcp/src/errors.ts` · handleTool, initializeFailureResponse, isToolError, LINK_NOT_FOUND_ON_DOC, LINK_NOT_FOUND_ON_PROJECT, mapApiError, ToolError, ToolErrorCode, …
+- `mcp/src/idempotency.ts` · fingerprintArgs, IdempotencyStore
+- `mcp/src/main.ts`
+- `mcp/src/optimize.ts` · decideOptimizedBytes, findGhostscript, ghostscriptArgs, ghostscriptCandidates, looksLikePdf, OPTIMIZE_IMAGE_DPI, OPTIMIZE_MIN_BYTES, OPTIMIZE_MIN_SAVING_RATIO, …
+- `mcp/src/realtime.ts` · DOC_POLL_MS, isTerminalDocStatus, WaitForDocInput, waitForDocStatus
+- `mcp/src/server.ts` · createMcpServer, SERVER_INSTRUCTIONS, withWorkspace, workspaceInstructions, workspaceLabel
+- `mcp/src/tools/aiWarnings.ts` · readAiOutcome, warningsFromAi
+- `mcp/src/tools/discover.ts` · registerGetActivityTool, registerListDocsTool
+- `mcp/src/tools/docLifecycle.ts` · registerArchiveDocTool, registerDeleteDocTool
+- `mcp/src/tools/findShareLink.ts` · findShareLinkInputShape, registerFindShareLinkTool
+- `mcp/src/tools/getShare.ts` · registerGetShareTool
+- `mcp/src/tools/getShareStats.ts` · getShareStatsInputShape, registerGetShareStatsTool
+- `mcp/src/tools/projectLinks.ts` · createProjectLinkInputShape, deleteProjectLinkInputShape, listProjectLinksInputShape, registerCreateProjectLinkTool, registerDeleteProjectLinkTool, registerListProjectLinksTool, registerUpdateProjectLinkTool, updateProjectLinkInputShape
+- `mcp/src/tools/projects.ts` · loadProject, projectIdSchema, ProjectRef, projectSlugSchema, registerAddDocsToProjectTool, registerCreateProjectTool, registerDeleteProjectTool, registerGetProjectTool, …
+- `mcp/src/tools/replacePdf.ts` · registerReplacePdfTool, replacePdfInputShape, ReplacePdfResult
+- `mcp/src/tools/setShareAccess.ts` · registerSetShareAccessTool, setShareAccessInputShape
+- `mcp/src/tools/shareLinkPassword.ts` · getShareLinkPasswordInputShape, registerGetShareLinkPasswordTool, registerVerifySharePasswordTool, verifySharePasswordInputShape
+- `mcp/src/tools/shareLinks.ts` · createShareLinkInputShape, deleteShareLinkInputShape, listShareLinksInputShape, registerCreateShareLinkTool, registerDeleteShareLinkTool, registerListShareLinksTool, registerUpdateShareLinkTool, updateShareLinkInputShape
+- `mcp/src/tools/sharePdf.ts` · fileNameFromUrl, InlinePdfSource, InlineUpload, isLocalApiUrl, isLocalFileAccessAllowed, LOCAL_FILE_REFUSED_MESSAGE, PdfSource, prepareInlineUpload, …
+- `mcp/src/tools/shared.ts` · DISMISSED_PROMPT_NOTE, docIdSchema, DocRef, docRefShape, existsUnlessNotFound, OBJECT_ID_RE, requireExactlyOneRef, resolveDoc, …
+- `mcp/src/tools/starred.ts` · registerListStarredTool, registerStarDocsTool, starDocsInputShape
+- `mcp/src/tools/tags.ts` · registerListTagsTool, registerTagTool, registerUntagTool
+- `mcp/src/tools/whoami.ts` · buildWhoamiPayload, COST_TIERS, creditCosts, registerWhoamiTool
+- `mcp/src/untrusted.ts` · sanitizeUntrustedText, untrusted, Untrusted, UNTRUSTED_LIMITS, UNTRUSTED_NOTE, untrustedOrNull, UntrustedSource
+
+## Scripts
+
+Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
+
+- `scripts/admin-add.ts` · refuseIfUnusable
+- `scripts/ai-ask-repair.ts`
+- `scripts/audit-stored-blob-urls.ts`
+- `scripts/build-index.mjs`
+- `scripts/check-cursor-web-limits.mjs`
+- `scripts/credit-balances-reconcile.ts`
+- `scripts/cron/cron.account-purge.ts`
+- `scripts/cron/cron.analytics-reconcile.ts`
+- `scripts/cron/cron.credits-cycle-reconcile.ts`
+- `scripts/cron/cron.credits-purchase-expiry.ts`
+- `scripts/cron/cron.credits-stale-reservations.ts`
+- `scripts/cron/cron.doc-metrics.ts`
+- `scripts/cron/cron.notification-emails.ts`
+- `scripts/cron/cron.plan-limits.ts`
+- `scripts/cron/cron.stripe-credits-reconcile.ts`
+- `scripts/cron/cron.stripe-credits-report.ts`
+- `scripts/cron/cron.usage-agg-reconcile.ts`
+- `scripts/cron/lib.ts` · runCronJob
+- `scripts/debug-doc-history.ts`
+- `scripts/dev-session-token.ts`
+- `scripts/diagnose-cursor-credits.mjs`
+- `scripts/doc-received-via-request-backfill.mjs`
+- `scripts/doc-view-counters-recount.ts`
+- `scripts/docchange-from-upload-repair.ts`
+- `scripts/gen-env-secrets.mjs`
+- `scripts/lib/time.mjs` · safeTimestamp
+- `scripts/measure-image-tokens.ts`
+- `scripts/mongo-clear-ai-runs-and-requests.ts`
+- `scripts/notifications-send-emails.ts`
+- `scripts/orphan-data-cleanup.ts`
+- `scripts/orphan-data-report.ts`
 - `scripts/pdf-extract-images.mjs`
 - `scripts/pdf-first-page-to-png.mjs`
 - `scripts/pdf-to-text.mjs`
-- `scripts/rollup-doc-metrics.ts`
-- `scripts/usage-agg-reconcile.ts`
-- `scripts/recreate-error-ttl-index.ts`
+- `scripts/plan-limits-grace.ts`
+- `scripts/preflight-env.ts`
 - `scripts/project-doc-count-recount.mjs`
 - `scripts/project-shareid-backfill.mjs`
-- `scripts/doc-received-via-request-backfill.mjs`
+- `scripts/publish-email-logo.ts`
+- `scripts/recreate-error-ttl-index.ts`
 - `scripts/request-docs-projectids-backfill.mjs`
+- `scripts/reset-local.ts`
 - `scripts/review-intel-backfill.mjs`
-- `scripts/orphan-data-report.ts`
-- `scripts/orphan-data-cleanup.ts`
-- `scripts/test-ai-extract.mjs`
+- `scripts/rollup-doc-metrics.ts`
+- `scripts/send-test-emails.ts`
+- `scripts/sharelinks-analytics-backfill.ts`
+- `scripts/sharelinks-backfill.ts`
+- `scripts/test-account-deletion.ts`
 - `scripts/test-ai-extract.ts`
 - `scripts/test-vercel-blob.mjs`
-- `scripts/gen-env-secrets.mjs` — Generate strong random env secrets for production (NextAuth, cron, token secrets).
-- `scripts/notifications-send-emails.ts` — Local runner for notification emails (dry-run by default).
-- `scripts/diagnose-cursor-credits.mjs` — Local-only diagnostic: scan Cursor logs/caches for “out of credits” signals (no network; no state changes).
-- `scripts/check-cursor-web-limits.jxa` — Pull Cursor web Limits page state from the active browser tab (reads `__NEXT_DATA__`; no network; no state changes).
-- `scripts/check-cursor-web-limits.mjs` — Node wrapper for `check-cursor-web-limits.jxa` (macOS).
-- `scripts/cookie.json`
-- `scripts/debug-doc-history.ts` — Debug script: print all Upload versions + DocChange history rows for a docId.
 - `scripts/tests-benchmark.ts`
-- `src/app/(app)/doc/[docId]/ai/page.tsx`
-- `src/app/(app)/doc/[docId]/page.tsx`
-- `src/app/(app)/doc/[docId]/pageClient.tsx`
-- `src/app/(app)/doc/[docId]/metrics/page.tsx`
-- `src/app/(app)/doc/[docId]/metrics/pageClient.tsx`
-- `src/app/(app)/doc/[docId]/review/page.tsx`
-- `src/app/(app)/doc/[docId]/review/pageClient.tsx`
-- `src/app/(app)/layout.tsx`
-- `src/app/(app)/project/[projectSlug]/page.tsx`
-- `src/app/(app)/project/[projectSlug]/pageClient.tsx`
-- `src/app/a/invitecodes/page.tsx`
-- `src/app/a/shareviews/[docId]/page.tsx`
-- `src/app/a/shareviews/page.tsx`
-- `src/app/about/page.tsx`
-- `src/app/api/admin/shareviews/doc/[docId]/route.ts`
-- `src/app/api/admin/shareviews/recent/route.ts`
-- `src/app/api/auth/[...nextauth]/route.ts`
-- `src/app/api/auth/claim-temp/route.ts`
-- `src/app/api/blob/upload/route.ts`
-- `src/app/api/debug/route.ts`
-- `src/app/api/metrics/events/route.ts`
-- `src/app/api/docs/[docId]/pdf/route.ts`
-- `src/app/api/docs/[docId]/report/route.ts`
-- `src/app/api/docs/[docId]/reviews/route.ts`
-- `src/app/api/docs/[docId]/route.ts`
-- `src/app/api/docs/[docId]/shareviews/route.ts`
-- `src/app/api/docs/[docId]/share-password/route.ts`
-- `src/app/api/docs/[docId]/changes/route.ts`
-- `src/app/api/docs/route.ts`
-- `src/app/api/invites/codes/[inviteId]/toggle-active/route.ts`
-- `src/app/api/invites/codes/route.ts`
-- `src/app/api/invites/request/route.ts`
-- `src/app/api/invites/requests/[requestId]/approve/route.ts`
-- `src/app/api/invites/requests/route.ts`
-- `src/app/api/invites/status/route.ts`
-- `src/app/api/invites/verify/route.ts`
-- `src/app/api/projects/[projectSlug]/docs/route.ts`
-- `src/app/api/projects/[projectSlug]/suggested-docs/route.ts`
-- `src/app/api/projects/[projectSlug]/route.ts`
-- `src/app/api/projects/route.ts`
-- `src/app/api/share/[shareId]/stats/route.ts`
-- `src/app/api/share/[shareId]/unlock/route.ts`
-- `src/app/api/tags/[tag]/docs/route.ts`
-- `src/app/api/uploads/[uploadId]/process/route.ts`
-- `src/app/api/uploads/[uploadId]/route.ts`
-- `src/app/api/uploads/route.ts`
-- `src/app/client-upload/page.tsx`
-- `src/app/globals.css`
-- `src/app/icon.svg`
-- `src/app/layout.tsx`
-- `src/app/login/page.tsx`
-- `src/app/page.tsx`
-- `src/app/project/[projectSlug]/pageClient.tsx`
-- `src/app/providers.tsx`
-- `src/app/s/[shareId]/og.png/route.tsx`
-- `src/app/s/[shareId]/page.tsx`
-- `src/app/s/[shareId]/PasswordGate.tsx`
-- `src/app/s/[shareId]/pdf/route.ts`
-- `src/app/share/[shareId]/og.png/route.tsx`
-- `src/app/share/[shareId]/page.tsx`
-- `src/app/share/[shareId]/PasswordGate.tsx`
-- `src/app/test/client-upload/page.tsx`
-- `src/app/test/animation/page.tsx`
-- `src/app/test/animation/pageClient.tsx`
-- `src/app/test/share-document/og.png/route.tsx`
-- `src/app/test/share-document/opengraph-image.tsx`
-- `src/app/test/share-document/page.tsx`
-- `src/app/test/share-document/twitter-image.tsx`
-- `src/components/AboutCopy.tsx`
-- `src/components/AccountMenu.tsx`
-- `src/components/BlobClientUploadTest.tsx`
-- `src/components/DocActionsMenu.tsx`
-- `src/components/DocDebugModal.tsx`
-- `src/components/DocSharePanel.tsx`
-- `src/admin/components/CacheToolsClient.tsx`
-- `src/components/LeftSidebar.tsx`
-- `src/components/Markdown.tsx`
-- `src/components/modals/DeleteProjectModal.tsx`
-- `src/components/modals/DocProjectsModal.tsx`
-- `src/components/modals/Modal.tsx`
-- `src/components/modals/TempUserGateModal.tsx`
-- `src/components/PdfJsViewer.tsx`
-- `src/components/RelevanceChecklist.tsx`
-- `src/components/UploadButton.tsx`
-- `src/components/UploadCompletionPanel.tsx`
-- `src/lib/admin/localStorageTools.ts`
-- `src/lib/ai/analyzePdfText.ts`
-- `src/lib/ai/docChangeDiff.ts`
-- `src/lib/ai/prompts/analyzePdfText-config.json`
-- `src/lib/ai/prompts/analyzePdfText-schema.json`
-- `src/lib/ai/prompts/analyzePdfText-system.md`
-- `src/lib/ai/prompts/analyzePdfText-user.md`
-- `src/lib/ai/prompts/requestReview/investor_focused/system.md`
-- `src/lib/ai/prompts/requestReview/investor_focused/user.md`
-- `src/lib/ai/prompts/requestReview/investor_focused/schema.json`
-- `src/lib/ai/reviewDocText.ts`
-- `src/lib/auth.ts`
-- `src/lib/blob/clientUpload.ts`
-- `src/lib/blob/serverClientUploadRoute.ts`
-- `src/lib/client/docUploadPipeline.ts`
-- `src/lib/db/mongoose.ts`
-- `src/lib/debug.ts`
-- `src/lib/email/sendInviteApprovalEmail.ts`
-- `src/lib/gating/actor.ts`
-- `src/lib/gating/tempUserHeaders.ts`
-- `src/lib/gating/tempUserClient.ts`
-- `src/lib/http/fetchJson.ts`
-- `src/lib/metrics/client.ts`
-- `src/lib/models/Doc.ts`
-- `src/lib/models/DocChange.ts`
-- `src/lib/models/DocReport.ts`
-- `src/lib/models/Invite.ts`
-- `src/lib/models/Project.ts`
-- `src/lib/models/PageTiming.ts`
-- `src/lib/models/ProjectClick.ts`
-- `src/lib/models/ProjectView.ts`
-- `src/lib/models/Review.ts`
-- `src/lib/models/ShareView.ts`
-- `src/lib/models/Upload.ts`
-- `src/lib/models/User.ts`
-- `src/lib/mongodb.ts`
-- `src/lib/og/imageResponse.tsx`
-- `src/lib/loadingOverlay.ts` — exports: LOADING_OVERLAY_TITLE_TO_DOTS_GAP_PX, LOADING_OVERLAY_SHOW_TEXT_DEFAULT. Shared constants for the centered loading overlay (keeps `/org/switch` and `SwitchingOverlay` in sync).
-- `src/lib/pendingUpload.tsx`
-- `src/lib/sharePassword.ts`
-- `src/lib/sidebarCache.ts`
-- `src/lib/starredDocs.ts`
-- `src/lib/urls.ts`
-- `src/hooks/README.md` — Shared React hooks live in `src/hooks/` (see `docs/CODE_QUALITY.md`).
-- `src/types/next-auth.d.ts`
-- `src/types/pdf-parse.d.ts`
-- `src/types/pdfjs-dist.d.ts`
-- `src/types/stripe-pricing-table.d.ts`
-- `THEME.md`
-- `tmp/archive/src/components/DocDebugModal.tsx`
-- `tmp/archive/src/components/GoogleSignInButton.tsx`
-- `tmp/archive/src/components/RelevanceChecklist.tsx`
-- `tmp/archive/src/components/ShareLinks.tsx`
-- `tmp/usavx-page1.json`
-- `tmp/usavx-page1.png`
-- `tmp/usavx.txt`
-- `tmp/usavx2.txt`
-- `tsconfig.json`
-- `tsconfig.tsbuildinfo`
+- `scripts/tests-routes.mjs`
+- `scripts/usage-agg-reconcile.ts`
+- `scripts/verify-share-analytics.ts`
+- `scripts/waitlist-invite.ts`
 
-# Duplicates (identical content)
-- aa664265
-  - `tmp/usavx.txt`
-  - `tmp/usavx2.txt`
+## Database
 
-# Orphans (best-effort)
-- Heuristic: string scan for import paths across `src/` + `scripts/` (dynamic/Next.js entry usage may be missed).
-- Components
-  - `src/components/DocDebugModal.tsx`
-  - `src/components/RelevanceChecklist.tsx`
-  - `src/components/UploadCompletionPanel.tsx`
+- `db/migration/20251226_0001_backfill_deletedDate_from_isDeletedDate.mjs` · up
+- `db/migration/20251227_0002_backfill_project_isRequest_from_requestUploadToken.mjs` · up
+- `db/migration/20251229_0003_dedupe_personal_orgs.mjs` · up
+- `db/migration/20251229_0004_backfill_orgId_to_personal_org.mjs` · up
+- `db/migration/20251229_0005_create_org_invite_indexes.mjs` · up
+- `db/migration/20260105_0001_usage_aggs_and_indexes.mjs` · up
+- `db/migration/20260107_0001_teams_query_indexes.mjs` · up
+- `db/migration/20260107_0002_creditledger_on_demand_cyclekey_index.mjs` · up
+- `db/migration/20260109_0001_docs_project_list_indexes.mjs` · up
+- `db/migration/20260120_0001_fix_docs_replaceUploadToken_index.mjs` · up
+- `db/migration/20260121_0001_projects_list_indexes.mjs` · up
+- `db/migration/20260122_0001_share_visit_indexes.mjs` · up
+- `db/migration/20260129_0001_sharedownloadrequests_claimTokenHash_index.mjs` · up
+- `db/migration/20260911_0001_orgs_slug_partial_unique_index.mjs` · up
+- `db/migration/20260913_0001_sharelinks_indexes.mjs` · up
+- `db/migration/20260915_0001_orgs_personal_partial_unique_index.mjs` · up
+- `db/migration/20260916_0001_billing_unique_indexes.mjs` · up
+- `db/migration/20260916_0002_shareviews_activity_window_indexes.mjs` · up
+- `db/migration/20260917_0001_shareviews_workspace_window_index.mjs` · up
+- `db/migration/run.mjs`
