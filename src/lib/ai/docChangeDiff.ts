@@ -92,8 +92,23 @@ export type DocChangeDiffUsage = {
 };
 
 let cachedPrompts: { system: string; user: string } | null = null;
+
+/**
+ * The prompt files, cached in production and re-read in development.
+ *
+ * Caching them process-wide is right when the files cannot change under a running server. In
+ * development they change constantly, and nothing invalidated this: editing a `.md` does not
+ * re-evaluate the module that holds the cache, so a running dev server serves the prompt it read
+ * first and every later edit is silently ignored.
+ *
+ * That is a nasty failure to debug because it looks like nothing. The run still works, the output
+ * still differs from last time - these are model calls over images, so consecutive runs vary on
+ * their own - and the natural reading is that the edit changed something. Two prompt revisions were
+ * evaluated that way here, one scored as an improvement and one as a regression, and neither had
+ * reached the model at all.
+ */
 async function loadPrompts(): Promise<{ system: string; user: string }> {
-  if (cachedPrompts) return cachedPrompts;
+  if (cachedPrompts && process.env.NODE_ENV === "production") return cachedPrompts;
   const [system, user] = await Promise.all([
     readFile(SYSTEM_PROMPT_PATH, "utf8"),
     readFile(USER_PROMPT_PATH, "utf8"),
