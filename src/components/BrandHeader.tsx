@@ -44,7 +44,7 @@ export default function BrandHeader({
   return (
     <header ref={ref} className="sticky top-0 z-20 w-full border-b border-white/10 bg-black/85 text-white/90 backdrop-blur-sm">
       <div className="px-4 py-3 sm:px-6">
-        <div className="flex min-h-[46px] items-center justify-between gap-4">
+        <div className="flex min-h-[46px] items-center justify-between gap-2 sm:gap-4">
           <div className="flex min-w-0 items-center gap-3">
             {logoHref ? (
               <Link href={logoHref} aria-label="LinkDrop home" title="LinkDrop" className="inline-flex shrink-0 items-center justify-center">

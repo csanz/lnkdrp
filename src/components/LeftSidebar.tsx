@@ -1953,7 +1953,13 @@ export default function LeftSidebar({
   }, [deleteDocOpen, deleteDocTarget?.id]);
 
   return (
-    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[var(--sidebar-edge)] bg-[var(--sidebar-bg)]">
+    /* `100svh`, not `100vh`. On a phone `vh` is the viewport with the browser chrome *retracted*,
+       so the drawer was ~90px taller than the screen and its foot — the credits row and the whole
+       account block, which is pinned outside the inner scroll area — sat under Safari's toolbar
+       with no way to scroll to it. The account menu opens upward from there, so sign-out and the
+       workspace switcher were unreachable on a phone entirely. `svh` is the smallest viewport,
+       which is the one that is always visible. Matches the 70 other uses in this codebase. */
+    <aside className="lnkdrp-sidebar relative z-50 h-[100svh] w-[312px] shrink-0 overflow-hidden border-r border-[var(--sidebar-edge)] bg-[var(--sidebar-bg)]">
       {/* Two parts, and the split is deliberate: everything you *browse* scrolls — the logo, the
           workspace pill, the nav items and the lists — and the foot that says who you are and what
           you have left stays put at the bottom. Pinning the header was wrong (it ate half a laptop
@@ -2252,7 +2258,12 @@ export default function LeftSidebar({
                   className={[
                     // Revealed on hover/focus: the list modal is otherwise only reachable through
                     // "See more", which a short list never shows — and archived items live there.
-                    "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-0 transition-opacity hover:text-[var(--fg)]",
+                    /* Faint, not hidden. A phone has no `:hover`, so `opacity-0` meant these were
+                       invisible yet still hit-testable — a tap near the row's edge opened a menu
+                       nobody could see. `focus-visible` is no fallback either: focus arrives only
+                       after the tap that needed the control visible. Same treatment as the doc-row
+                       menu next to it (DocActionsMenu.tsx:837). */
+                    "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-45 transition-opacity hover:text-[var(--fg)]",
                     "group-hover:opacity-100 focus-visible:opacity-100",
                   ].join(" ")}
                   onClick={() => {
@@ -2441,7 +2452,12 @@ export default function LeftSidebar({
                   className={[
                     // Revealed on hover/focus: the list modal is otherwise only reachable through
                     // "See more", which a short list never shows — and archived items live there.
-                    "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-0 transition-opacity hover:text-[var(--fg)]",
+                    /* Faint, not hidden. A phone has no `:hover`, so `opacity-0` meant these were
+                       invisible yet still hit-testable — a tap near the row's edge opened a menu
+                       nobody could see. `focus-visible` is no fallback either: focus arrives only
+                       after the tap that needed the control visible. Same treatment as the doc-row
+                       menu next to it (DocActionsMenu.tsx:837). */
+                    "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-45 transition-opacity hover:text-[var(--fg)]",
                     "group-hover:opacity-100 focus-visible:opacity-100",
                   ].join(" ")}
                   onClick={() => {
@@ -2523,7 +2539,7 @@ export default function LeftSidebar({
                           className={[
                             // IMPORTANT: keep this out of layout so it doesn't affect row height.
                             "absolute right-3.5 top-1/2 -translate-y-1/2 rounded-md text-[var(--muted)]",
-                            "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
+                            "opacity-45 transition-opacity group-hover:opacity-100 focus:opacity-100",
                           ].join(" ")}
                           onPointerDown={(e) => e.stopPropagation()}
                           onClick={(e) => {
@@ -2655,7 +2671,12 @@ export default function LeftSidebar({
                   className={[
                     // Revealed on hover/focus: the list modal is otherwise only reachable through
                     // "See more", which a short list never shows — and archived items live there.
-                    "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-0 transition-opacity hover:text-[var(--fg)]",
+                    /* Faint, not hidden. A phone has no `:hover`, so `opacity-0` meant these were
+                       invisible yet still hit-testable — a tap near the row's edge opened a menu
+                       nobody could see. `focus-visible` is no fallback either: focus arrives only
+                       after the tap that needed the control visible. Same treatment as the doc-row
+                       menu next to it (DocActionsMenu.tsx:837). */
+                    "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-45 transition-opacity hover:text-[var(--fg)]",
                     "group-hover:opacity-100 focus-visible:opacity-100",
                   ].join(" ")}
                   onClick={() => {

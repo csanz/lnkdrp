@@ -248,9 +248,11 @@ export default function IntroduceYourself({
               <label className="text-xs font-medium text-white/70" htmlFor="project-intro-name">
                 Name (optional)
               </label>
+              {/* 16px on phones: under that, iOS Safari zooms on focus and does not zoom back,
+                  leaving a reader magnified mid-form on somebody else's document. */}
               <input
                 id="project-intro-name"
-                className="mt-2 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/15"
+                className="mt-2 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/15 sm:text-sm"
                 placeholder="Your name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -266,7 +268,7 @@ export default function IntroduceYourself({
                 id="project-intro-email"
                 type="email"
                 inputMode="email"
-                className="mt-2 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/15"
+                className="mt-2 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-base text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/15 sm:text-sm"
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}

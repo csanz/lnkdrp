@@ -130,7 +130,8 @@ export default function SidebarProjectsModal({
 
                   <button
                     type="button"
-                    className="absolute right-2 top-2.5 rounded-lg p-1 text-[var(--muted-2)] opacity-0 transition-opacity hover:bg-[var(--panel)] hover:text-[var(--fg)] focus:opacity-100 group-hover:opacity-100"
+                    // Faint rather than hidden: on a touch screen `opacity-0` is an invisible live control.
+                    className="absolute right-2 top-2.5 rounded-lg p-1 text-[var(--muted-2)] opacity-45 transition-opacity hover:bg-[var(--panel)] hover:text-[var(--fg)] focus:opacity-100 group-hover:opacity-100"
                     aria-label="Project actions"
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {

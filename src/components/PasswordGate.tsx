@@ -160,7 +160,13 @@ export default function PasswordGate({
                 if (!password.trim() || submitting) return;
                 void unlock();
               }}
-              className="mt-2 h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 text-sm text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+              /*
+               * 16px on phones, not 14. iOS Safari zooms the viewport when a focused input's font
+               * is under 16px, and it does not zoom back out, so a recipient typing a password
+               * ended up magnified and had to pinch their way out of somebody else's document.
+               * `sm:text-sm` keeps the tighter size everywhere a phone is not involved.
+               */
+              className="mt-2 h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 text-base text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] sm:text-sm"
               placeholder="Enter password"
               autoComplete="current-password"
               autoFocus

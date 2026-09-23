@@ -2184,12 +2184,16 @@ export function PdfJsViewer({
                  Summary's is. */
               <a
                 href={backHref}
-                className="inline-flex min-w-0 shrink-0 items-center rounded-2xl border border-white/10 bg-white/5 p-1.5 text-white/80 transition-colors hover:text-white"
+                /* `min-w-0` without `shrink-0`: on a data-room link this pill carries the project
+                   name, and at 390px the left group (logo, mark, this, Summary) measured ~360px
+                   before the right group's ~220px. The root is `overflow-hidden`, so what fell off
+                   was Download PDF — the one control a recipient came for. The pill yields first. */
+                className="inline-flex min-w-0 items-center rounded-2xl border border-white/10 bg-white/5 p-1.5 text-white/80 transition-colors hover:text-white"
                 title={backLabel ? `Back to ${backLabel}` : "Back"}
               >
                 <span className="inline-flex h-8 min-w-0 items-center gap-1.5 rounded-xl px-3 text-xs font-medium hover:bg-white/10">
                   <span aria-hidden="true">←</span>
-                  <span className="max-w-[160px] truncate">{backLabel || "Back"}</span>
+                  <span className="max-w-[84px] truncate sm:max-w-[160px]">{backLabel || "Back"}</span>
                 </span>
               </a>
             ) : null}
