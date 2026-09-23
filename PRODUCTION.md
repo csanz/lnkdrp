@@ -82,7 +82,7 @@ In the order they bite:
    partners by name as readers of a Series A deck (typed by hand into the Personal workspace, not
    seeded). Clean or reseed that workspace and retake all four before the page is linked anywhere.
    Metis task `mt_EdI_sXudDM`; needs the owner's signed-in browser.
-5. **Plain secrets** in Vercel so support can see who is writing (`docs/SUPPORT.md`).
+5. **Plain secrets** in Vercel so support can see who is writing (setup notes are outside the repo, in `private-docs/SUPPORT.md`).
 6. **Realtime on Fly** (`DEPLOY.md` 6). Not a blocker for a closed beta, since polling works, but
    the "sidebar flips to Connected instantly" story depends on it.
 7. **Monitoring**: uptime check on `/api/health`, Resend on a paid plan before view emails ramp,

@@ -116,7 +116,7 @@ export default async function RootLayout({
           Plain chat widget: how a customer reaches support from inside the product. Mounted only
           when `NEXT_PUBLIC_PLAIN_CHAT_APP_ID` is set; the component itself stays off recipient
           pages. A signed-in user's email is signed server-side here so Plain opens on their own
-          threads without a verification step. See docs/SUPPORT.md.
+          threads without a verification step. Setup notes live outside the repo (private-docs/SUPPORT.md).
         */}
         {plainChatAppIdValue ? <PlainChat appId={plainChatAppIdValue} customer={plainChatCustomer(initialSession?.user)} /> : null}
       </body>
