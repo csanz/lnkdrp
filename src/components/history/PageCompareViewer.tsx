@@ -26,6 +26,7 @@ import type { PageChange } from "@/components/history/PageDiffStrip";
 import { useDiffRegions } from "@/components/history/useDiffRegions";
 import type { DiffBox } from "@/lib/history/pageDiffRegions";
 import { diffPresentation } from "@/lib/history/wordDiff";
+import { isReadableText } from "@/lib/history/textReadability";
 
 type Mode = "side" | "slider" | "fade";
 
@@ -128,6 +129,20 @@ function PageNote({ text }: { text: string }) {
  * The colours are the ones on the page marks, so red and green mean the same thing throughout.
  */
 function WordDiff({ previous, next }: { previous: string; next: string }) {
+  /**
+   * A page whose fonts were subset without a character map extracts as glyph indices, not words.
+   * Nothing errors - they are valid Unicode - so it only shows up on screen, as a wall of symbols.
+   * The images still compare fine, so say that rather than printing the noise.
+   */
+  if (!isReadableText(previous) || !isReadableText(next)) {
+    return (
+      <div className="text-[11px] leading-relaxed text-[var(--muted)]">
+        This page&apos;s text could not be read: its fonts were embedded without a character map, so the PDF stores shapes
+        rather than letters. The page images above are still compared in full.
+      </div>
+    );
+  }
+
   const result = diffPresentation(previous, next);
 
   if (result.mode === "identical") {
