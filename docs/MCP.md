@@ -236,8 +236,9 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
   its project's default link but `lnkdrp_create_project_link` answers `plan_limit` (see "Project links"
   below). `limit: null` means unlimited (Pro); the three capped fields are `null` outright when the
   plan snapshot itself could not be read (same failure `plan`/`onDemand` degrade to for). `deepAnalytics` and
-  `recipientsCanBrowseVersions` are Pro-only and independent of `onDemand` — a pay-as-you-go Free workspace
-  stays on the basic analytics tier. `notMcpAccessible` names real product surfaces with no MCP tool at all
+  `recipientsCanBrowseVersions` are Pro-only and independent of `onDemand` — a Free workspace on a legacy
+  pay-as-you-go subscription stays on the basic analytics tier (and since 2026-09-17 no new one can be
+  created: on-demand is Pro-only). `notMcpAccessible` names real product surfaces with no MCP tool at all
   (`requestRepos` — whose `reason` also says whether the feature is enabled on this deployment,
   `NEXT_PUBLIC_FEATURE_REQUESTS`; `downloadAccessRequests`), so their absence from
   `listTools` reads as "not built yet" rather than "this workspace lacks the feature" or a silently

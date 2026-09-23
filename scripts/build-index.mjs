@@ -20,6 +20,7 @@
  * generated. Those belong in each file's own header comment, where they sit beside the code they
  * describe and are read by anyone who opens it; `docs/FEATURES.md` remains the map of intent.
  */
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -29,6 +30,28 @@ const OUT = join(ROOT, "INDEX.md");
 /** Directories that hold no source worth mapping. */
 const SKIP = new Set(["node_modules", ".next", ".git", "tmp", "dist", "build", "coverage", ".vercel", "public"]);
 const CODE = /\.(ts|tsx|mjs|js|jsx)$/;
+
+/**
+ * Every file git tracks, or null when git cannot answer.
+ *
+ * The map has to describe the *repository*, not this working tree. Generating it from the
+ * filesystem baked three untracked local-only scripts into the committed INDEX.md, which made
+ * `--check` and `tests/lib/indexMap.test.ts` fail for everyone whose working tree was not this
+ * one - the same class of mistake as committing an import whose module is untracked, and caught
+ * the same way.
+ */
+function trackedFiles() {
+  try {
+    const out = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28 });
+    const files = out.split("\0").filter(Boolean);
+    return files.length ? new Set(files) : null;
+  } catch {
+    // No git (a tarball, a sandbox): fall back to the filesystem rather than produce nothing.
+    return null;
+  }
+}
+
+const TRACKED = trackedFiles();
 
 /** Every source file under `dir`, repo-relative, sorted, with POSIX separators. */
 function walk(dir) {
@@ -43,7 +66,7 @@ function walk(dir) {
     if (e.name.startsWith(".") || SKIP.has(e.name)) continue;
     const rel = `${dir}/${e.name}`;
     if (e.isDirectory()) out.push(...walk(rel));
-    else if (CODE.test(e.name) && !e.name.endsWith(".d.ts")) out.push(rel);
+    else if (CODE.test(e.name) && !e.name.endsWith(".d.ts") && (!TRACKED || TRACKED.has(rel))) out.push(rel);
   }
   return out.sort();
 }
@@ -56,7 +79,13 @@ function walk(dir) {
  * form appears in this codebase.
  */
 function exportsOf(rel) {
-  const src = readFileSync(join(ROOT, rel), "utf8");
+  let src;
+  try {
+    src = readFileSync(join(ROOT, rel), "utf8");
+  } catch {
+    // A dangling symlink or an unreadable file costs one missing export list, not the code map.
+    return [];
+  }
   const names = new Set();
   const add = (n) => {
     const name = String(n ?? "").trim();

@@ -36,6 +36,7 @@ import {
   AdminTd,
   AdminTh,
   AdminTr,
+  DetailGrid,
   DetailPanel,
   DetailRow,
   IdCell,
@@ -71,7 +72,6 @@ type ErrorRow = {
   model: string | null;
   fingerprint: string | null;
   meta: unknown;
-  lastSeenAt: string | null;
 };
 
 type ErrorsResponse = { ok: boolean; items: ErrorRow[]; nextCursor: string | null };
@@ -84,17 +84,27 @@ const CATEGORIES = ["api", "worker", "cron", "stripe", "db", "auth", "ai", "cred
 const SEVERITY_TONE: Record<string, AdminTone> = { error: "danger", warn: "warning", info: "info" };
 
 /**
- * What the search box means.
+ * What the search box means, and what it deliberately leaves out.
  *
- * The API has no free-text search — it filters on exact `code`, `requestId` and `fingerprint` —
- * so one box that guessed wrong would silently return nothing. The shape of the value says which
- * field it is: a request id is a uuid, a fingerprint is a hex digest, and anything else is a code.
+ * The API has no free-text search — every filter is an exact match — so a box that guessed wrong
+ * would return nothing and look broken. The shape of the value decides: a fingerprint is exactly
+ * 32 hex characters (`FINGERPRINT_HEX_LEN`, a truncated sha256), a workspace id is a 24-character
+ * ObjectId, and anything else is a code.
+ *
+ * `requestId` is **not** offered, though the API filters on it and the schema stores it. Almost
+ * nothing populates it: `errorJson` writes the great majority of these rows and passes neither a
+ * `Request` nor an explicit id, and the only other source is an `x-request-id` header that this
+ * deployment does not set (Vercel sends `x-vercel-id`). Offering a filter that always returns
+ * nothing teaches an admin to distrust the whole page.
+ *
+ * Codes are upper-case by construction (`UNHANDLED_EXCEPTION`), and the match is exact, so a
+ * lower-case search is normalised rather than silently missed.
  */
-function searchParamFor(term: string): "requestId" | "fingerprint" | "code" {
+function searchParamFor(term: string): { key: "fingerprint" | "workspaceId" | "code"; value: string } {
   const s = term.trim();
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return "requestId";
-  if (/^[0-9a-f]{16,}$/i.test(s)) return "fingerprint";
-  return "code";
+  if (/^[0-9a-f]{32}$/i.test(s)) return { key: "fingerprint", value: s.toLowerCase() };
+  if (/^[0-9a-f]{24}$/i.test(s)) return { key: "workspaceId", value: s };
+  return { key: "code", value: s.toUpperCase() };
 }
 
 /** First line of a stack, or the message: what an admin scans down the column for. */
@@ -137,7 +147,10 @@ export default function AdminErrorsPage() {
         if (severity) qs.set("severity", severity);
         if (category) qs.set("category", category);
         const t = term.trim();
-        if (t) qs.set(searchParamFor(t), t);
+        if (t) {
+          const { key, value } = searchParamFor(t);
+          qs.set(key, value);
+        }
         if (append && from) qs.set("cursor", from);
 
         const json = await fetchJson<ErrorsResponse>(`/api/admin/errors?${qs.toString()}`);
@@ -146,7 +159,12 @@ export default function AdminErrorsPage() {
         setCursor(json.nextCursor ?? null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not load errors");
-        if (!append) setRows([]);
+        // Drop the cursor with the rows. Keeping it put "Load more" under an empty table, paging
+        // a query that had already failed.
+        if (!append) {
+          setRows([]);
+          setCursor(null);
+        }
       } finally {
         setLoading(false);
       }
@@ -177,6 +195,7 @@ export default function AdminErrorsPage() {
       .slice(0, 4);
   }, [rows]);
 
+  const filtered = Boolean(term.trim() || severity || category || env);
   const errorCount = rows.filter((r) => r.severity === "error").length;
   const open = openId ? (rows.find((r) => r.id === openId) ?? null) : null;
 
@@ -192,7 +211,11 @@ export default function AdminErrorsPage() {
         {error ? <AdminAlert className="mt-3">{error}</AdminAlert> : null}
 
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          <StatTile label="Loaded" value={String(rows.length)} hint={cursor ? "More to load" : "Everything matching"} />
+          <StatTile
+            label="Loaded"
+            value={String(rows.length)}
+            hint={cursor ? "More to load" : filtered ? "Everything in the window" : "Everything in the last 24h"}
+          />
           <StatTile label="Errors" value={String(errorCount)} hint="Severity error, not warn or info" />
           <StatTile
             label="Distinct faults"
@@ -278,25 +301,37 @@ export default function AdminErrorsPage() {
                 <AdminTh>What happened</AdminTh>
                 <AdminTh>Where</AdminTh>
                 <AdminTh align="right">Status</AdminTh>
-                <AdminTh>Request</AdminTh>
               </>
             }
           >
             {loading && !rows.length ? (
-              <AdminTableMessage colSpan={7}>Loading errors…</AdminTableMessage>
+              <AdminTableMessage colSpan={6}>Loading errors…</AdminTableMessage>
             ) : !rows.length ? (
               <AdminTableEmpty
-                colSpan={7}
+                colSpan={6}
                 title="Nothing recorded"
                 hint={
-                  term || severity || category || env
-                    ? "No event matches these filters in the window the API allows."
+                  filtered
+                    ? "No event matches these filters, within the 30 days the API allows."
                     : "No 5xx in the last 24 hours. ERROR_LOGGING_ENABLED must be true for production to record any."
                 }
               />
             ) : (
               rows.map((r) => (
-                <AdminTr key={r.id} onClick={() => setOpenId(r.id === openId ? null : r.id)}>
+                <AdminTr
+                  key={r.id}
+                  className={r.id === openId ? "cursor-pointer bg-[var(--panel-hover)]" : "cursor-pointer"}
+                  aria-selected={r.id === openId}
+                  tabIndex={0}
+                  title={r.id === openId ? "Close this error" : "Open this error"}
+                  onClick={() => setOpenId(r.id === openId ? null : r.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setOpenId(r.id === openId ? null : r.id);
+                    }
+                  }}
+                >
                   <AdminTd align="right" numeric>
                     <TimeCell value={r.createdAt} />
                   </AdminTd>
@@ -315,9 +350,6 @@ export default function AdminErrorsPage() {
                   <AdminTd align="right" numeric>
                     {r.statusCode ?? ADMIN_DASH}
                   </AdminTd>
-                  <AdminTd>
-                    {r.requestId ? <IdCell value={r.requestId} label="request id" /> : <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>}
-                  </AdminTd>
                 </AdminTr>
               ))
             )}
@@ -333,7 +365,7 @@ export default function AdminErrorsPage() {
         </AdminSection>
 
         {open ? (
-          <AdminSection title="Detail" description="The row you opened. Click it again in the table to close this.">
+          <AdminSection title="Detail" description="The row you opened. Choose it again in the table to close this.">
             <DetailPanel
               title={open.code ?? headline(open)}
               description={headline(open)}
@@ -343,11 +375,9 @@ export default function AdminErrorsPage() {
                 </Button>
               }
             >
+              <DetailGrid columns={2}>
               <DetailRow label="When">
                 <TimeCell value={open.createdAt} />
-              </DetailRow>
-              <DetailRow label="Last seen">
-                <TimeCell value={open.lastSeenAt} />
               </DetailRow>
               <DetailRow label="Environment">{open.env ?? ADMIN_DASH}</DetailRow>
               <DetailRow label="Route">{open.route ? `${open.method ? `${open.method} ` : ""}${open.route}` : ADMIN_DASH}</DetailRow>
@@ -368,6 +398,7 @@ export default function AdminErrorsPage() {
                 {open.docId ? <IdCell value={open.docId} label="doc id" href={`/a/data/docs/${encodeURIComponent(open.docId)}`} /> : ADMIN_DASH}
               </DetailRow>
               <DetailRow label="Model">{open.model ?? ADMIN_DASH}</DetailRow>
+              </DetailGrid>
             </DetailPanel>
 
             {open.stack ? (

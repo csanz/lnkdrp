@@ -262,7 +262,7 @@ export default function TermsOfServicePage() {
           <section>
             <h2 className="mb-3 font-serif text-2xl tracking-tight text-white">13. Termination</h2>
             <p className="mb-4 leading-6">
-              You may stop using the Service at any time. To close your account, contact us at hi@lnkdrp.com; we do not currently offer self-service account deletion. We may suspend or terminate your account immediately, without prior notice, if you violate these Terms or engage in fraudulent, abusive, or illegal activity.
+              You may stop using the Service at any time, and you can delete your account yourself from your dashboard. Your account stops working immediately — your API keys are revoked and share links in workspaces you own alone stop resolving — and the data is erased 30 days later, which is the window in which you can change your mind by emailing hi@lnkdrp.com. We do not yet offer self-service data export, so to receive a copy of your data, email us before you delete. We may suspend or terminate your account immediately, without prior notice, if you violate these Terms or engage in fraudulent, abusive, or illegal activity.
             </p>
             <p className="leading-6">
               Upon termination, your right to use the Service will cease and your share links will stop working. We may delete Your Content and account data, though we reserve the right to retain certain information as required by law or for legitimate business purposes (for example, billing records). We are not obligated to provide you with a copy of Your Content upon termination, so download anything you need beforehand.

@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 863 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 860 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -835,7 +835,6 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `scripts/ai-ask-repair.ts`
 - `scripts/audit-stored-blob-urls.ts`
 - `scripts/build-index.mjs`
-- `scripts/check-cursor-web-limits.mjs`
 - `scripts/credit-balances-reconcile.ts`
 - `scripts/cron/cron.account-purge.ts`
 - `scripts/cron/cron.analytics-reconcile.ts`
@@ -849,9 +848,7 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `scripts/cron/cron.stripe-credits-report.ts`
 - `scripts/cron/cron.usage-agg-reconcile.ts`
 - `scripts/cron/lib.ts` · runCronJob
-- `scripts/debug-doc-history.ts`
 - `scripts/dev-session-token.ts`
-- `scripts/diagnose-cursor-credits.mjs`
 - `scripts/doc-received-via-request-backfill.mjs`
 - `scripts/doc-view-counters-recount.ts`
 - `scripts/docchange-from-upload-repair.ts`
