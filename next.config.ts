@@ -102,6 +102,20 @@ const nextConfig: NextConfig = {
         hostname: "lh3.googleusercontent.com",
       },
     ],
+    /**
+     * Which `quality` values `next/image` is allowed to ask the optimiser for.
+     *
+     * Next 16 defaults this to `[75]` and silently serves 75 for anything not listed — no warning,
+     * no error, just a `&q=75` in the URL. The homepage product shots pass `quality={90}` for a
+     * reason (at 75 the compressor spends its budget on the large flat areas of a screenshot and
+     * takes it out of the 11px labels, which is the only part anyone is trying to read), and that
+     * prop had been doing nothing since the day it was written. Verified against the live page:
+     * the request was `?url=/images/home/agents.png&w=1920&q=75`.
+     *
+     * Kept to the two values actually used, because every entry here is a size the optimiser may
+     * be asked to generate and cache.
+     */
+    qualities: [75, 90],
   },
   /**
    * In dev, ignore noisy filesystem churn (sync tools / caches) that can cause
