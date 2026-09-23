@@ -6,38 +6,39 @@ that day.
 
 ## 1. Auto-response (do this first)
 
-Settings → Auto-responses → New. Trigger: thread created. Delay: 1 minute (so a human or Ari
-answering inside that minute means no double reply). Channels: chat and email.
+Settings → Auto-responses → New. Name "First reply". Trigger: thread created (the only one).
+Channels: untick Slack, Discord and API; keep Email and Chat. No conditions. The form has no
+delay setting, so it sends at once. Done 2026-09-23; check the toggle in the list is on.
 
 ```
 Thanks {{ customer.shortName }}, we've got it and someone will reply within a business day.
 Your reference is {{ thread.ref }}.
 ```
 
-## 2. Route chat to Ari
+## 2. Route chat to the agent
 
-Workflows → New workflow (or type this into "Ask Sidekick to build a workflow"):
+First: Plain AI must be on (`https://app.plain.com/~/ai`) and the agent created, or "Assign to
+user" cannot find it. Then Workflows → New workflow, built by hand. Three blocks, nothing else:
 
-```
-When a thread is created on the chat channel, assign it to Ari. If the thread's first customer
-message is about billing, invoices, refunds, cancelling a subscription, or deleting an account,
-apply the label "Billing" and assign it to Christian instead.
-```
+1. **Start**: change the trigger from Manual to **Thread created**.
+2. **If/else**: Support channel **IS** Chat. Leave Else empty.
+3. **Assign to user** on the If branch: the agent.
 
-Built by hand: trigger **Thread created**; condition **Thread channel** is Chat; action
-**Assign to user** → Ari. Add a second branch with an **AI prompt condition** reading
-"Match if the customer is asking about billing, invoices, refunds, cancelling a subscription, or
-deleting their account" whose Yes branch applies a `Billing` label and assigns to you.
+Name it "Chat to <agent name>" and Publish. Do not use Sidekick for this: it built the billing
+branch backwards twice and could not resolve the agent. The billing branch is gone on purpose;
+the custom instructions below hand billing to a human.
 
 Then Ari → Preferences: **Shadow mode** first. Send five test questions from the chat bubble
 (how do share links work, what does Pro cost, why can't I see who opened my link, how do I
 connect Claude Code, how do I delete my account). When the drafts read right, switch to **Live**.
 Add the email channel to the routing rule a week later, once chat has proven it.
 
-## 3. Ari custom instructions
+## 3. Agent custom instructions
 
 Ari → Preferences → Custom instructions. Product facts live on lnkdrp.com/help (the sitemap
-knowledge source), not here; this is behaviour only.
+knowledge source), not here; this is behaviour only. The agent's public name is not "Ari";
+replace "lnkdrp's AI support assistant" in the Introduction with "<name>, lnkdrp's AI support
+assistant" once the name is chosen (shortlist: Skip, Glide, Fold, Dart, Pilot).
 
 ```
 About us
