@@ -1,7 +1,8 @@
 /**
  * Public pricing page.
  *
- * Free vs Pro side by side. Links, projects, analytics and collaborators are the product; the AI
+ * Free vs Pro side by side. Documents, projects, analytics and collaborators are what a plan caps
+ * (a document carries as many links as you like); the AI
  * summary and AI compare cost credits on every plan (summary 1/2/5, compare 2/5/12 by tier); letting
  * recipients browse versions is the Pro version feature (2026-09-13 decision, see
  * docs/prds/lnkdrp-credit-features.md). A compact "How credits work"
@@ -187,6 +188,7 @@ export default async function PricingPage() {
                   "Unlimited documents and share links",
                   "Unlimited projects",
                   "Deep analytics: who opened it, time per page, full history",
+                  "A brief of every visit, minutes after the reader is done, 1 credit",
                   "Recipients can browse every version and see what changed",
                   `${INCLUDED_CREDITS_PER_CYCLE} credits a month, about ${comparesFor(INCLUDED_CREDITS_PER_CYCLE)} AI compares at standard quality`,
                   `${plural(PRO_INCLUDED_COLLABORATORS, "teammate")} who can upload and share · unlimited free viewers`,
@@ -250,7 +252,7 @@ export default async function PricingPage() {
                   <Link href="/credits" className="underline underline-offset-4 hover:text-white/70">
                     Buy a credit pack
                   </Link>{" "}
-                  from {CHEAPEST_PACK_PRICE} on Free. On Pro, turn on on-demand instead: $0.10 per credit, billed through Stripe,
+                  from {CHEAPEST_PACK_PRICE} on Free. On Pro, turn on on-demand instead: {CREDITS_COPY.perCreditUsd} per credit, billed through Stripe,
                   under a hard spend limit you set. Unused included credits do not roll over.
                 </p>
               </div>
@@ -269,7 +271,7 @@ export default async function PricingPage() {
                       { label: "Summary and key points", sub: "Automatic on every link, at the basic level", costs: ["1", "2", "5"], soon: false },
                       { label: "AI compare", sub: "What changed between two versions", costs: ["2", "5", "12"], soon: false },
                       { label: "AI review", sub: "Scores a document someone sent you against the criteria you set, and explains the score. Priced per document.", costs: ["2", "5", "12"], soon: true },
-                      { label: "Viewer follow-up briefs", sub: "A short brief on one viewer: which pages they lingered on, whether they came back, and a suggested next step. Priced per brief.", costs: ["1", "1", "1"], soon: true },
+                      { label: "Visit brief", sub: "A few minutes after a recipient stops reading: what held them, what they skipped, whether they came back. Automatic on Pro; one credit per visit, no quality level to choose.", costs: ["1", "1", "1"], soon: false },
                       { label: "Recipient Q&A", sub: "Readers ask the document questions on the share page. You set a cap per reader and per link, so nobody can run up your credits. Priced per answered question.", costs: ["1", "2", "5"], soon: true },
                     ].map((row) => (
                       <tr key={row.label} className={row.soon ? "text-white/45" : undefined}>
@@ -372,19 +374,19 @@ export default async function PricingPage() {
                   // eight lines under a card saying 10 - the cap was 3 when the sentence was
                   // written, and the commit that raised it swept the interpolated copy and could
                   // not see this one.
-                  a: `Yes. Give a document a link per audience: one per investor, one per counterparty. Each link carries its own label, password, download switch, expiry and stats, and you never upload the file again. Links are not capped on any plan. Free counts shared documents (${FREE_DOCUMENTS}), not the links on them, so three investor links on one deck use one slot.`,
+                  a: `Yes. Give a document a link per audience: one per investor, one per counterparty. Each link carries its own label, password, download switch, expiry and stats, and you never upload the file again. Document links are not capped on any plan. Free counts shared documents (${FREE_DOCUMENTS}), not the links on them, so three investor links on one deck use one slot. Giving a *project* more than one link is a Pro feature.`,
                 },
                 {
                   q: "Is Pro per person or per workspace?",
-                  a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} people beyond the owner who can upload, share and replace. Anyone else can be invited as a **viewer** — free, unlimited, and able to see every document and all the analytics, but not to change anything. Agents never take a seat.`,
+                  a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} people beyond the owner who can upload, share and replace. Anyone else can be invited as a viewer — free, unlimited, and able to see every document and all the analytics, but not to change anything. Agents never take a seat.`,
                 },
                 {
                   q: `I already have more than ${FREE_DOCUMENTS} shared documents. What happens?`,
-                  a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new documents and projects wait until you archive some or upgrade. Existing links never stop working, and you can keep adding links to the documents you already have. Links are not capped on any plan.",
+                  a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new documents and projects wait until you archive some or upgrade. Existing links never stop working, and you can keep adding links to the documents you already have — document links are not capped on any plan.",
                 },
                 {
                   q: "What do credits pay for?",
-                  a: `AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Every Free workspace, personal or team, starts with ${FREE_STARTER_CREDITS} credits, one time, and uses at most ${CREDITS_COPY.freeDailyCap} credits a day; once they run out, ${whatHappensAfterFreeCredits()}. Pro includes ${INCLUDED_CREDITS_PER_CYCLE} credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.`,
+                  a: `AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Every Free workspace, personal or team, starts with ${FREE_STARTER_CREDITS} credits, one time, and uses at most ${CREDITS_COPY.freeDailyCap} credits a day; once they run out, ${whatHappensAfterFreeCredits()}. Pro includes ${INCLUDED_CREDITS_PER_CYCLE} credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are ${CREDITS_COPY.perCreditUsd} each, billed monthly through Stripe under a hard spend limit you set.`,
                 },
                 {
                   q: "What happens when I run out of credits?",

@@ -145,7 +145,7 @@ export function planLimitUsageSuffix(opts: { used?: number; max?: number; reques
  *
  * Title and reason come from the shared `UPSELL_COPY` registry so the inline notice and the
  * upgrade modal never drift. `used`/`max` are optional; when present they are folded into the
- * message. The one non-Free case (Pro with its included collaborator already in place) keeps its
+ * message. The one non-Free case (Pro with its included collaborators already in place) keeps its
  * own "contact us for seats" copy. `analytics_history` (a `402` from the deep-analytics routes)
  * reads the registry's `analytics_history` entry directly, since it is a feature gate and not
  * a counted cap.
@@ -153,9 +153,14 @@ export function planLimitUsageSuffix(opts: { used?: number; max?: number; reques
 export function planLimitPrompt(limit: PlanLimitKey, opts: { used?: number; max?: number } = {}): PlanLimitPrompt {
   const max = typeof opts.max === "number" && Number.isFinite(opts.max) ? Math.max(0, Math.floor(opts.max)) : null;
   if (limit === "collaborators" && max && max > 0) {
+    // `max` comes from the plan snapshot, so this moved from 1 to 3 without anyone editing it.
+    // The viewer half is the point: it is why three is enough, and the old copy dropped it and
+    // sent a paying customer to email us for a seat instead.
     return {
-      title: "This workspace includes one collaborator",
-      message: "Pro includes 1 collaborator. Want more seats? Contact us and we will add them to your workspace.",
+      title: `This workspace includes ${max} ${max === 1 ? "collaborator" : "collaborators"}`,
+      message:
+        `Pro includes ${max} ${max === 1 ? "person" : "people"} beyond the owner who can upload and share. ` +
+        "Invite anyone else as a viewer — viewers are free and unlimited, and can see every document and all the analytics.",
       secondaryLabel: "Manage members",
     };
   }

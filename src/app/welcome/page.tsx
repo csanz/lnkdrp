@@ -17,10 +17,12 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
+import { Types } from "mongoose";
 
 import { authOptions } from "@/lib/auth";
 import { connectMongo } from "@/lib/mongodb";
 import { UserModel } from "@/lib/models/User";
+import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { userNeedsFirstRun } from "@/lib/onboarding/firstRun";
 import WelcomeClient from "./WelcomeClient";
 
@@ -48,11 +50,25 @@ export default async function WelcomePage() {
 
   const full = (user?.name ?? "").trim();
   const cut = full.indexOf(" ");
+
+  /**
+   * The workspace already exists — `ensurePersonalOrgForUserId` runs during sign-in — so step one
+   * renames it rather than creating it. That is the difference between asking someone to set
+   * something up and asking them what to call the thing they already have.
+   *
+   * It arrives named "Personal", which is the default and not a choice: every personal workspace
+   * in the database carries that name, and `workspaceCustomer.ts` already notes it "reads oddly as
+   * a bill-to name on its own". The field is therefore offered empty, with "Personal" as the
+   * placeholder — a prefilled default is something to delete before you can answer.
+   */
+  const { orgId } = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(userId) });
+
   return (
     <WelcomeClient
       firstName={cut > 0 ? full.slice(0, cut) : full}
       lastName={cut > 0 ? full.slice(cut + 1).trim() : ""}
       email={(user?.email ?? "").trim()}
+      orgId={String(orgId)}
     />
   );
 }

@@ -13,9 +13,19 @@
 import Link from "next/link";
 import PublicFooter from "@/components/PublicFooter";
 import { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, PRO_SEATS_COPY } from "@/lib/client/planLimit";
+import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
 import PublicHeader from "@/components/PublicHeader";
 
 const LAST_UPDATED = "September 18, 2026";
+
+/**
+ * The packs, from the catalog checkout actually charges.
+ *
+ * These were written out as "30 credits for $5, 60 for $9, or 300 for $39" and survived a
+ * repricing, leaving a page the Terms fold in quoting prices Stripe would refuse. A contract term
+ * is the last place a hand-typed price belongs.
+ */
+const PACK_LIST = CREDIT_PACKS.map((p) => `${p.credits} credits for ${formatPackPrice(p.priceCents)}`).join(", ");
 
 /**
  * Render the TermsOfServicePage UI.
@@ -192,7 +202,7 @@ export default function TermsOfServicePage() {
               <strong>Pro:</strong> unlimited share links and projects, deep analytics with full history, a version list recipients can browse, and collaborators. {PRO_SEATS_COPY} collaborators are included beyond the workspace owner. A collaborator is someone who can upload, share or replace documents; people invited as <strong>viewers</strong>, who can read documents and analytics but change nothing, are free and unlimited. Collaborators are people; software agents acting under a collaborator's account never take a seat. Additional collaborator seats will be announced and priced before they are billed.
             </p>
             <p className="mb-4 leading-6">
-              <strong>AI features and credits:</strong> AI features are metered in credits. Links, uploads, replacements, and stats never need credits. The automatic summary written for every upload costs one credit. It costs nothing when your own AI agent writes the summary through our MCP server or API, and for files that recipients upload through a request or replace link. AI compare costs more, by level, and every cost is listed on the pricing page before it runs. Pro workspaces receive {CREDITS_COPY.proPerMonth} credits each billing cycle, which do not roll over, and can buy more on demand at $0.10 per credit under a spend limit you set. Free workspaces receive {CREDITS_COPY.freeStarter} starter credits, once, and can use at most {CREDITS_COPY.freeDailyCap} credits a day. Free workspaces may buy prepaid credit packs (30 credits for $5, 60 for $9, or 300 for $39); purchased credits are used after any starter or included credits, expire 12 months after purchase, and lift the Free daily limit for that workspace. Purchased credits stay with a workspace that later upgrades to Pro. A Free workspace whose starter credits are used may buy a pack or upgrade to Pro. When a workspace is out of credits, uploads still complete and links, tracking, and stats keep working; the AI summary is skipped and can be written later from the document page, and AI compare and other AI actions stop until credits are added or the workspace upgrades. We will not raise the credit cost of a feature without notice.
+              <strong>AI features and credits:</strong> AI features are metered in credits. Links, uploads, replacements, and stats never need credits. The automatic summary written for every upload costs one credit. It costs nothing when your own AI agent writes the summary through our MCP server or API, and for files that recipients upload through a request or replace link. AI compare costs more, by level, and every cost is listed on the pricing page before it runs. Pro workspaces receive {CREDITS_COPY.proPerMonth} credits each billing cycle, which do not roll over, and can buy more on demand at {CREDITS_COPY.perCreditUsd} per credit under a spend limit you set. Free workspaces receive {CREDITS_COPY.freeStarter} starter credits, once, and can use at most {CREDITS_COPY.freeDailyCap} credits a day. Free workspaces may buy prepaid credit packs ({PACK_LIST}); purchased credits are used after any starter or included credits, expire 12 months after purchase, and lift the Free daily limit for that workspace. Purchased credits stay with a workspace that later upgrades to Pro. A Free workspace whose starter credits are used may buy a pack or upgrade to Pro. When a workspace is out of credits, uploads still complete and links, tracking, and stats keep working; the AI summary is skipped and can be written later from the document page, and AI compare and other AI actions stop until credits are added or the workspace upgrades. We will not raise the credit cost of a feature without notice.
             </p>
             <p className="mb-4 leading-6">
               <strong>Pricing change, effective September 13, 2026:</strong> the automatic AI summary costs one credit. It was previously included. Starter credits already granted before that date are kept in full.

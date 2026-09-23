@@ -315,8 +315,26 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
 export async function checkLimit(
   orgId: string | Types.ObjectId,
   limit: LimitKey,
-  opts?: { adding?: number },
+  opts?: {
+    adding?: number;
+    /**
+     * The role being added, when that changes the answer.
+     *
+     * Only `collaborators` cares, and only about `viewer`. `getWorkspaceUsage` stopped counting
+     * viewers when Pro moved to three seats, but the *check* still had no idea what was being
+     * invited — so a workspace with three collaborators was refused a viewer invitation, while
+     * every screen promised viewers were free and unlimited. The count and the gate have to agree
+     * about what a seat is.
+     */
+    role?: string | null;
+  },
 ): Promise<LimitCheck> {
+  // A viewer takes no seat, so there is nothing to check: it is read-only (every mutating route
+  // gates above `viewer`) and `getWorkspaceUsage` does not count it.
+  if (limit === "collaborators" && (opts?.role ?? "").trim().toLowerCase() === "viewer") {
+    return { ok: true, warning: null };
+  }
+
   const plan = await getWorkspacePlan(orgId);
 
   // Feature gates are decided by plan alone: no usage query, no grace window.

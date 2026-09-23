@@ -24,7 +24,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Buy AI credits",
-  description: `Prepaid AI credit packs for LinkDrop: 30, 60 or 300 credits, used after your included credits and valid for ${PURCHASED_CREDITS_EXPIRY_MONTHS} months.`,
+  description: `Prepaid AI credit packs for LinkDrop: ${CREDIT_PACKS.map((p) => p.credits).join(", ")} credits, used after your included credits and valid for ${PURCHASED_CREDITS_EXPIRY_MONTHS} months.`,
 };
 
 async function readProPriceLabel(): Promise<string | null> {

@@ -10,6 +10,7 @@
  * refetched — and `loading.tsx` never flashes — on every keystroke.
  */
 
+import GetStartedActions from "@/components/onboarding/GetStartedActions";
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -425,7 +426,8 @@ export default function SearchPageClient() {
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-8 text-center text-sm text-[var(--muted)]">
-                    {q ? "No documents on this page match." : scope === "received" ? "No received documents yet." : "No documents yet. Upload one to get started."}
+                    {q ? "No documents on this page match." : scope === "received" ? "No received documents yet." : "No documents yet."}
+                    {q || scope === "received" ? null : <GetStartedActions />}
                   </div>
                 )}
               </section>

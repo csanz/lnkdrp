@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 860 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 875 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -250,6 +250,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/stripe/portal/route.ts` — `/api/stripe/portal` · POST, runtime
 - `src/app/api/stripe/subscription/resume/route.ts` — `/api/stripe/subscription/resume` · POST, runtime
 - `src/app/api/stripe/webhook/route.ts` — `/api/stripe/webhook` · POST, runtime
+- `src/app/api/support/plain/customer-cards/route.ts` — `/api/support/plain/customer-cards` · dynamic, POST, runtime
 - `src/app/api/tags/[tag]/docs/route.ts` — `/api/tags/:tag/docs` · GET, runtime
 - `src/app/api/tags/[tag]/route.ts` — `/api/tags/:tag` · DELETE, dynamic, PATCH, runtime
 - `src/app/api/tags/assignments/route.ts` — `/api/tags/assignments` · DELETE, dynamic, GET, POST, runtime
@@ -327,6 +328,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/doc/update/[code]/pageClient.tsx` · default
 - `src/app/error.tsx` · default
 - `src/app/login/EarlyAccessNotice.tsx` · EarlyAccessNotice
+- `src/app/login/QueueContext.tsx` · QueuedProvider, useQueued
 - `src/app/not-found.tsx` · default
 - `src/app/p/[shareId]/(room)/loading.tsx` · default
 - `src/app/p/[shareId]/IntroduceYourself.tsx` · default
@@ -467,6 +469,9 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/notifications/EmailCatalogList.tsx` · default
 - `src/components/notifications/NotificationPreferences.tsx` · default
 - `src/components/notifications/PreferenceExplainer.tsx` · default
+- `src/components/onboarding/FirstRunWelcome.tsx` · default
+- `src/components/onboarding/GetStartedActions.tsx` · default
+- `src/components/onboarding/OnboardingTopBar.tsx` · default
 - `src/components/people/ContributorsCard.tsx` · default
 - `src/components/project/ProjectHeaderActions.tsx` · default, ProjectHeaderPage
 - `src/components/project/ProjectIdentityRow.tsx` · default
@@ -607,7 +612,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/credits/packs.ts` · CREDIT_PACK_CURRENCY, CREDIT_PACKS, CreditPack, findCreditPack, findPurchasablePack, formatPackPrice, formatPerCredit, PACK_MARKUP_OVER_PRO, …
 - `src/lib/credits/purchases.ts` · expireCreditPurchases, grantCreditPack
 - `src/lib/credits/qualityDefaults.ts` · defaultHistoryQualityTierForPlan, getDefaultHistoryQualityTier, parseQualityTier, resolveHistoryQualityTier
-- `src/lib/credits/schedule.ts` · creditsForRun, INCLUDED_ACTIONS_AT_LAUNCH
+- `src/lib/credits/schedule.ts` · BRIEF_CREDITS, creditsForRun, INCLUDED_ACTIONS_AT_LAUNCH
 - `src/lib/credits/serviceCore.ts` · createCreditService
 - `src/lib/credits/snapshot.ts` · CreditsSnapshot, getCreditsSnapshot
 - `src/lib/credits/staleReservations.ts` · releaseStaleReservations, ReleaseStaleReservationsResult, StaleReservationRow
@@ -771,6 +776,8 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/sharePassword.ts` · decryptSharePassword, encryptSharePassword, hashSharePassword, shareAuthCookieName, shareAuthCookieValue, verifySharePassword
 - `src/lib/sidebarCache.ts` · ACTIVE_ORG_CHANGED_EVENT, ACTIVE_ORG_STORAGE_KEY, clearSidebarCache, DOC_LEAVING_EVENT, DocLeavingDetail, DOCS_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocLeaving, …
 - `src/lib/starredDocs.ts` · getStarredDocs, isDocStarred, moveStarredDoc, refreshStarredDocsFromServer, STARRED_DOCS_CHANGED_EVENT, StarredDoc, toggleStarredDoc, upsertStarredDocMeta, …
+- `src/lib/support/plain/cards.ts` · buildAccountCard, buildCards, buildErrorsCard, CARD_KEYS, CardKey, CustomerContext, ErrorContext, loadCustomerContext, …
+- `src/lib/support/plain/signature.ts` · configuredPlainSigningSecret, PLAIN_SIGNATURE_HEADER, signPlainBody, verifyPlainSignature
 - `src/lib/tags/palette.ts` · asTagColorKey, DEFAULT_TAG_COLOR, nextTagColor, TAG_COLOR_KEYS, TAG_COLORS, TagColorKey
 - `src/lib/tags/service.ts` · attachTag, deleteTag, detachTag, findOrCreateTag, listTags, listTagsPage, mergeTags, removeAllTagsFromTarget, …
 - `src/lib/tags/slug.ts` · isUsableTagName, normalizeTagName, TAG_NAME_MAX, tagSlug

@@ -21,6 +21,7 @@ import { useAuthEnabled } from "@/app/providers";
 import Spinner from "@/components/ui/Spinner";
 import PricingCta from "@/app/pricing/PricingCta";
 import { type CreditPack, formatPackPrice, formatPerCredit } from "@/lib/credits/packs";
+import { PRO_SEATS_COPY } from "@/lib/client/planNumbers";
 import { formatShortDate } from "@/lib/format/date";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
@@ -309,7 +310,7 @@ function Body({
             </h2>
             <p className="mt-3 max-w-xl text-sm leading-6 text-black/60">
               Buying credits more than once a month? A month of Pro costs less than the {best.credits}-credit pack, and
-              adds unlimited documents and projects, deep analytics on who read what, and a collaborator.
+              adds unlimited documents and projects, deep analytics on who read what, and {PRO_SEATS_COPY} teammates plus unlimited free viewers.
             </p>
           </div>
           <div className={cn("w-full")}>

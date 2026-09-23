@@ -166,7 +166,8 @@ export async function POST(request: Request) {
     // the workspace's collaborator allowance (Free 0, Pro 1). Existing members re-joining are fine.
     const alreadyMember = await OrgMembershipModel.exists({ orgId: orgObjectId, userId, isDeleted: { $ne: true } });
     if (!alreadyMember) {
-      const limitCheck = await checkLimit(orgId, "collaborators");
+      // The seat is decided by the role on the invite: a viewer claims into no seat at all.
+      const limitCheck = await checkLimit(orgId, "collaborators", { role });
       if (!limitCheck.ok) {
         void recordActivity({
           orgId,

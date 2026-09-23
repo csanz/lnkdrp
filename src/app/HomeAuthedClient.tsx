@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowUpTrayIcon, CpuChipIcon, DocumentPlusIcon, LinkIcon, LockClosedIcon } from "@heroicons/react/24/outline";
 import UploadButton from "@/components/UploadButton";
+import FirstRunWelcome from "@/components/onboarding/FirstRunWelcome";
 import AgentHintNotice from "@/components/AgentHintNotice";
 import AgentMark from "@/components/AgentMark";
 import { usePlan } from "@/lib/client/usePlan";
@@ -301,6 +302,33 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
           }
         />
         <div className={`mx-auto my-auto w-full max-w-[920px] ${APP_PAGE_GUTTER} pb-16 pt-6`}>
+          {/*
+            Shown while the workspace is empty, so the first upload retires it with nothing written.
+            `plan` is undefined until it loads; `=== 0` rather than `!` keeps the card from flashing
+            in before we know, which on a workspace with documents would be a greeting for nobody.
+          */}
+          <FirstRunWelcome
+            show={plan?.usage.documents === 0}
+            actions={
+              <>
+                <UploadButton
+                  label="Share your first PDF"
+                  accept="pdf"
+                  variant="cta"
+                  disabled={pickerDisabled}
+                  onFileRejected={setError}
+                  onFileSelected={stageFile}
+                />
+                <Link
+                  href="/connect"
+                  className="inline-flex items-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-medium text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)]"
+                >
+                  Connect an agent
+                </Link>
+              </>
+            }
+          />
+
           {/* Primary action: one large drop zone. */}
           <div
             className={[

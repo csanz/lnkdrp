@@ -91,4 +91,15 @@ describe("the upgrade modal quotes the same numbers", () => {
     const blob = JSON.stringify(UPSELL_COPY);
     expect(blob).toContain(`${CREDITS_COPY.proPerMonth} AI credits a month`);
   });
+
+  test("the seat count comes from the mirror, and the generic pitch mentions seats at all", () => {
+    // Seats were typed out as a literal "3 teammates" the same day the constant moved from 1 to 3,
+    // in the file whose own docstring warns against exactly that. And the `pro` pitch — the modal
+    // someone sees when they press Upgrade with no specific wall in front of them — listed
+    // documents, analytics and credits, and never mentioned that Pro is what lets anyone else in.
+    const blob = JSON.stringify(UPSELL_COPY);
+    expect(blob).toContain(`${PRO_SEATS_COPY} teammates`);
+    expect(blob).not.toMatch(/\b1 collaborator included\b/);
+    expect(UPSELL_COPY.pro.bullets.join(" "), "the generic Pro pitch says nothing about seats").toMatch(/teammates|viewers/);
+  });
 });

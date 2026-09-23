@@ -13,12 +13,14 @@
 import { waitlistEnabled } from "@/lib/waitlist/waitlist";
 
 import { EarlyAccessNotice } from "./EarlyAccessNotice";
+import { QueuedProvider } from "./QueueContext";
 
 export default function LoginLayout({ children }: { children: React.ReactNode }) {
+  const queued = waitlistEnabled();
   return (
-    <>
-      <EarlyAccessNotice queued={waitlistEnabled()} />
+    <QueuedProvider queued={queued}>
+      <EarlyAccessNotice queued={queued} />
       {children}
-    </>
+    </QueuedProvider>
   );
 }

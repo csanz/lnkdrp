@@ -281,7 +281,8 @@ export async function POST(request: Request) {
 
   // Plan limits: Free workspaces cannot add collaborators (the invite would add a member).
   // Personal orgs never reach here (they 404 above); only team orgs are gated.
-  const limitCheck = await checkLimit(orgIdRaw, "collaborators");
+  // `role` matters: a viewer takes no seat, so inviting one is never a plan decision.
+  const limitCheck = await checkLimit(orgIdRaw, "collaborators", { role });
   if (!limitCheck.ok) {
     void recordActivity({
       orgId: orgIdRaw,

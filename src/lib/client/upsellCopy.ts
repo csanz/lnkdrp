@@ -10,7 +10,7 @@
  * request), agents never take a seat.
  */
 import type { PlanLimitKey } from "@/lib/client/planLimit";
-import { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, comparesFor } from "@/lib/client/planNumbers";
+import { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, PRO_SEATS_COPY, comparesFor } from "@/lib/client/planNumbers";
 
 /** Which upsell to show. `pro` is the generic pitch (sidebar link, no wall hit); the next five mirror API limit keys; `credits` is passive. */
 export type UpsellKey =
@@ -27,8 +27,8 @@ export type UpsellKey =
 export type UpsellCopy = {
   title: string;
   reason: string;
-  /** Three Pro benefits; the first is always the thing the user was trying to do. */
-  bullets: [string, string, string];
+  /** Three or four Pro benefits; the first is always the thing the user was trying to do. */
+  bullets: [string, string, string] | [string, string, string, string];
   /** Primary action label; defaults to "Upgrade to Pro". */
   primaryLabel?: string;
   /** Secondary action label; the modal defaults to "Not now", the inline notice to this value. */
@@ -55,6 +55,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
       "Unlimited documents, share links and projects",
       "Deep analytics: who opened it, time per page, full history",
       `${CREDITS_COPY.proPerMonth} AI credits a month, and a version list recipients can browse`,
+      `${PRO_SEATS_COPY} teammates who can upload and share, plus unlimited free viewers`,
     ],
     secondaryLabel: "Compare plans",
   },
@@ -92,7 +93,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     title: "Collaborators are a Pro feature",
     reason: "Free workspaces are single-user. Pro adds teammates who can upload and share, plus unlimited free viewers.",
     bullets: [
-      "3 teammates who can upload and share, plus unlimited free viewers",
+      `${PRO_SEATS_COPY} teammates who can upload and share, plus unlimited free viewers`,
       "Agents never take a seat",
       "Unlimited documents and projects for the whole workspace",
     ],

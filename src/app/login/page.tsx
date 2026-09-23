@@ -22,6 +22,7 @@ import { signIn } from "next-auth/react";
 import { useAuthEnabled } from "@/app/providers";
 import { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import Spinner from "@/components/ui/Spinner";
+import { useQueued } from "./QueueContext";
 import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
 
@@ -86,7 +87,8 @@ function LoginPageInner() {
     }
   }, []);
 
-  const headline = signedOut ? "You’ve been signed out." : "Log in or sign up.";
+  const queued = useQueued();
+  const headline = signedOut ? "You’ve been signed out." : queued ? "Request early access." : "Log in or sign up.";
   const intro = useMemo(() => {
     if (!authEnabled) return "Login isn’t available right now: authentication is disabled on this build.";
     if (signedOut) {
@@ -94,10 +96,14 @@ function LoginPageInner() {
         ? "Your session ended, so we stopped here rather than showing you a half-loaded page. Sign back in and we’ll take you straight back to where you were."
         : "Your session ended, so we stopped here rather than showing you a half-loaded page. Sign back in to pick up where you left off.";
     }
-    // Deliberately says what the account *is*, not when you get it: whether sign-in joins a queue
-    // is server-only knowledge, and `EarlyAccessNotice` above this card is what states it.
+    // The card has to say what actually happens when the button is pressed. It used to say only
+    // what the account *is*, leaving the queue to a banner above it — which put "signing in puts
+    // you on the list" directly above "New accounts start free" and a Sign up button.
+    if (queued) {
+      return "One button, no password to remember. Signing in puts you on the list rather than opening an account — we let people in a few at a time, and there is nothing to pay.";
+    }
     return "One button, no password to remember. Accounts are free and nothing is charged until you choose a plan.";
-  }, [authEnabled, signedOut, next]);
+  }, [authEnabled, signedOut, next, queued]);
 
   const perks: string[] = [
     `${FREE_PLAN_LIMITS_COPY.documents} shared documents with view and download tracking, free forever.`,
@@ -124,7 +130,7 @@ function LoginPageInner() {
         }}
       >
         <span className={busy ? "invisible" : ""}>
-          {signedOut ? "Sign back in with Google" : "Sign up or log in with Google"}
+          {signedOut ? "Sign back in with Google" : queued ? "Request access with Google" : "Sign up or log in with Google"}
         </span>
         {busy ? (
           <span className="absolute inset-0 grid place-items-center">
@@ -191,7 +197,7 @@ function LoginPageInner() {
               ) : (
                 <>
                   <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">
-                    New accounts start free
+                    {queued ? "What you get once you're in" : "New accounts start free"}
                   </div>
                   <ul className="mt-5 space-y-2.5 text-sm leading-6">
                     {perks.map((perk) => (

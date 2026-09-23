@@ -7,6 +7,7 @@
  * (cursor-based under the hood: the cursor that opened each page is kept so Previous can replay it).
  */
 
+import GetStartedActions from "@/components/onboarding/GetStartedActions";
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import ChangePreviewModal from "@/components/activity/ChangePreviewModal";
 import { projectLinkMetricsHref } from "@/lib/analytics/workspace/shape";
@@ -1001,6 +1002,7 @@ export default function ActivityPageClient() {
           inFlightRows.length ? null : (
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-10 text-center text-sm text-[var(--muted)]">
               No activity yet. Uploads, share changes and views will show up here.
+              <GetStartedActions />
             </div>
           )
         ) : (

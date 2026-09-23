@@ -147,7 +147,8 @@ export async function POST(request: Request) {
   if (!orgName) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Plan limits: an emailed invite would add a member; Free workspaces have no collaborator seats.
-  const limitCheck = await checkLimit(orgIdRaw, "collaborators");
+  // A viewer is exempt: it takes no seat, and `getWorkspaceUsage` does not count one.
+  const limitCheck = await checkLimit(orgIdRaw, "collaborators", { role });
   if (!limitCheck.ok) return planLimitResponse(limitCheck);
 
   const token = crypto.randomBytes(24).toString("base64url");

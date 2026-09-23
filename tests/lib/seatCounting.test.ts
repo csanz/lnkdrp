@@ -44,6 +44,38 @@ describe("what counts as a seat", () => {
   });
 });
 
+describe("a viewer invite is never refused for want of a seat", () => {
+  /**
+   * The count and the gate have to agree about what a seat is.
+   *
+   * `getWorkspaceUsage` stopped counting viewers when Pro moved to three seats, but `checkLimit`
+   * had no idea what role was being invited — so a workspace holding three collaborators was
+   * refused a *viewer* invitation, while /pricing, the Terms and the upgrade modal all promised
+   * viewers were free and unlimited. The copy was written the same day as the counting change and
+   * neither noticed the gate in between.
+   */
+  test("checkLimit exempts a viewer before it ever looks at the plan", async () => {
+    const { checkLimit } = await import("@/lib/billing/planLimits");
+    // No Mongo mock and no org: the exemption must return before any database read, which is
+    // itself the assertion — anything else throws here.
+    await expect(checkLimit("000000000000000000000000", "collaborators", { role: "viewer" })).resolves.toEqual({
+      ok: true,
+      warning: null,
+    });
+  });
+
+  test("every invite path passes the role through", () => {
+    for (const path of [
+      "src/app/api/org-invites/route.ts",
+      "src/app/api/org-invites/email/route.ts",
+      "src/app/api/org-invites/claim/route.ts",
+    ]) {
+      const src = readFileSync(join(ROOT, path), "utf8");
+      expect(src, `${path} drops the role`).toMatch(/checkLimit\([^)]*"collaborators",\s*\{\s*role\s*\}/);
+    }
+  });
+});
+
 describe("viewers are read-only, which is what makes them free", () => {
   /** Every `route.ts` under src/app/api, with its source. */
   function apiRoutes(dir: string): Array<{ path: string; src: string }> {
