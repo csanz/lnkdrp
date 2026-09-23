@@ -80,7 +80,10 @@ function optionsFor(appId: string, customer: PlainChatCustomer | null, theme: "l
     appId,
     theme,
     hideLauncher: !customer && !showLauncher,
-    requireAuthentication: !customer,
+    // Always on: Plain's "Require email verification" is enabled workspace-side and refuses a
+    // widget that does not set this. A signed-in user still sees no code prompt, because the
+    // server-signed `emailHash` below is the other accepted proof of the same thing.
+    requireAuthentication: true,
     position: { right: "20px", bottom: "20px", zIndex: "60" },
     style: {
       brandColor: "#000000",
