@@ -11,6 +11,7 @@
     "build": "next build",
     "start": "next start -p 3001",
     "preflight:env": "tsx --env-file=.env.local scripts/preflight-env.ts",
+    "preflight:env:prod": "tsx --env-file=.env.production.local scripts/preflight-env.ts",
     "cron:doc-metrics": "tsx --env-file=.env.local scripts/cron/cron.doc-metrics.ts",
     "cron:stripe-credits-reconcile": "tsx --env-file=.env.local scripts/cron/cron.stripe-credits-reconcile.ts",
     "cron:stripe-credits-report": "tsx --env-file=.env.local scripts/cron/cron.stripe-credits-report.ts",
@@ -55,7 +56,9 @@
     "waitlist:invite": "tsx --env-file=.env.local scripts/waitlist-invite.ts",
     "waitlist:invite:prod": "tsx --env-file=.env.production.local scripts/waitlist-invite.ts",
     "admin:add": "tsx --env-file=.env.local scripts/admin-add.ts",
-    "admin:list": "tsx --env-file=.env.local scripts/admin-add.ts --list"
+    "admin:add:prod": "tsx --env-file=.env.production.local scripts/admin-add.ts",
+    "admin:list": "tsx --env-file=.env.local scripts/admin-add.ts --list",
+    "admin:list:prod": "tsx --env-file=.env.production.local scripts/admin-add.ts --list"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",

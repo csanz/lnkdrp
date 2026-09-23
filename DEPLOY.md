@@ -173,6 +173,12 @@ and do not link to or announce the site until the Announce step in G.
       addresses in `WAITLIST_ALLOW_EMAILS` either way so you are never queued behind your own
       launch. If it is on, watch `/a/waitlist` from the announcement: nobody in the queue can do
       anything until someone approves them.
+- [ ] **Make somebody an admin, before turning the queue on.** With the queue on and no admin,
+      nobody can approve anyone and the first sign-up waits forever — `npm run admin:list:prod`
+      answers "No admins." on a fresh database, which is every first deploy. Grant it with
+      `npm run admin:add -- --to=you@example.com` locally, or `npm run admin:add:prod -- --to=…`
+      against production. Both also approve that account off the queue, because an admin who cannot
+      sign in is not an admin.
 - [ ] **Announce / open to users.**
 
 **H. Watch (11) — first week**
