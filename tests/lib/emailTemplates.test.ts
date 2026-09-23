@@ -15,13 +15,22 @@ import {
  * that sends them. These cover the download-request trio, including the missing-site-URL fallbacks
  * the owner mail used to inline.
  */
+/**
+ * The last line of every email, from `layout.ts`.
+ *
+ * These three used to assert the body ended with the sign-off. It ends with the postal address
+ * now; the sign-off is still there, one line above.
+ */
+const POSTAL_ADDRESS = "455 Market St Ste 1940 #695619, San Francisco, California 94105";
+
 describe("download request emails", () => {
   test("receipt names the document and the link", () => {
     const mail = downloadRequestReceivedEmail({ title: "Series A deck", shareUrl: "https://lnkdrp.com/s/abc" });
     expect(mail.subject).toBe("Request received: Series A deck");
     expect(mail.text).toContain("Document: Series A deck");
     expect(mail.text).toContain("Link: https://lnkdrp.com/s/abc");
-    expect(mail.text.trimEnd().endsWith("- LinkDrop")).toBe(true);
+    expect(mail.text.trimEnd()).toContain("- LinkDrop");
+    expect(mail.text.trimEnd().endsWith(POSTAL_ADDRESS)).toBe(true);
   });
 
   test("owner mail carries who asked, approve and deny", () => {
@@ -81,7 +90,8 @@ describe("member removed email", () => {
     expect(mail.text).toContain("Anything you uploaded stays with the workspace");
     // The trailing slash is trimmed rather than doubled into the URL.
     expect(mail.text).toContain("Your workspace: https://lnkdrp.com\n");
-    expect(mail.text.trimEnd().endsWith("- LinkDrop")).toBe(true);
+    expect(mail.text.trimEnd()).toContain("- LinkDrop");
+    expect(mail.text.trimEnd().endsWith(POSTAL_ADDRESS)).toBe(true);
   });
 
   test("an unnamed workspace and an unknown remover still read as a sentence", () => {
@@ -109,7 +119,8 @@ describe("viewer introduction emails", () => {
     expect(mail.text).toContain('reading "Series A deck" from Acme');
     expect(mail.text).toContain("https://lnkdrp.com/share/verify?t=tok");
     expect(mail.text).toContain("The document stays open either way");
-    expect(mail.text.trimEnd().endsWith("- LinkDrop")).toBe(true);
+    expect(mail.text.trimEnd()).toContain("- LinkDrop");
+    expect(mail.text.trimEnd().endsWith(POSTAL_ADDRESS)).toBe(true);
   });
 
   test("an untitled document and a nameless workspace still read as a sentence", () => {

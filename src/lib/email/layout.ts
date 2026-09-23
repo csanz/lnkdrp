@@ -200,6 +200,29 @@ function hasNotice(footer: EmailFooter | null | undefined): boolean {
   return Boolean(footer && (footer.reason || (footer.links && footer.links.length)));
 }
 
+/**
+ * The sender's postal address, on every email.
+ *
+ * CAN-SPAM requires it on *commercial* mail, and most of what this product sends is relationship
+ * mail — "someone opened your document" — which is exempt. It goes on everything anyway, because
+ * the alternative is deciding per template whether that template is commercial, forever, and
+ * getting it wrong the first time a digest reads like an ad. It is also the conventional companion
+ * to the one-click unsubscribe already in these footers, and a new sending domain can use every
+ * legitimacy signal it can get.
+ *
+ * A constant with an env override rather than env alone: there are two deployments plus every
+ * developer's `.env.local`, and a missing variable in any one of them would silently drop the
+ * address from real mail. `EMAIL_POSTAL_ADDRESS` overrides it where a deployment needs to.
+ */
+const POSTAL_ADDRESS_DEFAULT = "455 Market St Ste 1940 #695619, San Francisco, California 94105";
+
+function postalAddress(): string {
+  const configured = (process.env.EMAIL_POSTAL_ADDRESS ?? "").trim();
+  // An explicit empty value is not "use the default": it is a deployment saying not to print one.
+  if (process.env.EMAIL_POSTAL_ADDRESS !== undefined) return configured;
+  return POSTAL_ADDRESS_DEFAULT;
+}
+
 export function renderText(
   blocks: readonly Block[],
   footer?: EmailFooter | null,
@@ -249,12 +272,19 @@ export function renderText(
   }
   if (afterCompact) out.push("");
 
+  const address = postalAddress();
   if (hasNotice(footer)) {
     out.push("--");
     if (footer?.reason) out.push(footer.reason);
     for (const l of footer?.links ?? []) out.push(`${l.label}: ${l.url}`);
+    if (address) out.push(address);
   } else if (footer?.signature) {
     out.push(footer.signature);
+    if (address) out.push("", address);
+  } else if (address) {
+    // No notice and no sign-off still gets the address: the rule is the whole point of doing this
+    // centrally, and a template with a bare body is the one most likely to be a mail-out.
+    out.push("--", address);
   }
   return out.join("\n");
 }
@@ -357,6 +387,17 @@ export function renderHtml(params: {
       (linkRow ? `<p style="margin:0;font-family:${FONT};font-size:13px;line-height:1.55;color:#71717a;">${linkRow}</p>` : "");
   } else if (footer?.signature) {
     footerHtml = `<p style="margin:0;font-family:${FONT};font-size:13px;line-height:1.55;color:#71717a;">${escapeHtml(footer.signature)}</p>`;
+  }
+  /**
+   * Last line of the footer, quieter than the rest: it is there to be found, not read.
+   *
+   * Quieter by colour alone. 13px is the floor a design review set for this mail and it is
+   * asserted in viewNotifications.test.ts — small text in an email is small on a phone held at
+   * arm's length, and an address nobody can read satisfies nothing.
+   */
+  const addressHtml = postalAddress();
+  if (addressHtml) {
+    footerHtml += `<p style="margin:${footerHtml ? "10px" : "0"} 0 0;font-family:${FONT};font-size:13px;line-height:1.5;color:#a1a1aa;">${escapeHtml(addressHtml)}</p>`;
   }
 
   const preheaderHtml = preheader

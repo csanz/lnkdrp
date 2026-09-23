@@ -23,6 +23,9 @@ import { welcomeEmail } from "@/lib/email/templates/welcome";
 import { viewerIntroducedEmail } from "@/lib/email/templates/viewerIntroduction";
 import { downloadRequestOwnerEmail } from "@/lib/email/templates/downloadRequest";
 
+/** What `layout.ts` prints as the last line of every email. */
+const POSTAL_ADDRESS = "455 Market St Ste 1940 #695619, San Francisco, California 94105";
+
 const rows = buildPreviews();
 
 /** Every `href` the HTML body links to. */
@@ -119,9 +122,13 @@ describe("blocks", () => {
 
   test("a transactional footer carries the signature and offers no unsubscribe it cannot honour", () => {
     const mail = welcomeEmail({ name: "Dana", appUrl: "https://lnkdrp.com" });
-    expect(mail.text.trimEnd().endsWith("- LinkDrop")).toBe(true);
+    expect(mail.text.trimEnd()).toContain("- LinkDrop");
     expect(mail.html).toContain("- LinkDrop");
     expect(mail.html?.toLowerCase()).not.toContain("unsubscribe");
+    // The address closes it, in both bodies, and brings no unsubscribe link with it — a
+    // transactional mail must not offer an "off" it cannot honour.
+    expect(mail.text.trimEnd().endsWith(POSTAL_ADDRESS)).toBe(true);
+    expect(mail.html).toContain(POSTAL_ADDRESS);
   });
 
   test("an empty rows block renders nothing rather than an empty table", () => {

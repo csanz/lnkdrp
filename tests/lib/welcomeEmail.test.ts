@@ -28,6 +28,9 @@ import { FREE_STARTER_CREDITS } from "@/lib/credits/grants";
 const REPO_ROOT = path.resolve(__dirname, "../..");
 const AUTH_SRC = fs.readFileSync(path.join(REPO_ROOT, "src/lib/auth.ts"), "utf8");
 
+/** What `layout.ts` prints as the last line of every email. */
+const POSTAL_ADDRESS = "455 Market St Ste 1940 #695619, San Francisco, California 94105";
+
 describe("welcome email body", () => {
   test("greets them by first name only", () => {
     const mail = welcomeEmail({ name: "Dana Lee", appUrl: "https://lnkdrp.com" });
@@ -70,8 +73,13 @@ describe("welcome email body", () => {
     expect(welcomeEmail({ name: "Dana" }).text).not.toMatch(/only email/i);
   });
 
-  test("ends with the shared signature", () => {
-    expect(welcomeEmail({ name: "Dana" }).text.trimEnd().endsWith("- LinkDrop")).toBe(true);
+  test("is signed off, above the postal address that now closes every email", () => {
+    // The sign-off used to be the last line. It is second to last now: CAN-SPAM's address goes
+    // below it, the way it does in every other product's mail. See `postalAddress` in layout.ts.
+    const text = welcomeEmail({ name: "Dana" }).text.trimEnd();
+    expect(text).toContain("- LinkDrop");
+    expect(text.endsWith(POSTAL_ADDRESS)).toBe(true);
+    expect(text.indexOf("- LinkDrop")).toBeLessThan(text.indexOf(POSTAL_ADDRESS));
   });
 
   test("is in the catalogue, so the admin list of what we send stays honest", () => {
