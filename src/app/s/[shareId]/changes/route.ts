@@ -213,14 +213,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
                  * is disabled, expires or is archived. `/s/:shareId/page-image` re-checks the link
                  * on every request instead, so revoking it stops the images too. Emitted only
                  * where a render actually exists, so nothing points at a 404.
+                 *
+                 * `size=full` because these are opened in the full-size comparison, where a pane is
+                 * most of a laptop screen wide. The proxy defaults to the 480px thumbnail, which is
+                 * right for anything listing pages and badly wrong here - it was being blown up to
+                 * roughly twice its size and looked it.
                  */
                 previousImageUrl:
                   typeof p?.previousImageUrl === "string" && p.previousImageUrl.trim() && Number.isFinite((c as any).fromVersion)
-                    ? `/s/${encodeURIComponent(shareId)}/page-image?v=${Math.floor(Number((c as any).fromVersion))}&p=${Math.floor(Number(p.pageNumber))}`
+                    ? `/s/${encodeURIComponent(shareId)}/page-image?v=${Math.floor(Number((c as any).fromVersion))}&p=${Math.floor(Number(p.pageNumber))}&size=full`
                     : null,
                 newImageUrl:
                   typeof p?.newImageUrl === "string" && p.newImageUrl.trim() && Number.isFinite((c as any).toVersion)
-                    ? `/s/${encodeURIComponent(shareId)}/page-image?v=${Math.floor(Number((c as any).toVersion))}&p=${Math.floor(Number(p.pageNumber))}`
+                    ? `/s/${encodeURIComponent(shareId)}/page-image?v=${Math.floor(Number((c as any).toVersion))}&p=${Math.floor(Number(p.pageNumber))}&size=full`
                     : null,
               }))
               .filter((p: any) => typeof p.pageNumber === "number" && p.pageNumber >= 1)
