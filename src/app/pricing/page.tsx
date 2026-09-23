@@ -26,9 +26,13 @@ import {
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 import { comparesFor, plural } from "@/lib/client/planNumbers";
+import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
 import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import { cn } from "@/lib/cn";
 import PricingCta from "./PricingCta";
+
+/** "from $7": the entry pack, never retyped. */
+const CHEAPEST_PACK_PRICE = formatPackPrice(Math.min(...CREDIT_PACKS.map((p) => p.priceCents)));
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -246,7 +250,7 @@ export default async function PricingPage() {
                   <Link href="/credits" className="underline underline-offset-4 hover:text-white/70">
                     Buy a credit pack
                   </Link>{" "}
-                  from $5 on Free. On Pro, turn on on-demand instead: $0.10 per credit, billed through Stripe,
+                  from {CHEAPEST_PACK_PRICE} on Free. On Pro, turn on on-demand instead: $0.10 per credit, billed through Stripe,
                   under a hard spend limit you set. Unused included credits do not roll over.
                 </p>
               </div>

@@ -10,6 +10,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import PublicFooter from "@/components/PublicFooter";
+import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
+
+/** "from $7": the entry pack, so this never has to be retyped when packs are repriced. */
+const CHEAPEST_PACK_PRICE = formatPackPrice(Math.min(...CREDIT_PACKS.map((p) => p.priceCents)));
 import PublicHeader from "@/components/PublicHeader";
 import { COST_CATALOG, FREE_ACTIONS, QUALITY_BLURBS, QUALITY_LABELS, QUALITY_TIERS, costAnchorId } from "@/lib/credits/costCatalog";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
@@ -124,7 +128,7 @@ export default function CostsPage() {
             <h2 className="font-serif text-2xl tracking-tight text-white">Where credits come from</h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
           Every workspace starts with {FREE_STARTER_CREDITS} starter credits, once. Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month and can turn
-          on on-demand usage at $0.10 a credit under a spend limit you set. On Free, buy a credit pack from $5.
+          on on-demand usage at $0.10 a credit under a spend limit you set. On Free, buy a credit pack from {CHEAPEST_PACK_PRICE}.
         </p>
         <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
           <Link href="/credits" className="font-medium text-white underline-offset-4 hover:underline">

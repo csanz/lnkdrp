@@ -20,7 +20,7 @@ import { SubscriptionModel } from "@/lib/models/Subscription";
 import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { CreditPurchaseModel } from "@/lib/models/CreditPurchase";
 import { ensureWorkspaceStripeCustomer } from "@/lib/billing/workspaceCustomer";
-import { CREDIT_PACK_CURRENCY, PURCHASED_CREDITS_EXPIRY_MONTHS, findCreditPack } from "@/lib/credits/packs";
+import { CREDIT_PACK_CURRENCY, PURCHASED_CREDITS_EXPIRY_MONTHS, findPurchasablePack } from "@/lib/credits/packs";
 import { forbidWaitlisted } from "@/lib/gating/waitlist";
 import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
@@ -70,7 +70,9 @@ export async function POST(request: Request) {
       }
 
       const body = (await request.json().catch(() => null)) as { packId?: unknown } | null;
-      const pack = findCreditPack(body?.packId);
+      // Purchasable only: a retired id still resolves for *recording* an in-flight purchase
+      // (see `RETIRED_CREDIT_PACKS`), but must never open a Checkout at a withdrawn price.
+      const pack = findPurchasablePack(body?.packId);
       if (!pack) return NextResponse.json({ error: "Unknown credit pack" }, { status: 400 });
 
       const stripeKey = (process.env.STRIPE_SECRET_KEY ?? "").trim();

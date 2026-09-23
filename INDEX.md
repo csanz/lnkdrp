@@ -604,7 +604,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/credits/grants.ts` · buildCycleKey, FREE_STARTER_CREDITS, grantCycleIncludedCredits, INCLUDED_CREDITS_PER_CYCLE
 - `src/lib/credits/idempotency.ts` · generateIdempotencyKey, idempotencyKeyFromRequest
 - `src/lib/credits/mongooseStore.ts` · createMongooseCreditStore
-- `src/lib/credits/packs.ts` · CREDIT_PACK_CURRENCY, CREDIT_PACKS, CreditPack, findCreditPack, formatPackPrice, formatPerCredit, planPurchaseExpiry, PURCHASED_CREDITS_EXPIRY_MONTHS, …
+- `src/lib/credits/packs.ts` · CREDIT_PACK_CURRENCY, CREDIT_PACKS, CreditPack, findCreditPack, findPurchasablePack, formatPackPrice, formatPerCredit, PACK_MARKUP_OVER_PRO, …
 - `src/lib/credits/purchases.ts` · expireCreditPurchases, grantCreditPack
 - `src/lib/credits/qualityDefaults.ts` · defaultHistoryQualityTierForPlan, getDefaultHistoryQualityTier, parseQualityTier, resolveHistoryQualityTier
 - `src/lib/credits/schedule.ts` · creditsForRun, INCLUDED_ACTIONS_AT_LAUNCH
