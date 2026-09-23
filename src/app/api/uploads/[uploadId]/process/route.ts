@@ -1384,18 +1384,46 @@ export async function POST(
             }
 
             let diff = null as any;
+            /** What this backfill run cost, for the ledger. See `compareTelemetry`. */
+            let backfillUsage: DocChangeDiffUsage | null = null;
             if (historyLedgerId) {
               try {
                 const backfillPages = await loadChangedPages({ prevUpload: prev, newUpload: upload }).catch(() => []);
                 diff = attachPageContext(
-                  await runDocChangeDiff({ previousText, newText, changedPages: backfillPages, qualityTier: historyTier }),
+                  await runDocChangeDiff({
+                    previousText,
+                    newText,
+                    changedPages: backfillPages,
+                    qualityTier: historyTier,
+                    /**
+                     * The same ceiling its sibling compare carries, for the same reason.
+                     *
+                     * This runs in the same `after()` block and ahead of the write that marks the
+                     * upload ready, so a hung model call takes the function to `maxDuration` and is
+                     * killed before either the charge or the refund - leaving the workspace's
+                     * credits deducted against a `pending` row and the upload stuck until the
+                     * twenty-minute stale reclaim. The hourly sweep does return them, so this
+                     * self-heals rather than leaking, which is the only reason it was not urgent.
+                     */
+                    abortSignal: AbortSignal.timeout(COMPARE_TIMEOUT_MS),
+                    onUsage: (u) => {
+                      backfillUsage = u;
+                    },
+                  }),
                   backfillPages,
                 );
                 if (!diff) {
                   await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
                   diff = null;
                 } else {
-                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId: historyLedgerId, creditsCharged: historyChargedCredits });
+                  await markLedgerCharged({
+                    workspaceId: actor.orgId,
+                    ledgerId: historyLedgerId,
+                    creditsCharged: historyChargedCredits,
+                    // This branch recorded no telemetry at all, so backfilled compares were
+                    // invisible in the cost data the ledger was widened to collect.
+                    telemetry: compareTelemetry(backfillUsage),
+                  });
                   creditsUsedThisRun += historyChargedCredits;
                 }
               } catch {

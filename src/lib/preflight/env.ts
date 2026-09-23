@@ -45,16 +45,46 @@ const REQUIRED: Array<[string, Group]> = [
   ["STRIPE_SECRET_KEY", "Payments"],
   ["STRIPE_WEBHOOK_SECRET", "Payments"],
   ["STRIPE_PRICE_ID", "Payments"],
-  ["NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", "Payments"],
   ["CRON_SECRET", "Secrets"],
   ["REALTIME_SECRET", "Secrets"],
   ["LNKDRP_SHARE_PASSWORD_SECRET", "Secrets"],
   ["LNKDRP_ORG_INVITE_TOKEN_SECRET", "Secrets"],
-  ["LNKDRP_NOTIFICATION_TOKEN_SECRET", "Secrets"],
+];
+
+/**
+ * Wanted, but a deploy without one is not broken - so these warn rather than fail.
+ *
+ * Two of them used to sit in `REQUIRED` while DEPLOY.md's own table calls them optional, so an
+ * operator who configured production exactly as the runbook says opened /a/env and met two red
+ * rows with nothing actually wrong. That is worse than saying nothing: a red that is usually noise
+ * gets waved through, and the next one is a Stripe key in the wrong mode or a Mongo URI pointing at
+ * the wrong database, both of which this module genuinely detects.
+ */
+const WANTED: Array<[string, Group, string]> = [
+  ["NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", "Payments", "no current page reads it; set it before adding client-side Stripe"],
+  ["LNKDRP_NOTIFICATION_TOKEN_SECRET", "Secrets", "falls back to NEXTAUTH_SECRET, which is deliberate"],
+  // RESEND_API_KEY is not here on purpose: `checkEmail` already reports it, and conditionally on
+  // EMAIL_TRANSPORT, which is the better answer. One row per variable.
 ];
 
 function checkPresence(add: Sink) {
   for (const [name, group] of REQUIRED) if (!env(name)) add(name, group, "fail", "not set");
+  for (const [name, group, why] of WANTED) if (!env(name)) add(name, group, "warn", `not set - ${why}`);
+
+  // No separate row for the webhook's self-call origin: `NEXT_PUBLIC_SITE_URL` above is required
+  // and is the first thing `resolveConfiguredSiteUrl` tries, so a second check could only ever
+  // repeat that failure under another name.
+
+  /**
+   * Not a pass or a fail, a fact worth stating out loud.
+   *
+   * This is the one gating flag whose absence silently means "open": unset, anyone who reaches the
+   * Google sign-in gets a full account on first visit. The default is deliberate, but a launch
+   * meant to sit behind a queue should not discover the door was open by watching strangers sign up.
+   */
+  const waitlist = env("WAITLIST_ENABLED").toLowerCase();
+  const queued = waitlist === "1" || waitlist === "true";
+  add("WAITLIST_ENABLED", "Auth", queued ? "ok" : "warn", queued ? "sign-ups join the queue" : "not set - sign-ups are open to anyone who can reach the sign-in");
 }
 
 function checkUrls(add: Sink) {

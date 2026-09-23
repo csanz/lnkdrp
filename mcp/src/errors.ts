@@ -412,15 +412,34 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
       }
       return outOfCreditsError(status, body, bodyCode, siteUrl);
     }
-    case 413:
-      // Naming sourceUrl as the way out was wrong: the ceiling is the document's, not the
-      // transport's, so the same file refused as bytes is refused as a URL.
+    case 413: {
+      /**
+       * Two different ceilings answer 413, and the advice for them is opposite.
+       *
+       * Ours is the document limit, and it is the document's: the same file refused as bytes is
+       * refused as a URL, so shrinking it is the only way through. The platform's is a body cap -
+       * Vercel rejects a request past ~4.5 MB before the route runs - and there `sourceUrl` is
+       * exactly what gets past it, because the server fetches the file itself.
+       *
+       * Telling an agent the wrong one costs it the working path. Our refusals carry a recognised
+       * error code in a JSON body; a platform refusal does not, which is how they are told apart.
+       */
+      if (!bodyCode) {
+        return new ToolError(
+          "too_large",
+          `${message || "The upload was refused as too large."} That limit is on the request itself, not on the ` +
+            "document, so sending the same file as `sourceUrl` (an https link the server fetches) usually goes " +
+            "through where inline bytes do not.",
+          { status },
+        );
+      }
       return new ToolError(
         "too_large",
         `${message || "The file is too large."} That ceiling is on the document, so sending the same file a different ` +
           "way will not get past it. Shrink the PDF instead (fewer pages, or downsampled images) and try again.",
         { status },
       );
+    }
     case 415:
       return new ToolError(
         "unsupported_content_type",

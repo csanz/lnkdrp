@@ -219,11 +219,30 @@ async function connect(): Promise<void> {
   };
 }
 
+/** Consecutive failures after which a server is treated as down rather than blipping. */
+const SETTLED_AFTER_ATTEMPTS = 10;
+/** The slow cadence used from then on. */
+const SETTLED_DELAY_MS = 300_000;
+
 function scheduleReconnect() {
   if (!wanted || reconnectTimer !== null) return;
   attempts += 1;
-  // 1s, 2s, 4s … capped at 30s, with jitter so a fleet of tabs does not stampede.
-  const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempts, 5)) * (0.75 + Math.random() * 0.5);
+  /**
+   * 1s, 2s, 4s … 30s, then five minutes once it is clear nobody is answering.
+   *
+   * A 30-second ceiling is right for a blip and wrong for an outage: while the realtime host is
+   * down, every open tab wakes a dynamic route that reads Mongo twice, twice a minute, for as long
+   * as the tab stays open. A server that has refused ten consecutive attempts is not coming back
+   * within thirty seconds, and everything that reads realtime already falls back to polling, so
+   * the only thing the fast retry buys after that point is load. Jitter throughout, so a fleet of
+   * tabs does not stampede when it does come back.
+   */
+  const jitter = 0.75 + Math.random() * 0.5;
+  // The exponent has to grow with the ceiling, or raising the cap changes nothing: 2**5 is 32s, so
+  // a five-minute ceiling on a five-step exponent is still a thirty-second wait.
+  const steps = attempts > SETTLED_AFTER_ATTEMPTS ? 9 : 5;
+  const ceiling = attempts > SETTLED_AFTER_ATTEMPTS ? SETTLED_DELAY_MS : 30_000;
+  const delay = Math.min(ceiling, 1000 * 2 ** Math.min(attempts, steps)) * jitter;
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null;
     void connect();

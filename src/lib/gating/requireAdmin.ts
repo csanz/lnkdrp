@@ -30,9 +30,21 @@ export type AdminGate =
   | { ok: true; userId: string | null; email: string | null }
   | { ok: false; status: number; error: string };
 
-/** Development-only convenience. Never true in production, whatever the `Host` header says. */
+/**
+ * Development-only convenience. Never true in production, whatever the `Host` header says.
+ *
+ * Two environment checks, not one, and the rest of the codebase already does both - see
+ * `src/lib/cron/auth.ts` and `src/lib/errors/logger.ts`. What this gate opens is everything: a
+ * `Host: localhost:3001` header makes the caller a full admin across `/api/admin/*` and `/a`,
+ * able to read every workspace, change credits and delete accounts. Vercel does set `NODE_ENV`, so
+ * one check covers the planned topology - and stops covering it the moment anything serves this
+ * app another way: a staging host started with a bare `node server.js`, a container that forgets
+ * the variable, the `realtime:prod` and `mcp:prod` scripts which set no `NODE_ENV` at all. One
+ * missing variable should not be the whole distance between the gate and no gate.
+ */
 function isLocalhostBypassAllowed(request: Request): boolean {
   if (process.env.NODE_ENV === "production") return false;
+  if ((process.env.VERCEL_ENV ?? "").trim() === "production") return false;
   if ((process.env.ADMIN_LOCALHOST_BYPASS ?? "").trim() === "0") return false;
   const host = (request.headers.get("host") ?? "").toLowerCase();
   return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");

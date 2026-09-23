@@ -120,7 +120,7 @@ and do not link to or announce the site until the Announce step in G.
       | `credits-purchase-expiry` | daily 04:05 | takes back unspent credit-pack credits 12 months after purchase |
       | `account-purge` | daily 04:30 | deletes the data of accounts 30 days after they asked — **this deletes blobs** |
 
-      Vercel **Pro is mandatory** — seven of the ten run more than once a day and Hobby rejects
+      Vercel **Pro is mandatory** — eight of the eleven run more than once a day and Hobby rejects
       the file. Not on Vercel Cron? Schedule the same ten with the crontab in 5.1 from one
       always-on host; never two schedulers. The realtime and MCP services have no scheduled work.
 - [ ] Preview environment scoped on its own: sandbox Stripe, its own database and Blob store,
@@ -133,8 +133,8 @@ and do not link to or announce the site until the Announce step in G.
       CNAME, `fly certs check`, `/healthz` on `mcp.lnkdrp.com` (7).
 - [ ] `LNKDRP_ALLOW_LOCAL_FILES` stays **unset** on `lnkdrp-mcp`, in `[env]` and in `fly secrets`.
       With it set, an agent's `filePath` becomes a read of the container's filesystem (7).
-- [ ] Decide whether the image carries Ghostscript (`ghostscript` + `pdfjs-dist` in
-      `mcp/Dockerfile`). Without it, inline uploads are sent unshrunk and say so; nothing breaks (7).
+- [ ] Nothing to decide about Ghostscript: `mcp/Dockerfile` installs it and `pdfjs-dist`, so inline
+      uploads are shrunk before sending and the page count is verified on both files (7).
 - [ ] Remember the services do not auto-deploy: `fly deploy` again whenever a file listed in 9
       changes.
 
@@ -475,6 +475,15 @@ Connect the store to Production only and give Preview its own store; with one st
 environment, preview uploads land beside production files and each environment accepts the
 other's URLs. Copy `BLOB_READ_WRITE_TOKEN`.
 
+**Publish the email logo into this store before the first send.** Every transactional email loads
+its logo from an absolute URL, and the default baked into `src/lib/email/layout.ts` points at the
+store this was developed against — so without this step production mail renders its logo out of a
+developer's personal Blob store, and keeps doing so until that store is deleted, rotated or made
+private, at which point every notification, invite, plan-limit and waitlist email shows a broken
+image with nothing failing and nothing logged. Run `scripts/publish-email-logo.ts` with the
+production `BLOB_READ_WRITE_TOKEN` and set `EMAIL_LOGO_URL` to the URL it prints
+(`https://<storeId>.public.blob.vercel-storage.com/brand/email-logo.png`).
+
 Uploads go browser → Blob with a token minted by `/api/blob/upload`: PDF up to 250 MB and the page
 preview PNG under `docs/`, PNG/JPEG/WebP under `org-avatars/`. The browser tells the app when an
 upload is done; the app registers no Blob completion callback, so `VERCEL_BLOB_CALLBACK_URL` is
@@ -525,26 +534,26 @@ workspace invites.
 
 **View emails are on by default.** Every workspace member, existing and new, reads
 `viewEmailMode` = `daily` unless they turn it off, and no migration or opt-in step stands in
-front of the first send. The first `notification-emails` tick after the deploy (any tick, not
-the 23:00 one) creates every member's `share_views` cursor at that moment and sends nothing, so
-views from before that tick are never emailed. From the next 23:00 UTC tick on, every member of a
-workspace whose links were opened by a recipient since then gets a daily digest. Size Resend for
-it before deploying, not after:
+front of the first send. Notifications are queued, not caught up to: a `NotificationQueue` row is written when the event
+happens and drained by the cron. (This replaced `NotificationEmailCursor`, which is deprecated —
+anything describing a first tick that creates cursors and sends nothing predates it, and with it
+the quiet grace period where events from before the deploy were never emailed. On a database
+starting empty there is nothing to catch up on either way; on one with history there is.) Size
+Resend before deploying, not after:
 
 - **Daily digests**: up to one per member per workspace per UTC day. Count members across all
   workspaces with share traffic; that number alone is the daily floor once links are being opened.
 - **Immediate**: members who switch to `immediate` get up to one email per document per 5-minute
-  tick while new recipients keep opening links, on every plan. The switch itself can send a burst:
-  the first immediate tick emails every recipient open since the member's last digest (up to 7
-  days), one email per document. Members on `off` have their cursor moved forward every tick, so
-  turning emails back on never sends what happened while they were off.
+  tick while new recipients keep opening links, on every plan. Each row carries its own retry and
+  backoff, and one that keeps failing ends as a `dead` letter rather than blocking the queue behind
+  it. Members on `off` have nothing enqueued, so turning emails back on never sends what happened
+  while they were off.
 - The Resend free tier (100 emails a day) is not enough for launch: put the account on a paid plan
   whose daily and monthly quota covers the member count above plus the other email kinds, with
   headroom. Over quota, sends fail and are retried, within limits. A failed immediate email
   retries every 5 minutes from the first document that failed. A failed daily digest retries only
-  on the remaining 23:00–23:59 UTC ticks, then on the next day's 23:00 run. Once a stuck cursor is
-  more than 7 days old (`defaultLookbackDays`), the events older than that fall out of the window
-  and are never sent.
+  on the remaining 23:00–23:59 UTC ticks, then on the next day's 23:00 run. A row that keeps failing
+  ends as a `dead` letter rather than retrying forever.
 - The cron reads every live membership, unsorted, capped at `limitMembers` (default 600). Above
   600 memberships across all workspaces, some members get no view, doc-update or request emails
   on a tick, and nothing reports it; raise the limit or fix the query before that point.
@@ -597,13 +606,14 @@ Two more things that decide whether mail lands, neither of them DNS:
 1. Add the sending domain `lnkdrp.com` in Resend and create the DNS records it asks for (SPF and
    DKIM). Wait for "Verified"; unverified domains
    silently drop to spam or fail.
-2. Create an API key with send access. Env on the web app: `RESEND_API_KEY`,
+2. Create an API key with send access. Env on the web app: `RESEND_API_KEY`, `EMAIL_LOGO_URL`
+   (4.4 — without it, production mail loads its logo from the development Blob store),
    `NOTIFICATION_EMAIL_FROM` (`LinkDrop <hi@lnkdrp.com>`), `INVITE_EMAIL_FROM` (same, or a
    dedicated address). Invites read only `INVITE_EMAIL_FROM`; everything else uses
    `NOTIFICATION_EMAIL_FROM`, falling back to `INVITE_EMAIL_FROM`. No email sets a Reply-To, so
    replies go to the From address: give it a real inbox.
 3. Leave `EMAIL_TRANSPORT` **unset** in production. `EMAIL_TRANSPORT=console` logs instead of
-   sending and is for local development, but invites ignore it and always call Resend. It logs the
+   sending and is for local development. It logs the
    full body, and download-request emails carry live Approve, Deny and claim URLs that work without
    sign-in, so in production those tokens would land in Vercel logs and any Log Drain. Without
    `RESEND_API_KEY`, sending throws.
@@ -697,7 +707,7 @@ it through a tunnel that rewrites the host header (for example `ngrok --host-hea
 and never serve staging from `next dev`. `ADMIN_LOCALHOST_BYPASS=0` turns it off in development
 when you need the real gate.
 
-4. Crons come from `vercel.json`; see 5.1. **Vercel Pro is required** because seven of the ten
+4. Crons come from `vercel.json`; see 5.1. **Vercel Pro is required** because eight of the eleven
    jobs run more than once a day (`notification-emails` every 5 minutes). PDF processing, URL
    import, uploads, compare reruns and all ten cron routes declare `maxDuration = 300`.
    Processing continues in `after()` inside that same 300 s budget, so a deck that cannot be
@@ -742,6 +752,7 @@ one `cron:<job>` npm script, and `tests/lib/cronMap.test.ts` fails when they dri
 | `analytics-reconcile` | `50 3 * * *` | yes | ignored; no bound (it scans all history) | no |
 | `credits-purchase-expiry` | `5 4 * * *` | ignored | yes | no |
 | `account-purge` | `30 4 * * *` | yes | yes (default 25) | no |
+| `credits-stale-reservations` | `25 * * * *` | yes | yes (default 500) | no |
 
 Never pass `--dry-run` to a job marked "ignored" expecting a preview: the runner still adds
 `?dryRun=1`, the route ignores it and does the real work, including Stripe meter events and credit
@@ -789,7 +800,12 @@ grants.
   50 3 * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/analytics-reconcile
   5 4 * * *    curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/credits-purchase-expiry
   30 4 * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/account-purge
+  25 * * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/credits-stale-reservations
   ```
+  `credits-stale-reservations` matters more than its position in this list suggests: credits
+  reserved for an AI run that died are only returned by this job. Leave it unscheduled and
+  workspaces lose credits permanently, one dead run at a time, with nothing surfacing it but the
+  admin anomalies page.
   `scripts/cron/README.md` leaves `analytics-reconcile`, `credits-purchase-expiry` and
   `account-purge` out of its
   crontab, says every route takes a lease (four do; see the table above) and calls a double
@@ -1227,7 +1243,7 @@ with no customer data in it, tomorrow whatever a volume or a debugging mount add
 to any shared staging MCP. The flag is for a server the caller runs themselves, which is the local
 `npm run mcp` case.
 
-**PDF optimization needs Ghostscript, and the image does not have it.** Before an inline upload the
+**PDF optimization uses Ghostscript, and the image has it.** Before an inline upload the
 server shells out to `gs` (`mcp/src/optimize.ts`): `-dPDFSETTINGS=/prepress` with images
 downsampled to `LNKDRP_PDF_OPTIMIZE_DPI` (default 220), a 120 s timeout, page count verified
 against the original, and the result kept only if it is a valid PDF with the same page count and at
@@ -1237,18 +1253,16 @@ least 5% smaller. Files under 1 MB are not touched. It is a **soft dependency**:
 "Ghostscript (gs) is not installed on the MCP server, so the file was sent as-is." Every other
 failure — timeout, changed page count, no saving — is soft the same way.
 
-`mcp/Dockerfile` runs no `apk add`, so the Fly image has no `gs` and every inline upload carries
-that note. Shipping without it is a supported choice: `sourceUrl` never needed optimization, and
-the inline path cannot carry a large file on Vercel anyway (4.4). It only matters if the inline
-path is how your agents share, because optimization is what brings a 6 MB deck under Vercel's
-4.5 MB body cap. To turn it on, add `ghostscript` to a `RUN apk add --no-cache` line in
-`mcp/Dockerfile` and `fly deploy`; it is a large package with its own fonts, so check the built
-image size and the `shared-cpu-1x` 512 MB machine's headroom before assuming no `[[vm]]` change is
-needed. Add `pdfjs-dist` to the same generated
-`package.json` in that Dockerfile while you are there: optimization verifies the page count on both
-files before it accepts a smaller one, and without `pdfjs-dist` that check cannot run, so
-Ghostscript would do the work on every upload and the result would always be thrown away with
-"The original was sent unchanged: the page count could not be verified on both files."
+`mcp/Dockerfile` installs both: `apk add --no-cache ghostscript` (verified at build time with
+`gs --version`) and `pdfjs-dist` in the generated `package.json`, which is what lets optimization
+verify the page count on both files before accepting a smaller one. Without that check Ghostscript
+would do the work on every upload and the result would always be thrown away with "The original was
+sent unchanged: the page count could not be verified on both files."
+
+This matters most on the inline path, because optimization is what brings a 6 MB deck under
+Vercel's 4.5 MB body cap; `sourceUrl` never needed it. Ghostscript is a large package with its own
+fonts, so if the image is rebuilt, check its size against the `shared-cpu-1x` 512 MB machine's
+headroom.
 
 Or with Docker anywhere (add `--platform linux/amd64` as in 6.3):
 
@@ -1282,6 +1296,12 @@ caller's own key. Details: `docs/MCP.md`.
 
 Run in this order; each step depends on the previous.
 
+0. Open `/a/env` as an admin (or run `npm run preflight:env` against the production environment) and
+   confirm **zero failing rows**. It checks more than presence: Stripe keys in the wrong mode, a
+   Mongo URI pointing at the wrong database, a webhook endpoint missing events, a site URL on
+   `http://` or with a trailing slash. Warnings are for things that are optional or deliberate, and
+   are worth reading once. Do this before anything below, because every step after it assumes the
+   environment is right.
 1. `curl https://lnkdrp.com/api/health` → 200 with `"ok":true`, `"mongo":"ok"`,
    `"env":"production"`, and `"version"` equal to `git rev-parse --short=7 HEAD` of the commit you
    released (null means the deploy was not built from git). Then

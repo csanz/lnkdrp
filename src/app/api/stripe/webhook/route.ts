@@ -12,6 +12,7 @@
  *   (previous attempt threw → 400) is processed again.
  */
 import { NextResponse } from "next/server";
+import { resolveConfiguredSiteUrl } from "@/lib/urls";
 import { Types } from "mongoose";
 import Stripe from "stripe";
 
@@ -108,10 +109,24 @@ function planNameFor(status: string, kind: SubscriptionKind | null): string {
  * explicit limit, including one the owner lowered, is left alone), then re-runs the summaries
  * that were skipped for want of credits — those are what they came to pay for.
  */
-/** `NEXT_PUBLIC_APP_URL`, falling back to a value that still lets processing trigger locally. */
+/**
+ * Where this deployment reaches itself, for the self-call that re-runs skipped summaries.
+ *
+ * It read `NEXT_PUBLIC_APP_URL` alone and fell back to `http://localhost:3001`. On a deploy with
+ * that variable unset, a customer buys credits, the webhook credits them correctly, and then the
+ * self-call is made to localhost from inside the lambda: ECONNREFUSED, swallowed by a `.catch`,
+ * logged only at debug level 2. The money lands and the summaries they paid for never run, with
+ * nothing anywhere to say so.
+ *
+ * `resolveConfiguredSiteUrl` already knows the whole ladder - site URL, app URL, NextAuth URL, and
+ * `VERCEL_URL`, which is always present on Vercel. The localhost fallback stays, but only outside
+ * production, where it is the correct answer rather than a silent dead end.
+ */
 function appUrl(): string {
-  const configured = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim();
-  return (configured || "http://localhost:3001").replace(/\/+$/, "");
+  const resolved = resolveConfiguredSiteUrl();
+  if (resolved) return resolved.origin;
+  if (process.env.NODE_ENV === "production") return "";
+  return "http://localhost:3001";
 }
 
 async function activatePayAsYouGo(params: { orgId: Types.ObjectId; eventId: string }): Promise<void> {
@@ -126,7 +141,24 @@ async function activatePayAsYouGo(params: { orgId: Types.ObjectId; eventId: stri
   }
   debugLog(1, "[stripe:webhook] pay-as-you-go active → on-demand on", { id: params.eventId, orgId: String(params.orgId) });
   try {
-    const { queued } = await requeueSkippedSummaries({ orgId: String(params.orgId), origin: appUrl() });
+    /**
+     * Say so when this cannot run, rather than firing a request at nothing.
+     *
+     * The customer has just paid; the summaries are what they paid for. An unresolvable origin used
+     * to mean a fetch to localhost from inside the lambda, refused, swallowed by the catch below,
+     * and logged only at level 2 - money in, nothing done, nothing said. Level 1 is where the rest
+     * of this route's real events are logged.
+     */
+    const origin = appUrl();
+    if (!origin) {
+      debugLog(1, "[stripe:webhook] cannot re-queue summaries: no site URL configured", {
+        id: params.eventId,
+        orgId: String(params.orgId),
+        hint: "set NEXT_PUBLIC_SITE_URL or NEXT_PUBLIC_APP_URL",
+      });
+      return;
+    }
+    const { queued } = await requeueSkippedSummaries({ orgId: String(params.orgId), origin });
     debugLog(1, "[stripe:webhook] pay-as-you-go → skipped summaries re-queued", { id: params.eventId, orgId: String(params.orgId), queued });
   } catch (e) {
     debugLog(2, "[stripe:webhook] summary re-queue failed (non-fatal)", { message: e instanceof Error ? e.message : String(e) });
@@ -157,7 +189,15 @@ async function handleCreditPackCheckout(session: Stripe.Checkout.Session, eventI
   debugLog(1, "[stripe:webhook] credit pack granted", { id: eventId, orgId, credits: result.credits, alreadyGranted: result.alreadyGranted });
   if (result.alreadyGranted) return;
   try {
-    const { queued } = await requeueSkippedSummaries({ orgId, origin: appUrl() });
+    const origin = appUrl();
+    if (!origin) {
+      debugLog(1, "[stripe:webhook] cannot re-queue summaries: no site URL configured", {
+        orgId,
+        hint: "set NEXT_PUBLIC_SITE_URL or NEXT_PUBLIC_APP_URL",
+      });
+      return;
+    }
+    const { queued } = await requeueSkippedSummaries({ orgId, origin });
     debugLog(1, "[stripe:webhook] credit pack → skipped summaries re-queued", { id: eventId, orgId, queued });
   } catch (e) {
     debugLog(2, "[stripe:webhook] summary re-queue failed (non-fatal)", { message: e instanceof Error ? e.message : String(e) });
@@ -416,16 +456,42 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
     // in cases where Stripe sends `current_period_end=null` while still clearing/setting cancel schedules.
     if (effectivePeriodEnd) setFields.currentPeriodEnd = effectivePeriodEnd;
 
+    /**
+     * Refuse to apply an event older than the one that last wrote this row.
+     *
+     * Stripe does not promise ordering and this route asks for retries, so the dangerous case is a
+     * stale `updated` landing after a `deleted`: the row goes back to active, Stripe has nothing
+     * more to send for a subscription that is gone, and the workspace sits on Pro for free.
+     *
+     * Expressed as a filter rather than a read-then-write so two events arriving together cannot
+     * both pass the check. A row with no stamp yet - every row written before this field existed -
+     * matches, so the first event after deploy always lands.
+     */
+    const eventCreatedAt = typeof event.created === "number" ? new Date(event.created * 1000) : null;
+    const orderedQuery = eventCreatedAt
+      ? { ...query, $or: [{ lastStripeEventAt: null }, { lastStripeEventAt: { $exists: false } }, { lastStripeEventAt: { $lte: eventCreatedAt } }] }
+      : query;
+
     const res = await SubscriptionModel.updateOne(
-      query,
+      orderedQuery,
       {
         $setOnInsert: orgId ? { orgId, isDeleted: false } : {},
         $set: {
           ...setFields,
+          ...(eventCreatedAt ? { lastStripeEventAt: eventCreatedAt } : {}),
         },
       },
       { upsert: Boolean(orgId) },
     );
+    if (eventCreatedAt && res.matchedCount === 0 && res.upsertedCount === 0) {
+      debugLog(1, "[stripe:webhook] ignored out-of-order subscription event", {
+        id: event.id,
+        type: event.type,
+        eventCreated: eventCreatedAt.toISOString(),
+        orgId: orgId ? String(orgId) : null,
+      });
+      return;
+    }
     debugLog(1, "[stripe:webhook] subscription updated → org subscription saved", {
       id: event.id,
       type: event.type,
@@ -565,13 +631,25 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
     // Disable on-demand first (needs the workspace mapping, which the row still holds).
     await disableOnDemandForSubscription({ query, reason: "customer.subscription.deleted", eventId: event.id });
 
-    const res = await SubscriptionModel.updateOne(query, {
+    /**
+     * The same ordering guard the update handler carries, in the other direction.
+     *
+     * A stale `deleted` landing after a newer `updated` would downgrade a workspace that has since
+     * resubscribed, and no further event would come to correct it.
+     */
+    const deletedAt = typeof event.created === "number" ? new Date(event.created * 1000) : null;
+    const orderedQuery = deletedAt
+      ? { ...query, $or: [{ lastStripeEventAt: null }, { lastStripeEventAt: { $exists: false } }, { lastStripeEventAt: { $lte: deletedAt } }] }
+      : query;
+
+    const res = await SubscriptionModel.updateOne(orderedQuery, {
       $set: {
         status: "free",
         planName: "Free",
         currentPeriodEnd: null,
         cancelAtPeriodEnd: false,
         stripeSubscriptionItemId: null,
+        ...(deletedAt ? { lastStripeEventAt: deletedAt } : {}),
       },
     });
     debugLog(1, "[stripe:webhook] subscription.deleted → downgraded workspace", {

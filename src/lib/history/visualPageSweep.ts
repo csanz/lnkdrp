@@ -24,13 +24,15 @@
  * leans on: it is deaf to compression and sharp about locality, which is exactly backwards from
  * the fingerprint, so the two together cover both cases.
  *
- * Only pages nothing else already flagged are swept. A page whose text changed is in the list
- * regardless, so the cost falls on pages that look unchanged - and the answer for those is the
- * whole point.
+ * Every page with a render on both sides is compared, not only the unflagged ones. Pages the text
+ * pass already flagged still need their regions located, because the crop handed to the model and
+ * the marks drawn in the viewer both come from here. The unflagged ones are what this was built
+ * for; the flagged ones get their geometry along the way.
  */
 import sharp from "sharp";
 
 import { diffRegions, type DiffRegions } from "@/lib/history/pageDiffRegions";
+import { debugLog } from "@/lib/debug";
 
 /** Width both renders are decoded to before comparing. Matches the viewer's own analysis width. */
 const ANALYSIS_WIDTH = 640;
@@ -44,11 +46,19 @@ const CONCURRENCY = 8;
 /** One page's two renders, by URL. */
 export type SweepCandidate = { pageNumber: number; previousUrl: string; newUrl: string };
 
-async function decode(url: string, width: number, height: number): Promise<Uint8ClampedArray | null> {
+/** Fetch once; every caller below works from the bytes rather than the URL. */
+async function fetchBytes(url: string): Promise<Buffer | null> {
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+async function decode(buf: Buffer, width: number, height: number): Promise<Uint8ClampedArray | null> {
+  try {
     const data = await sharp(buf)
       .resize(width, height, { fit: "contain", background: "#ffffff" })
       .ensureAlpha()
@@ -62,16 +72,23 @@ async function decode(url: string, width: number, height: number): Promise<Uint8
 
 /** Compare one page's two renders. Null when either could not be read. */
 async function pageRegions(c: SweepCandidate): Promise<DiffRegions | null> {
+  // Two fetches, not three. The new render used to be pulled once for its dimensions and then a
+  // second time to decode, so a 50-page replacement made 150 blob round trips where 100 would do,
+  // on the critical path of every replacement.
+  const [prevBuf, nextBuf] = await Promise.all([fetchBytes(c.previousUrl), fetchBytes(c.newUrl)]);
+  if (!prevBuf || !nextBuf) return null;
+
   // The new render's shape sets the frame, and the previous one is letterboxed into it rather than
   // stretched: a page whose box changed would otherwise move every pixel and report as changed.
   let height = Math.round((ANALYSIS_WIDTH * 9) / 16);
   try {
-    const meta = await sharp(Buffer.from(await (await fetch(c.newUrl)).arrayBuffer())).metadata();
+    const meta = await sharp(nextBuf).metadata();
     if (meta.width && meta.height) height = Math.max(8, Math.round((ANALYSIS_WIDTH * meta.height) / meta.width));
   } catch {
     return null;
   }
-  const [prev, next] = await Promise.all([decode(c.previousUrl, ANALYSIS_WIDTH, height), decode(c.newUrl, ANALYSIS_WIDTH, height)]);
+
+  const [prev, next] = await Promise.all([decode(prevBuf, ANALYSIS_WIDTH, height), decode(nextBuf, ANALYSIS_WIDTH, height)]);
   if (!prev || !next) return null;
   return diffRegions(prev, next, ANALYSIS_WIDTH, height);
 }
@@ -96,6 +113,14 @@ export function regionsMeanChanged(r: DiffRegions | null | undefined): boolean {
 export async function sweepVisualChanges(candidates: SweepCandidate[]): Promise<Map<number, DiffRegions>> {
   const out = new Map<number, DiffRegions>();
   const queue = candidates.slice(0, MAX_PAGES);
+  // Say when the cap bites. Past it a small local edit is simply never looked for, and silence
+  // there is indistinguishable from "nothing changed on those pages".
+  if (candidates.length > MAX_PAGES) {
+    debugLog(1, "[visualPageSweep] page cap reached; later pages not swept", {
+      candidates: candidates.length,
+      swept: MAX_PAGES,
+    });
+  }
   let cursor = 0;
 
   async function worker(): Promise<void> {

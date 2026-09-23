@@ -41,6 +41,11 @@ function decodeCursor(raw: string | null): Cursor | null {
     if (!Number.isFinite(toVersion) || toVersion < 1) return null;
     if (!createdDate || !id) return null;
     if (!Types.ObjectId.isValid(id)) return null;
+    // Parseable as a date, because it goes straight into a Mongo filter as `new Date(...)`. An
+    // unparseable string became an Invalid Date, Mongoose's cast asserted, and the catch at the
+    // bottom of this route handed the CastError's text to an anonymous caller - naming the model,
+    // the path and the type. The `/s` twin closed this; this copy had drifted.
+    if (!Number.isFinite(Date.parse(createdDate))) return null;
     return { toVersion: Math.floor(toVersion), createdDate, id };
   } catch {
     return null;
@@ -216,8 +221,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
 
       return NextResponse.json({ ok: true, changes: out, nextCursor }, { headers: { "cache-control": "no-store" } });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 400 });
+      // The body is ours to log, never the caller's: this route is reachable with nothing but a
+      // share slug, and `err.message` on a cast failure names the model, the path and the type.
+      debugError(1, "[api/share/:shareId/changes] failed", { message: err instanceof Error ? err.message : String(err) });
+      return NextResponse.json({ error: "Bad request" }, { status: 400 });
     }
   });
 }

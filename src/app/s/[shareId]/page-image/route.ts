@@ -21,6 +21,7 @@ import { resolveShareLink } from "@/lib/share/links";
 import { UploadModel } from "@/lib/models/Upload";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 import { ownerCanShowVersionHistory } from "@/lib/share/ownerPlan";
 
 export const runtime = "nodejs";
@@ -98,8 +99,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       const target = wantFull ? pick("imageUrl") ?? pick("thumbUrl") : pick("thumbUrl") ?? pick("imageUrl");
       if (!target) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-      const upstream = await fetch(target);
-      if (!upstream.ok || !upstream.body) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      /**
+       * Through `fetchStoredBlob`, not a bare fetch.
+       *
+       * This dereferences a URL read out of the database and streams whatever comes back to an
+       * anonymous link holder - the exact shape that helper exists to contain. It checks the host
+       * against the blob store allowlist and refuses to follow a redirect off it; a bare `fetch`
+       * does neither, and follows redirects by default. Not exploitable today, because only the
+       * processing job writes `slideNodes` - but that is an invariant this codebase has already
+       * been bitten by once, and it would regress silently the moment any other write path touches
+       * those rows.
+       */
+      const upstream = await fetchStoredBlob(target);
+      if (!upstream || !upstream.ok || !upstream.body) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
       return new NextResponse(upstream.body, {
         status: 200,

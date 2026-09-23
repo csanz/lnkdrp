@@ -21,7 +21,22 @@ export const DEV_MCP_URL = "http://localhost:8787/mcp";
  */
 export function mcpUrlForOrigin(origin: string): string {
   if (process.env.NEXT_PUBLIC_MCP_URL) return MCP_URL;
-  return origin.replace(/\/+$/, "") === SITE_ORIGIN ? MCP_URL : DEV_MCP_URL;
+  /**
+   * Localhost is the only thing that earns the local default.
+   *
+   * This used to return `DEV_MCP_URL` for any origin that did not string-equal `SITE_ORIGIN`, a
+   * value baked in at build time. That is every preview deploy, the `*.vercel.app` hostname a first
+   * deploy serves from before a domain is attached, and `lnkdrp.com` itself if the variable is
+   * spelled with `www.` or a trailing slash. In all of those a real customer was handed
+   * `claude mcp add --transport http lnkdrp http://localhost:8787/mcp`, pointing their agent at a
+   * server on their own machine.
+   *
+   * A wrong-but-public URL is recoverable; a localhost URL written into somebody's agent config is
+   * not, because nothing about it looks broken until they wonder why lnkdrp never answers.
+   */
+  const host = origin.replace(/\/+$/, "");
+  if (host === SITE_ORIGIN) return MCP_URL;
+  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host) ? DEV_MCP_URL : MCP_URL;
 }
 /** Public site origin for docs and the verification command (build-time; falls back to production). */
 export const SITE_ORIGIN = (process.env.NEXT_PUBLIC_SITE_URL || "https://lnkdrp.com").replace(/\/+$/, "");

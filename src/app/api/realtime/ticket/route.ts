@@ -21,7 +21,17 @@ const NO_STORE = { "cache-control": "no-store" } as const;
 
 export async function GET(request: Request) {
   try {
-    const url = (process.env.NEXT_PUBLIC_REALTIME_URL || "").trim();
+    /**
+     * A runtime way to turn realtime off, because the URL alone is not one.
+     *
+     * `NEXT_PUBLIC_REALTIME_URL` is inlined at build time, so the documented rollback - unset it -
+     * needs a full redeploy. Until that lands, every open tab keeps retrying a dead server and
+     * waking this route, which is dynamic and reads Mongo twice, every thirty seconds per tab.
+     * `REALTIME_DISABLED` is read here, at request time, and answers the same empty payload the
+     * clients already treat as "poll instead".
+     */
+    const disabled = ["1", "true"].includes((process.env.REALTIME_DISABLED ?? "").trim().toLowerCase());
+    const url = disabled ? "" : (process.env.NEXT_PUBLIC_REALTIME_URL || "").trim();
     const actor = await resolveActorForStats(request);
     if (actor.kind !== "user") return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: NO_STORE });
     if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400, headers: NO_STORE });

@@ -32,6 +32,19 @@ const subscriptionSchema = new Schema(
      */
     status: { type: String, trim: true, default: "free", index: true },
 
+    /**
+     * `event.created` of the Stripe event that last wrote this row.
+     *
+     * Stripe does not guarantee delivery order, and this webhook deliberately answers 400 on a
+     * processing error so Stripe retries with backoff. Without a stamp the handlers overwrite
+     * status unconditionally, so a retried older event can land after a newer one: an `updated`
+     * carrying `active` fails on a transient error, `deleted` arrives and downgrades the row, the
+     * retry of the older `updated` then writes it back to active - and Stripe sends nothing further
+     * for a subscription that no longer exists, so that workspace keeps Pro, and its exemption from
+     * the Free daily credit brake, indefinitely and for nothing.
+     */
+    lastStripeEventAt: { type: Date, default: null },
+
     /** Human-readable plan label shown in the UI. */
     planName: { type: String, trim: true, default: "Free" },
 
