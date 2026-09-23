@@ -1,5 +1,6 @@
 "use client";
 
+import ContributorsCard from "@/components/people/ContributorsCard";
 import { SparklesIcon } from "@heroicons/react/24/outline";
 import { useState, type RefObject, type ReactNode } from "react";
 import Modal from "@/components/modals/Modal";
@@ -239,6 +240,10 @@ export default function DocSharePanel({
           </div>
         </div>
       )}
+
+      {/* Who made this. Last in the rail: the link and its analytics are why somebody opens this
+          panel; authorship is what they look for second, and only on a shared document. */}
+      <ContributorsCard docId={docId} />
 
       <Modal
         open={aiExtractOpen}
