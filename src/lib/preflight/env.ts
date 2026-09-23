@@ -76,20 +76,15 @@ function checkPresence(add: Sink) {
   // repeat that failure under another name.
 
   /**
-   * Who skips the queue, since the queue itself no longer has an off switch.
+   * Not a pass or a fail, a fact worth stating out loud.
    *
-   * Every new account is queued (`src/lib/waitlist/waitlist.ts`), so the thing worth reporting is
-   * the allowlist: it is the one setting that lets somebody in without a person deciding, and a
-   * domain left in it is a door nobody remembers opening.
+   * This is the one gating flag whose absence silently means "open": unset, anyone who reaches the
+   * Google sign-in gets a full account on first visit. The default is deliberate, but a launch
+   * meant to sit behind a queue should not discover the door was open by watching strangers sign up.
    */
-  const emails = env("WAITLIST_ALLOW_EMAILS");
-  const domains = env("WAITLIST_ALLOW_DOMAINS");
-  if (!emails && !domains) {
-    add("WAITLIST_ALLOW_EMAILS", "Auth", "ok", "no allowlist - every new account waits for approval");
-  } else {
-    const parts = [emails ? `${emails.split(/[,\s]+/).filter(Boolean).length} address(es)` : "", domains ? `domains: ${domains}` : ""].filter(Boolean);
-    add("WAITLIST_ALLOW_EMAILS", "Auth", domains ? "warn" : "ok", `${parts.join("; ")} skip the queue`);
-  }
+  const waitlist = env("WAITLIST_ENABLED").toLowerCase();
+  const queued = waitlist === "1" || waitlist === "true";
+  add("WAITLIST_ENABLED", "Auth", queued ? "ok" : "warn", queued ? "sign-ups join the queue" : "not set - sign-ups are open to anyone who can reach the sign-in");
 }
 
 function checkUrls(add: Sink) {
