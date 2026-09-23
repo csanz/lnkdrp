@@ -362,7 +362,17 @@ type HistoryItem = {
   toVersion: number | null;
   createdDate: string | null;
   summary: string;
-  pagesThatChanged?: Array<{ pageNumber: number; summary: string }>;
+  pagesThatChanged?: Array<{
+    pageNumber: number;
+    summary: string;
+    /** added / removed / replaced, measured from the two renders. Null when it cannot be told. */
+    changeKind: "added" | "removed" | "replaced" | null;
+    /** What the changed part of the page said before and says now, read off the page by the model. */
+    previousWording: string | null;
+    newWording: string | null;
+    /** One line per marked area of the page. */
+    regionNotes: string[];
+  }>;
 };
 
 function normalizePdfRotation(page: { rotate?: number } | null | undefined): number {
@@ -984,9 +994,22 @@ export function PdfJsViewer({
                         typeof p?.pageNumber === "number" && Number.isFinite(p.pageNumber) ? Math.floor(p.pageNumber) : null;
                       if (!n || n < 1) return null;
                       const s = typeof p?.summary === "string" ? p.summary : "";
-                      return { pageNumber: n, summary: s };
+                      const str = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
+                      return {
+                        pageNumber: n,
+                        summary: s,
+                        changeKind:
+                          p?.changeKind === "added" || p?.changeKind === "removed" || p?.changeKind === "replaced"
+                            ? (p.changeKind as "added" | "removed" | "replaced")
+                            : null,
+                        previousWording: str(p?.previousWording),
+                        newWording: str(p?.newWording),
+                        regionNotes: Array.isArray(p?.regionNotes)
+                          ? (p.regionNotes as unknown[]).filter((x): x is string => typeof x === "string" && Boolean(x.trim()))
+                          : [],
+                      };
                     })
-                    .filter((x): x is { pageNumber: number; summary: string } => Boolean(x))
+                    .filter((x): x is NonNullable<HistoryItem["pagesThatChanged"]>[number] => Boolean(x))
                 : [];
               return { fromVersion, toVersion, createdDate, summary: summary.trim(), pagesThatChanged } satisfies HistoryItem;
             })
@@ -2982,10 +3005,59 @@ export function PdfJsViewer({
                           }}
                           title={`Jump to page ${p.pageNumber}`}
                         >
-                          <div className="text-xs font-semibold text-white/85">Page {p.pageNumber}</div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-semibold text-white/85">Page {p.pageNumber}</span>
+                            {/* Measured from the two renders, so it is the same for every reader. */}
+                            {p.changeKind ? (
+                              <span
+                                className={[
+                                  "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                                  p.changeKind === "added"
+                                    ? "bg-emerald-400/20 text-emerald-200"
+                                    : p.changeKind === "removed"
+                                      ? "bg-rose-400/20 text-rose-200"
+                                      : "bg-white/10 text-white/80",
+                                ].join(" ")}
+                              >
+                                {p.changeKind === "added" ? "Added" : p.changeKind === "removed" ? "Removed" : "Replaced"}
+                              </span>
+                            ) : null}
+                          </div>
                           <div className="mt-0.5 text-sm text-white/80">
                             {(p.summary || "").trim() || "Change summary unavailable."}
                           </div>
+
+                          {/*
+                            The words themselves, where the compare could read them. A recipient
+                            asking what changed wants the sentence, not a page number - and this is
+                            text, so it carries none of the blob-URL exposure that keeps the page
+                            images on the owner's side for now.
+                          */}
+                          {p.previousWording || p.newWording ? (
+                            <div className="mt-2 space-y-1">
+                              {p.previousWording ? (
+                                <div className="rounded-md bg-rose-400/10 px-2 py-1 text-xs leading-relaxed text-rose-100/90">
+                                  <span className="mr-1 font-semibold uppercase tracking-wide text-rose-200/70">Before</span>
+                                  {p.previousWording}
+                                </div>
+                              ) : null}
+                              {p.newWording ? (
+                                <div className="rounded-md bg-emerald-400/10 px-2 py-1 text-xs leading-relaxed text-emerald-100/90">
+                                  <span className="mr-1 font-semibold uppercase tracking-wide text-emerald-200/70">Now</span>
+                                  {p.newWording}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+
+                          {/* Only where they say something the page summary does not. */}
+                          {p.regionNotes.length > 1 ? (
+                            <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-white/70">
+                              {p.regionNotes.slice(0, 3).map((n, i) => (
+                                <li key={i}>{n}</li>
+                              ))}
+                            </ul>
+                          ) : null}
                         </button>
                       ))}
                     </div>

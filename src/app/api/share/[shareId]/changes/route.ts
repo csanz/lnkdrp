@@ -159,9 +159,28 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         const pagesThatChangedRaw = (c as any).diff?.pagesThatChanged;
         const pagesThatChanged = Array.isArray(pagesThatChangedRaw)
           ? pagesThatChangedRaw
+              /**
+               * Text only, and deliberately so.
+               *
+               * The owner's view also gets `previousImageUrl` and `newImageUrl` and draws the two
+               * pages side by side. Those are public blob URLs that outlive the link being
+               * disabled, expired or archived, so handing them to a recipient widens exactly the
+               * leak the blob work exists to close - that surface waits for the proxy.
+               *
+               * None of this does. What changed, in which direction, and what each marked area of
+               * the page was about are sentences, and they are most of what a recipient opening
+               * "what changed" actually wants.
+               */
               .map((p: any) => ({
                 pageNumber: typeof p?.pageNumber === "number" && Number.isFinite(p.pageNumber) ? Math.floor(p.pageNumber) : null,
                 summary: typeof p?.summary === "string" ? p.summary : "",
+                changeKind:
+                  p?.changeKind === "added" || p?.changeKind === "removed" || p?.changeKind === "replaced" ? p.changeKind : null,
+                previousWording: typeof p?.previousWording === "string" && p.previousWording.trim() ? p.previousWording : null,
+                newWording: typeof p?.newWording === "string" && p.newWording.trim() ? p.newWording : null,
+                regionNotes: Array.isArray(p?.regionNotes)
+                  ? p.regionNotes.filter((n: unknown) => typeof n === "string" && n.trim()).slice(0, 3)
+                  : [],
               }))
               .filter((p: any) => typeof p.pageNumber === "number" && p.pageNumber >= 1)
           : [];

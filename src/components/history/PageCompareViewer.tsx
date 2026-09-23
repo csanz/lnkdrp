@@ -124,10 +124,10 @@ function Marks({ boxes, tone, notes }: { boxes: DiffBox[]; tone: "removed" | "ad
 /** One swatch of the legend, so the colours are explained rather than guessed at. */
 function Swatch({ tone, children }: { tone: "removed" | "added"; children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-[var(--muted)]">
+    <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-[var(--muted)]">
       <span
         className={[
-          "inline-block h-2.5 w-2.5 rounded-[2px] ring-2",
+          "inline-block h-2.5 w-2.5 shrink-0 rounded-[2px] ring-1",
           tone === "removed" ? "bg-rose-500/20 ring-rose-400/80" : "bg-emerald-500/20 ring-emerald-500/80",
         ].join(" ")}
       />
@@ -445,7 +445,11 @@ export default function PageCompareViewer({
               A control that moves what you are looking at is worse than the thing it controls:
               nothing here may change the layout, only its contents.
             */}
-            <div className="mt-0.5 flex h-4 items-center gap-x-3 overflow-hidden whitespace-nowrap">
+            {/*
+              `overflow-hidden` belongs on the text, not the row: the swatches carry a 2px ring that
+              sits outside their box, and the first one lost its left edge to the clip.
+            */}
+            <div className="mt-0.5 flex h-4 items-center gap-x-3 whitespace-nowrap pl-0.5">
               {showMarks && boxes.length ? (
                 <>
                   <Swatch tone="removed">was here in {fromLabel}</Swatch>
