@@ -372,6 +372,14 @@ type HistoryItem = {
     newWording: string | null;
     /** One line per marked area of the page. */
     regionNotes: string[];
+    /**
+     * Both renders of this page, proxied through `/s/:shareId/page-image`.
+     *
+     * Never the blob address: that keeps working after the link is revoked, which is the thing the
+     * proxy exists to stop.
+     */
+    previousImageUrl: string | null;
+    newImageUrl: string | null;
   }>;
 };
 
@@ -943,7 +951,15 @@ export function PdfJsViewer({
     setHistoryLoading(true);
     setHistoryError(null);
 
-    const limit = historyItems.length ? 18 : 10;
+    /**
+     * The two most recent versions, then more on scroll.
+     *
+     * A recipient opening "what changed" is asking about the version they were just sent against
+     * the one they saw last; the six before that are the owner's business. Each entry now carries
+     * page previews, so a long first page is also a lot of images fetched for history nobody
+     * scrolled to. The sentinel still pages the rest in for anyone who wants it.
+     */
+    const limit = historyItems.length ? 6 : 2;
     const cursor = historyStateRef.current.cursor;
     const url = (() => {
       const base = revisionHistoryUrl;
@@ -1007,6 +1023,8 @@ export function PdfJsViewer({
                         regionNotes: Array.isArray(p?.regionNotes)
                           ? (p.regionNotes as unknown[]).filter((x): x is string => typeof x === "string" && Boolean(x.trim()))
                           : [],
+                        previousImageUrl: str(p?.previousImageUrl),
+                        newImageUrl: str(p?.newImageUrl),
                       };
                     })
                     .filter((x): x is NonNullable<HistoryItem["pagesThatChanged"]>[number] => Boolean(x))
@@ -2953,15 +2971,17 @@ export function PdfJsViewer({
           setHistoryOpen(false);
         }}
         ariaLabel="Version history"
-        panelClassName="border-white/15 bg-black/95 text-white ring-white/15"
+        // Wide enough for two page previews side by side: the default 520px squeezed them to
+        // thumbnails too small to read, which is the whole point of showing them.
+        panelClassName="w-[min(64rem,calc(100vw-2rem))] border-white/15 bg-black/95 text-white ring-white/15"
         contentClassName="px-6 pb-6 pt-5"
       >
         <div className="flex items-center gap-2 text-base font-semibold text-white">
           <HistoryIcon />
-          <span>Version history</span>
+          <span>What changed</span>
         </div>
         <div className="mt-2 text-sm text-white/70">
-          Versions of this document (version, date and what changed).
+          The most recent updates to this document, with the pages that changed.
         </div>
 
         {!historyItems.length && historyLoading ? (
@@ -3026,6 +3046,54 @@ export function PdfJsViewer({
                           <div className="mt-0.5 text-sm text-white/80">
                             {(p.summary || "").trim() || "Change summary unavailable."}
                           </div>
+
+                          {/*
+                            The page as it was, beside the page as it is.
+                            The reason this was text-only until now was never that recipients should
+                            not see their own document: it was that the renders live at public blob
+                            addresses which outlive the link. These come through
+                            `/s/:shareId/page-image`, which re-checks the link on every request.
+                          */}
+                          {p.previousImageUrl || p.newImageUrl ? (
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              {[
+                                { url: p.previousImageUrl, label: h.fromVersion ? `v${h.fromVersion}` : "Before", tone: "rose" as const },
+                                { url: p.newImageUrl, label: h.toVersion ? `v${h.toVersion}` : "Now", tone: "emerald" as const },
+                              ].map((side) => (
+                                <figure key={side.label} className="m-0 min-w-0">
+                                  <figcaption
+                                    className={[
+                                      "mb-1 text-[10px] font-semibold uppercase tracking-wide",
+                                      side.tone === "rose" ? "text-rose-200/70" : "text-emerald-200/70",
+                                    ].join(" ")}
+                                  >
+                                    {side.label}
+                                  </figcaption>
+                                  {side.url ? (
+                                    <span
+                                      className={[
+                                        "block overflow-hidden rounded-md border bg-black/40",
+                                        side.tone === "rose" ? "border-rose-400/30" : "border-emerald-400/30",
+                                      ].join(" ")}
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={side.url}
+                                        alt={`Page ${p.pageNumber}, ${side.label}`}
+                                        loading="lazy"
+                                        decoding="async"
+                                        className="block h-auto w-full"
+                                      />
+                                    </span>
+                                  ) : (
+                                    <span className="flex aspect-[4/3] items-center justify-center rounded-md border border-dashed border-white/15 text-[10px] text-white/40">
+                                      Not available
+                                    </span>
+                                  )}
+                                </figure>
+                              ))}
+                            </div>
+                          ) : null}
 
                           {/*
                             The words themselves, where the compare could read them. A recipient

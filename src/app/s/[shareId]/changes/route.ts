@@ -206,6 +206,22 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
                 regionNotes: Array.isArray(p?.regionNotes)
                   ? p.regionNotes.filter((n: unknown) => typeof n === "string" && n.trim()).slice(0, 3)
                   : [],
+                /**
+                 * Proxied, never the blob URL.
+                 *
+                 * The stored entry holds public blob addresses that keep working after this link
+                 * is disabled, expires or is archived. `/s/:shareId/page-image` re-checks the link
+                 * on every request instead, so revoking it stops the images too. Emitted only
+                 * where a render actually exists, so nothing points at a 404.
+                 */
+                previousImageUrl:
+                  typeof p?.previousImageUrl === "string" && p.previousImageUrl.trim() && Number.isFinite((c as any).fromVersion)
+                    ? `/s/${encodeURIComponent(shareId)}/page-image?v=${Math.floor(Number((c as any).fromVersion))}&p=${Math.floor(Number(p.pageNumber))}`
+                    : null,
+                newImageUrl:
+                  typeof p?.newImageUrl === "string" && p.newImageUrl.trim() && Number.isFinite((c as any).toVersion)
+                    ? `/s/${encodeURIComponent(shareId)}/page-image?v=${Math.floor(Number((c as any).toVersion))}&p=${Math.floor(Number(p.pageNumber))}`
+                    : null,
               }))
               .filter((p: any) => typeof p.pageNumber === "number" && p.pageNumber >= 1)
           : [];
