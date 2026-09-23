@@ -107,3 +107,6 @@ Setup in Plain, once the branch is deployed (Ari can only index pages it can fet
 
 Writing an article: facts only from the product as shipped; never internal names, paths or
 flags; nothing hidden behind a flag or unreleased; link between articles with `/help/<slug>`.
+
+The paste-ready text for the auto-response, the Ari routing rule, Ari's custom instructions and
+the template shortlist is in `docs/support/plain-setup.md`.
