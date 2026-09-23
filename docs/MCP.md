@@ -10,6 +10,44 @@ but a workspace API key. It is the third deployable next to the Next app and the
   `docs/FEATURES.md` ("Agent API keys", "MCP server", "Activity").
 - Harness: `tests/mcp/e2e.ts` (see "Running the e2e" below).
 
+## State (2026-09-23)
+
+Where the server stands today, so a reader does not have to infer it from the tool list. Update
+this section when the count, the deployment or the verification changes.
+
+- **Built and on `main`.** 33 tools in `mcp/src/tools/*.ts`: identity and discovery (`whoami`,
+  `list_docs`, `get_activity`), the document lifecycle (`share_pdf`, `replace_pdf`, `get_share`,
+  `set_share_access`, `get_share_stats`, `archive_doc`, `delete_doc`), share links (create, list,
+  find, password read and verify, update, delete), projects and project links (create, list, get,
+  add and remove docs, update, delete; link create, list, update, delete), tags (`list_tags`, `tag`,
+  `untag`) and starring (`star_docs`, `list_starred`). Destructive tools confirm with the human
+  through the client's elicitation; a dismissed prompt is final and a headless client cannot delete
+  (`LNKDRP_SKIP_CONFIRMATIONS=1` lifts that on a dev database only, and `healthz` reports
+  `confirmations: "skipped"` when it does).
+- **Latest additions.** `lnkdrp_get_share_stats { includeVisits }` returns `recentVisits[]`, the
+  stored AI visit briefs (a4f965d); `lnkdrp_get_activity` accepts the `share.visit_briefed` type
+  (948d724); `lnkdrp_whoami.costs.brief` prices it. `lnkdrp_get_share` says plainly that
+  `shareEnabled` is document-wide on both branches (e4dde41).
+- **Verified today.** `tests/mcp/e2e.ts` passed 55 of 55 steps against the Pro dev workspace
+  ("Personal", now the harness default; the old default org answers `owner_removed` because its
+  owner left it). `tests/mcp/analytics.ts` read a deck with a dozen readers across five links: the
+  per-link figures added up to the document's, and `recentVisits` listed seven finished sittings
+  with their briefs. The Free tier's `recentVisits`-absent branch is covered by the tool's tier check
+  and the harness assertion but was not run end to end today.
+- **Deployment.** Runs locally on `:8787` (`npm run mcp`, REST at `:3001`, realtime at `:8788`).
+  **`https://mcp.lnkdrp.com/mcp` is not deployed yet**; the app's `/connect` snippets and the
+  `/mcp/<client>` guides already print that URL, so until the container in "Deployment" below is
+  up, a copied snippet points at nothing. The Dockerfile, env table and checklist are complete; what
+  is missing is the host. Single instance only until sessions and the idempotency cache move to a
+  shared store.
+- **Depends on.** The Next app's REST API for everything (no Mongo, no secrets of its own beyond
+  `REALTIME_SECRET`), and the realtime server only to return from `share_pdf` on the `ready` frame
+  instead of polling.
+- **Not covered by any tool.** Request repos and download-access requests (surfaced read-only as
+  `capabilities.notMcpAccessible` in `lnkdrp_whoami`), view-notification preferences, credit
+  purchases, and writing a visit brief on demand (the reader page's button; `POST
+  /api/visits/:id/brief` exists and a tool could wrap it).
+
 ## What it is (and is not)
 
 The server is a **thin translator**: every tool call becomes one or more calls to the Next app's
