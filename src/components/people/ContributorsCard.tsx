@@ -113,7 +113,13 @@ export default function ContributorsCard({ docId }: { docId: string }) {
             title="Who created this document and who has worked on it"
           >
             <UsersIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-            <span className="truncate">People</span>
+            {/*
+              "Contributors", not "People". One of the rows is routinely an agent, marked as one -
+              so a heading that calls the list people is contradicted by its own contents, and by
+              this component's own `kind: "person" | "agent"`. Contributors is true of both, and is
+              what the card was named after.
+            */}
+            <span className="truncate">Contributors</span>
           </div>
           {contributors.length ? (
             <span className="shrink-0 text-[11px] tabular-nums text-[var(--muted-2)]">
