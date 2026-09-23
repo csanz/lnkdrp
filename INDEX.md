@@ -587,7 +587,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/client/entityTitles.ts` · clearEntityTitles, EntityKind, forgetEntityTitle, recallEntityTitle, rememberEntityTitle, rememberEntityTitles, resolveEntityTitle, useEntityTitle
 - `src/lib/client/outOfCredits.ts` · dispatchOutOfCredits, OUT_OF_CREDITS_EVENT, OutOfCreditsReason, outOfCreditsReasonFromCode
 - `src/lib/client/planLimit.ts` · clearPlanLimitHit, comparesFor, CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, markPlanLimitHit, parsePlanLimitError, PLAN_LIMIT_HIT_EVENT, …
-- `src/lib/client/planNumbers.ts` · COMPARE_CREDITS, comparesFor, CREDITS_COPY, FREE_PLAN_LIMITS_COPY, plural
+- `src/lib/client/planNumbers.ts` · COMPARE_CREDITS, comparesFor, CREDITS_COPY, FREE_PLAN_LIMITS_COPY, plural, PRO_SEATS_COPY
 - `src/lib/client/realtime.ts` · REALTIME_STATE_EVENT, RealtimeFrame, realtimeState, RealtimeState, subscribeRealtime
 - `src/lib/client/sessionMemory.ts` · forgetSignedIn, hadSession, rememberSignedIn
 - `src/lib/client/upsellCopy.ts` · PRO_PRICE_FALLBACK, UPSELL_COPY, UpsellCopy, UpsellKey, upsellKeyForLimit
@@ -601,7 +601,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/credits/costCatalog.ts` · COST_CATALOG, costAnchorId, CostCatalogEntry, costEntryForAction, FREE_ACTIONS, QUALITY_BLURBS, QUALITY_LABELS, QUALITY_TIERS
 - `src/lib/credits/creditService.ts` · defaultBalanceForWorkspace, failAndRefundLedger, FREE_DAILY_CREDIT_CAP, markLedgerCharged, recordUnbilledRun, reserveCreditsOrThrow, starterCreditsForWorkspace
 - `src/lib/credits/errors.ts` · DAILY_CAP_CODE, isDailyCapError, isOutOfCreditsError, OUT_OF_CREDITS_CODE
-- `src/lib/credits/grants.ts` · buildCycleKey, FREE_STARTER_CREDITS, grantCycleIncludedCredits, INCLUDED_CREDITS_PER_CYCLE
+- `src/lib/credits/grants.ts` · buildCycleKey, creditMonthIndex, creditWindowIndex, FREE_STARTER_CREDITS, grantCycleIncludedCredits, INCLUDED_CREDITS_PER_CYCLE
 - `src/lib/credits/idempotency.ts` · generateIdempotencyKey, idempotencyKeyFromRequest
 - `src/lib/credits/mongooseStore.ts` · createMongooseCreditStore
 - `src/lib/credits/packs.ts` · CREDIT_PACK_CURRENCY, CREDIT_PACKS, CreditPack, findCreditPack, findPurchasablePack, formatPackPrice, formatPerCredit, PACK_MARKUP_OVER_PRO, …

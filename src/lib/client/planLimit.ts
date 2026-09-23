@@ -40,7 +40,7 @@ export type PlanLimitError = {
 // The numbers themselves live in `planNumbers.ts`: `upsellCopy.ts` needs them too and already
 // imports this module, so defining them here would make that a runtime cycle. Re-exported so the
 // ten surfaces that read them from here keep working.
-export { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, comparesFor } from "@/lib/client/planNumbers";
+export { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, comparesFor , PRO_SEATS_COPY } from "@/lib/client/planNumbers";
 
 /**
  * The clause that used to be six copies of "topped up every month" scattered across the hero,

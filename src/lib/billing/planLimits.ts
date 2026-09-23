@@ -55,8 +55,18 @@ export const FREE_DOCUMENTS = 10;
 export const FREE_PROJECTS = 2;
 /** Free plan: viewer analytics window in days. */
 export const FREE_ANALYTICS_DAYS = 7;
-/** Pro plan: collaborators (members beyond the owner) included in the base price. */
-export const PRO_INCLUDED_COLLABORATORS = 1;
+/**
+ * Pro: people beyond the owner who can *do* things, included in the base price.
+ *
+ * Three, because the set of people who upload and share is small — a founder, a co-founder, a head
+ * of sales — while the set who want to read the numbers is not. Only the first group takes a seat:
+ * a `viewer` membership is free and uncapped (see `getWorkspaceUsage`), which is what lets this be
+ * three rather than a number that has to keep rising.
+ *
+ * It was 1, and it was a wall: a third person got "Contact us to add more seats" and had to email
+ * us to use a product they had already paid for.
+ */
+export const PRO_INCLUDED_COLLABORATORS = 3;
 /**
  * Free plan: team workspaces one person may own (their personal workspace is always theirs and is
  * never counted).
@@ -215,7 +225,15 @@ export async function getWorkspaceUsage(
     // Same filter the project list uses (src/lib/projects/scope.ts): the cap must never count a
     // project the owner cannot see in their list.
     ProjectModel.countDocuments(liveProjectFilter(id)),
-    OrgMembershipModel.countDocuments({ orgId: id, isDeleted: { $ne: true } }),
+    /**
+     * Seats count people who can *act*, not everyone with a login.
+     *
+     * A `viewer` reaches activity, the plan and agent status and nothing that writes (every
+     * mutating route gates at `member` or `admin`), so charging for one would be charging to read
+     * your own numbers. Counting every membership is what made "Pro includes 1 collaborator" feel
+     * hostile: inviting the exec team to look at analytics consumed the seat the co-founder needed.
+     */
+    OrgMembershipModel.countDocuments({ orgId: id, isDeleted: { $ne: true }, role: { $ne: "viewer" } }),
   ]);
   return { documents, projects, members };
 }
@@ -253,7 +271,7 @@ export async function getWorkspaceGrace(orgId: string | Types.ObjectId): Promise
 /** Human message for a blocked limit, e.g. "Free workspaces can share 3 documents. Archive one or upgrade to Pro." */
 function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): string {
   if (plan === "pro" && limit === "collaborators") {
-    return `Pro includes ${max} collaborator${max === 1 ? "" : "s"}. Contact us to add more seats to this workspace.`;
+    return `Pro includes ${max} ${max === 1 ? "person" : "people"} beyond the owner. Invite anyone else as a viewer — viewers are free and unlimited, and can see every document and all the analytics.`;
   }
   switch (limit) {
     case "documents":
@@ -268,7 +286,7 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
         : `Free accounts can have ${max} team workspaces. Upgrade to Pro to create another.`;
     case "collaborators":
       return max === 0
-        ? "Free workspaces are single-user. Upgrade to Pro to invite collaborators."
+        ? `Free workspaces are single-user. Pro includes ${PRO_INCLUDED_COLLABORATORS} people beyond the owner, plus unlimited free viewers.`
         : `Free workspaces can have ${max} collaborator${max === 1 ? "" : "s"}. Upgrade to Pro to invite more.`;
     case "version_history":
       return "Letting recipients browse versions is a Pro feature.";

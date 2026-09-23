@@ -22,7 +22,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
-import { buildCycleKey, grantCycleIncludedCredits } from "@/lib/credits/grants";
+import { buildCycleKey, creditWindowIndex, grantCycleIncludedCredits } from "@/lib/credits/grants";
 import { PRO_KIND_FILTER, isBillableStatus, isProSubscription } from "@/lib/billing/subscriptionState";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
 import { getSubscriptionPeriod } from "@/lib/billing/stripePeriods";
@@ -115,7 +115,13 @@ async function handle(request: Request) {
       const freshEnough = start && end && updatedAt && now - updatedAt < staleCutoffMs;
 
       if (freshEnough) {
-        const cycleKey = buildCycleKey({ stripeSubscriptionId: subId, currentPeriodStart: start! });
+        // Same window the grant will use, or the "already granted?" probe below answers about
+        // month 0 and every later month of an annual period looks done.
+        const cycleKey = buildCycleKey({
+          stripeSubscriptionId: subId,
+          currentPeriodStart: start!,
+          monthIndex: creditWindowIndex(start!, end!, new Date()),
+        });
         ready.push({ orgId, subId, cycleKey, start: start!, end: end! });
       } else {
         needsStripe.push({ id: String((s as any)._id), orgId, subId });
@@ -151,6 +157,9 @@ async function handle(request: Request) {
         stripeSubscriptionId: r.subId,
         currentPeriodStart: r.start,
         currentPeriodEnd: r.end,
+        // On an annual plan this is what opens months 2..12: Stripe sends no event between
+        // renewals, so without it a yearly subscriber would get one grant for the whole year.
+        monthIndex: creditWindowIndex(r.start, r.end, new Date()),
       });
       if (res.alreadyGranted) grantsSkipped += 1;
       else grantsApplied += 1;
@@ -195,7 +204,11 @@ async function handle(request: Request) {
         if (!start || !end) continue;
         if (!isBillableStatus(status)) continue;
 
-        const cycleKey = buildCycleKey({ stripeSubscriptionId: row.subId, currentPeriodStart: start });
+        const cycleKey = buildCycleKey({
+          stripeSubscriptionId: row.subId,
+          currentPeriodStart: start,
+          monthIndex: creditWindowIndex(start, end, new Date()),
+        });
         const exists = await CreditLedgerModel.exists({
           workspaceId: row.orgId,
           eventType: "cycle_grant_included",
@@ -215,6 +228,7 @@ async function handle(request: Request) {
           stripeSubscriptionId: row.subId,
           currentPeriodStart: start,
           currentPeriodEnd: end,
+          monthIndex: creditWindowIndex(start, end, new Date()),
         });
         if (res.alreadyGranted) grantsSkipped += 1;
         else grantsApplied += 1;

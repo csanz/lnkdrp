@@ -21,7 +21,7 @@ import { debugLog } from "@/lib/debug";
 import { StripeEventModel } from "@/lib/models/StripeEvent";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
-import { grantCycleIncludedCredits, buildCycleKey } from "@/lib/credits/grants";
+import { grantCycleIncludedCredits, buildCycleKey, creditWindowIndex } from "@/lib/credits/grants";
 import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
 import { requeueSkippedSummaries } from "@/lib/credits/summaryRequeue";
 import { grantCreditPack } from "@/lib/credits/purchases";
@@ -522,17 +522,21 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       await activatePayAsYouGo({ orgId, eventId: event.id });
     }
 
-    // Idempotent cycle grant: reset included credits to 300 on new billing cycle.
+    // Idempotent cycle grant: open this billing cycle's included credits
+    // (`INCLUDED_CREDITS_PER_CYCLE`). On an annual plan this opens month 0 only; the
+    // credits-cycle-reconcile cron opens the eleven that follow.
     try {
       const orgIdStr = orgId ? String(orgId) : null;
       const start = currentPeriodStart;
       if (pro && orgIdStr && start) {
-        const cycleKey = buildCycleKey({ stripeSubscriptionId: subscriptionId, currentPeriodStart: start });
+        const monthIndex = creditWindowIndex(start, effectivePeriodEnd ?? null, new Date());
+        const cycleKey = buildCycleKey({ stripeSubscriptionId: subscriptionId, currentPeriodStart: start, monthIndex });
         await grantCycleIncludedCredits({
           workspaceId: orgIdStr,
           stripeSubscriptionId: subscriptionId,
           currentPeriodStart: start,
           currentPeriodEnd: effectivePeriodEnd ?? null,
+          monthIndex,
         });
         debugLog(1, "[stripe:webhook] cycle grant ensured", { orgId: orgIdStr, cycleKey });
       }
@@ -576,12 +580,14 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
           { upsert: true },
         );
         if (pro && currentPeriodStart) {
-          const cycleKey = buildCycleKey({ stripeSubscriptionId: subscriptionId, currentPeriodStart });
+          const monthIndex = creditWindowIndex(currentPeriodStart, currentPeriodEnd ?? null, new Date());
+          const cycleKey = buildCycleKey({ stripeSubscriptionId: subscriptionId, currentPeriodStart, monthIndex });
           await grantCycleIncludedCredits({
             workspaceId: String(orgId),
             stripeSubscriptionId: subscriptionId,
             currentPeriodStart,
             currentPeriodEnd: currentPeriodEnd ?? null,
+            monthIndex,
           });
           debugLog(1, "[stripe:webhook] invoice.paid → cycle grant ensured", { orgId: String(orgId), cycleKey });
         }

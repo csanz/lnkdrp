@@ -189,7 +189,7 @@ export default async function PricingPage() {
                   "Deep analytics: who opened it, time per page, full history",
                   "Recipients can browse every version and see what changed",
                   `${INCLUDED_CREDITS_PER_CYCLE} credits a month, about ${comparesFor(INCLUDED_CREDITS_PER_CYCLE)} AI compares at standard quality`,
-                  `${PRO_INCLUDED_COLLABORATORS} collaborator included · more on request`,
+                  `${plural(PRO_INCLUDED_COLLABORATORS, "teammate")} who can upload and share · unlimited free viewers`,
                   "Agents never take a seat",
                   "AI summary on every link, 1 credit; free when your agent writes it",
                   "Password protection and download control",
@@ -376,7 +376,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "Is Pro per person or per workspace?",
-                  a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} collaborator; contact us to add more seats to a workspace.`,
+                  a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} people beyond the owner who can upload, share and replace. Anyone else can be invited as a **viewer** — free, unlimited, and able to see every document and all the analytics, but not to change anything. Agents never take a seat.`,
                 },
                 {
                   q: `I already have more than ${FREE_DOCUMENTS} shared documents. What happens?`,

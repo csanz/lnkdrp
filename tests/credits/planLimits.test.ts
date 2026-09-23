@@ -243,7 +243,12 @@ describe("billing/planLimits checkLimit", () => {
     expect(collab.code).toBe("plan_limit");
     expect(collab.max).toBe(PRO_INCLUDED_COLLABORATORS);
     expect(collab.grace).toBeNull();
-    expect(collab.message).toMatch(/Pro includes 1 collaborator/);
+    // Asserted against the constant, not a typed-in number: the seat count moved 1 -> 3 and this
+    // was the only thing that noticed, which is what it is for.
+    expect(collab.message).toContain(`Pro includes ${PRO_INCLUDED_COLLABORATORS} people beyond the owner`);
+    // It must not send a paying customer away to ask for a seat.
+    expect(collab.message).not.toMatch(/contact us/i);
+    expect(collab.message).toMatch(/viewers are free and unlimited/i);
   });
 
   test("pro with only the owner may add the included collaborator", async () => {

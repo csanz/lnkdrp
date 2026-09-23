@@ -19,7 +19,7 @@ import { formatShortDate } from "@/lib/format/date";
 import PlanUsageMeter from "@/components/PlanUsageMeter";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { openBillingPortal, resumeSubscription, startCheckout as startCheckoutAction } from "@/lib/billing/clientActions";
-import { CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
+import { CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, whatHappensAfterFreeCredits, PRO_SEATS_COPY } from "@/lib/client/planLimit";
 import { usePlan } from "@/lib/client/usePlan";
 
 type BillingStatusResponse = {
@@ -287,7 +287,7 @@ export default function SubscriptionCard() {
             subtitle={
               <span>
                 {ending ? "" : periodHint ? `${periodHint} ` : "Your subscription is active. "}Unlimited documents · Unlimited projects ·
-                Deep analytics · Full history · 1 collaborator included.
+                Deep analytics · Full history · {PRO_SEATS_COPY} teammates · unlimited free viewers.
               </span>
             }
             cta={

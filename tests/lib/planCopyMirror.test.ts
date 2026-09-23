@@ -17,7 +17,7 @@
 import { UPSELL_COPY } from "@/lib/client/upsellCopy";
 import { describe, expect, test, vi } from "vitest";
 
-import { CREDITS_COPY, COMPARE_CREDITS, FREE_PLAN_LIMITS_COPY } from "@/lib/client/planNumbers";
+import { CREDITS_COPY, COMPARE_CREDITS, FREE_PLAN_LIMITS_COPY, PRO_SEATS_COPY } from "@/lib/client/planNumbers";
 
 /** Both server modules reach for Mongo at import time; the constants themselves are plain values. */
 async function serverConstants() {
@@ -45,6 +45,11 @@ describe("client copy mirrors the server plan constants", () => {
     for (const tier of ["basic", "standard", "advanced"] as const) {
       expect(COMPARE_CREDITS[tier]).toBe(creditsForRun({ actionType: "history", qualityTier: tier }));
     }
+  });
+
+  test("the seat count on screen is the seat count enforced", async () => {
+    const { PRO_INCLUDED_COLLABORATORS } = await serverConstants();
+    expect(PRO_SEATS_COPY).toBe(PRO_INCLUDED_COLLABORATORS);
   });
 
   test("the credit numbers on screen are the credits granted", async () => {

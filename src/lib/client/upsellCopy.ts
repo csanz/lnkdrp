@@ -6,7 +6,7 @@
  * (passive states such as the sidebar fallback nudge). Facts mirror `/pricing` and
  * `src/lib/billing/planLimits.ts`: Free = 10 shared documents (links are unlimited), 2 projects, 7-day analytics, single user,
  * version history and AI compare on credits; Pro = unlimited links and projects, full analytics
- * history, a version list recipients can browse, 500 credits a month, 1 collaborator included (more on
+ * history, a version list recipients can browse, 500 credits a month, 3 teammates included plus free viewers (more on
  * request), agents never take a seat.
  */
 import type { PlanLimitKey } from "@/lib/client/planLimit";
@@ -90,9 +90,9 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
   },
   collaborators: {
     title: "Collaborators are a Pro feature",
-    reason: "Free workspaces are single-user; Pro includes a collaborator, with more seats on request.",
+    reason: "Free workspaces are single-user. Pro adds teammates who can upload and share, plus unlimited free viewers.",
     bullets: [
-      "1 collaborator included, more on request",
+      "3 teammates who can upload and share, plus unlimited free viewers",
       "Agents never take a seat",
       "Unlimited documents and projects for the whole workspace",
     ],

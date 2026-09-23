@@ -35,6 +35,15 @@ export const FREE_PLAN_LIMITS_COPY = {
   analyticsDays: 7,
 } as const;
 
+/**
+ * Pro seats, mirrored from `PRO_INCLUDED_COLLABORATORS`.
+ *
+ * A seat is someone who can upload, share or replace. `viewer` memberships are free and uncapped,
+ * so this number is about the people who *act*, not everyone with a login.
+ * `tests/lib/planCopyMirror.test.ts` holds it equal to the server constant.
+ */
+export const PRO_SEATS_COPY = 3;
+
 /** Credit numbers, mirrored from `src/lib/credits/grants.ts` and `src/lib/credits/creditService.ts`. */
 export const CREDITS_COPY = {
   /** One-time starter grant for Free workspaces (no cycle reset). */
