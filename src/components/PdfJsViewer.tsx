@@ -45,6 +45,16 @@ import {
 } from "@/lib/share/viewerProfile";
 
 /** What the version-history panel says when we have nothing more specific to tell the reader. */
+/**
+ * How many versions a recipient's "what changed" shows, and all it shows.
+ *
+ * Not a page size - there is no second page. A recipient is asking about the version they were
+ * just sent against the one they saw last; every revision before that is the sending workspace's
+ * own history, and scrolling a share link back through all of it is not something the owner asked
+ * to publish. The owner's own history page is unaffected and still pages through everything.
+ */
+export const RECIPIENT_HISTORY_VERSIONS = 2;
+
 export const HISTORY_ERROR_FALLBACK = "Version history isn’t available right now.";
 
 /**
@@ -961,15 +971,7 @@ export function PdfJsViewer({
     setHistoryLoading(true);
     setHistoryError(null);
 
-    /**
-     * The two most recent versions, then more on scroll.
-     *
-     * A recipient opening "what changed" is asking about the version they were just sent against
-     * the one they saw last; the six before that are the owner's business. Each entry now carries
-     * page previews, so a long first page is also a lot of images fetched for history nobody
-     * scrolled to. The sentinel still pages the rest in for anyone who wants it.
-     */
-    const limit = historyItems.length ? 6 : 2;
+    const limit = RECIPIENT_HISTORY_VERSIONS;
     const cursor = historyStateRef.current.cursor;
     const url = (() => {
       const base = revisionHistoryUrl;
@@ -1056,9 +1058,11 @@ export function PdfJsViewer({
         return merged;
       });
 
-      const nextCursor = typeof nextCursorRaw === "string" && nextCursorRaw.trim() ? nextCursorRaw.trim() : null;
-      setHistoryCursor(nextCursor);
-      setHistoryHasMore(Boolean(nextCursor));
+      // The server still returns a cursor; this view simply does not follow it. Dropping it here
+      // rather than in the route keeps the owner-facing endpoint paginating as it always has.
+      void nextCursorRaw;
+      setHistoryCursor(null);
+      setHistoryHasMore(false);
     } catch (e) {
       // Keep wording calm and factual (avoid blame/negativity), which means only ever showing a
       // sentence written above: `e.message` here belongs to fetch, to the abort, or to the server.
@@ -3161,12 +3165,11 @@ export function PdfJsViewer({
               </div>
             ))}
 
-            {/* Infinite scroll sentinel */}
-            <div ref={historySentinelRef} className="h-4" />
-            {historyLoading ? <div className="text-sm text-white/70">Loading more…</div> : null}
-            {!historyHasMore && !historyLoading ? (
-              <div className="text-sm text-white/60">You’ve reached the start of the history.</div>
-            ) : null}
+            {/*
+              No sentinel and no "start of the history": this is the most recent versions, not a
+              window onto all of them, so there is nothing further to scroll toward.
+            */}
+            <div ref={historySentinelRef} className="h-1" />
           </div>
         ) : (
           <div className="mt-5 text-sm text-white/75">No revisions yet.</div>

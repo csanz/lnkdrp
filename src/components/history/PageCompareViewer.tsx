@@ -21,6 +21,7 @@
  * Images load only for the page being looked at. The strip that opens this deliberately shows none.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import type { PageChange } from "@/components/history/PageDiffStrip";
 import { useDiffRegions } from "@/components/history/useDiffRegions";
@@ -328,6 +329,9 @@ export default function PageCompareViewer({
   const [fade, setFade] = useState(50);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const railRef = useRef<HTMLDivElement | null>(null);
+  /** Portalled, so mount before touching `document`. */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   const page = pages[index] ?? null;
   const prev = page?.previousImageUrl ?? null;
@@ -414,8 +418,19 @@ export default function PageCompareViewer({
               ? `${regions.boxes.length} area${regions.boxes.length === 1 ? "" : "s"} changed`
               : null;
 
-  return (
-    <div className="fixed inset-0 z-[200]" role="dialog" aria-modal="true" aria-label={`Page ${page.pageNumber} comparison`}>
+  if (!mounted) return null;
+
+  /**
+   * Through a portal to <body>, above the dialog that opened it.
+   *
+   * `position: fixed` is relative to the nearest ancestor with a transform, filter or containment,
+   * and this is opened from inside the recipient's history panel - which is itself a portalled
+   * dialog at the same stacking level. Rendered in place it appeared *behind* that panel. The
+   * portal takes it out of the tree and the higher z-index puts it in front, so closing it returns
+   * to the panel rather than revealing it.
+   */
+  return createPortal(
+    <div className="fixed inset-0 z-[300]" role="dialog" aria-modal="true" aria-label={`Page ${page.pageNumber} comparison`}>
       <button type="button" className="absolute inset-0 bg-black/70 backdrop-blur-sm" aria-label="Close" onClick={onClose} />
 
       <div
@@ -719,6 +734,7 @@ export default function PageCompareViewer({
           </div>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
