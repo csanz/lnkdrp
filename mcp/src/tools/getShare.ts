@@ -17,10 +17,13 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
       title: "Get share",
       description:
         "Read a document's share link state by docId or shareId (exactly one): status (draft|preparing|ready|failed), " +
-        "shareUrl, shareEnabled, download/password/revision-history settings, preview image, and the AI one-liner and summary " +
-        "once processing is ready. By docId (or the default link's shareId) the link fields describe the document's default " +
-        "link, and anyLinkActive says whether any of its links still opens; by a non-default shareId they describe that link. " +
-        "link.status is active|disabled|expired. summaryStale: true means this version's AI summary failed or was " +
+        "shareUrl, download/password/revision-history settings, preview image, and the AI one-liner and summary " +
+        "once processing is ready. By docId (or the default link's shareId) those fields describe the document's default " +
+        "link; by a non-default shareId they describe that link. shareEnabled is the one exception: on BOTH branches it is " +
+        "document-wide and identical to anyLinkActive - whether any link of the document still opens - so a link you " +
+        "revoked comes back with shareEnabled true while the document's other links are live. Never read it as the state of " +
+        "the link you named: that is link.status (active|disabled|expired), and defaultLinkActive is the same answer for the " +
+        "default link. summaryStale: true means this version's AI summary failed or was " +
         "skipped, so summary, oneLiner and keyPoints are still the previous version's - check warnings. " +
         "version, pageCount and keyPoints describe the file that is live now, so " +
         "after lnkdrp_replace_pdf you can confirm the right one went up (pageCount is null for versions processed before " +

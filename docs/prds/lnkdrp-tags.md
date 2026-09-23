@@ -70,7 +70,10 @@ the case here.
    "Quarterly updates" into "Q…". Up to three dots sit before the document count, names in the
    tooltip, and a **Tags section** below Projects lists each tag with its count, which is what
    makes a colour legible. Full pills everywhere with room: document and project pages, search
-   results, modals.
+   results, modals. **The Tags section is collapsed by default**, with its count in the header
+   ("Tags 5") so it is still discoverable — the sidebar already carries Starred, Projects and Docs,
+   and a fourth open list pushes documents below the fold. It expands on its own when a tag page or
+   a tag filter is open, and the choice is remembered per browser like the other sections.
    **Colour is auto-assigned from a small palette and can be changed per tag** — effortless by
    default, and durable ("green is fundraising") for anyone who cares to set it.
 8. **A tag's page is search, scoped.** `/tag/:slug` shows the rollup for the range (Views, Opens,
