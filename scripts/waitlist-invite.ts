@@ -28,6 +28,7 @@
  *
  *   --dry       stop before the write and the send; print the link it would have mailed
  *   --console   print the email instead of sending, for looking at the body
+ *   --no-email  approve and stop; send nothing
  *
  * ## Approving somebody in production
  *
@@ -47,6 +48,15 @@
  *
  * `.env.production.local` is covered by `.gitignore`'s `.env*`. Delete it when you are done rather
  * than leaving production credentials in the repo root.
+ *
+ * **`vercel env pull` cannot give you all of them.** Variables marked Sensitive on Vercel are
+ * write-only: the pull writes the key with an empty value, so `MONGODB_URI` and `NEXTAUTH_SECRET`
+ * come back blank and the run fails on the first of them. Supply those two yourself.
+ *
+ * If you only have the database and not the secret, use `--no-email`. Approval is the part that
+ * matters and it needs nothing but Mongo: `enforceEntryGates` sends an approved visitor to
+ * `/accept`, which works for a signed-in person carrying no token at all. The emailed link is a
+ * convenience, not the way in.
  */
 import "dotenv/config";
 import { Types } from "mongoose";
@@ -82,6 +92,7 @@ function usage(message?: string): never {
       "    --base=<url>       site URL for the link (default NEXT_PUBLIC_SITE_URL)",
       "    --dry              print the link, write nothing, send nothing",
       "    --console          print the email instead of sending it",
+      "    --no-email         approve and stop; send nothing",
       "",
     ].join("\n"),
   );
@@ -96,6 +107,7 @@ async function main() {
 
   const dry = a.dry === true;
   const console_ = a.console === true;
+  const noEmail = a["no-email"] === true;
   /**
    * Force delivery unless asked not to.
    *
@@ -175,7 +187,37 @@ async function main() {
   }
   console.log(approval.changed ? "  approved   yes (was queued)" : "  approved   already was");
 
+  if (noEmail) {
+    console.log("  emailed    no (--no-email)");
+    console.log("  They can sign in now; /accept takes the terms without a token.\n");
+    return;
+  }
+
+  /**
+   * Never mail a link this process cannot sign correctly.
+   *
+   * `createAcceptToken` keys its HMAC on `NEXTAUTH_SECRET` and falls back to a dev constant when
+   * that is unset — fine for a local run against a local site, and a trap for a production one:
+   * the link is well-formed, arrives looking perfectly normal, and production rejects it on click.
+   * A recipient cannot tell that from a broken product.
+   *
+   * The account is already approved by this point, which is the half that matters, so refusing
+   * here costs nothing but the email — and says exactly what to do about it.
+   */
   const transport = (process.env.EMAIL_TRANSPORT ?? "").trim().toLowerCase();
+  if (!(process.env.NEXTAUTH_SECRET ?? "").trim() && transport !== "console") {
+    console.error("  emailed    NO — NEXTAUTH_SECRET is not set in this environment.");
+    console.error("");
+    console.error("  The account is approved. The email was not sent, on purpose: without the");
+    console.error("  secret the accept link is signed with a development key, and the site would");
+    console.error("  reject its own invitation when they clicked it.");
+    console.error("");
+    console.error("  They can sign in now regardless — /accept takes the terms without a token.");
+    console.error("  To send the mail, put the real NEXTAUTH_SECRET in the env file and run again,");
+    console.error("  or re-run with --no-email to stop asking.\n");
+    process.exit(1);
+  }
+
   await sendWaitlistApprovedEmail({
     to: user.email ?? to,
     name: user.name ?? null,
