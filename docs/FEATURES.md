@@ -334,7 +334,6 @@ A document owns **any number of share links** — one per audience — instead o
   - Owner share panel surfaces a condensed “AI snapshot” and allows viewing the full snapshot.
 - **Doc reviews**:
   - `/doc/:docId/review` page and `/api/docs/:docId/reviews` API for listing reviews.
-  - `/api/docs/:docId/report` API for generating/saving a report (review-like artifact).
 - **Tags**:
   - `/api/tags/:tag/docs` lists docs that contain a specific AI-derived tag (paged).
 

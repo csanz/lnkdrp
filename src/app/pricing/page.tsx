@@ -25,7 +25,7 @@ import {
 } from "@/lib/billing/planLimits";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
-import { comparesFor } from "@/lib/client/planNumbers";
+import { comparesFor, plural } from "@/lib/client/planNumbers";
 import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import { cn } from "@/lib/cn";
 import PricingCta from "./PricingCta";
@@ -125,7 +125,7 @@ export default async function PricingPage() {
                 muted="text-white/75"
                 items={[
                   `${FREE_DOCUMENTS} shared documents, each with unlimited share links`,
-                  `${FREE_PROJECTS} project${FREE_PROJECTS === 1 ? "" : "s"}`,
+                  plural(FREE_PROJECTS, "project"),
                   `Basic analytics: views and downloads, last ${FREE_ANALYTICS_DAYS} days`,
                   "AI summary on every link, 1 credit; free when your agent writes it",
                   "Version history, with AI compare from 2 credits",

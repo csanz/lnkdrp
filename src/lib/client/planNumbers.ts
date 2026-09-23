@@ -15,6 +15,19 @@
  * module imports nothing, so anything may read it.
  */
 
+/**
+ * "2 projects", "1 project".
+ *
+ * The plan caps are `const` numbers, so writing `FREE_PROJECTS === 1 ? "" : "s"` inline is a *type*
+ * error, not just noise: TypeScript narrows the literal to `2` and rejects the comparison against
+ * `1`. Without somewhere to put this, the pricing card ended up with the singular hard-coded, and
+ * rendered "2 project" once the cap moved off 1. Taking `number` widens it and the caps can move
+ * again without anyone having to notice the grammar.
+ */
+export function plural(count: number, singular: string, many = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : many}`;
+}
+
 /** Free-plan caps, mirrored from `src/lib/billing/planLimits.ts`. */
 export const FREE_PLAN_LIMITS_COPY = {
   documents: 10,

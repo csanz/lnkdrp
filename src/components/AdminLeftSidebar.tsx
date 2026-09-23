@@ -49,6 +49,7 @@ export default function AdminLeftSidebar() {
       {
         label: "System",
         items: [
+          { label: "Errors", href: "/a/errors", exact: true },
           { label: "Cron health", href: "/a/cron-health", exact: true },
           { label: "Environment", href: "/a/env", exact: true },
           { label: "Deployments", href: "/a/deployments", exact: true },

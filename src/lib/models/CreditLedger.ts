@@ -58,7 +58,18 @@ const creditLedgerSchema = new Schema(
     creditsReserved: { type: Number, min: 0, default: 0 },
     creditsCharged: { type: Number, min: 0, default: 0 },
 
-    // True-cost tracking (persisted when available; null in fallback schedule iteration).
+    /**
+     * True-cost tracking. `costUnitsActual` is written; **`costUsdActual` is not, by anything.**
+     *
+     * Every row is created with it null (`src/lib/credits/mongooseStore.ts`) and no charge path
+     * ever sets it — the charge path fills provider and token telemetry, not dollars. It is kept
+     * because the aggregates and `/api/billing/usage` still read it and would have to be migrated
+     * together, not because it holds anything.
+     *
+     * Read this before touching `usageAggregation.ts`: invoice dollars come from credits times the
+     * flat rate *because* this is always null. That fallback is not redundant belt-and-braces —
+     * removing it is what made the billing header read $0.00 for a cycle Stripe had really metered.
+     */
     costUnitsActual: { type: Number, default: null, min: 0 },
     costUsdActual: { type: Number, default: null, min: 0 },
 
@@ -87,7 +98,6 @@ const creditLedgerSchema = new Schema(
     totalTokens: { type: Number, default: null, min: 0 },
     latencyMs: { type: Number, default: null, min: 0 },
     retriesCount: { type: Number, default: null, min: 0 },
-    contextWindowUsed: { type: Number, default: null, min: 0 },
     /**
      * How many images the request carried, and over how many pages.
      *

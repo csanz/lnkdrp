@@ -48,6 +48,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/a/deployments/page.tsx` — `/a/deployments` · default
 - `src/app/a/emails/page.tsx` — `/a/emails` · default
 - `src/app/a/env/page.tsx` — `/a/env` · default
+- `src/app/a/errors/page.tsx` — `/a/errors` · default
 - `src/app/a/layout.tsx` · default
 - `src/app/a/page.tsx` — `/a` · default
 - `src/app/a/shareviews/[docId]/page.tsx` — `/a/shareviews/:docId` · default
@@ -189,7 +190,6 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/docs/[docId]/pages/person/route.ts` — `/api/docs/:docId/pages/person` · dynamic, GET, runtime
 - `src/app/api/docs/[docId]/pages/route.ts` — `/api/docs/:docId/pages` · dynamic, GET, runtime
 - `src/app/api/docs/[docId]/pdf/route.ts` — `/api/docs/:docId/pdf` · GET, runtime
-- `src/app/api/docs/[docId]/report/route.ts` — `/api/docs/:docId/report` · POST, runtime
 - `src/app/api/docs/[docId]/reviews/route.ts` — `/api/docs/:docId/reviews` · dynamic, GET, runtime
 - `src/app/api/docs/[docId]/route.ts` — `/api/docs/:docId` · DELETE, dynamic, GET, PATCH, runtime
 - `src/app/api/docs/[docId]/share-password/route.ts` — `/api/docs/:docId/share-password` · dynamic, GET, POST, runtime
@@ -587,7 +587,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/client/entityTitles.ts` · clearEntityTitles, EntityKind, forgetEntityTitle, recallEntityTitle, rememberEntityTitle, rememberEntityTitles, resolveEntityTitle, useEntityTitle
 - `src/lib/client/outOfCredits.ts` · dispatchOutOfCredits, OUT_OF_CREDITS_EVENT, OutOfCreditsReason, outOfCreditsReasonFromCode
 - `src/lib/client/planLimit.ts` · clearPlanLimitHit, comparesFor, CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, markPlanLimitHit, parsePlanLimitError, PLAN_LIMIT_HIT_EVENT, …
-- `src/lib/client/planNumbers.ts` · COMPARE_CREDITS, comparesFor, CREDITS_COPY, FREE_PLAN_LIMITS_COPY
+- `src/lib/client/planNumbers.ts` · COMPARE_CREDITS, comparesFor, CREDITS_COPY, FREE_PLAN_LIMITS_COPY, plural
 - `src/lib/client/realtime.ts` · REALTIME_STATE_EVENT, RealtimeFrame, realtimeState, RealtimeState, subscribeRealtime
 - `src/lib/client/sessionMemory.ts` · forgetSignedIn, hadSession, rememberSignedIn
 - `src/lib/client/upsellCopy.ts` · PRO_PRICE_FALLBACK, UPSELL_COPY, UpsellCopy, UpsellKey, upsellKeyForLimit

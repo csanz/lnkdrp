@@ -1683,7 +1683,9 @@ monitor is in 12.
   `fly logs -a lnkdrp-mcp` for the services (`docker logs` off Fly); they stream recent output
   only. With `ERROR_LOGGING_ENABLED=true`, `errorevents` holds cron failures, Stripe webhook
   failures, share-password errors and every `errorJson` response with status ≥ 500 for 14 days,
-  readable by an admin at `/api/admin/errors`. There is no page for them under `/a`. Every error a
+  readable by an admin at **`/a/errors`** (filters for environment, severity, area, code, request id
+  and fingerprint, and a Repeating band that groups the loaded rows by fingerprint; the API behind it
+  is `/api/admin/errors`). Every error a
   route returns through `errorJson` now writes one redacted `console.error` line (context, status,
   error name, message with keys, bearer tokens, credentials in URLs and email addresses
   stripped) whatever `DEBUG_LEVEL` is, so it shows in Vercel Logs with no debug setting. It never

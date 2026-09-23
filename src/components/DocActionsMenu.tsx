@@ -8,7 +8,6 @@ import {
   ChevronRightIcon,
   DocumentMagnifyingGlassIcon,
   EllipsisHorizontalIcon,
-  FlagIcon,
   FolderIcon,
   PlusIcon,
   TrashIcon,
@@ -24,9 +23,9 @@ import { notifyDocLeaving, notifyDocsChanged, notifyProjectsChanged, optimistica
 
 type ProjectDTO = { id: string; name: string; slug?: string };
 
-// Temporary: hide unfinished actions from the doc menu.
+// Temporary: hide unfinished actions from the doc menu. Quality review is genuinely not
+// released yet; Report was removed outright — see the header comment.
 const SHOW_QUALITY_REVIEW = false;
-const SHOW_REPORT = false;
 
 /** Width of the main menu and of the projects submenu (px); keep in sync with their `w-[…]` classes. */
 const MENU_WIDTH = 220;
@@ -128,11 +127,6 @@ export default function DocActionsMenu({
   const [newProjectError, setNewProjectError] = useState<string | null>(null);
   const [newProjectBusy, setNewProjectBusy] = useState(false);
 
-  const [showReport, setShowReport] = useState(false);
-  const [reportMessage, setReportMessage] = useState("");
-  const [reportBusy, setReportBusy] = useState(false);
-  const [reportDone, setReportDone] = useState(false);
-  const [reportError, setReportError] = useState<string | null>(null);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -503,32 +497,6 @@ export default function DocActionsMenu({
     }
   }
 /**
- * Submit Report (updates state (setReportBusy, setReportError, setReportDone); uses setReportBusy, setReportError, fetchJson).
- */
-
-
-  async function submitReport() {
-    setReportBusy(true);
-    setReportError(null);
-    try {
-      await fetchJson(`/api/docs/${docId}/report`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: reportMessage.trim() }),
-      });
-      setReportDone(true);
-      window.setTimeout(() => {
-        setShowReport(false);
-        setReportDone(false);
-        setReportMessage("");
-      }, 650);
-    } catch (e) {
-      setReportError(e instanceof Error ? e.message : "Failed to report");
-    } finally {
-      setReportBusy(false);
-    }
-  }
-/**
  * Delete Doc (updates state (setDeleteBusy, setDeleteError, setShowDeleteConfirm); uses setDeleteBusy, setDeleteError, fetchJson).
  */
 
@@ -734,7 +702,7 @@ export default function DocActionsMenu({
             </li>
           ) : null}
 
-          {showArchive || SHOW_QUALITY_REVIEW || SHOW_REPORT || showDelete ? (
+          {showArchive || SHOW_QUALITY_REVIEW || showDelete ? (
             <li className="my-1 h-px bg-[var(--border)]" role="separator" />
           ) : null}
 
@@ -790,29 +758,6 @@ export default function DocActionsMenu({
             </li>
           ) : null}
 
-          {SHOW_REPORT ? (
-            <li>
-              <button
-                type="button"
-                role="menuitem"
-                className={menuItemBase}
-                onClick={() => {
-                  setShowReport(true);
-                  setReportError(null);
-                  setReportDone(false);
-                  setOpen(false);
-                  setProjectsOpen(false);
-                }}
-              >
-                <span className="inline-flex items-center gap-2">
-                  <span className="text-zinc-500">
-                    <FlagIcon className="h-4 w-4" />
-                  </span>
-                  <span>Report</span>
-                </span>
-              </button>
-            </li>
-          ) : null}
           {showDelete ? (
             <li>
               <button
@@ -988,50 +933,6 @@ export default function DocActionsMenu({
                     ) : (
                       "Create project"
                     )}
-                  </button>
-                </div>
-              </div>
-            </Modal>
-          )
-        : null}
-
-      {showReport
-        ? portal(
-            <Modal
-              open={showReport}
-              onClose={() => {
-                if (reportBusy) return;
-                setShowReport(false);
-              }}
-              ariaLabel="Report"
-            >
-              <div className="space-y-4">
-                <div className="text-base font-semibold text-[var(--fg)]">Report</div>
-                <div className="text-sm text-[var(--muted)]">Tell us what’s wrong (optional).</div>
-                <textarea
-                  value={reportMessage}
-                  onChange={(e) => setReportMessage(e.target.value)}
-                  placeholder="Describe the issue…"
-                  className="min-h-[120px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                />
-                {reportError ? <div className="text-sm font-medium text-red-700">{reportError}</div> : null}
-                {reportDone ? <div className="text-sm font-medium text-emerald-700">Reported.</div> : null}
-                <div className="flex items-center justify-end gap-3">
-                  <button
-                    type="button"
-                    className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
-                    disabled={reportBusy}
-                    onClick={() => setShowReport(false)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
-                    disabled={reportBusy}
-                    onClick={() => void submitReport()}
-                  >
-                    {reportBusy ? "Sending…" : "Send report"}
                   </button>
                 </div>
               </div>
