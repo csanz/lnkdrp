@@ -67,7 +67,7 @@ vocabulary).
 | Recipient on `/s/…`, `/p/…`, request, download or share-verify routes | Not mounted, and hidden on client-side navigation there. They are a customer's audience, not ours. |
 
 `SupportLink` (`src/components/support/SupportLink.tsx`) is the one way the product points at
-support: a `mailto:hi@lnkdrp.com` link that opens the widget instead when it is ready. Used by
+support: a `mailto:support@lnkdrp.com` link that opens the widget instead when it is ready. Used by
 the dashboard Contact modal, the Pro seats prompt and the pricing Enterprise button. Privacy and
 Terms keep a plain email address on purpose.
 

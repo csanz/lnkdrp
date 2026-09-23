@@ -39,7 +39,7 @@ export default function SupportPage() {
               The chat should open on its own. If it hasn&rsquo;t,{" "}
               <SupportLink className="font-semibold text-white underline underline-offset-2">open it here</SupportLink>, or
               email us at{" "}
-              <SupportLink className="font-semibold text-white underline underline-offset-2">hi@lnkdrp.com</SupportLink>.
+              <SupportLink className="font-semibold text-white underline underline-offset-2">support@lnkdrp.com</SupportLink>.
             </p>
             <p className="mt-3 text-sm leading-6 text-white/50">We reply within a business day.</p>
           </div>

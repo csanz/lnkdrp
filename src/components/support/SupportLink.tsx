@@ -3,7 +3,7 @@
 /**
  * The one way the product points at support.
  *
- * Renders as a plain `mailto:hi@lnkdrp.com` link, so it works with JavaScript off, with the
+ * Renders as a plain `mailto:support@lnkdrp.com` link, so it works with JavaScript off, with the
  * widget unconfigured, and in a crawler. When the Plain chat widget is on the page and ready,
  * the click opens it instead and the mail client never launches. Either way the person lands
  * in the same Plain queue: email and chat are two doors to one room.
@@ -15,7 +15,7 @@ import type { MouseEvent, ReactNode } from "react";
 
 import { openSupportChat } from "@/components/support/PlainChat";
 
-export const SUPPORT_EMAIL = "hi@lnkdrp.com";
+export const SUPPORT_EMAIL = "support@lnkdrp.com";
 
 /** A mailto link to support that opens the chat widget instead when it is on the page. */
 export default function SupportLink({

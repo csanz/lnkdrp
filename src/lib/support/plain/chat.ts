@@ -3,7 +3,7 @@
  *
  * Two environment variables:
  * - `NEXT_PUBLIC_PLAIN_CHAT_APP_ID`: the chat app from Plain → Settings → Chat. Unset, the widget
- *   is not mounted and every "Contact us" link falls back to `mailto:hi@lnkdrp.com`.
+ *   is not mounted and every "Contact us" link falls back to `mailto:support@lnkdrp.com`.
  * - `PLAIN_CHAT_SECRET`: the secret from the same page. It signs the signed-in user's email so
  *   Plain treats the chat as that customer without asking them to verify by code. Unset, the
  *   widget still works but every visitor goes through Plain's own email verification.

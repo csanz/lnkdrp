@@ -797,7 +797,7 @@ function DashboardPageInner() {
         <div className="mt-3 text-[13px] leading-6 text-[var(--muted-2)]">
           For all support inquiries, including billing issues, receipts, and general assistance,{" "}
           <SupportLink className="font-semibold text-[var(--fg)] underline underline-offset-2">message us</SupportLink> or email{" "}
-          <SupportLink className="font-semibold text-[var(--fg)] underline underline-offset-2">hi@lnkdrp.com</SupportLink>.
+          <SupportLink className="font-semibold text-[var(--fg)] underline underline-offset-2">support@lnkdrp.com</SupportLink>.
         </div>
       </Modal>
 

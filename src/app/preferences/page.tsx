@@ -159,7 +159,7 @@ function PreferencesPageInner() {
               </button>
             </div>
             <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] text-[var(--muted-2)]">
-              Account deletion isn’t available yet. Email hi@lnkdrp.com and we’ll take care of it.
+              Account deletion isn’t available yet. Email support@lnkdrp.com and we’ll take care of it.
             </div>
           </Section>
         ) : null}
