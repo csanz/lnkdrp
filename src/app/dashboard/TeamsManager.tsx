@@ -14,6 +14,7 @@ import {
 } from "@/lib/orgsCache";
 import { useNavigationLocked } from "@/app/providers";
 import Modal from "@/components/modals/Modal";
+import SupportLink from "@/components/support/SupportLink";
 import RemoveMemberModal from "@/components/modals/RemoveMemberModal";
 import Pill from "@/components/ui/Pill";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
@@ -780,12 +781,9 @@ export default function TeamsManager() {
               <div className="text-[13px] font-semibold text-[var(--fg)]">{proSeatsPrompt.title}</div>
               <div className="mt-0.5">
                 {proSeatsPrompt.message}{" "}
-                <a
-                  className="font-semibold text-[var(--fg)] underline underline-offset-2"
-                  href="mailto:hi@lnkdrp.com?subject=LinkDrop%20seats"
-                >
+                <SupportLink className="font-semibold text-[var(--fg)] underline underline-offset-2" subject="LinkDrop seats">
                   Contact us
-                </a>
+                </SupportLink>
               </div>
             </div>
           ) : null}

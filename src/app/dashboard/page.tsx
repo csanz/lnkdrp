@@ -11,6 +11,7 @@ import { useSession } from "next-auth/react";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } from "@/lib/orgsCache";
 import Modal from "@/components/modals/Modal";
+import SupportLink from "@/components/support/SupportLink";
 import Alert from "@/components/ui/Alert";
 import IconButton from "@/components/ui/IconButton";
 import HelpTooltip from "@/components/ui/HelpTooltip";
@@ -794,11 +795,9 @@ function DashboardPageInner() {
       <Modal open={contactOpen} onClose={() => setContactOpen(false)} ariaLabel="Contact us">
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Contact Us</div>
         <div className="mt-3 text-[13px] leading-6 text-[var(--muted-2)]">
-          For all support inquiries, including billing issues, receipts, and general assistance, please email{" "}
-          <a className="font-semibold text-[var(--fg)] underline underline-offset-2" href="mailto:hi@lnkdrp.com">
-            hi@lnkdrp.com
-          </a>
-          .
+          For all support inquiries, including billing issues, receipts, and general assistance,{" "}
+          <SupportLink className="font-semibold text-[var(--fg)] underline underline-offset-2">message us</SupportLink> or email{" "}
+          <SupportLink className="font-semibold text-[var(--fg)] underline underline-offset-2">hi@lnkdrp.com</SupportLink>.
         </div>
       </Modal>
 

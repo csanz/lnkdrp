@@ -55,10 +55,28 @@ curl -s -X POST http://localhost:3001/api/support/plain/customer-cards \
 Unit tests: `tests/lib/plainCustomerCards.test.ts` (signature door, one card per key, component
 vocabulary).
 
+### Chat widget
+
+`src/components/support/PlainChat.tsx`, mounted once from the root layout when
+`NEXT_PUBLIC_PLAIN_CHAT_APP_ID` is set. Who sees what:
+
+| Visitor | Widget |
+| --- | --- |
+| Signed in | Launcher visible. The server signs their email with `PLAIN_CHAT_SECRET` (`src/lib/support/plain/chat.ts`), so Plain opens on their own threads and the customer cards render with no verification step. |
+| Anonymous on the marketing site | Loaded but hidden. "Talk to us" on pricing opens it; Plain verifies them by emailed code. |
+| Recipient on `/s/…`, `/p/…`, request, download or share-verify routes | Not mounted, and hidden on client-side navigation there. They are a customer's audience, not ours. |
+
+`SupportLink` (`src/components/support/SupportLink.tsx`) is the one way the product points at
+support: a `mailto:hi@lnkdrp.com` link that opens the widget instead when it is ready. Used by
+the dashboard Contact modal, the Pro seats prompt and the pricing Enterprise button. Privacy and
+Terms keep a plain email address on purpose.
+
+Setup in Plain: **Settings → Chat → Create a Chat App**. Copy the app id into
+`NEXT_PUBLIC_PLAIN_CHAT_APP_ID` and generate the secret on the same page into
+`PLAIN_CHAT_SECRET`. The app sets no `script-src` CSP, so nothing else to allow.
+
 ### Not built, on purpose
 
-- No in-app chat widget or contact form yet. `hi@lnkdrp.com` (linked from pricing, privacy,
-  terms and the dashboard) forwards into Plain.
 - No help-center content in this repo; articles live in Plain's knowledge base so its AI agent
   can answer from them.
 - Feature requests are a tag in Plain, not a board.

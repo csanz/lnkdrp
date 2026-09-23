@@ -11,6 +11,8 @@ import type { Session } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getMetadataBaseUrl } from "@/lib/urls";
 import { Analytics } from "@vercel/analytics/next";
+import PlainChat from "@/components/support/PlainChat";
+import { plainChatAppId, plainChatCustomer } from "@/lib/support/plain/chat";
 
 export const metadata: Metadata = {
   title: {
@@ -85,6 +87,8 @@ export default async function RootLayout({
     }
   }
 
+  const plainChatAppIdValue = plainChatAppId();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
@@ -108,6 +112,13 @@ export default async function RootLayout({
           events. It renders nothing.
         */}
         <Analytics />
+        {/*
+          Plain chat widget: how a customer reaches support from inside the product. Mounted only
+          when `NEXT_PUBLIC_PLAIN_CHAT_APP_ID` is set; the component itself stays off recipient
+          pages. A signed-in user's email is signed server-side here so Plain opens on their own
+          threads without a verification step. See docs/SUPPORT.md.
+        */}
+        {plainChatAppIdValue ? <PlainChat appId={plainChatAppIdValue} customer={plainChatCustomer(initialSession?.user)} /> : null}
       </body>
     </html>
   );
