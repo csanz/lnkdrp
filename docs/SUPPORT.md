@@ -85,3 +85,25 @@ Setup in Plain: **Settings → Chat → Create a Chat App**. Set **Chat URL** to
 - No help-center content in this repo; articles live in Plain's knowledge base so its AI agent
   can answer from them.
 - Feature requests are a tag in Plain, not a board.
+
+### Help articles and the AI agent (Ari)
+
+Customer-facing help lives in the repo, not in Plain: `src/content/help/*.md` (front matter
+`title` / `description` / `order`), rendered at `/help` and `/help/:slug` by
+`src/app/help/*` through `src/components/help/HelpMarkdown.tsx`, loaded by
+`src/lib/help/articles.ts`. They change with the product, so they ship in the same commit as the
+feature they describe. `src/app/sitemap.ts` lists every public page, the MCP guides and every
+article; recipient routes and the signed-in app are deliberately absent.
+
+Setup in Plain, once the branch is deployed (Ari can only index pages it can fetch):
+
+1. **Settings → Plain AI → Knowledge Sources → Sitemap**: `https://lnkdrp.com/sitemap.xml`.
+   New articles are indexed on the next crawl with no step in Plain.
+2. **Workflows → routing rule**: condition channel is chat (add email once the articles have
+   proven themselves), action "Assign to user" with Ari.
+3. **Ari → Preferences**: Shadow mode first; switch to Live when the drafts read right.
+4. **Settings → Auto-responses**: one for new threads, a minute's delay, so a customer sees an
+   acknowledgement even before Ari or a person answers.
+
+Writing an article: facts only from the product as shipped; never internal names, paths or
+flags; nothing hidden behind a flag or unreleased; link between articles with `/help/<slug>`.

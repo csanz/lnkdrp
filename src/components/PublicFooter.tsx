@@ -1,8 +1,8 @@
 /**
  * Shared footer for public (logged-out) pages: `/`, `/about`, `/pricing`, `/tos`, `/privacy`.
  *
- * One left-aligned cluster: copyright, then MCP and the legal links (Terms, Privacy), so a reader
- * who scrolled to the end still has a way into the agent guide. `className` positions the footer (the homepage pins it to the bottom of the
+ * One left-aligned cluster: copyright, then Help, MCP and the legal links (Terms, Privacy), so a
+ * reader who scrolled to the end still has a way into the help articles and the agent guide. `className` positions the footer (the homepage pins it to the bottom of the
  * first viewport); `containerClassName` aligns the inner row with a page's content column.
  */
 import Link from "next/link";
@@ -11,7 +11,7 @@ import { cn } from "@/lib/cn";
 const FOOTER_LINK_CLASS = "transition hover:text-white/70";
 
 /**
- * Render the PublicFooter UI (copyright, then MCP / Terms / Privacy).
+ * Render the PublicFooter UI (copyright, then Help / MCP / Terms / Privacy).
  */
 export default function PublicFooter({
   className,
@@ -32,6 +32,9 @@ export default function PublicFooter({
           <span>© {year} LNKDRP Technologies LLC</span>
           <span aria-hidden="true" className="text-white/20">·</span>
           <nav aria-label="Footer" className="flex items-center gap-4">
+            <Link href="/help" className={FOOTER_LINK_CLASS}>
+              Help
+            </Link>
             <Link href="/mcp" className={FOOTER_LINK_CLASS}>
               MCP
             </Link>
