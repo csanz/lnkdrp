@@ -28,6 +28,29 @@ export const runtime = "nodejs";
 // Diff generation can take a while for long docs; allow the function to outlive the 90s AI timeout.
 export const maxDuration = 300;
 
+/**
+ * Shape a compare's usage for the credit ledger.
+ *
+ * The ledger's store spreads whatever it is handed straight onto the document, and the ledger is a
+ * strict schema - so a nested object under a key it does not declare is dropped on save without a
+ * word. An earlier version passed `{ compare: usage }` and recorded nothing at all, while reading
+ * exactly like it worked. These are the ledger's own telemetry paths.
+ */
+function compareTelemetry(u: DocChangeDiffUsage | null): Record<string, unknown> | null {
+  if (!u) return null;
+  const input = typeof u.inputTokens === "number" ? u.inputTokens : null;
+  const output = typeof u.outputTokens === "number" ? u.outputTokens : null;
+  return {
+    provider: "openai",
+    modelRoute: u.model,
+    promptTokens: input,
+    completionTokens: output,
+    totalTokens: input !== null && output !== null ? input + output : null,
+    imagesAttached: u.imagesAttached,
+    pagesAttached: u.pagesAttached,
+  };
+}
+
 /** Hard timeout for the AI diff call; on abort the reservation is refunded and a 503 is returned. */
 const DIFF_TIMEOUT_MS = 90_000;
 
@@ -202,7 +225,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
         workspaceId: actor.orgId,
         ledgerId: reserved.ledgerId,
         creditsCharged: credits,
-        telemetry: usage ? { compare: usage } : null,
+        telemetry: compareTelemetry(usage),
       });
       return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
     } catch (e) {

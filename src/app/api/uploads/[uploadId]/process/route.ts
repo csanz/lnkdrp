@@ -67,6 +67,29 @@ async function reserveForAttempt(params: Parameters<typeof reserveCreditsOrThrow
   return await reserveCreditsOrThrow({ ...params, idempotencyKey: `${params.idempotencyKey}:retry:${Date.now().toString(36)}` });
 }
 
+/**
+ * Shape a compare's usage for the credit ledger.
+ *
+ * The ledger's store spreads whatever it is handed straight onto the document, and the ledger is a
+ * strict schema - so a nested object under a key it does not declare is dropped on save without a
+ * word. An earlier version passed `{ compare: usage }` and recorded nothing at all, while reading
+ * exactly like it worked. These are the ledger's own telemetry paths.
+ */
+function compareTelemetry(u: DocChangeDiffUsage | null): Record<string, unknown> | null {
+  if (!u) return null;
+  const input = typeof u.inputTokens === "number" ? u.inputTokens : null;
+  const output = typeof u.outputTokens === "number" ? u.outputTokens : null;
+  return {
+    provider: "openai",
+    modelRoute: u.model,
+    promptTokens: input,
+    completionTokens: output,
+    totalTokens: input !== null && output !== null ? input + output : null,
+    imagesAttached: u.imagesAttached,
+    pagesAttached: u.pagesAttached,
+  };
+}
+
 /** An upload stuck in `processing` longer than this is considered abandoned and may be re-claimed. */
 const PROCESSING_STALE_MS = 20 * 60 * 1000;
 
@@ -2427,7 +2450,7 @@ export async function POST(
                     // What the tier actually bought. Until this was recorded, the only answer to
                     // "is 2/5/12 the right price, and what do the extra pages cost?" was arithmetic
                     // over a provider tiling rule nobody here has measured.
-                    telemetry: compareUsage ? { compare: compareUsage } : null,
+                    telemetry: compareTelemetry(compareUsage),
                   });
                   creditsUsedThisRun += historyChargedCredits;
                   aiState.compare = "done";

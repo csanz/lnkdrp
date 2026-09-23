@@ -219,6 +219,8 @@ export async function runDocChangeDiff(input: {
     imageChanged?: boolean | null;
     /** Where the two renders differ, as fractions of the page. See `describeRegions`. */
     changedRegions?: Array<{ x: number; y: number; width: number; height: number }> | null;
+    /** Each changed region, cut out of both versions, inline. See `@/lib/history/pageCrops`. */
+    changedRegionCrops?: Array<{ previous: string; next: string }> | null;
   }>;
   /**
    * Page counts for the two versions, when the caller knows them.
@@ -378,6 +380,31 @@ export async function runDocChangeDiff(input: {
             parts.push({ type: "image", image: nextImg });
             imagesAttached += 1;
           }
+          /**
+           * The close-up, after the pair it came from.
+           *
+           * Handing over a whole page and asking which of its lines moved is a question the model
+           * answers well on a sparse slide and badly on a dense one - three consecutive runs on the
+           * same dense column quoted three different neighbouring lines. The region is already
+           * measured, so the crop turns that question into "read this".
+           *
+           * Cheap enough to do by default: a small crop is one tile on this model, roughly a
+           * quarter of what the page it came from costs.
+           */
+          const crops = Array.isArray(p.changedRegionCrops) ? p.changedRegionCrops : [];
+          crops.forEach((crop, idx) => {
+            if (!crop?.previous || !crop?.next) return;
+            parts.push({
+              type: "text",
+              text:
+                crops.length > 1
+                  ? `Page ${pageNumber}, close-up ${idx + 1} of ${crops.length} of a region that changed (previous then new). Same area of the page in both versions, positioned from the pixels - quote previousWording and newWording from here.`
+                  : `Page ${pageNumber}, close-up of the region that changed (previous then new). Same area of the page in both versions, positioned from the pixels - quote previousWording and newWording from here.`,
+            });
+            parts.push({ type: "image", image: crop.previous });
+            parts.push({ type: "image", image: crop.next });
+            imagesAttached += 2;
+          });
           attachedPages += 1;
         }
         pagesAttached = attachedPages;

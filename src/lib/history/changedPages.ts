@@ -12,6 +12,7 @@ import type { DocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { isNoChangeSummary } from "@/lib/ai/docChangeSummary";
 import { fingerprintsDiffer } from "@/lib/history/pageFingerprint";
 import { regionsMeanChanged, sweepVisualChanges, type SweepCandidate } from "./visualPageSweep";
+import { cropPairs } from "./pageCrops";
 import { openPdfDocument } from "@/lib/pdf/renderPage";
 
 export type PdfPageText = { page_number: number; text: string };
@@ -36,6 +37,16 @@ export type ChangedPage = {
    * Empty when the comparison could not be made.
    */
   changedRegions?: Array<{ x: number; y: number; width: number; height: number }>;
+  /**
+   * Each changed region of the page, cut out of both versions and encoded inline.
+   *
+   * Attached to the prompt beside the full pages so "which line changed" becomes "read this". One
+   * entry per region rather than one per page: a single window around an edit top-left and another
+   * bottom-right covers most of the page, which is a close-up of nothing. Never stored -
+   * `attachPageContext` composes what it persists field by field, so these do not reach the
+   * database. See `@/lib/history/pageCrops`.
+   */
+  changedRegionCrops?: Array<{ previous: string; next: string }>;
 };
 
 /** Max changed pages sent to the model, to keep the compare's cost bounded. */
@@ -335,8 +346,31 @@ export async function loadChangedPages(params: {
     });
 
   params.onTotal?.((totalChanged ?? changed.length) + extra.length);
-  if (!extra.length) return withRegions;
-  return [...withRegions, ...extra].sort((a, b) => a.pageNumber - b.pageNumber).slice(0, MAX_PAGE_CONTEXT);
+  const all = (extra.length ? [...withRegions, ...extra].sort((a, b) => a.pageNumber - b.pageNumber) : withRegions).slice(
+    0,
+    MAX_PAGE_CONTEXT,
+  );
+
+  /**
+   * Cut the changed region out of each page and carry it along for the prompt.
+   *
+   * Bounded by `MAX_CROPPED_PAGES` rather than by tier, because the caller picks how many pages to
+   * attach and this only has to cover the largest of those. Best-effort per page: a crop that fails
+   * leaves that page with its full images and nothing else, which is where it started.
+   */
+  const cropped = await Promise.all(
+    all.slice(0, MAX_CROPPED_PAGES).map(async (page) => {
+      if (!page.changedRegions?.length) return page;
+      const crops = await cropPairs({
+        previousImageUrl: page.previousImageUrl,
+        newImageUrl: page.newImageUrl,
+        boxes: page.changedRegions,
+      }).catch(() => []);
+      return crops.length ? { ...page, changedRegionCrops: crops } : page;
+    }),
+  ).catch(() => all.slice(0, MAX_CROPPED_PAGES));
+
+  return [...cropped, ...all.slice(MAX_CROPPED_PAGES)];
 }
 
 /**
@@ -347,6 +381,13 @@ export async function loadChangedPages(params: {
  * stops before the end of a very long page.
  */
 const MAX_PAGE_TEXT_CHARS = 4_000;
+
+/**
+ * How many pages get a close-up of their changed region.
+ *
+ * Covers the largest tier's attachment budget; pages past it still carry their full renders.
+ */
+const MAX_CROPPED_PAGES = 10;
 
 /** Normalize and cap one side of a page's text for storage. */
 function capPageText(input: unknown): string {

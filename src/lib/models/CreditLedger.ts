@@ -88,6 +88,15 @@ const creditLedgerSchema = new Schema(
     latencyMs: { type: Number, default: null, min: 0 },
     retriesCount: { type: Number, default: null, min: 0 },
     contextWindowUsed: { type: Number, default: null, min: 0 },
+    /**
+     * How many images the request carried, and over how many pages.
+     *
+     * Without these a token total cannot be attributed: images are the overwhelming majority of a
+     * compare's input, and what one costs depends on how the provider tiles it. With the count
+     * beside the total, one real run answers it.
+     */
+    imagesAttached: { type: Number, default: null, min: 0 },
+    pagesAttached: { type: Number, default: null, min: 0 },
 
     // Internal bookkeeping for enforcing on-demand caps (not customer-facing).
     creditsFromTrial: { type: Number, default: 0, min: 0 },
