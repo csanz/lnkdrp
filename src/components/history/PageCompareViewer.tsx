@@ -268,6 +268,43 @@ function WordDiff({
   );
 }
 
+/**
+ * A floating page arrow, over the pages rather than under them.
+ *
+ * The same control the share viewer puts on a document, for the same reason: stepping through
+ * pages is what you do constantly in here, and a bar at the foot of a tall scrolling panel means
+ * scrolling away from the thing you are reading to reach it, then back. Visible at rest so it is
+ * not a hover secret, dimmed rather than hidden at the ends so the position stays legible.
+ */
+function PageArrow({ side, disabled, onClick }: { side: "left" | "right"; disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={side === "left" ? "Previous changed page" : "Next changed page"}
+      title={side === "left" ? "Previous changed page (←)" : "Next changed page (→)"}
+      onClick={onClick}
+      disabled={disabled}
+      className={[
+        "pointer-events-auto absolute top-1/2 z-10 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full",
+        "bg-[var(--panel)]/90 text-[var(--fg)] shadow-xl ring-1 ring-[var(--border)] backdrop-blur-sm transition",
+        "hover:bg-[var(--panel-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--fg)]",
+        "disabled:pointer-events-none disabled:opacity-25",
+        side === "left" ? "left-2 sm:left-4" : "right-2 sm:right-4",
+      ].join(" ")}
+    >
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d={side === "left" ? "M15 6L9 12L15 18" : "M9 6L15 12L9 18"}
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
+}
+
 /** Two letters from a name, for the avatar. Falls back to one, then to a neutral mark. */
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -540,7 +577,18 @@ export default function PageCompareViewer({
           the images at the panel height while they kept their natural aspect ratio, and the
           overflow was clipped off the top rather than scrolled to.
         */}
-        <div className="min-h-0 flex-1 overflow-auto p-4">
+        {/*
+          The arrows are siblings of the scroll area, not children of it: inside, an absolutely
+          positioned element scrolls with the content and slides off the top of a tall page.
+        */}
+        <div className="relative min-h-0 flex-1">
+          {pages.length > 1 ? (
+            <>
+              <PageArrow side="left" disabled={index === 0} onClick={() => step(-1)} />
+              <PageArrow side="right" disabled={index === pages.length - 1} onClick={() => step(1)} />
+            </>
+          ) : null}
+          <div className="h-full overflow-auto p-4">
           {mode === "side" ? (
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
               <figure className="m-0 flex min-w-0 flex-1 flex-col gap-1.5">
@@ -660,6 +708,7 @@ export default function PageCompareViewer({
               Only one version of this page was rendered, so there is nothing to wipe between. Side by side shows what there is.
             </div>
           ) : null}
+          </div>
         </div>
 
         {/*
@@ -679,15 +728,6 @@ export default function PageCompareViewer({
         */}
         {pages.length > 0 ? (
           <div className="flex items-center gap-3 border-t border-[var(--border)] px-4 py-2.5">
-            <button
-              type="button"
-              onClick={() => step(-1)}
-              disabled={index === 0}
-              className="shrink-0 rounded-md border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-40"
-            >
-              Previous
-            </button>
-
             <div ref={railRef} className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-1">
               {railPages.map((rp) =>
                 rp.changedIndex === null ? (
@@ -722,15 +762,6 @@ export default function PageCompareViewer({
             <span className="shrink-0 text-[11px] text-[var(--muted)]">
               {railTotal ? `${pages.length} of ${railTotal} pages changed` : `${pages.length} changed`}
             </span>
-
-            <button
-              type="button"
-              onClick={() => step(1)}
-              disabled={index === pages.length - 1}
-              className="shrink-0 rounded-md border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-40"
-            >
-              Next
-            </button>
           </div>
         ) : null}
       </div>
