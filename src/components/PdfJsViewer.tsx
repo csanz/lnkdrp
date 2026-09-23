@@ -12,6 +12,8 @@ import Link from "next/link";
 import { signIn } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/modals/Modal";
+import PageCompareViewer from "@/components/history/PageCompareViewer";
+import type { PageChange } from "@/components/history/PageDiffStrip";
 import Markdown from "@/components/Markdown";
 import OverflowMenu from "@/components/ui/OverflowMenu";
 import BrandHeader from "@/components/BrandHeader";
@@ -547,6 +549,14 @@ export function PdfJsViewer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  /**
+   * The comparison a recipient opened, if any: which history entry, and which of its pages.
+   *
+   * Deliberately the same component the owner's history page uses. Two implementations of
+   * "show me these two pages" would drift, and the recipient's is the one that matters more -
+   * it is the version an outsider judges the document by.
+   */
+  const [compareAt, setCompareAt] = useState<{ item: number; page: number } | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
@@ -2965,15 +2975,56 @@ export function PdfJsViewer({
         )}
       </Modal>
 
+      {/*
+        The same comparison the owner sees, opened over the history panel and closing back to it.
+        Rendered outside the Modal so it is not clipped by the panel it was opened from.
+      */}
+      {(() => {
+        if (!compareAt) return null;
+        const item = historyItems[compareAt.item];
+        const pages: PageChange[] = (item?.pagesThatChanged ?? [])
+          .filter((p) => p.previousImageUrl || p.newImageUrl)
+          .map((p) => ({
+            pageNumber: p.pageNumber,
+            summary: p.summary,
+            previousImageUrl: p.previousImageUrl,
+            newImageUrl: p.newImageUrl,
+            // The recipient payload carries no perceptual verdict and no extracted page text: both
+            // are the workspace's working data. The viewer degrades to what it is given.
+            imageChanged: null,
+            previousText: "",
+            newText: "",
+            previousWording: p.previousWording,
+            newWording: p.newWording,
+            changeKind: p.changeKind,
+            regionNotes: p.regionNotes,
+          }));
+        if (!pages.length) return null;
+        return (
+          <PageCompareViewer
+            pages={pages}
+            index={Math.min(Math.max(compareAt.page, 0), pages.length - 1)}
+            onIndexChange={(next) => setCompareAt({ item: compareAt.item, page: next })}
+            onClose={() => setCompareAt(null)}
+            totalPages={null}
+            fromVersion={item?.fromVersion ?? null}
+            toVersion={item?.toVersion ?? null}
+            // Null hides the badge: who inside the sending workspace replaced the file is internal.
+            authorName={null}
+            changedAt={null}
+          />
+        );
+      })()}
+
       <Modal
         open={historyOpen}
         onClose={() => {
           setHistoryOpen(false);
         }}
         ariaLabel="Version history"
-        // Wide enough for two page previews side by side: the default 520px squeezed them to
-        // thumbnails too small to read, which is the whole point of showing them.
-        panelClassName="w-[min(64rem,calc(100vw-2rem))] border-white/15 bg-black/95 text-white ring-white/15"
+        // Sized for reading: the before/after wording needs more than the default 520px, and the
+        // pages themselves are not in here - they open in the full-size comparison.
+        panelClassName="w-[min(40rem,calc(100vw-2rem))] border-white/15 bg-black/95 text-white ring-white/15"
         contentClassName="px-6 pb-6 pt-5"
       >
         <div className="flex items-center gap-2 text-base font-semibold text-white">
@@ -3009,8 +3060,24 @@ export function PdfJsViewer({
 
                 {Array.isArray(h.pagesThatChanged) && h.pagesThatChanged.length ? (
                   <div className="mt-3 border-t border-white/10 pt-3">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-white/70">
-                      Pages updated
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-white/70">
+                        Pages updated
+                      </div>
+                      {/*
+                        The pages themselves belong in the full-size comparison, not squeezed into
+                        this column. A first version of this drew both renders inline here, at a
+                        size that answered nothing.
+                      */}
+                      {h.pagesThatChanged.some((p) => p.previousImageUrl || p.newImageUrl) ? (
+                        <button
+                          type="button"
+                          onClick={() => setCompareAt({ item: idx, page: 0 })}
+                          className="rounded-md bg-white px-2.5 py-1 text-[11px] font-semibold text-black transition-opacity hover:opacity-85"
+                        >
+                          Compare pages
+                        </button>
+                      ) : null}
                     </div>
                     <div className="mt-2 grid gap-2">
                       {h.pagesThatChanged.slice(0, 12).map((p) => (
@@ -3019,11 +3086,19 @@ export function PdfJsViewer({
                           type="button"
                           className="rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-left text-sm text-white/90 hover:bg-black/35"
                           onClick={() => {
+                            const pages = h.pagesThatChanged ?? [];
+                            const withImages = pages.filter((q) => q.previousImageUrl || q.newImageUrl);
+                            const at = withImages.findIndex((q) => q.pageNumber === p.pageNumber);
+                            if (at >= 0) {
+                              setCompareAt({ item: idx, page: at });
+                              return;
+                            }
+                            // Nothing stored to compare for this page: go and look at it instead.
                             setPageNumber(p.pageNumber);
                             setViewMode("single");
                             setHistoryOpen(false);
                           }}
-                          title={`Jump to page ${p.pageNumber}`}
+                          title={`Compare page ${p.pageNumber}`}
                         >
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs font-semibold text-white/85">Page {p.pageNumber}</span>
@@ -3046,54 +3121,6 @@ export function PdfJsViewer({
                           <div className="mt-0.5 text-sm text-white/80">
                             {(p.summary || "").trim() || "Change summary unavailable."}
                           </div>
-
-                          {/*
-                            The page as it was, beside the page as it is.
-                            The reason this was text-only until now was never that recipients should
-                            not see their own document: it was that the renders live at public blob
-                            addresses which outlive the link. These come through
-                            `/s/:shareId/page-image`, which re-checks the link on every request.
-                          */}
-                          {p.previousImageUrl || p.newImageUrl ? (
-                            <div className="mt-2 grid grid-cols-2 gap-2">
-                              {[
-                                { url: p.previousImageUrl, label: h.fromVersion ? `v${h.fromVersion}` : "Before", tone: "rose" as const },
-                                { url: p.newImageUrl, label: h.toVersion ? `v${h.toVersion}` : "Now", tone: "emerald" as const },
-                              ].map((side) => (
-                                <figure key={side.label} className="m-0 min-w-0">
-                                  <figcaption
-                                    className={[
-                                      "mb-1 text-[10px] font-semibold uppercase tracking-wide",
-                                      side.tone === "rose" ? "text-rose-200/70" : "text-emerald-200/70",
-                                    ].join(" ")}
-                                  >
-                                    {side.label}
-                                  </figcaption>
-                                  {side.url ? (
-                                    <span
-                                      className={[
-                                        "block overflow-hidden rounded-md border bg-black/40",
-                                        side.tone === "rose" ? "border-rose-400/30" : "border-emerald-400/30",
-                                      ].join(" ")}
-                                    >
-                                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                                      <img
-                                        src={side.url}
-                                        alt={`Page ${p.pageNumber}, ${side.label}`}
-                                        loading="lazy"
-                                        decoding="async"
-                                        className="block h-auto w-full"
-                                      />
-                                    </span>
-                                  ) : (
-                                    <span className="flex aspect-[4/3] items-center justify-center rounded-md border border-dashed border-white/15 text-[10px] text-white/40">
-                                      Not available
-                                    </span>
-                                  )}
-                                </figure>
-                              ))}
-                            </div>
-                          ) : null}
 
                           {/*
                             The words themselves, where the compare could read them. A recipient
