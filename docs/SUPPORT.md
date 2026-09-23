@@ -71,7 +71,12 @@ support: a `mailto:hi@lnkdrp.com` link that opens the widget instead when it is 
 the dashboard Contact modal, the Pro seats prompt and the pricing Enterprise button. Privacy and
 Terms keep a plain email address on purpose.
 
-Setup in Plain: **Settings → Chat → Create a Chat App**. Copy the app id into
+`/support` (`src/app/support/page.tsx`) always shows the launcher and opens the chat on arrival.
+It is the **Chat URL** in Plain's chat settings: the "Reply" button in Plain's unread-message
+emails brings the customer there to continue the thread.
+
+Setup in Plain: **Settings → Chat → Create a Chat App**. Set **Chat URL** to
+`https://lnkdrp.com/support`. Copy the app id into
 `NEXT_PUBLIC_PLAIN_CHAT_APP_ID` and generate the secret on the same page into
 `PLAIN_CHAT_SECRET`. The app sets no `script-src` CSP, so nothing else to allow.
 

@@ -54,6 +54,9 @@ declare global {
 
 export const PLAIN_CHAT_SCRIPT = "https://chat.cdn-plain.com/index.js";
 
+/** The page Plain's "Reply" emails link back to; see `src/app/support/page.tsx`. */
+export const SUPPORT_PATH = "/support";
+
 /** Recipient-facing routes: never mount the widget there. */
 const VIEWER_PREFIXES = ["/s/", "/p/", "/r/", "/request/", "/request-view/", "/download/", "/share/"];
 
@@ -71,12 +74,12 @@ export function openSupportChat(): boolean {
   return true;
 }
 
-/** The full `Plain.init` options for this visitor: launcher and identity when signed in, hidden and verified-by-code otherwise. */
-function optionsFor(appId: string, customer: PlainChatCustomer | null, theme: "light" | "dark" | "auto"): PlainInitOptions {
+/** The full `Plain.init` options for this visitor: launcher and identity when signed in; hidden (unless on `/support`) and verified-by-code otherwise. */
+function optionsFor(appId: string, customer: PlainChatCustomer | null, theme: "light" | "dark" | "auto", showLauncher: boolean): PlainInitOptions {
   return {
     appId,
     theme,
-    hideLauncher: !customer,
+    hideLauncher: !customer && !showLauncher,
     requireAuthentication: !customer,
     position: { right: "20px", bottom: "20px", zIndex: "60" },
     style: {
@@ -105,6 +108,9 @@ export default function PlainChat({ appId, customer }: { appId: string; customer
   const theme: "light" | "dark" | "auto" = resolvedTheme === "dark" ? "dark" : resolvedTheme === "light" ? "light" : "auto";
   const initialised = useRef(false);
   const viewer = isViewerPath(pathname);
+  // `/support` is where Plain's notification emails send a customer back to; the launcher must
+  // be there for anonymous visitors too.
+  const showLauncher = pathname === SUPPORT_PATH;
 
   // Keep the widget in step with theme, session and route changes after the first init. The
   // script injects its own DOM, so returning null below does not remove a launcher that is
@@ -118,8 +124,8 @@ export default function PlainChat({ appId, customer }: { appId: string; customer
       plain.update({ hideLauncher: true });
       return;
     }
-    plain.update(optionsFor(appId, customer, theme));
-  }, [appId, customer, theme, viewer]);
+    plain.update(optionsFor(appId, customer, theme, showLauncher));
+  }, [appId, customer, theme, viewer, showLauncher]);
 
   if (viewer) return null;
 
@@ -131,7 +137,7 @@ export default function PlainChat({ appId, customer }: { appId: string; customer
       onLoad={() => {
         const plain = window.Plain;
         if (!plain || initialised.current) return;
-        plain.init(optionsFor(appId, customer, theme));
+        plain.init(optionsFor(appId, customer, theme, showLauncher));
         initialised.current = true;
       }}
     />
