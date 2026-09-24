@@ -554,3 +554,23 @@ body {
     scrollbar-color: color-mix(in srgb, var(--fg) 22%, transparent) transparent;
   }
 }
+
+/*
+  Plain chat widget (src/components/support/PlainChat.tsx). The widget renders inside an open
+  shadow root on `div#plain-chat`, and reads its type scale and font from custom properties it
+  declares on `:host`. A rule in this document on the host element outranks the widget's own
+  `:host` declarations, so this is where the widget is brought in line with the app: our font
+  stack, and one step smaller than Plain's defaults (their 14px body against our 13px). The
+  welcome heading and the logo size are set by the widget on elements inside its tree, out of
+  reach from here; PlainChat.tsx injects those two overrides into the shadow root.
+*/
+#plain-chat {
+  --font-primary: var(--font-sans, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif);
+  --text-large: 0.9375rem;
+  --text-regular: 0.8125rem;
+  --text-small: 0.6875rem;
+  --text-xsmall: 0.625rem;
+  --line-height-large: 1.25rem;
+  --line-height-regular: 1.125rem;
+  --line-height-small: 0.9375rem;
+}
