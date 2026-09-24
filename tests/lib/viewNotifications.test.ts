@@ -432,6 +432,19 @@ describe("email composition", () => {
     expect(email.text).toContain(vn.PRO_IDENTITY_LINE);
     expect(email.html).toContain(vn.PRO_IDENTITY_LINE);
     expect(email.text).toContain(`See what they read: ${APP}/doc/d1/metrics?shareId=shareA`);
+    // The upsell is a secondary button, attributed to the email; the sentence is its caption. With
+    // two viewers the primary already went to the metrics page, so this one goes to pricing.
+    expect(email.text).toContain(`See who opened it: ${APP}/pricing?from=view_email`);
+    expect(email.html).toMatch(
+      /<td align="center" bgcolor="#ffffff" style="[^"]*padding:10px 16px;[^"]*"><a href="https:\/\/app\.example\.com\/pricing\?from=view_email" style="[^"]*">See who opened it<\/a>/,
+    );
+  });
+
+  test("immediate Free single viewer: primary to the reader page, upsell to the metrics teaser", () => {
+    const email = vn.composeImmediateEmail({ ctx: ctxFree, doc: DOC, events: [view()], links });
+    expect(email.text).toContain(`${vn.READER_ACTION_LABEL}: ${APP}/doc/d1/metrics/viewer/a_bot1`);
+    expect(email.text).toContain(`See who opened it: ${APP}/doc/d1/metrics?shareId=shareA&from=view_email`);
+    expect(email.html).toContain(`href="${APP}/doc/d1/metrics?shareId=shareA&amp;from=view_email"`);
   });
 
   test("immediate Free single viewer on a named link reads 'Someone on the X link'", () => {
@@ -510,6 +523,10 @@ describe("email composition", () => {
       expect(part).not.toContain("· top:");
     }
     expect(free.text).toContain(vn.PRO_IDENTITY_LINE);
+    // Several documents: no one metrics page to show, so the button goes to pricing.
+    expect(free.text).toContain(`See who opened it: ${APP}/pricing?from=view_email`);
+    expect(free.html).toContain(`href="${APP}/pricing?from=view_email"`);
+    expect(pro.text).not.toContain("See who opened it");
   });
 
   test("digest lists at most DIGEST_MAX_DOCUMENTS documents but counts all of them", () => {

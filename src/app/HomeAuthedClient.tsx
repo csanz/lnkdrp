@@ -14,6 +14,7 @@ import { useAgentStatus } from "@/lib/client/useAgentStatus";
 import AppShellLayout from "./(app)/AppShellLayout";
 import { PlanLimitClientError, apiCreateDoc, apiCreateUpload, isPdfFile, PDF_ONLY_MESSAGE } from "@/lib/client/docUploadPipeline";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { FREE_PLAN_LIMITS_COPY, planLimitGraceHint } from "@/lib/client/planLimit";
 import { usePendingUpload } from "@/lib/pendingUpload";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { fetchJson } from "@/lib/http/fetchJson";
@@ -193,7 +194,11 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
       router.push(`/doc/${encodeURIComponent(docId)}`);
     } catch (e) {
       if (e instanceof PlanLimitClientError) {
-        openUpgrade("documents", { used: e.planLimit.used, max: e.planLimit.max ?? undefined });
+        openUpgrade("documents", {
+          used: e.planLimit.used,
+          max: e.planLimit.max ?? undefined,
+          graceHint: planLimitGraceHint(e.planLimit),
+        });
       } else {
         setError(e instanceof Error ? e.message : "Link upload failed");
       }
@@ -221,9 +226,19 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
 
   const atDocumentLimit = plan?.plan === "free" && plan.atLimit.documents;
   const pickerDisabled = urlBusy || Boolean(atDocumentLimit);
+  const freeDocuments =
+    plan?.plan === "free" && typeof plan.limits.documents === "number"
+      ? { used: plan.usage.documents, max: plan.limits.documents }
+      : null;
+  // `/api/plan` clears `atLimit` while the launch grace window is open (the server still accepts
+  // uploads), so the countdown and the blocked notice are mutually exclusive: the hint can only ever
+  // decorate the enabled drop zone and the modal. The snapshot carries the same `grace` shape as a
+  // 402 body, and the formatter reads nothing else.
+  const graceHint = plan?.plan === "free" && plan.graceActive ? planLimitGraceHint({ grace: plan.grace }) : null;
+  const overCapInGrace = Boolean(graceHint) && freeDocuments !== null && freeDocuments.used >= freeDocuments.max;
   const openDocumentUpgrade = () => {
     if (!plan) return;
-    openUpgrade("documents", { used: plan.usage.documents, max: plan.limits.documents ?? undefined });
+    openUpgrade("documents", { used: plan.usage.documents, max: plan.limits.documents ?? undefined, graceHint });
   };
 
   /** Stage a picked or dropped file for the preview route (PDF only). */
@@ -242,10 +257,6 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
     pushUploadRouteSoon();
   }
 
-  const freeDocuments =
-    plan?.plan === "free" && typeof plan.limits.documents === "number"
-      ? { used: plan.usage.documents, max: plan.limits.documents }
-      : null;
   const connectedClient = agentStatus?.connected ? (agentStatus.clients[0]?.client ?? agentStatus.lastUsedClient) : null;
 
   return (
@@ -286,7 +297,7 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
                 onClick={openDocumentUpgrade}
                 className={[
                   "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[12px] transition-colors",
-                  atDocumentLimit
+                  atDocumentLimit || overCapInGrace
                     ? "border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
                     : "border-[var(--border)] text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
                 ].join(" ")}
@@ -345,7 +356,7 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
                     <LockClosedIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
                   </div>
                   <div className="mt-5 text-[17px] font-semibold tracking-tight text-[var(--fg)]">
-                    All {freeDocuments?.max ?? 3} Free documents are shared
+                    All {freeDocuments?.max ?? FREE_PLAN_LIMITS_COPY.documents} Free documents are shared
                   </div>
                   <p className="mt-2 max-w-md text-[13px] leading-6 text-[var(--muted-2)]">
                     Archive a document you no longer need to free a slot, or upgrade to Pro for unlimited documents. Links are never limited: every shared document can carry as many as you need.
@@ -389,6 +400,14 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
                   <p className="mt-2 text-[13px] text-[var(--muted-2)]">
                     You will see a preview first. Nothing is uploaded until you confirm.
                   </p>
+                  {overCapInGrace && freeDocuments ? (
+                    <p className="mt-2 text-[13px] text-amber-700 dark:text-amber-300">
+                      Over the Free limit of {freeDocuments.max} documents. {graceHint}{" "}
+                      <button type="button" onClick={openDocumentUpgrade} className="font-medium underline underline-offset-2 hover:opacity-80">
+                        Upgrade to Pro
+                      </button>
+                    </p>
+                  ) : null}
                   <div className="mt-6">
                     <UploadButton
                       label="Choose a PDF"

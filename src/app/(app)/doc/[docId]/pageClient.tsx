@@ -24,7 +24,7 @@ import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { formatBytes, formatPageCount } from "@/lib/format/bytes";
 import { debugLog } from "@/lib/debug";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
-import { parsePlanLimitError, planLimitGraceHint } from "@/lib/client/planLimit";
+import { FREE_PLAN_LIMITS_COPY, parsePlanLimitError, planLimitGraceHint } from "@/lib/client/planLimit";
 import { upsellKeyForLimit } from "@/lib/client/upsellCopy";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import Modal from "@/components/modals/Modal";
@@ -2815,7 +2815,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         // Pre-empt the 402: the workspace is at its shared-document cap.
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[12px] leading-5 text-[var(--muted-2)]">
                           <span>
-                            Sharing this needs a free document slot ({plan.usage.documents} of {plan.limits.documents ?? 3}{" "}
+                            Sharing this needs a free document slot ({plan.usage.documents} of {plan.limits.documents ?? FREE_PLAN_LIMITS_COPY.documents}{" "}
                             used).
                           </span>
                           <button

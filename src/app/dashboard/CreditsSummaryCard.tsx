@@ -4,6 +4,10 @@
  * Shows remaining credits for every plan. On Pro the included tile is the monthly allowance and the
  * header carries the billing cycle reset date (Stripe period end); on Free (plan read from
  * `/api/billing/status`) the included tile is the one-time starter grant and there is no reset date.
+ *
+ * Where more credits come from follows the billing interval from the same read: Free and yearly Pro
+ * buy packs at `/credits` (yearly Pro has no on-demand), monthly Pro turns on on-demand at the
+ * limits tab.
  */
 "use client";
 
@@ -64,6 +68,8 @@ function CreditsSummaryCardInner({
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<CreditsSnapshot | null>(null);
   const [plan, setPlan] = useState<PlanState>(null);
+  // Which Pro; null off Pro or when the read failed (then treated as monthly Pro).
+  const [proInterval, setProInterval] = useState<"month" | "year" | null>(null);
   const { openUpgrade } = useUpgradeModal();
 
   // The plan picks the labels (starter grant vs monthly allowance). A failed read falls back to the
@@ -73,9 +79,11 @@ function CreditsSummaryCardInner({
     void (async () => {
       try {
         const res = await fetch("/api/billing/status", { method: "GET" });
-        const json = (await res.json().catch(() => null)) as { plan?: unknown } | null;
+        const json = (await res.json().catch(() => null)) as { plan?: unknown; interval?: unknown } | null;
         const p = res.ok && json && typeof json.plan === "string" ? json.plan.trim().toLowerCase() : "";
-        if (!cancelled) setPlan(p === "free" || p === "pro" ? p : "unknown");
+        if (cancelled) return;
+        setPlan(p === "free" || p === "pro" ? p : "unknown");
+        setProInterval(p === "pro" ? (json?.interval === "year" ? "year" : "month") : null);
       } catch {
         if (!cancelled) setPlan("unknown");
       }
@@ -132,6 +140,9 @@ function CreditsSummaryCardInner({
   const centsPerCredit = USD_CENTS_PER_CREDIT;
   const usedCentsThisCycle = usedThisCycle !== null ? usedThisCycle * centsPerCredit : null;
   const isFree = plan === "free";
+  // Yearly Pro has no on-demand: it buys packs like Free, so it gets the Purchased tile and the
+  // pack prompts instead of the limits tab (a dead end for it).
+  const buysPacks = isFree || proInterval === "year";
   // Free: the snapshot reports the starter grant while any of it remains; once it is spent the
   // grant is still 50, so keep the label honest instead of showing a dash.
   const starterGrant = includedThisCycle ?? CREDITS_COPY.freeStarter;
@@ -191,7 +202,7 @@ function CreditsSummaryCardInner({
             {isFree ? `${starterGrant.toLocaleString()} to start, one time` : `Per month: ${includedThisCycle !== null ? includedThisCycle.toLocaleString() : "–"}`}
           </div>
         </div>
-        {isFree ? (
+        {buysPacks ? (
           <div className="rounded-xl bg-[var(--panel-2)] p-4">
             <div className="text-[12px] font-semibold text-[var(--muted-2)]">Purchased</div>
             <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
@@ -242,18 +253,18 @@ function CreditsSummaryCardInner({
 
       {/* A way to get more credits at any balance, not only once they are gone (the out-of-credits
           box below takes over at zero). */}
-      {creditsRemaining !== 0 && isFree ? (
+      {creditsRemaining !== 0 && buysPacks ? (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
           <div className="min-w-0 text-[12px] text-[var(--muted-2)]">
             <span className="font-semibold text-[var(--fg)]">Need more credits?</span> Buy a pack from {CHEAPEST_PACK_PRICE},
-            used after your starter credits and valid for {PURCHASED_CREDITS_EXPIRY_MONTHS} months.
+            used after your {isFree ? "starter" : "included"} credits and valid for {PURCHASED_CREDITS_EXPIRY_MONTHS} months.
           </div>
           <Link href="/credits" className={PRIMARY_LINK}>
-            Add more credits
+            Add credits
           </Link>
         </div>
       ) : null}
-      {creditsRemaining !== 0 && !isFree && !onDemandEnabled ? (
+      {creditsRemaining !== 0 && !buysPacks && !onDemandEnabled ? (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
           <div className="min-w-0 text-[12px] text-[var(--muted-2)]">
             <span className="font-semibold text-[var(--fg)]">Need more than {CREDITS_COPY.proPerMonth} a month?</span> Turn on
@@ -271,19 +282,23 @@ function CreditsSummaryCardInner({
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
             {isFree
               ? `You’re out of credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Buy a credit pack from ${CHEAPEST_PACK_PRICE}, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} credits a month and AI compare on every replacement.`
-              : onDemandEnabled
-                ? "Your included credits are used up and on-demand usage is running, billed per credit up to your limit."
-                : "You’ve used this month’s included credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Turn on on-demand usage to keep AI running now, or wait for credits to reset."}
+              : buysPacks
+                ? `You’ve used this month’s included credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Buy a credit pack from ${CHEAPEST_PACK_PRICE} to keep AI running now, or wait for credits to reset.`
+                : onDemandEnabled
+                  ? "Your included credits are used up and on-demand usage is running, billed per credit up to your limit."
+                  : "You’ve used this month’s included credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Turn on on-demand usage to keep AI running now, or wait for credits to reset."}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {isFree ? (
+            {buysPacks ? (
               <>
                 <Link href="/credits" className={PRIMARY_LINK}>
-                  Add more credits
+                  Add credits
                 </Link>
-                <button type="button" className={SECONDARY} onClick={() => openUpgrade("credits")}>
-                  Upgrade to Pro
-                </button>
+                {isFree ? (
+                  <button type="button" className={SECONDARY} onClick={() => openUpgrade("credits")}>
+                    Upgrade to Pro
+                  </button>
+                ) : null}
               </>
             ) : (
               <Link href="/dashboard?tab=limits" className={PRIMARY_LINK}>

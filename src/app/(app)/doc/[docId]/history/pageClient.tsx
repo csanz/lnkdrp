@@ -272,25 +272,22 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [defaultHistoryTier, setDefaultHistoryTier] = useState<"basic" | "standard" | "advanced">("standard");
   const [rerunBusyById, setRerunBusyById] = useState<Record<string, boolean>>({});
   const [rerunErrorById, setRerunErrorById] = useState<Record<string, string>>({});
-  // Credits left and the Free top-up date, so each Regenerate button can say what it costs and
-  // whether the workspace can afford it. Refreshed after every rerun.
+  // Credits left, so each Regenerate button can say what it costs and whether the workspace can
+  // afford it. Refreshed after every rerun.
   // `remaining` is credits held (the number shown); `spendable` adds Pro's on-demand headroom and
   // decides whether a run can go ahead (`null`: on-demand has no limit).
-  const [credits, setCredits] = useState<{ remaining: number; spendable: number | null; resetsAt: string | null } | null>(null);
+  const [credits, setCredits] = useState<{ remaining: number; spendable: number | null } | null>(null);
   const refreshCredits = useCallback(async () => {
     try {
       const res = await fetch("/api/credits/snapshot?fast=1&bust=1", { cache: "no-store" });
       const json = (await res.json().catch(() => null)) as {
         creditsRemaining?: unknown;
         spendableRemaining?: unknown;
-        resetsAt?: unknown;
-        cycleEnd?: unknown;
       } | null;
       if (!res.ok || typeof json?.creditsRemaining !== "number") return;
-      const resetsAt = typeof json.resetsAt === "string" ? json.resetsAt : null;
       const spendable =
         typeof json.spendableRemaining === "number" ? json.spendableRemaining : json.spendableRemaining === null ? null : json.creditsRemaining;
-      setCredits({ remaining: json.creditsRemaining, spendable, resetsAt });
+      setCredits({ remaining: json.creditsRemaining, spendable });
     } catch {
       // leave the buttons enabled; the API is the real gate
     }
@@ -1027,11 +1024,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                     (credits.spendable === null || credits.spendable >= RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier])
                                       ? `${credits.remaining} left · billed on-demand`
                                       : credits.remaining < RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier]
-                                      ? `Not enough credits (${credits.remaining} left)${
-                                          credits.resetsAt
-                                            ? `. Tops up to 10 on ${new Date(credits.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}`
-                                            : ""
-                                        }`
+                                      ? `Not enough credits (${credits.remaining} left)`
                                       : `${credits.remaining} left`}
                                   </span>
                                 ) : null}

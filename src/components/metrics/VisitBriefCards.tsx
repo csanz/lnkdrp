@@ -7,7 +7,9 @@
  * at all (the endpoint answers 402), so the section disappears rather than explaining itself.
  *
  * "Write the brief" spends one credit and is billed to whoever clicks. The 402 codes are the same
- * ones every other AI action returns, so the out-of-credits modal opens on them unchanged.
+ * ones every other AI action returns, so the out-of-credits modal opens on them unchanged; the
+ * one exception, `plan_limit` (`visit_briefs`), swaps the card's footer for a `PlanLimitNotice`
+ * whose button opens the upgrade modal.
  */
 "use client";
 
@@ -15,8 +17,11 @@ import { useCallback, useEffect, useState } from "react";
 import { ArrowDownTrayIcon, SparklesIcon } from "@heroicons/react/24/outline";
 
 import { formatDateTime, formatDurationShort } from "@/components/metrics/MetricsView";
+import PlanLimitNotice from "@/components/PlanLimitNotice";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
+import { markPlanLimitHit } from "@/lib/client/planLimit";
+import { refreshPlan } from "@/lib/client/usePlan";
 import type { VisitBriefCard } from "@/lib/visits/visitBriefs";
 
 export type ReaderKey = { kind: "authed" | "anon"; key: string };
@@ -48,7 +53,8 @@ export function visitOrdinal(n: number): string {
 }
 
 /**
- *
+ * The "Visit briefs" section of a reader's page: one card per finished visit, with the brief or
+ * the reason there is none and a button to write it now.
  */
 export default function VisitBriefCards({
   apiBase,
@@ -67,6 +73,11 @@ export default function VisitBriefCards({
   const [hidden, setHidden] = useState(false);
   const [writing, setWriting] = useState<string | null>(null);
   const [failed, setFailed] = useState<Record<string, string>>({});
+  /**
+   * The write answered `402 plan_limit`: the workspace is Free (the list loaded before a downgrade,
+   * or the wall moved), so the card shows the upgrade notice instead of a failure line.
+   */
+  const [planWalled, setPlanWalled] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!who) return;
@@ -95,6 +106,7 @@ export default function VisitBriefCards({
   const write = useCallback(
     async (id: string) => {
       setWriting(id);
+      setPlanWalled((w) => (w === id ? null : w));
       setFailed((f) => {
         const next = { ...f };
         delete next[id];
@@ -105,7 +117,11 @@ export default function VisitBriefCards({
         if (res.status === 402) {
           const body = (await res.json().catch(() => null)) as { code?: unknown } | null;
           if (body?.code === "plan_limit") {
-            setFailed((f) => ({ ...f, [id]: "Briefs are written on Pro." }));
+            markPlanLimitHit("visit_briefs");
+            // The list only loads on Pro, so this 402 means the plan changed since; drop the cached
+            // Pro snapshot or the notice's Upgrade button would open nothing (`openUpgrade` skips Pro).
+            refreshPlan();
+            setPlanWalled(id);
           } else {
             dispatchOutOfCredits(outOfCreditsReasonFromCode(body?.code));
           }
@@ -207,6 +223,8 @@ export default function VisitBriefCards({
                     </p>
                   ) : null}
                 </div>
+              ) : planWalled === c.id ? (
+                <PlanLimitNotice limit="visit_briefs" secondaryHref="/pricing" className="mt-2" compact />
               ) : (
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0 text-[13px] text-[var(--muted)]">

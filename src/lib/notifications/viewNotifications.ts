@@ -88,6 +88,14 @@ export const FIRST_VIEW_HONESTY_LINE =
 export const PRO_IDENTITY_LINE = "Pro shows who opened it and how long they stayed.";
 /** The second thing Free does not get: the brief of the whole visit, minutes after it ends. */
 export const PRO_BRIEF_LINE = "Pro also sends you a short brief of every visit once the reader is done.";
+/**
+ * The Free upsell as a button, with `PRO_IDENTITY_LINE` as its caption. Someone just opened the
+ * owner's deck; an unlinked sentence at that moment was the product's best argument with nowhere
+ * to go.
+ */
+export const PRO_ACTION_LABEL = "See who opened it";
+/** Marks a visit that started from a view email, so pricing and metrics can attribute the upgrade. */
+export const VIEW_EMAIL_FROM_PARAM = "from=view_email";
 
 export const VIEW_EMAIL_FOOTER_REASON = "You get this because someone opened a link to a document in your workspace.";
 
@@ -383,9 +391,22 @@ export function needsFirstViewHonesty(ev: NewViewerEvent, link: ViewLinkInfo | n
   return plan === "pro" ? isAnonymousViewer(ev) : true;
 }
 
+/** The document's metrics page, narrowed to one link when the mail is about exactly one. */
 export function buildMetricsUrl(appUrl: string, docId: string, shareId?: string | null): string {
   const base = `${appUrl}/doc/${encodeURIComponent(docId)}/metrics`;
   return shareId ? `${base}?shareId=${encodeURIComponent(shareId)}` : base;
+}
+
+/**
+ * Where the Free upsell button goes. The document's metrics page is preferred over pricing: it
+ * shows the real count of readers Pro would name, which argues better than a price list. Callers
+ * pass `null` when there is no such page to show (a digest of several documents) or when the
+ * primary button already goes there (two adjacent buttons to one page read as a mistake); that
+ * one goes to pricing. Either way the address carries `VIEW_EMAIL_FROM_PARAM`.
+ */
+export function buildUpsellUrl(appUrl: string, metricsUrl: string | null): string {
+  const base = metricsUrl ?? `${appUrl}/pricing`;
+  return `${base}${base.includes("?") ? "&" : "?"}${VIEW_EMAIL_FROM_PARAM}`;
 }
 
 /**
@@ -748,7 +769,8 @@ export function composeImmediateEmail(params: {
    */
   const single = events.length === 1 ? events[0] : null;
   const readerUrl = single ? buildReaderUrl(ctx.appUrl, single, links.get(single.shareId)) : null;
-  const actionUrl = readerUrl ?? buildMetricsUrl(ctx.appUrl, doc.docId, shareIds.length === 1 ? shareIds[0] : null);
+  const metricsUrl = buildMetricsUrl(ctx.appUrl, doc.docId, shareIds.length === 1 ? shareIds[0] : null);
+  const actionUrl = readerUrl ?? metricsUrl;
   const actionLabel = readerUrl ? READER_ACTION_LABEL : PRIMARY_ACTION_LABEL;
 
   const blocks: Block[] = [];
@@ -808,6 +830,9 @@ export function composeImmediateEmail(params: {
   }
   blocks.push({ kind: "action", label: actionLabel, url: actionUrl });
   if (!pro) {
+    // The metrics teaser is only worth a second button when the primary went to the reader page.
+    const upsellUrl = buildUpsellUrl(ctx.appUrl, readerUrl ? metricsUrl : null);
+    blocks.push({ kind: "action", label: PRO_ACTION_LABEL, url: upsellUrl, variant: "secondary" });
     blocks.push({ kind: "muted", text: PRO_IDENTITY_LINE });
     blocks.push({ kind: "muted", text: PRO_BRIEF_LINE });
   }
@@ -871,6 +896,8 @@ export function composeDigestEmail(params: {
 
   const all: ViewEvent[] = [...views, ...returns];
   const groups = groupByDocument(all).filter((g) => docs.has(g.docId));
+  // The one document's metrics page when the digest is about exactly one; the upsell goes there.
+  let onlyDocMetricsUrl: string | null = null;
   for (const group of groups.slice(0, DIGEST_MAX_DOCUMENTS)) {
     const doc = docs.get(group.docId);
     if (!doc) continue;
@@ -898,11 +925,9 @@ export function composeDigestEmail(params: {
       items.push(line);
     }
     blocks.push({ kind: "bullets", items });
-    blocks.push({
-      kind: "action",
-      label: PRIMARY_ACTION_LABEL,
-      url: buildMetricsUrl(ctx.appUrl, doc.docId, linkGroups.length === 1 ? linkGroups[0].shareId : null),
-    });
+    const metricsUrl = buildMetricsUrl(ctx.appUrl, doc.docId, linkGroups.length === 1 ? linkGroups[0].shareId : null);
+    blocks.push({ kind: "action", label: PRIMARY_ACTION_LABEL, url: metricsUrl });
+    if (groups.length === 1) onlyDocMetricsUrl = metricsUrl;
   }
   const moreDocs = groups.length - DIGEST_MAX_DOCUMENTS;
   if (moreDocs > 0) {
@@ -915,7 +940,10 @@ export function composeDigestEmail(params: {
   if (views.some((ev) => needsFirstViewHonesty(ev, links.get(ev.shareId), ctx.plan))) {
     blocks.push({ kind: "muted", text: FIRST_VIEW_HONESTY_LINE });
   }
-  if (!pro) blocks.push({ kind: "muted", text: PRO_IDENTITY_LINE });
+  if (!pro) {
+    blocks.push({ kind: "action", label: PRO_ACTION_LABEL, url: buildUpsellUrl(ctx.appUrl, onlyDocMetricsUrl), variant: "secondary" });
+    blocks.push({ kind: "muted", text: PRO_IDENTITY_LINE });
+  }
 
   return composed(subject, digestPreheader(views.length, returns.length, groups.length), blocks, ctx);
 }

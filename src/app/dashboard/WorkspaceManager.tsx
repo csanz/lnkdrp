@@ -4,7 +4,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fetchJson } from "@/lib/http/fetchJson";
+import { extractErrorMessage, fetchJson } from "@/lib/http/fetchJson";
+import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { markPlanLimitHit, parsePlanLimitError, planLimitGraceHint } from "@/lib/client/planLimit";
+import { peekPlan } from "@/lib/client/usePlan";
 import { refreshOrgsCache } from "@/lib/orgsCache";
 import { useNavigationLocked } from "@/app/providers";
 import Modal from "@/components/modals/Modal";
@@ -88,8 +92,10 @@ async function trimTransparentMargins(file: File): Promise<File> {
   }
 }
 
+/** Workspace switcher, creator and member manager for the dashboard's Workspace card. */
 export default function WorkspaceManager() {
   const { session, stableOrgs, activeOrgId, orgsBusy, orgsError } = useOrgsSnapshot();
+  const { openUpgrade } = useUpgradeModal();
   const navLocked = useNavigationLocked();
 
   const [orgActionBusy, setOrgActionBusy] = useState(false);
@@ -187,11 +193,32 @@ export default function WorkspaceManager() {
     setOrgActionBusy(true);
     setCreateOrgError(null);
     try {
-      const json = await fetchJson<{ org?: { id: string } }>("/api/orgs", {
+      // Not `fetchJson`: it throws away the status and body, and the team-workspace cap comes back
+      // as a `402 plan_limit` that should open the upgrade modal rather than a line of red text.
+      const res = await fetchWithTempUser("/api/orgs", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name }),
       });
+      const json = (await res.json().catch(() => null)) as { org?: { id: string } } | null;
+      if (!res.ok) {
+        const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
+        if (limitErr) {
+          markPlanLimitHit(limitErr.limit);
+          // The cap is per account (none of the workspaces this user OWNS is Pro), but `openUpgrade`
+          // is a no-op while the ACTIVE workspace's snapshot says Pro, which is exactly a Free user
+          // working inside someone else's Pro workspace. Keep the modal open with the server's
+          // message there, so the refusal never disappears without a word.
+          if (peekPlan()?.plan === "pro") {
+            setCreateOrgError(limitErr.message);
+            return;
+          }
+          setShowCreateOrgModal(false);
+          openUpgrade(limitErr.limit, { used: limitErr.used, max: limitErr.max, graceHint: planLimitGraceHint(limitErr) });
+          return;
+        }
+        throw new Error(extractErrorMessage(json) || `Request failed: /api/orgs (${res.status})`);
+      }
       const newOrgId = typeof json?.org?.id === "string" ? json.org.id : "";
       setShowCreateOrgModal(false);
       setCreateOrgName("");
@@ -215,7 +242,7 @@ export default function WorkspaceManager() {
     } finally {
       setOrgActionBusy(false);
     }
-  }, [session?.user, navLocked, orgActionBusy, createOrgName]);
+  }, [session?.user, navLocked, orgActionBusy, createOrgName, openUpgrade]);
 
   const openManageOrg = useCallback(
     async (orgId: string) => {

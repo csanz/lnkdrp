@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import AgentHintNotice from "@/components/AgentHintNotice";
 import UploadButton, { UploadIcon } from "@/components/UploadButton";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { FREE_PLAN_LIMITS_COPY, planLimitGraceHint } from "@/lib/client/planLimit";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import { PlanLimitClientError,
   apiCreateDoc,
@@ -156,7 +157,11 @@ export default function UploadPageClient() {
     } catch (e) {
       if (e instanceof PlanLimitClientError) {
         // The API refused the doc at the document cap (plan snapshot may have been stale).
-        openUpgrade("documents", { used: e.planLimit.used, max: e.planLimit.max ?? undefined });
+        openUpgrade("documents", {
+          used: e.planLimit.used,
+          max: e.planLimit.max ?? undefined,
+          graceHint: planLimitGraceHint(e.planLimit),
+        });
         refreshPlan();
         setBusy(false);
         return;
@@ -240,7 +245,7 @@ export default function UploadPageClient() {
           className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] leading-5 text-[var(--muted-2)] md:px-6"
         >
           <span>
-            This workspace is sharing {plan.limits.documents ?? 3} documents, its Free limit. Archive one, or upgrade to keep uploading.
+            This workspace is sharing {plan.limits.documents ?? FREE_PLAN_LIMITS_COPY.documents} documents, its Free limit. Archive one, or upgrade to keep uploading.
           </span>
           <button
             type="button"

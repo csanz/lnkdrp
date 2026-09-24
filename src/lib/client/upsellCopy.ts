@@ -12,7 +12,7 @@
 import type { PlanLimitKey } from "@/lib/client/planLimit";
 import { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, PRO_SEATS_COPY, comparesFor } from "@/lib/client/planNumbers";
 
-/** Which upsell to show. `pro` is the generic pitch (sidebar link, no wall hit); the next five mirror API limit keys; `credits` is passive. */
+/** Which upsell to show. `pro` is the generic pitch (sidebar link, no wall hit); the middle keys mirror API limit keys; `credits` is passive. */
 export type UpsellKey =
   | "pro"
   | "version_history"
@@ -21,6 +21,8 @@ export type UpsellKey =
   | "collaborators"
   | "analytics_history"
   | "project_links"
+  | "team_workspaces"
+  | "visit_briefs"
   | "credits";
 
 /** Copy for one upsell: title, one-sentence reason, and three concrete Pro benefits. */
@@ -120,6 +122,30 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     ],
     secondaryLabel: "Compare plans",
   },
+  team_workspaces: {
+    // No number here: `FREE_TEAM_WORKSPACES` has no client-safe mirror yet, and the modal already
+    // appends the server's "{used} of {max} used." from the 402 body.
+    title: "More team workspaces on Pro",
+    reason:
+      "Your personal workspace is always yours. Free includes a limited number of team workspaces beyond it; on Pro you can create as many as you need, each with its own members, documents and analytics.",
+    bullets: [
+      "Unlimited team workspaces, one per client, fund or deal",
+      `${PRO_SEATS_COPY} teammates who can upload and share in each, plus unlimited free viewers`,
+      "Unlimited documents and projects across every workspace",
+    ],
+    secondaryLabel: "Compare plans",
+  },
+  visit_briefs: {
+    title: "Visit briefs are a Pro feature",
+    reason:
+      "A brief is the model's account of one visit: what the reader lingered on, what they skipped and what to say next. Pro workspaces get one after every visit that closed with something to say.",
+    bullets: [
+      "A written brief after each visit worth one, often with a next step",
+      "Who opened it, time on each page and the full history",
+      `${CREDITS_COPY.proPerMonth} AI credits a month for briefs, summaries and compares`,
+    ],
+    secondaryLabel: "Compare plans",
+  },
   credits: {
     title: "More credits on Pro",
     reason: "Credits pay for AI runs: the summary on each upload and AI compare. Links, uploads and stats never need credits.",
@@ -145,6 +171,8 @@ export function upsellKeyForLimit(limit: string): UpsellKey {
     case "version_history":
     case "analytics_history":
     case "project_links":
+    case "team_workspaces":
+    case "visit_briefs":
       return limit as UpsellKey;
     default:
       return "documents";

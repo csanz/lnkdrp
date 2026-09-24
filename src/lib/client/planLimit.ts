@@ -11,10 +11,12 @@ import { CREDITS_COPY } from "@/lib/client/planNumbers";
 import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
 
 /**
- * Which Free-plan limit was hit. Mirrors `LimitKey` in `src/lib/billing/planLimits.ts`.
- * `version_history`, `analytics_history` (deep analytics: viewer identities, per-page time,
- * visit timelines) and `project_links` (a second share link on a project) are Pro feature gates
- * (no count; `used`/`max` are 0).
+ * Which Free-plan limit was hit. Mirrors `LimitKey` in `src/lib/billing/planLimits.ts`, plus
+ * `visit_briefs`, which is not a server `LimitKey`: `POST /api/visits/[visitBriefId]/brief` builds
+ * that 402 by hand. `version_history`, `analytics_history` (deep analytics: viewer identities,
+ * per-page time, visit timelines), `project_links` (a second share link on a project) and
+ * `visit_briefs` (the write-up after a visit) are Pro feature gates (no count; `used`/`max` are 0).
+ * `team_workspaces` is counted per account rather than per workspace (`POST /api/orgs`).
  */
 export type PlanLimitKey =
   | "documents"
@@ -22,7 +24,9 @@ export type PlanLimitKey =
   | "collaborators"
   | "version_history"
   | "analytics_history"
-  | "project_links";
+  | "project_links"
+  | "team_workspaces"
+  | "visit_briefs";
 
 /** Grace window for workspaces that were over the limits at launch (ISO strings). */
 export type PlanLimitGrace = { startedAt: string; endsAt: string; blockedAt: string | null } | null;
@@ -75,6 +79,8 @@ const LIMIT_KEYS: ReadonlySet<string> = new Set([
   "version_history",
   "analytics_history",
   "project_links",
+  "team_workspaces",
+  "visit_briefs",
 ]);
 
 /** Coerce an unknown value to a non-negative integer, or `null` when it is not a finite number. */
@@ -177,7 +183,7 @@ export function planLimitPrompt(limit: PlanLimitKey, opts: { used?: number; max?
  * Format the launch grace-period hint for a parsed 402, when the workspace is still inside its
  * unblocked window; `null` otherwise. Hook-free so open-modal handlers can use it.
  */
-export function planLimitGraceHint(error: PlanLimitError | null | undefined): string | null {
+export function planLimitGraceHint(error: Pick<PlanLimitError, "grace"> | null | undefined): string | null {
   const g = error?.grace;
   if (!g || g.blockedAt) return null;
   const ends = Date.parse(g.endsAt);

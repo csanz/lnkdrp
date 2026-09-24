@@ -13,6 +13,7 @@ import { OUT_OF_CREDITS_EVENT, type OutOfCreditsReason } from "@/lib/client/outO
 
 const COOLDOWN_MS = 8_000;
 
+/** Mount once in the app shell: shows the out-of-credits modal for `lnkdrp:out-of-credits` events. */
 export default function OutOfCreditsListener() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -42,6 +43,10 @@ export default function OutOfCreditsListener() {
       onManageCredits={() => {
         setOpen(false);
         router.push("/dashboard/limits");
+      }}
+      onBuyCredits={() => {
+        setOpen(false);
+        router.push("/credits");
       }}
     />
   );

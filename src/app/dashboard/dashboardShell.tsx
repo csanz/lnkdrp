@@ -5,7 +5,9 @@
  * allowance), so the header credits pill and the snapshot fetch behind it run for both plans. The
  * plan from `/api/billing/status` only picks the copy of the out-of-credits banner, and stays
  * unknown (null) unless that call succeeds with a plan we recognise — a plan we guessed wrong is
- * worse than a banner that waits, because the Free copy is an upsell.
+ * worse than a banner that waits, because the Free copy is an upsell. The same read carries the
+ * billing interval: Free and yearly Pro are sent to `/credits` for a pack, monthly Pro to the
+ * limits page for on-demand.
  */
 "use client";
 
@@ -65,6 +67,18 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   const pendingCreditsRefreshRef = useRef(false);
   // Workspace plan; picks the out-of-credits banner copy. null = unknown (banner waits).
   const [plan, setPlan] = useState<"free" | "pro" | null>(null);
+  // Which Pro: yearly Pro has no on-demand and buys credit packs like Free, so its banner CTA goes
+  // to /credits rather than the limits page. null off Pro or until the status read lands.
+  const [proInterval, setProInterval] = useState<"month" | "year" | null>(null);
+  // `refreshCredits` is captured once by the []-dep effects below (realtime + global refresh), so
+  // reading `activeOrgId`/`orgReady` from state inside it would see the mount-time values ("" and
+  // false), compute dismissed=null and hide the banner on every later refresh. Refs stay current.
+  const activeOrgIdRef = useRef(activeOrgId);
+  const orgReadyRef = useRef(orgReady);
+  useEffect(() => {
+    activeOrgIdRef.current = activeOrgId;
+    orgReadyRef.current = orgReady;
+  }, [activeOrgId, orgReady]);
   // null = unknown (avoid flicker), boolean = known
   const [bannerDismissed, setBannerDismissed] = useState<boolean | null>(null);
 
@@ -197,15 +211,17 @@ export default function DashboardShell({ children }: { children: React.ReactNode
 
       const cycleEnd = typeof json?.cycleEnd === "string" ? json.cycleEnd : null;
       const blocked = Boolean(json?.blocked);
+      // Through the refs, not state: this function may be the mount-time closure (see the refs above).
+      const orgId = activeOrgIdRef.current;
       const dismissed: boolean | null = !blocked
         ? false
-        : activeOrgId && cycleEnd
-          ? readDismissedForCycle({ orgId: activeOrgId, cycleEnd })
-          : orgReady && !activeOrgId
+        : orgId && cycleEnd
+          ? readDismissedForCycle({ orgId, cycleEnd })
+          : orgReadyRef.current && !orgId
             ? false
             : null;
       setBannerDismissed(dismissed);
-      if (dismissed !== null) publishCreditsBannerState({ orgId: activeOrgId, cycleEnd, blocked, dismissed });
+      if (dismissed !== null) publishCreditsBannerState({ orgId, cycleEnd, blocked, dismissed });
     } catch (e) {
       setCreditsError(e instanceof Error ? e.message : "Failed to load credits");
       // Preserve the last-known snapshot to avoid flicker in the header badge/drawer.
@@ -231,7 +247,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       void (async () => {
         try {
           const res = await fetch("/api/billing/status", { method: "GET" });
-          const json = (await res.json().catch(() => null)) as { plan?: unknown } | null;
+          const json = (await res.json().catch(() => null)) as { plan?: unknown; interval?: unknown } | null;
           const p = res.ok && json && typeof json.plan === "string" ? json.plan.trim().toLowerCase() : "";
           if (cancelled) return;
           // A failed read is not a Free workspace. This used to be `p === "pro" ? "pro" : "free"`,
@@ -243,6 +259,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           const next: "free" | "pro" | null = p === "pro" ? "pro" : p === "free" ? "free" : null;
           if (next === null) return;
           setPlan(next);
+          setProInterval(next === "pro" ? (json?.interval === "year" ? "year" : "month") : null);
         } catch {
           // Unknown plan: the pill still shows; only the banner (whose copy is plan-specific) waits.
         }
@@ -305,9 +322,11 @@ export default function DashboardShell({ children }: { children: React.ReactNode
     // Avoid flicker: don't render until dismissal status is known.
     if (bannerDismissed !== false) return null;
     const isFree = plan === "free";
+    // Free and yearly Pro get more credits by buying a pack; only monthly Pro has on-demand.
+    const buysPacks = isFree || proInterval === "year";
     const onDemandConfigured = credits.onDemandMonthlyLimitCents > 0;
-    const ctaLabel = isFree ? "Upgrade to Pro" : onDemandConfigured ? "Increase limit" : "View limits";
-    const ctaHref = isFree ? "/pricing" : "/dashboard/limits";
+    const ctaLabel = buysPacks ? "Add credits" : onDemandConfigured ? "Increase limit" : "View limits";
+    const ctaHref = buysPacks ? "/credits" : "/dashboard/limits";
     const message = isFree
       ? `AI tools are unavailable. You’ve used your starter credits; Pro includes ${CREDITS_COPY.proPerMonth} a month.`
       : "AI compare is unavailable. You’ve used all credits for this month.";
@@ -322,6 +341,14 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             >
               {ctaLabel}
             </Link>
+            {isFree ? (
+              <Link
+                href="/pricing"
+                className="text-[11px] font-semibold text-amber-900/70 underline-offset-2 hover:text-amber-900/80 hover:underline dark:text-amber-200/60 dark:hover:text-amber-200/75"
+              >
+                or upgrade to Pro
+              </Link>
+            ) : null}
             <button
               type="button"
               className="text-[11px] font-semibold text-amber-900/70 hover:text-amber-900/80 dark:text-amber-200/60 dark:hover:text-amber-200/75"
@@ -341,7 +368,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         </div>
       </div>
     );
-  }, [credits, bannerDismissed, activeOrgId, plan]);
+  }, [credits, bannerDismissed, activeOrgId, plan, proInterval]);
 
   function formatShortDate(iso: string): string {
     const d = new Date(iso);

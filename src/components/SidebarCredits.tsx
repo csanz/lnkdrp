@@ -8,6 +8,10 @@
  * noticed; the value turns amber when the balance is low or spent. The tooltip names the grant
  * (one-time starter credits on Free, this cycle's allowance on Pro). Hidden when the credits UI is
  * switched off or the snapshot cannot be read.
+ *
+ * Once the workspace is out of credits the row links to where more come from: `/credits` (packs)
+ * on Free and yearly Pro, `/dashboard/limits` (on-demand) on monthly Pro. `/api/plan` does not
+ * carry the billing interval, so a blocked Pro workspace reads it from `/api/billing/status`.
  */
 "use client";
 
@@ -29,8 +33,35 @@ export default function SidebarCredits() {
   const [remaining, setRemaining] = useState<number | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [flash, setFlash] = useState(false);
+  // Which Pro; null until read. A blocked Pro row keeps opening usage until it is known, since
+  // guessing monthly would send yearly Pro to /dashboard/limits, which refuses it.
+  const [proInterval, setProInterval] = useState<"month" | "year" | null>(null);
   const prevRef = useRef<number | null>(null);
   const flashTimerRef = useRef<number | null>(null);
+
+  // Only a blocked Pro workspace needs the interval (yearly Pro buys packs, monthly Pro has
+  // on-demand), so the extra request is skipped on the common path.
+  const planName = plan?.plan ?? null;
+  const planOrgId = plan?.orgId ?? null;
+  useEffect(() => {
+    // A workspace switch must not carry the previous org's interval into this one's href.
+    setProInterval(null);
+    if (!blocked || planName !== "pro") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/billing/status", { method: "GET" });
+        const json = (await res.json().catch(() => null)) as { interval?: unknown } | null;
+        if (cancelled || !res.ok) return;
+        setProInterval(json?.interval === "year" ? "year" : "month");
+      } catch {
+        // Unknown interval: the row keeps opening usage.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [blocked, planName, planOrgId]);
 
   useEffect(() => {
     if (!FEATURE_CREDITS_ENABLED) return;
@@ -76,11 +107,26 @@ export default function SidebarCredits() {
 
   const isFree = plan?.plan === "free";
   const low = blocked || remaining <= LOW_CREDITS_THRESHOLD;
-  const title = isFree ? "AI starter credits remaining. Opens usage." : "AI credits remaining this cycle. Opens usage.";
+  // Free and yearly Pro get more credits from a pack; monthly Pro turns on on-demand. While the
+  // plan (or, on Pro, the interval) is still unknown the row keeps opening usage rather than
+  // guessing a door.
+  const buysPacks = isFree || proInterval === "year";
+  const doorKnown = plan !== null && (planName !== "pro" || proInterval !== null);
+  const door = blocked && doorKnown ? (buysPacks ? "/credits" : "/dashboard/limits") : null;
+  const href = door ?? "/dashboard?tab=usage";
+  const title = door
+    ? door === "/credits"
+      ? "Out of AI credits. Opens credit packs."
+      : "Out of AI credits. Opens on-demand limits."
+    : blocked
+      ? "Out of AI credits. Opens usage."
+      : isFree
+        ? "AI starter credits remaining. Opens usage."
+        : "AI credits remaining this cycle. Opens usage.";
 
   return (
     <Link
-      href="/dashboard?tab=usage"
+      href={href}
       className="mb-2 flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-[12px] transition-colors hover:bg-[var(--sidebar-hover)]"
       title={title}
     >

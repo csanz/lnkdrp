@@ -2860,8 +2860,14 @@ export default function LeftSidebar({
             <PlanLimitNotice
               limit={planLimitHit}
               compact
-              secondaryLabel={planLimitHit === "projects" ? "Manage projects" : "Manage documents"}
-              secondaryHref={planLimitHit === "projects" ? "/search?scope=projects" : "/search?scope=documents"}
+              // Only the counted caps have something to manage; a feature gate (visit briefs) or the
+              // per-account team-workspace cap has no list to trim, so the secondary goes to plans.
+              secondaryLabel={
+                planLimitHit === "projects" ? "Manage projects" : planLimitHit === "documents" ? "Manage documents" : "Compare plans"
+              }
+              secondaryHref={
+                planLimitHit === "projects" ? "/search?scope=projects" : planLimitHit === "documents" ? "/search?scope=documents" : "/pricing"
+              }
               onDismiss={() => setPlanLimitNudgeDismissed(true)}
             />
           </div>
