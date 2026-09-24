@@ -34,12 +34,17 @@ this section when the count, the deployment or the verification changes.
   per-link figures added up to the document's, and `recentVisits` listed seven finished sittings
   with their briefs. The Free tier's `recentVisits`-absent branch is covered by the tool's tier check
   and the harness assertion but was not run end to end today.
-- **Deployment.** Runs locally on `:8787` (`npm run mcp`, REST at `:3001`, realtime at `:8788`).
-  **`https://mcp.lnkdrp.com/mcp` is not deployed yet**; the app's `/connect` snippets and the
-  `/mcp/<client>` guides already print that URL, so until the container in "Deployment" below is
-  up, a copied snippet points at nothing. The Dockerfile, env table and checklist are complete; what
-  is missing is the host. Single instance only until sessions and the idempotency cache move to a
-  shared store.
+- **Deployment.** **`https://mcp.lnkdrp.com/mcp` is live since 2026-09-24**: Fly app `lnkdrp-mcp`,
+  one machine in `iad`, built from `main` at `fc72740`, certificate issued, `/healthz` reports
+  `apiUrl: https://www.lnkdrp.com`. Two things to know before the next `fly deploy`: the machine
+  runs with `LNKDRP_API_URL=https://www.lnkdrp.com` passed as `--env` because `main`'s
+  `deploy/fly/mcp.fly.toml` still says the apex, which 308s to `www` and fails every tool call
+  (fixed in the toml on `next-release`); and `REALTIME_SECRET` is unset, so the server polls
+  (`realtime: 'off (polling only)'` in the startup log). A second app, `dev-lnkdrp-mcp`, also
+  exists on Fly and points at production. Locally: `:8787` (`npm run mcp`, REST at `:3001`,
+  realtime at `:8788`). Single instance only until sessions and the idempotency cache move to a
+  shared store. OAuth sign-in (this branch) needs the Next app side deployed before it works
+  against the live server.
 - **Depends on.** The Next app's REST API for everything (no Mongo, no secrets of its own beyond
   `REALTIME_SECRET`), and the realtime server only to return from `share_pdf` on the `ready` frame
   instead of polling.
