@@ -1,15 +1,18 @@
 import { CheckIcon } from "@heroicons/react/24/outline";
 
-const STEPS = ["Add lnkdrp to your client", "Sign in when it asks", "Verify"] as const;
+/** The sign-in path: add, sign in, verify. */
+export const SIGN_IN_STEPS = ["Add lnkdrp to your client", "Sign in when it asks", "Verify"] as const;
+/** The key path: create, add with the key, verify. */
+export const KEY_STEPS = ["Create a key", "Add lnkdrp to your client", "Verify"] as const;
 
 /**
- * The three-step rail at the top of the Connect page. `current` is 1-based; `done` marks every
- * step complete (the workspace has a connected agent).
+ * The three-step rail at the top of the Connect page. `steps` follows the chosen path; `current`
+ * is 1-based; `done` marks every step complete (the workspace has a connected agent).
  */
-export default function StepsRail({ current, done }: { current: 1 | 2 | 3; done: boolean }) {
+export default function StepsRail({ steps, current, done }: { steps: readonly string[]; current: 1 | 2 | 3; done: boolean }) {
   return (
     <ol className="flex flex-wrap items-center gap-x-6 gap-y-2" aria-label="Setup steps">
-      {STEPS.map((label, i) => {
+      {steps.map((label, i) => {
         const n = i + 1;
         const complete = done || n < current;
         const active = !done && n === current;

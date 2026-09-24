@@ -26,19 +26,21 @@ import CodeBlock from "./CodeBlock";
 export default function ClientTabs({
   plaintextKey,
   workspace,
+  client,
+  onClientChange,
+  mode,
 }: {
   plaintextKey: string | null;
   /** The active workspace, or null while it loads (commands then use the personal name). */
   workspace: { name: string; isPersonal: boolean } | null;
+  /** Controlled by the page: the chosen client and the chosen path, which the step rail follows too. */
+  client: ClientKey;
+  onClientChange: (client: ClientKey) => void;
+  mode: "signin" | "key";
 }) {
-  const [client, setClient] = useState<ClientKey>("claude");
   const active = CLIENT_SETUPS.find((c) => c.key === client) ?? CLIENT_SETUPS[0];
   const key = plaintextKey ?? KEY_PLACEHOLDER;
-  // Sign in is the default wherever the client supports it. A key just created on this page is a
-  // strong hint the person wants the key path, so that flips the default until they choose.
-  const [mode, setMode] = useState<"signin" | "key" | null>(null);
-  const canSignIn = Boolean(active.signIn);
-  const useKey = !canSignIn || (mode ? mode === "key" : Boolean(plaintextKey));
+  const useKey = mode === "key" || !active.signIn;
   // Commands point at the MCP server that matches this page's origin (local default on a dev
   // server, production on the site). Read after mount so the first frame matches the server render.
   const [origin, setOrigin] = useState(SITE_ORIGIN);
@@ -65,7 +67,7 @@ export default function ClientTabs({
               aria-selected={selected}
               aria-controls={`client-panel-${c.key}`}
               id={`client-tab-${c.key}`}
-              onClick={() => setClient(c.key)}
+              onClick={() => onClientChange(c.key)}
               className={[
                 "-mb-px border-b-2 pb-2 text-[12px] font-medium tracking-wide transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] motion-reduce:transition-none",
                 selected ? "border-[var(--fg)] text-[var(--fg)]" : "border-transparent text-[var(--muted-2)] hover:text-[var(--fg)]",
@@ -100,34 +102,6 @@ export default function ClientTabs({
               </>
             )}
           </p>
-        ) : null}
-        {canSignIn ? (
-          <div className="mb-3 flex flex-wrap items-center gap-2" role="radiogroup" aria-label="How to authenticate">
-            {(
-              [
-                { id: "signin", label: "Sign in", hint: "Recommended" },
-                { id: "key", label: "Use a key", hint: "Scripts, no browser" },
-              ] as const
-            ).map((opt) => {
-              const selected = (opt.id === "key") === useKey;
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => setMode(opt.id)}
-                  className={[
-                    "inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] motion-reduce:transition-none",
-                    selected ? "border-[var(--fg)] bg-[var(--fg)] text-[var(--bg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]",
-                  ].join(" ")}
-                >
-                  {opt.label}
-                  <span className={["text-[10px] font-semibold uppercase tracking-[0.1em]", selected ? "text-[var(--bg)]/70" : "text-[var(--muted-2)]"].join(" ")}>{opt.hint}</span>
-                </button>
-              );
-            })}
-          </div>
         ) : null}
         <CodeBlock lines={lines} label={`Copy ${active.label} setup`} />
         <div className="mt-3 flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5 text-[12px] leading-5 text-[var(--muted-2)]">

@@ -17,8 +17,11 @@ export default function VerifyPanel({
   status,
   loading,
   onCheck,
+  mode = "signin",
 }: {
   plaintextKey: string | null;
+  /** The key path leads with the curl check; the sign-in path leads with asking the agent. */
+  mode?: "signin" | "key";
   status: AgentStatus | null;
   loading: boolean;
   /** Invalidates the shared status cache and refetches; the result arrives through `status`. */
@@ -50,22 +53,24 @@ export default function VerifyPanel({
 
   return (
     <div className="grid gap-4">
-      <p className="text-[13px] leading-5 text-[var(--muted)]">
-        Ask your agent: <span className="text-[var(--fg)]">“{ASK_YOUR_AGENT}”</span>. Its first call turns the status to Connected.
-      </p>
-      <details className="group">
-        <summary className="cursor-pointer select-none list-none text-[12px] font-medium text-[var(--muted-2)] hover:text-[var(--fg)] [&::-webkit-details-marker]:hidden">
-          Using a key? Check it from a terminal ›
-        </summary>
-        <div className="mt-2">
+      {mode === "key" ? (
+        <div>
+          <p className="mb-2 text-[13px] text-[var(--muted)]">Check the key from a terminal. It works today, before the MCP server ships.</p>
           <CodeBlock lines={whoamiCurl(key, origin)} label="Copy verification command" />
           {isLocal ? (
             <p className="mt-2 text-[12px] leading-5 text-[var(--muted-2)]">
               You are on <code className="font-mono">{origin}</code>, so the command targets this server. Keys created here do not work on {SITE_ORIGIN.replace(/^https?:\/\//, "")}.
             </p>
           ) : null}
+          <p className="mt-3 text-[13px] leading-5 text-[var(--muted)]">
+            Then ask your agent: <span className="text-[var(--fg)]">“{ASK_YOUR_AGENT}”</span>. Its first call turns the status to Connected.
+          </p>
         </div>
-      </details>
+      ) : (
+        <p className="text-[13px] leading-5 text-[var(--muted)]">
+          Ask your agent: <span className="text-[var(--fg)]">“{ASK_YOUR_AGENT}”</span>. Its first call turns the status to Connected.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
