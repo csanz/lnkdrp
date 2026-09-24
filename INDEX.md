@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 911 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 915 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -160,6 +160,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/billing/summary/route.ts` — `/api/billing/summary` · dynamic, GET, runtime
 - `src/app/api/billing/usage/route.ts` — `/api/billing/usage` · dynamic, GET, runtime
 - `src/app/api/blob/upload/route.ts` — `/api/blob/upload` · POST, runtime
+- `src/app/api/changes/route.ts` — `/api/changes` · dynamic, GET, parseSince, runtime
 - `src/app/api/credits/purchase/route.ts` — `/api/credits/purchase` · GET, POST, runtime
 - `src/app/api/credits/quality-defaults/route.ts` — `/api/credits/quality-defaults` · dynamic, GET, POST, runtime
 - `src/app/api/credits/snapshot/route.ts` — `/api/credits/snapshot` · dynamic, GET, runtime
@@ -436,11 +437,13 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/charts/ChartValueLabel.tsx` · valueLabels
 - `src/components/connect/ClientTabs.tsx` · default
 - `src/components/connect/CodeBlock.tsx` · default
+- `src/components/connect/ConnectModeToggle.tsx` · default, ConnectMode
+- `src/components/connect/CreateKey.tsx` · CreatedKey, CreateKeyForm, DEFAULT_KEY_NAME, errorMessage, MAX_ACTIVE_KEYS, PRIMARY_BUTTON, QUIET_BUTTON, RevealBox
 - `src/components/connect/KeysPanel.tsx` · default
 - `src/components/connect/Panel.tsx` · default
 - `src/components/connect/PublicGuideShell.tsx` · default
 - `src/components/connect/StatusPill.tsx` · default
-- `src/components/connect/StepsRail.tsx` · default
+- `src/components/connect/StepsRail.tsx` · default, KEY_STEPS, SIGN_IN_STEPS
 - `src/components/connect/ToolCatalogTable.tsx` · default
 - `src/components/connect/Troubleshooting.tsx` · default
 - `src/components/connect/VerifyPanel.tsx` · default
@@ -861,6 +864,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `mcp/src/tools/projectLinks.ts` · createProjectLinkInputShape, deleteProjectLinkInputShape, listProjectLinksInputShape, registerCreateProjectLinkTool, registerDeleteProjectLinkTool, registerListProjectLinksTool, registerUpdateProjectLinkTool, updateProjectLinkInputShape
 - `mcp/src/tools/projects.ts` · loadProject, projectIdSchema, ProjectRef, projectSlugSchema, registerAddDocsToProjectTool, registerCreateProjectTool, registerDeleteProjectTool, registerGetProjectTool, …
 - `mcp/src/tools/replacePdf.ts` · registerReplacePdfTool, replacePdfInputShape, ReplacePdfResult
+- `mcp/src/tools/revisions.ts` · registerGetRevisionTool, registerListRevisionsTool, registerRevisionContributorsTool
 - `mcp/src/tools/setShareAccess.ts` · registerSetShareAccessTool, setShareAccessInputShape
 - `mcp/src/tools/shareLinkPassword.ts` · getShareLinkPasswordInputShape, registerGetShareLinkPasswordTool, registerVerifySharePasswordTool, verifySharePasswordInputShape
 - `mcp/src/tools/shareLinks.ts` · createShareLinkInputShape, deleteShareLinkInputShape, listShareLinksInputShape, registerCreateShareLinkTool, registerDeleteShareLinkTool, registerListShareLinksTool, registerUpdateShareLinkTool, updateShareLinkInputShape

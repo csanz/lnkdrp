@@ -580,6 +580,13 @@ function DashboardPageInner() {
                 <div className="mt-4">
                   <NotificationPreferences />
                 </div>
+                <p className="mt-4 text-[12px] text-[var(--muted-2)]">
+                  Slack posts are set up under{" "}
+                  <a href="/integrations" className="font-medium text-[var(--fg)] underline-offset-4 hover:underline">
+                    Integrations
+                  </a>
+                  .
+                </p>
               </div>
 
               {/* The other ten, behind one line. On the page they would outweigh the settings,

@@ -1,0 +1,257 @@
+"use client";
+
+/**
+ * The Slack page (docs/prds/lnkdrp-slack.md, M1).
+ *
+ * Nothing connected: what it does and "Add to Slack", which is a plain link to the install route
+ * (a redirect chain, not a fetch). Connected: one row per channel with the four event switches,
+ * "Send a test message" and "Disconnect", a Default marker, and "Add channel". Project routing
+ * (M3) is not here yet. Owners and admins act; everyone else reads.
+ */
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useState } from "react";
+
+import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import { usePlan } from "@/lib/client/usePlan";
+import type { SlackConnectionDto, SlackEventKey } from "@/lib/slack/connections";
+import { SlackMark, useSlackConnections } from "./slackShared";
+
+const EVENT_COPY: Record<SlackEventKey, { title: string; body: string }> = {
+  views: { title: "Opens", body: "The first time a recipient opens a share link." },
+  briefs: { title: "Visit briefs", body: "The write-up after a recipient finishes reading (Pro)." },
+  docUpdates: { title: "Replaced documents", body: "A new version of a document, with what changed." },
+  requests: { title: "Received files", body: "A file dropped into a request inbox." },
+};
+
+const REASON_COPY: Record<string, string> = {
+  denied: "You cancelled on Slack's side. Nothing was connected.",
+  state: "That install link had expired or was not yours. Start again from this page.",
+  code: "Slack did not send back a code. Start again from this page.",
+  exchange: "Slack did not accept the install. Try again in a minute.",
+  not_configured: "Slack is not set up on this deployment.",
+};
+
+const BTN_PRIMARY =
+  "inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] hover:opacity-90 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
+const BTN_SECONDARY =
+  "inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
+
+export default function SlackPageClient() {
+  const params = useSearchParams();
+  const landed = params.get("slack");
+  const reason = params.get("reason") ?? "";
+  const { data, error, loading, refresh, setData } = useSlackConnections();
+  const { plan } = usePlan();
+  const canManage = plan?.role === "owner" || plan?.role === "admin";
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(
+    landed === "connected"
+      ? { tone: "ok", text: "Slack is connected. Send a test message to see it in the channel." }
+      : landed === "error"
+        ? { tone: "error", text: REASON_COPY[reason] ?? `Slack answered "${reason}". Try again.` }
+        : null,
+  );
+
+  const call = useCallback(
+    async (key: string, method: "PATCH" | "DELETE" | "POST", path: string, body: Record<string, unknown>) => {
+      setBusy(key);
+      setNotice(null);
+      try {
+        const res = await fetch(path, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        const json = (await res.json().catch(() => null)) as { error?: string; connections?: SlackConnectionDto[]; ok?: boolean; reason?: string } | null;
+        if (!res.ok) throw new Error(json?.error || (json?.reason ? `Slack answered ${json.reason}.` : "Something went wrong."));
+        if (json?.connections && data) setData({ ...data, connections: json.connections });
+        return json;
+      } catch (e) {
+        setNotice({ tone: "error", text: e instanceof Error ? e.message : "Something went wrong." });
+        return null;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [data, setData],
+  );
+
+  const connections = data?.connections ?? [];
+  const enabled = data?.enabled ?? true;
+
+  return (
+    <div className="flex h-full flex-col">
+      <AppPageHeader
+        icon={SlackMark}
+        title="Slack"
+        description="Post what happens to your documents into a channel you choose. Private to your workspace; recipients never see it."
+        actions={
+          <Link href="/integrations" className="text-[13px] font-semibold text-[var(--muted-2)] underline-offset-4 hover:text-[var(--fg)] hover:underline">
+            All integrations
+          </Link>
+        }
+      />
+      <div className={`min-h-0 flex-1 overflow-auto bg-[var(--bg)] ${APP_PAGE_GUTTER} py-6`} aria-busy={loading && !data}>
+        {notice ? (
+          <div
+            role={notice.tone === "error" ? "alert" : "status"}
+            className={[
+              "mb-4 rounded-xl px-4 py-3 text-[13px] leading-5",
+              notice.tone === "error" ? "bg-[var(--plan-ending-bg)] text-[var(--plan-ending-fg)]" : "border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)]",
+            ].join(" ")}
+          >
+            {notice.text}
+          </div>
+        ) : null}
+        {error ? <div role="alert" className="mb-4 text-[13px] text-red-600 dark:text-red-400">{error}</div> : null}
+
+        {!enabled ? (
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6 text-[13px] leading-6 text-[var(--muted)]">
+            Slack is not set up on this deployment. The Slack app&apos;s credentials are missing from the server configuration.
+          </div>
+        ) : !loading && connections.length === 0 ? (
+          <div className="max-w-2xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+            <div className="text-[15px] font-semibold text-[var(--fg)]">Nothing connected yet</div>
+            <p className="mt-2 text-[13px] leading-6 text-[var(--muted)]">
+              Add LinkDrop to a channel and pick which moments post there: a recipient opening a link, the brief after they finish reading, a replaced document, a file received in a request inbox. You choose the channel on Slack&apos;s screen; private channels work too. Add more channels later and route each project to its own.
+            </p>
+            {canManage ? (
+              <a href="/api/slack/install" className={`${BTN_PRIMARY} mt-5 gap-2`}>
+                <SlackMark className="h-4 w-4" /> Add to Slack
+              </a>
+            ) : (
+              <p className="mt-5 text-[12px] text-[var(--muted-2)]">An owner or admin of this workspace can connect it.</p>
+            )}
+          </div>
+        ) : (
+          <div className="grid gap-4">
+            {connections.map((c) => (
+              <ChannelRow key={c.id} c={c} canManage={canManage} busy={busy} call={call} setNotice={setNotice} />
+            ))}
+            {canManage ? (
+              <div>
+                <a href="/api/slack/install" className={`${BTN_SECONDARY} gap-2`}>
+                  <SlackMark className="h-4 w-4" /> Add channel
+                </a>
+                <p className="mt-2 text-[12px] text-[var(--muted-2)]">Each channel is its own install on Slack&apos;s side. Routing projects to channels is coming next.</p>
+              </div>
+            ) : null}
+          </div>
+        )}
+        {!loading && connections.length > 0 ? (
+          <button type="button" onClick={() => void refresh()} className="mt-6 text-[12px] text-[var(--muted-2)] underline-offset-4 hover:underline">
+            Refresh
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ChannelRow({
+  c,
+  canManage,
+  busy,
+  call,
+  setNotice,
+}: {
+  c: SlackConnectionDto;
+  canManage: boolean;
+  busy: string | null;
+  call: (key: string, method: "PATCH" | "DELETE" | "POST", path: string, body: Record<string, unknown>) => Promise<unknown>;
+  setNotice: (n: { tone: "ok" | "error"; text: string } | null) => void;
+}) {
+  const revoked = c.status === "revoked";
+  return (
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-[var(--shadow-card)]">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <SlackMark className="h-5 w-5" />
+            <span className="text-[15px] font-semibold text-[var(--fg)]">{c.channelName}</span>
+            {c.isDefault ? <span className="rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]">Default</span> : null}
+            {revoked ? <span className="rounded-full bg-[var(--plan-ending-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--plan-ending-fg)]">Disconnected</span> : null}
+          </div>
+          <div className="mt-1 text-[12px] text-[var(--muted-2)]">
+            {c.teamName}
+            {c.lastPostAt ? ` · last post ${new Date(c.lastPostAt).toLocaleString()}` : " · nothing posted yet"}
+          </div>
+          {revoked ? (
+            <p className="mt-2 text-[13px] leading-5 text-[var(--fg)]">
+              Slack disconnected this channel{c.lastError ? ` (${c.lastError})` : ""}. The channel or the app was removed on Slack&apos;s side. Reconnect it with Add channel.
+            </p>
+          ) : c.lastError ? (
+            <p className="mt-2 text-[12px] text-[var(--muted)]">Last error: {c.lastError}</p>
+          ) : null}
+        </div>
+        {canManage ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {!revoked ? (
+              <button
+                type="button"
+                className={BTN_SECONDARY}
+                disabled={busy !== null}
+                onClick={async () => {
+                  const r = (await call(`test:${c.id}`, "POST", "/api/orgs/active/slack/test", { connectionId: c.id })) as { ok?: boolean } | null;
+                  if (r?.ok) setNotice({ tone: "ok", text: `Sent to ${c.channelName}.` });
+                }}
+              >
+                {busy === `test:${c.id}` ? "Sending…" : "Send a test message"}
+              </button>
+            ) : null}
+            {!c.isDefault && !revoked ? (
+              <button type="button" className={BTN_SECONDARY} disabled={busy !== null} onClick={() => void call(`default:${c.id}`, "PATCH", "/api/orgs/active/slack", { connectionId: c.id, isDefault: true })}>
+                Make default
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="rounded-lg px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:text-red-600 disabled:opacity-60"
+              disabled={busy !== null}
+              onClick={() => {
+                if (!window.confirm(`Disconnect ${c.channelName}? Nothing will post there until it is reconnected.`)) return;
+                void call(`delete:${c.id}`, "DELETE", "/api/orgs/active/slack", { connectionId: c.id });
+              }}
+            >
+              Disconnect
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <ul className="mt-4 grid gap-2 sm:grid-cols-2">
+        {(Object.keys(EVENT_COPY) as SlackEventKey[]).map((key) => {
+          const on = c.events[key];
+          return (
+            <li key={key} className="flex items-start justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="text-[13px] font-medium text-[var(--fg)]">{EVENT_COPY[key].title}</div>
+                <div className="text-[12px] text-[var(--muted-2)]">{EVENT_COPY[key].body}</div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={on}
+                aria-label={`${EVENT_COPY[key].title} to ${c.channelName}`}
+                disabled={!canManage || revoked || busy !== null}
+                onClick={() => void call(`ev:${c.id}:${key}`, "PATCH", "/api/orgs/active/slack", { connectionId: c.id, events: { [key]: !on } })}
+                className={[
+                  "relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-60",
+                  on ? "bg-[var(--fg)]" : "bg-[var(--border)]",
+                ].join(" ")}
+              >
+                <span className={["absolute top-0.5 h-4 w-4 rounded-full bg-[var(--bg)] transition-transform", on ? "translate-x-4" : "translate-x-0.5"].join(" ")} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {c.configurationUrl ? (
+        <p className="mt-3 text-[12px] text-[var(--muted-2)]">
+          Remove the app on Slack&apos;s side from its{" "}
+          <a href={c.configurationUrl} target="_blank" rel="noreferrer" className="underline-offset-4 hover:underline">
+            configuration page
+          </a>
+          .
+        </p>
+      ) : null}
+    </div>
+  );
+}

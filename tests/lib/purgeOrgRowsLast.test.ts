@@ -88,7 +88,12 @@ vi.mock("@/lib/models/ShareView", () => ({ ShareViewModel: stub("ShareView") }))
 vi.mock("@/lib/models/ShareVisit", () => ({ ShareVisitModel: stub("ShareVisit") }));
 vi.mock("@/lib/models/VisitBrief", () => ({ VisitBriefModel: stub("VisitBrief") }));
 vi.mock("@/lib/models/ActivityEvent", () => ({ ActivityEventModel: stub("ActivityEvent") }));
-vi.mock("@/lib/models/ApiKey", () => ({ ApiKeyModel: stub("ApiKey") }));
+// The real module too: OAuthGrant and OAuthCode import API_KEY_SCOPES from it (a schema enum, no DB).
+vi.mock("@/lib/models/ApiKey", async (importOriginal) => ({ ...(await importOriginal<object>()), ApiKeyModel: stub("ApiKey") }));
+vi.mock("@/lib/models/SlackConnection", () => ({ SlackConnectionModel: stub("SlackConnection") }));
+// Added to the purge with the OAuth sign-in work; unmocked they buffered against no database and timed out.
+vi.mock("@/lib/models/OAuthGrant", () => ({ OAuthGrantModel: stub("OAuthGrant") }));
+vi.mock("@/lib/models/OAuthCode", () => ({ OAuthCodeModel: stub("OAuthCode") }));
 vi.mock("@/lib/models/CreditLedger", () => ({ CreditLedgerModel: stub("CreditLedger") }));
 vi.mock("@/lib/models/WorkspaceCreditBalance", () => ({ WorkspaceCreditBalanceModel: stub("WorkspaceCreditBalance") }));
 vi.mock("@/lib/models/CreditPurchase", () => ({ CreditPurchaseModel: stub("CreditPurchase") }));

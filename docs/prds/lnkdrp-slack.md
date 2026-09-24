@@ -1,6 +1,6 @@
 # PRD — Slack (workspace updates in a channel you choose)
 
-**Status:** Draft 2026-09-24, for decision. Nothing built. Channels per project added the same day (decision 2, M3).
+**Status:** Decisions 1–12 and open questions 1 and 4 locked 2026-09-24 (every plan; an Integrations sidebar entry and page). M1 built the same day: sidebar entry, `/integrations` and `/integrations/slack`, `SlackConnection`, install and callback routes with signed state, encrypted webhook storage, settings API, test message, activity rows, purge. Waiting on the Slack app credentials (`SLACK_CLIENT_ID`/`SLACK_CLIENT_SECRET`) for the first real connect. M2 (events) next.
 **Owner:** chrissanz
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-view-notifications](./lnkdrp-view-notifications.md) · [lnkdrp-notification-queue](./lnkdrp-notification-queue.md) · [lnkdrp-visit-briefs](./lnkdrp-visit-briefs.md) · [REALTIME](../REALTIME.md) · [CRON](../CRON.md)
@@ -273,7 +273,7 @@ CHANGELOG, DEPLOY.md env table and the Slack app checklist in section 4, PRODUCT
 
 ## Open questions
 
-1. **Plan gating.** Available on every plan with plan-shaped content (proposed), or Pro-only as
+1. **Plan gating.** Resolved 2026-09-24: every plan, with plan-shaped content. (Was: proposed, or Pro-only as
    a reason to upgrade? The view email is on Free; matching it is the consistent answer.
 2. **Return visits.** The view email fires on the first open only; return visits reach the owner
    through the brief. Should the Slack "opened" message also fire on a return after 24 hours

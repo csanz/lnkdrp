@@ -13,6 +13,7 @@ import {
   ChevronUpIcon,
   ClockIcon,
   CpuChipIcon,
+  PuzzlePieceIcon,
   DocumentIcon,
   DocumentPlusIcon,
   EllipsisHorizontalIcon,
@@ -2193,6 +2194,32 @@ export default function LeftSidebar({
                 "V · Christian Sanz · 4 hrs ago" — three facts, none of them the one being asked.
                 The entry above already answers it ("1 connected"), the full list is in its tooltip,
                 and /connect is one click away for the detail. */}
+
+            {/* Integrations: Slack first, more later (docs/prds/lnkdrp-slack.md). */}
+            <button
+              type="button"
+              disabled={navLocked}
+              className={[
+                "group w-full cursor-pointer overflow-hidden rounded-xl px-3 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                navLocked
+                  ? "cursor-not-allowed opacity-50"
+                  : pathname.startsWith("/integrations")
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
+                    : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
+              ].join(" ")}
+              onClick={() => {
+                if (navLocked) return;
+                router.push("/integrations");
+              }}
+              aria-label="Integrations"
+              aria-current={pathname.startsWith("/integrations") ? "page" : undefined}
+              title={navLocked ? "Disabled while uploading" : "Slack and other tools this workspace posts to"}
+            >
+              <div className="flex items-center gap-2">
+                <PuzzlePieceIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
+                <span>Integrations</span>
+              </div>
+            </button>
 
             {FEATURE_REQUESTS_ENABLED ? (
               <button

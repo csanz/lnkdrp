@@ -114,6 +114,10 @@ API_TEST_USER_ID=<mongo-user-id>
 
 # Feature flags
 NEXT_PUBLIC_FEATURE_REQUESTS=1                  # Re-enables the "Requests" item in the app sidebar (hidden by default)
+
+# Slack integration (optional; see docs/prds/lnkdrp-slack.md). Both required for "Add to Slack".
+# SLACK_CLIENT_ID=
+# SLACK_CLIENT_SECRET=
 ```
 
 ---

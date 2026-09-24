@@ -39,6 +39,8 @@ export const ACTIVITY_FILTERS = [
   // drown the rows about the documents themselves, and "show me what got filed" is its own
   // question.
   { id: "tags", label: "Tags", types: ["tag.applied", "tag.removed"] },
+  // Where the workspace's activity goes besides email: a Slack channel wired up or removed.
+  { id: "integrations", label: "Integrations", types: ["integration.slack_connected", "integration.slack_disconnected"] },
   // What *recipients* did, which is also what keeps them out of the workspace donut: its
   // denominator is work done here, and `ACTIVITY_WORK_TYPES` excludes this group wholesale
   // (see `NOT_WORK` in ./summary.ts). Entering a password belongs with the rest of a recipient's
@@ -355,6 +357,14 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
     case "member.left": {
       const who = user || metaString(item.meta, "name") || metaString(item.meta, "email") || "Someone";
       return { subject: who, verb: "left", object: "this workspace", suffix: null };
+    }
+    case "integration.slack_connected": {
+      const channel = metaString(item.meta, "channelName") || "a channel";
+      return { subject: user || "Someone", verb: "connected Slack", object: channel, suffix: null };
+    }
+    case "integration.slack_disconnected": {
+      const channel = metaString(item.meta, "channelName") || "a channel";
+      return { subject: user || "Someone", verb: "disconnected Slack", object: channel, suffix: null };
     }
     case "project.landed": {
       // No document: this is the arrival on the file list, and the reader may have opened nothing.

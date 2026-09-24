@@ -91,7 +91,11 @@ export type ActivityType =
   // A recipient's visit ended and the account of it is stored (`VisitBrief`); `meta.headline`
   // carries the model's one line when a brief was written, `meta.recapReason` says why not when
   // it was not. Written by the `visit-briefs` cron, never in the ingest path.
-  | "share.visit_briefed";
+  | "share.visit_briefed"
+  // A Slack channel wired up or removed (docs/prds/lnkdrp-slack.md). `meta.channelName` and
+  // `meta.teamName`; never the webhook URL.
+  | "integration.slack_connected"
+  | "integration.slack_disconnected";
 
 export type ActivityAgent = { client: string; version: string | null } | null;
 

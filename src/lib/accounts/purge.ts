@@ -27,6 +27,7 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { ApiKeyModel } from "@/lib/models/ApiKey";
+import { SlackConnectionModel } from "@/lib/models/SlackConnection";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { SubscriptionModel } from "@/lib/models/Subscription";
@@ -387,6 +388,8 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
         ShareVisitModel.deleteMany(orgFilter),
         ActivityEventModel.deleteMany(orgFilter),
         ApiKeyModel.deleteMany(orgFilter),
+        // Encrypted webhook URLs: with the workspace gone there is nothing left to post about.
+        SlackConnectionModel.deleteMany(orgFilter),
         CreditLedgerModel.deleteMany(workspaceFilter),
         WorkspaceCreditBalanceModel.deleteMany(workspaceFilter),
         SubscriptionModel.deleteMany(orgFilter),

@@ -64,6 +64,8 @@ const REQUIRED: Array<[string, Group]> = [
 const WANTED: Array<[string, Group, string]> = [
   ["NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", "Payments", "no current page reads it; set it before adding client-side Stripe"],
   ["STRIPE_PRICE_ID_ANNUAL", "Payments", "the yearly Pro price (12 months for 10); without it /pricing offers monthly only"],
+  ["SLACK_CLIENT_ID", "Secrets", "the Slack app's client id; without it and SLACK_CLIENT_SECRET, Add to Slack is hidden"],
+  ["SLACK_CLIENT_SECRET", "Secrets", "the Slack app's client secret; without it and SLACK_CLIENT_ID, Add to Slack is hidden"],
   ["LNKDRP_NOTIFICATION_TOKEN_SECRET", "Secrets", "falls back to NEXTAUTH_SECRET, which is deliberate"],
   // RESEND_API_KEY is not here on purpose: `checkEmail` already reports it, and conditionally on
   // EMAIL_TRANSPORT, which is the better answer. One row per variable.

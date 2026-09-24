@@ -82,6 +82,9 @@ const ACTIVITY_TYPES = [
   // Filing, so an agent can ask what has been tagged lately — including by itself.
   "tag.applied",
   "tag.removed",
+  // A Slack channel connected or removed; `meta.channelName` names it.
+  "integration.slack_connected",
+  "integration.slack_disconnected",
 ] as const;
 
 // Compile-time guard: an event type the app logs but this list lacks cannot be filtered on, which
