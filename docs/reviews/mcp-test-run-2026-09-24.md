@@ -35,6 +35,25 @@ The workspace used throughout is the dev account's personal workspace, renamed "
 
 Everything withheld above (viewer names and reader links in the feed and emails, `recentVisits`, visit briefs, second project links, recipient version history) needs the workspace on Pro. Stripe is in test mode locally (`sk_test`, `whsec_` set), so the supported route is Upgrade on `/pricing` with the `4242` test card while `stripe listen --forward-to localhost:3001/api/stripe/webhook` is running; that also exercises the Phase 0 checkout and webhook changes. The fallback for a dev database is to set the subscription row to `active` / `kind: pro` and grant the cycle credits with a one-off script.
 
+## Second pass: Pro, and real browser visitors
+
+Stripe test mode showed why the workspace was Free: five Checkout sessions opened today, all `open` / `unpaid`, none completed, and the account's only webhook endpoint is production (`www.lnkdrp.com`), so a local checkout could never land without the Stripe CLI forwarding events (not installed here). `tmp/set-plan-dev.ts` (dev database only, `--revert` to undo) put the workspace on Pro with a synthetic subscription id and a 500-credit cycle grant.
+
+Then three **real** visitors: headless Chrome (`tmp/visit-browser.mjs`, Playwright driving the installed Chrome) opened the share link, turned pages with the viewer's own "Next page" control, and two of them introduced themselves through the viewer's own form. The viewer's real client code posted every heartbeat (10, 17 and 5 stats POSTs, all 200, no console errors, no failed requests).
+
+| Visitor | Pages | Sitting | Outcome |
+|---|---|---|---|
+| Ada Lovelace (introduced) | 5 of 12 | 29 s | brief: "spent 11 s on the $21.7B market size and timing", two interests |
+| Grace Hopper (introduced) | 8 of 12 | 36 s | brief: "spent 9 sec on why we win deals" |
+| anonymous | 3 of 12 | 14 s | brief: "spent 7 seconds on the warehouse automation solution" |
+
+- `viewer.introduced` rows appeared for both named visitors, from the real form.
+- `cron:visit-briefs` claimed each sitting two minutes after its last event and wrote a brief (one credit each, `creditsCharged` in the cron result); `share.visit_briefed` rows carry the headlines on the feed.
+- `lnkdrp_get_share_stats { includeVisits }` on the deep tier returned all three `recentVisits` with headline and interests; the analytics harness listed every reader by name with per-page times.
+- The view email for these three went out as one immediate email; on Pro it names the readers.
+
+Everything withheld in the first pass is now exercised except second project links and recipient version history, which the e2e harness skips on purpose rather than exercising.
+
 ## Fixes made during the run
 
 - `/connect`: a renamed personal workspace is now named after its real name (`mcpServerName`), the copy says the workspace's name instead of "Personal", and the Copy button sits in its own column instead of floating over the scrolling code.
