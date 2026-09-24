@@ -1430,6 +1430,12 @@ Run in this order; each step depends on the previous.
 
 ## 9. Release workflow
 
+**Branches (since 2026-09-23).** Every push to `main` is a production deploy, so day-to-day work
+lands on `next-release`, the branch for whatever ships next; several sessions and agents can
+commit there without triggering a deploy. A release is `next-release` merged into `main` once the
+gate below passes, and the branch keeps going for the release after. Nothing hot-fixes `main`
+directly except a fix that cannot wait for the branch.
+
 - `main` of the repository connected under Vercel → Settings → Git is production. Every push to
   `main` deploys the web app on Vercel; previews build from other branches with the preview env
   (5.3).
