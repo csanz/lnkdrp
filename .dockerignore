@@ -3,7 +3,7 @@
 # was ending up in an image — but the whole checkout was still being uploaded to the builder,
 # `.env.local` and `.git` included. On Fly that builder is a remote machine.
 #
-# Keep in step with those COPY lines: tsconfig.json, src/lib/realtime/ticket.ts,
+# Keep in step with those COPY lines: tsconfig.json, src/lib/realtime/ticket.ts, src/lib/db/access.ts,
 # src/lib/analytics/project/viewerKey.ts, src/lib/credits/{schedule,types}.ts, realtime/ and mcp/
 # must all survive this list.
 

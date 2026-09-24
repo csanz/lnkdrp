@@ -3,6 +3,7 @@ import GoogleProvider from "next-auth/providers/google";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
+import { explainMongoAuthzError, isMongoAuthzError } from "@/lib/db/access";
 import { UserModel } from "@/lib/models/User";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
@@ -54,7 +55,7 @@ function authEnv(): Record<(typeof REQUIRED_AUTH_ENV)[number], string> {
     throw new Error(
       `Missing required env var${missing.length > 1 ? "s" : ""}: ${missing.join(", ")}. ` +
         "This module is evaluated by the root layout, so during `next build` a missing value fails " +
-        "page-data collection for every page — the page named above is not the cause. " +
+        "page-data collection for every page; the page named above is not the cause. " +
         "Set them in Vercel under Settings → Environment Variables, scoped to the environment you " +
         "are deploying (DEPLOY.md section 5 lists every variable the web app needs).",
     );
@@ -114,9 +115,21 @@ export const authOptions: NextAuthOptions = {
       await connectMongo();
 
       // If a user is disabled, deny sign-in without mutating the record.
+      //
+      // This is the first command the process sends to the database on a fresh boot, so it is
+      // where a wrong database name in MONGODB_URI surfaces. NextAuth puts a thrown error's
+      // message in the browser's address bar (`/api/auth/error?error=…`), which for the raw driver
+      // error means the whole `find` command, filter included, and no hint that the name is wrong.
+      // Replace it with the one-line explanation; the log gets the same line.
       const existing = await UserModel.findOne({ email })
         .select({ _id: 1, isActive: 1 })
-        .lean();
+        .lean()
+        .catch((err: unknown) => {
+          if (!isMongoAuthzError(err)) throw err;
+          const explained = explainMongoAuthzError(err, { uri: process.env.MONGODB_URI });
+          console.error(`[auth] sign-in failed: ${explained}`);
+          throw new Error(explained);
+        });
       if (existing && existing.isActive === false) return false;
 
       const now = new Date();

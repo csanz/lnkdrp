@@ -31,6 +31,8 @@ RUN printf '%s\n' \
 
 COPY tsconfig.json ./tsconfig.json
 COPY src/lib/realtime/ticket.ts ./src/lib/realtime/ticket.ts
+# Names a wrong database in MONGODB_URI at boot instead of seven change-stream failures. Import-free.
+COPY src/lib/db/access.ts ./src/lib/db/access.ts
 # The project-link key rule. Import-free on purpose — see the note on `splitProjectViewerKey`.
 COPY src/lib/analytics/project/viewerKey.ts ./src/lib/analytics/project/viewerKey.ts
 COPY realtime ./realtime

@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { judgeMongoAccess, mongoUriDatabase, type MongoAuthInfo } from "@/lib/db/access";
 import { debugError, debugLog } from "@/lib/debug";
 
 /**
@@ -77,6 +78,37 @@ export async function connectMongoose(): Promise<typeof mongoose> {
 
   cache.conn = await cache.promise;
   debugLog(1, "[mongo] connected");
+  void warnIfDatabaseNotGranted(cache.conn, MONGODB_URI);
   return cache.conn;
+}
+
+let accessChecked = false;
+
+/**
+ * Say so, once, when the connected user has no rights on the database this process will use.
+ *
+ * Authentication is cluster-wide, so a URI whose path names a database the user's role does not
+ * cover connects without complaint and then fails every query with code 13. The first symptom is
+ * a sign-in that bounces to `/api/auth/error` with a raw `find` command in the URL. One
+ * `connectionStatus` call after connect names the mismatch instead (`src/lib/db/access.ts`).
+ *
+ * A warning, not a throw: the judgement reads the server's privilege list, and a role shape this
+ * code has not seen must not take down a deployment that works. Logged with `console.error`
+ * rather than the gated debug logger because a misconfiguration is worth a line at any level.
+ */
+async function warnIfDatabaseNotGranted(conn: typeof mongoose, uri: string) {
+  if (accessChecked) return;
+  accessChecked = true;
+  try {
+    const database = process.env.MONGODB_DB_NAME || mongoUriDatabase(uri) || conn.connection.db?.databaseName || "";
+    const status = (await conn.connection.db?.admin().command({ connectionStatus: 1, showPrivileges: true })) as
+      | { authInfo?: MongoAuthInfo }
+      | undefined;
+    const verdict = judgeMongoAccess(database, status?.authInfo);
+    if (!verdict.ok) console.error(`[mongo] ${verdict.message}`);
+  } catch (err) {
+    // A server that refuses connectionStatus is not itself a problem; the next query says more.
+    debugLog(2, "[mongo] access check skipped", err instanceof Error ? err.message : String(err));
+  }
 }
 

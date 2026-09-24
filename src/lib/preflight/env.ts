@@ -19,6 +19,7 @@
  * is enough to tell two keys apart in a screenshot without putting either in one.
  */
 import { MongoClient } from "mongodb";
+import { explainMongoAuthzError, isMongoAuthzError, judgeMongoAccess, type MongoAuthInfo } from "@/lib/db/access";
 
 export type Status = "ok" | "warn" | "fail" | "skip";
 export type Group = "URLs" | "Auth" | "Database" | "Payments" | "Storage" | "AI" | "Email" | "Secrets";
@@ -62,6 +63,7 @@ const REQUIRED: Array<[string, Group]> = [
  */
 const WANTED: Array<[string, Group, string]> = [
   ["NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY", "Payments", "no current page reads it; set it before adding client-side Stripe"],
+  ["STRIPE_PRICE_ID_ANNUAL", "Payments", "the yearly Pro price (12 months for 10); without it /pricing offers monthly only"],
   ["LNKDRP_NOTIFICATION_TOKEN_SECRET", "Secrets", "falls back to NEXTAUTH_SECRET, which is deliberate"],
   // RESEND_API_KEY is not here on purpose: `checkEmail` already reports it, and conditionally on
   // EMAIL_TRANSPORT, which is the better answer. One row per variable.
@@ -96,8 +98,8 @@ function checkUrls(add: Sink) {
     try {
       const u = new URL(v);
       const local = u.hostname === "localhost" || u.hostname === "127.0.0.1";
-      if (u.protocol !== "https:" && !local) add(name, "URLs", "fail", `${v} — ${u.protocol}// but production must be https`);
-      else if (v.endsWith("/")) add(name, "URLs", "warn", `${v} — the trailing slash builds double-slashed links`);
+      if (u.protocol !== "https:" && !local) add(name, "URLs", "fail", `${v}: ${u.protocol}// but production must be https`);
+      else if (v.endsWith("/")) add(name, "URLs", "warn", `${v}: the trailing slash builds double-slashed links`);
       else add(name, "URLs", "ok", v);
     } catch {
       add(name, "URLs", "fail", `not a URL: ${v}`);
@@ -106,7 +108,7 @@ function checkUrls(add: Sink) {
   const site = env("NEXT_PUBLIC_SITE_URL").replace(/\/$/, "");
   const auth = env("NEXTAUTH_URL").replace(/\/$/, "");
   if (site && auth && site !== auth) {
-    add("SITE_URL vs NEXTAUTH_URL", "URLs", "warn", `${site} vs ${auth} — sign-in redirects and share links will disagree`);
+    add("SITE_URL vs NEXTAUTH_URL", "URLs", "warn", `${site} vs ${auth}: sign-in redirects and share links will disagree`);
   }
 }
 
@@ -153,12 +155,12 @@ function checkStripeModes(add: Sink) {
   const skLive = sk.startsWith("sk_live_");
   const pkLive = pk.startsWith("pk_live_");
   if (skLive !== pkLive) add("Stripe key modes", "Payments", "fail", `secret is ${skLive ? "LIVE" : "test"} but publishable is ${pkLive ? "LIVE" : "test"}`);
-  else add("Stripe key modes", "Payments", skLive ? "ok" : "warn", skLive ? "both live" : "both test/sandbox — fine for preview, not production");
+  else add("Stripe key modes", "Payments", skLive ? "ok" : "warn", skLive ? "both live" : "both test/sandbox: fine for preview, not production");
 }
 
 function checkEmailTransport(add: Sink) {
   const t = env("EMAIL_TRANSPORT");
-  if (t === "console") add("EMAIL_TRANSPORT", "Email", "warn", "console — no mail is actually sent");
+  if (t === "console") add("EMAIL_TRANSPORT", "Email", "warn", "console: no mail is actually sent");
   else if (!env("RESEND_API_KEY")) add("RESEND_API_KEY", "Email", "warn", "not set; sending will fail at runtime");
 }
 
@@ -172,8 +174,8 @@ async function checkMongo(add: Sink, offline: boolean) {
       return "";
     }
   })();
-  if (!path) add("MONGODB_URI", "Database", "fail", "no database in the path — add /lnkdrp (DEPLOY 4.1)");
-  if (env("MONGODB_DB_NAME")) add("MONGODB_DB_NAME", "Database", "warn", `set to "${env("MONGODB_DB_NAME")}" — it overrides the URI's /${path}`);
+  if (!path) add("MONGODB_URI", "Database", "fail", "no database in the path; add the database name, e.g. /lnkdrp-prod (DEPLOY 4.1)");
+  if (env("MONGODB_DB_NAME")) add("MONGODB_DB_NAME", "Database", "warn", `set to "${env("MONGODB_DB_NAME")}": it overrides the URI's /${path}`);
   if (offline) return add("MONGODB_URI (connect)", "Database", "skip", "offline");
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
   try {
@@ -182,7 +184,19 @@ async function checkMongo(add: Sink, offline: boolean) {
     const names = await db.listCollections({}, { nameOnly: true }).toArray();
     add("MONGODB_URI (connect)", "Database", "ok", `connected to "${db.databaseName}", ${names.length} collections`);
   } catch (e) {
-    add("MONGODB_URI (connect)", "Database", "fail", e instanceof Error ? e.message.slice(0, 120) : "connect failed");
+    // Connected but not allowed: the role is on another database name. Ask the server which, so
+    // the line says "granted on lnkdrp_dev, URI says lnkdrp-dev" instead of a truncated command dump.
+    if (isMongoAuthzError(e)) {
+      const message = await client
+        .db("admin")
+        .command({ connectionStatus: 1, showPrivileges: true })
+        .then((s) => judgeMongoAccess(env("MONGODB_DB_NAME") || path, (s as { authInfo?: MongoAuthInfo }).authInfo))
+        .then((v) => (v.ok ? explainMongoAuthzError(e, { uri }) : v.message))
+        .catch(() => explainMongoAuthzError(e, { uri }));
+      add("MONGODB_URI (connect)", "Database", "fail", message);
+    } else {
+      add("MONGODB_URI (connect)", "Database", "fail", e instanceof Error ? e.message.slice(0, 120) : "connect failed");
+    }
   } finally {
     await client.close().catch(() => {});
   }
@@ -259,7 +273,7 @@ async function checkStripeWebhook(add: Sink, offline: boolean) {
     const mine = (body.data ?? []).filter((e) => (e.url ?? "").replace(/\/$/, "") === want);
     if (!mine.length) {
       const others = (body.data ?? []).map((e) => e.url).filter(Boolean).slice(0, 3).join(", ");
-      return add("Stripe webhook", "Payments", "fail", `no endpoint for ${want}${others ? ` — found: ${others}` : ""}`);
+      return add("Stripe webhook", "Payments", "fail", `no endpoint for ${want}${others ? `; found: ${others}` : ""}`);
     }
     const enabled = mine.find((e) => e.status === "enabled") ?? mine[0];
     if (enabled.status !== "enabled") return add("Stripe webhook", "Payments", "fail", `endpoint exists but is ${enabled.status}`);
@@ -285,20 +299,36 @@ async function checkStripeLive(add: Sink, offline: boolean) {
     const a = (await acct.json()) as { id?: string; charges_enabled?: boolean; settings?: { dashboard?: { display_name?: string } } };
     add("Stripe API", "Payments", "ok", `${a.id} (${a.settings?.dashboard?.display_name ?? "no display name"})`);
     if (sk.startsWith("sk_live_") && a.charges_enabled === false) {
-      add("Stripe activation", "Payments", "fail", "live key but charges_enabled=false — the account cannot take payments (DEPLOY 4.2)");
+      add("Stripe activation", "Payments", "fail", "live key but charges_enabled=false: the account cannot take payments (DEPLOY 4.2)");
     }
     // Each price must exist in the same mode as the key, or Checkout fails at the worst moment.
-    for (const name of ["STRIPE_PRICE_ID", "STRIPE_AI_CREDITS_PRICE_ID", "STRIPE_USAGE_PRICE_ID"]) {
+    for (const name of ["STRIPE_PRICE_ID", "STRIPE_PRICE_ID_ANNUAL", "STRIPE_AI_CREDITS_PRICE_ID", "STRIPE_USAGE_PRICE_ID"]) {
       const id = env(name);
       if (!id) continue;
       const res = await call(`prices/${encodeURIComponent(id)}`);
       if (!res.ok) {
-        add(name, "Payments", "fail", `${res.status} — not found with this key (wrong mode, or wrong id)`);
+        add(name, "Payments", "fail", `${res.status}: not found with this key (wrong mode, or wrong id)`);
         continue;
       }
-      const p = (await res.json()) as { active?: boolean; currency?: string; unit_amount?: number | null; recurring?: { usage_type?: string } | null };
-      const bits = [p.currency?.toUpperCase(), p.unit_amount != null ? (p.unit_amount / 100).toFixed(2) : "metered", p.active ? "active" : "INACTIVE", p.recurring?.usage_type];
-      add(name, "Payments", p.active === false ? "fail" : "ok", bits.filter(Boolean).join(" · "));
+      const p = (await res.json()) as {
+        active?: boolean;
+        currency?: string;
+        unit_amount?: number | null;
+        recurring?: { usage_type?: string; interval?: string } | null;
+      };
+      const bits = [
+        p.currency?.toUpperCase(),
+        p.unit_amount != null ? (p.unit_amount / 100).toFixed(2) : "metered",
+        p.recurring?.interval ? `per ${p.recurring.interval}` : null,
+        p.active ? "active" : "INACTIVE",
+        p.recurring?.usage_type,
+      ];
+      // The annual price must bill yearly and be licensed, or Checkout builds a subscription that
+      // bills monthly under a yearly label. Say so here, not on the first customer.
+      const wrongShape =
+        name === "STRIPE_PRICE_ID_ANNUAL" && (p.recurring?.interval !== "year" || p.recurring?.usage_type === "metered");
+      const status = p.active === false || wrongShape ? "fail" : "ok";
+      add(name, "Payments", status, wrongShape ? `${bits.filter(Boolean).join(" · ")}; must be a licensed price with interval=year` : bits.filter(Boolean).join(" · "));
     }
   } catch (e) {
     add("Stripe API", "Payments", "fail", e instanceof Error ? e.message.slice(0, 100) : "request failed");
@@ -311,7 +341,7 @@ async function checkOpenAI(add: Sink, offline: boolean) {
   if (offline) return add("OPENAI_API_KEY", "AI", "skip", "offline");
   try {
     const res = await fetch("https://api.openai.com/v1/models", { headers: { authorization: `Bearer ${key}` } });
-    add("OPENAI_API_KEY", "AI", res.ok ? "ok" : "fail", res.ok ? `accepted (${fingerprint(key)})` : `${res.status} — rejected`);
+    add("OPENAI_API_KEY", "AI", res.ok ? "ok" : "fail", res.ok ? `accepted (${fingerprint(key)})` : `${res.status}: rejected`);
   } catch (e) {
     add("OPENAI_API_KEY", "AI", "warn", e instanceof Error ? e.message.slice(0, 80) : "request failed");
   }
@@ -325,7 +355,7 @@ async function checkBlob(add: Sink, offline: boolean) {
     const { list } = await import("@vercel/blob");
     const res = await list({ token, limit: 1 });
     const host = res.blobs[0]?.url ? new URL(res.blobs[0].url).host : "(store is empty)";
-    add("BLOB_READ_WRITE_TOKEN", "Storage", "ok", `store reachable — ${host}`);
+    add("BLOB_READ_WRITE_TOKEN", "Storage", "ok", `store reachable: ${host}`);
     const base = env("BLOB_BASE_URL");
     if (base && res.blobs[0]?.url && !res.blobs[0].url.startsWith(base.replace(/\/$/, ""))) {
       add("BLOB_BASE_URL", "Storage", "fail", `${base} does not match the store this token opens (${host})`);
@@ -340,7 +370,7 @@ async function checkResend(add: Sink, offline: boolean) {
   if (!key || offline) return;
   try {
     const res = await fetch("https://api.resend.com/domains", { headers: { authorization: `Bearer ${key}` } });
-    if (!res.ok) return add("RESEND_API_KEY", "Email", "fail", `${res.status} — rejected`);
+    if (!res.ok) return add("RESEND_API_KEY", "Email", "fail", `${res.status}: rejected`);
     const body = (await res.json()) as { data?: Array<{ name?: string; status?: string }> };
     const domains = body.data ?? [];
     const verified = domains.filter((d) => d.status === "verified").map((d) => d.name).filter(Boolean) as string[];

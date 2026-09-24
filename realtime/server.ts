@@ -37,6 +37,7 @@ import mongoose from "mongoose";
 import { WebSocketServer, WebSocket } from "ws";
 
 import { realtimeSecret, verifyRealtimeTicket } from "../src/lib/realtime/ticket";
+import { explainMongoAuthzError, isMongoAuthzError, judgeMongoAccess, mongoUriDatabase, type MongoAuthInfo } from "../src/lib/db/access";
 // Import-free by design: anything this process pulls in must also be in `realtime/Dockerfile`'s
 // COPY list, and `share/projectPublic` drags mongoose models with it.
 import { splitProjectViewerKey } from "../src/lib/analytics/project/viewerKey";
@@ -274,6 +275,23 @@ async function main() {
   if (!db) throw new Error("no db handle after connect");
   log("mongo connected");
 
+  // Does this user have any rights on the database the URI names? Authentication is cluster-wide,
+  // so a URI path that differs from the role's database (`lnkdrp-prod` vs `lnkdrp`, a hyphen for an
+  // underscore) connects cleanly and then loses all seven change streams with code 13 — seven stack
+  // dumps, a 30 s wait for a resume that cannot happen, and an exit that reads as an outage. Ask
+  // once and say the real thing. Only a non-empty privilege list that covers nothing is fatal; a
+  // shape this code cannot read is left to the streams to judge (`src/lib/db/access.ts`).
+  try {
+    const status = (await db.admin().command({ connectionStatus: 1, showPrivileges: true })) as { authInfo?: MongoAuthInfo };
+    const verdict = judgeMongoAccess(mongoUriDatabase(MONGODB_URI) || db.databaseName, status.authInfo);
+    if (!verdict.ok) {
+      console.error(`[realtime] fatal: ${verdict.message}`);
+      process.exit(1);
+    }
+  } catch (err) {
+    log("access check skipped:", err instanceof Error ? err.message : String(err));
+  }
+
   // --- change streams -------------------------------------------------------------------------
   // The driver resumes transient errors itself, and both events fire on a stream that lives on: a
   // throw in a 'change' handler emits 'error' with the stream open, and a resume closes the old
@@ -316,7 +334,20 @@ async function main() {
       }, STREAM_RESUME_GRACE_MS);
     };
     stream.on("error", (err) => {
-      if (!shuttingDown) log(`${name} stream error`, err);
+      if (shuttingDown) return check();
+      // A permission error never resumes, so do not wait the grace period, and say what it is
+      // rather than printing the driver's command dump seven times over.
+      if (isMongoAuthzError(err)) {
+        log(`${name} stream refused: ${explainMongoAuthzError(err, { uri: MONGODB_URI })}`);
+        if (!exiting) {
+          streamHealth[name] = false;
+          exiting = true;
+          log(`/healthz now 503, exiting in ${STREAM_EXIT_DELAY_MS / 1000}s so the machine restarts`);
+          setTimeout(() => process.exit(1), STREAM_EXIT_DELAY_MS);
+        }
+        return;
+      }
+      log(`${name} stream error`, err);
       check();
     });
     stream.on("close", check);

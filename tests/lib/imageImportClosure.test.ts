@@ -81,8 +81,9 @@ describe.each(IMAGES)("$name image", ({ dockerfile, entry, name }) => {
     const { files, unresolved } = reachableFiles(entry);
     expect(unresolved).toEqual([]);
 
+    // Dockerfile COPY paths are always forward-slash; `path.relative` is not on Windows.
     const notShipped = [...files]
-      .map((file) => path.relative(ROOT, file))
+      .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
       .filter((rel) => !shipped.some((s) => rel === s || rel.startsWith(`${s.replace(/\/$/, "")}/`)));
 
     // The failure names the files, because the fix is a judgement call: COPY it when it is a leaf,
