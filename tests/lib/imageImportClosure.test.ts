@@ -93,8 +93,10 @@ describe.each(IMAGES)("$name image", ({ dockerfile, entry, name }) => {
 
   test("nothing it imports drags in a database model or the app's mongoose connection", () => {
     const { files } = reachableFiles(entry);
+    // Posix separators, as in the sibling test: on Windows `path.relative` answers with backslashes
+    // and this regex matched nothing, so the assertion passed with an empty list.
     const heavy = [...files]
-      .map((file) => path.relative(ROOT, file))
+      .map((file) => path.relative(ROOT, file).split(path.sep).join("/"))
       .filter((rel) => /^src\/lib\/(models|mongodb)/.test(rel));
     expect(heavy, `the ${name} image must stay free of ${heavy.join(", ")}`).toEqual([]);
   });

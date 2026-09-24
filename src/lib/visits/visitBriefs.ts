@@ -968,10 +968,11 @@ export function strongerHeadline(params: {
     }
   }
   if (!top) return params.headline;
-  // The topic: the first interest's clause before its "(p. N)" or "—", which the prompt makes the
-  // substance of the page. Falls back to "page N" rather than to a heading.
+  // The topic: the first interest's clause before its "(p. N)", an em dash, a spaced hyphen, or
+  // the " · " that `oneLine` in visitBrief.ts joins object-shaped output with; the prompt makes the
+  // clause the substance of the page. Falls back to "page N" rather than to a heading.
   const first = params.interests[0] ?? "";
-  const topicRaw = first.split(/\s+\(p\.|\s+—|\s+-\s+/)[0]?.trim() ?? "";
+  const topicRaw = first.split(/\s+\(p\.|\s+—|\s+-\s+|\s+·\s*/)[0]?.trim() ?? "";
   const topic = topicRaw && topicRaw.length <= 90 ? topicRaw.charAt(0).toLowerCase() + topicRaw.slice(1) : `page ${top.page}`;
   const parts = [`spent ${shortDuration(top.ms)} on ${topic}`];
   if (top.opened > 1) parts.push(`came back to it ${top.opened === 2 ? "twice" : `${top.opened} times`}`);

@@ -29,7 +29,7 @@ export function viewerVerifyEmail(params: {
 
   return transactional({
     subject: title ? `Confirm your email for "${title}"` : "Confirm your email",
-    preheader: "Optional \u2014 the document stays open either way.",
+    preheader: "Optional: the document stays open either way.",
     // The reader has never heard of LinkDrop; the name they recognise is whoever shared this.
     workspace: params.workspace ?? (workspace ? { name: workspace, avatarUrl: null } : null),
     blocks: blocks(
@@ -71,7 +71,7 @@ export function viewerIntroducedEmail(params: {
 
   return transactional({
     subject: name ? `${name} introduced themselves on ${what}` : `A reader introduced themselves on ${what}`,
-    preheader: params.verified ? "Confirmed by email." : "Unconfirmed \u2014 their claim, not a fact.",
+    preheader: params.verified ? "Confirmed by email." : "Unconfirmed: their claim, not a fact.",
     workspace: params.workspace ?? null,
     blocks: blocks(
       { kind: "heading", text: name ? `${name} introduced themselves` : "A reader introduced themselves" },

@@ -42,7 +42,8 @@ type Hit = { file: string; line: number; text: string };
 /** Every em dash inside a string literal, template literal chunk or JSX text node. */
 function emDashStrings(file: string): Hit[] {
   const src = fs.readFileSync(file, "utf8");
-  if (!src.includes("—")) return [];
+  // No raw-text short-circuit: a `—` escape in a string literal is still an em dash once
+  // rendered, and the AST walk below sees the decoded value. The pre-check let those through.
   const rel = path.relative(ROOT, file).split(path.sep).join("/");
   const kind = file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, kind);

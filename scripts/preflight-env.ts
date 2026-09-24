@@ -6,6 +6,7 @@
  * Exits non-zero on any failure, so it works as a release gate.
  */
 import { runEnvPreflight, summarise, type Status } from "@/lib/preflight/env";
+import { exit } from "./lib/exit";
 
 const ICON: Record<Status, string> = { ok: "  ok  ", warn: " warn ", fail: " FAIL ", skip: " skip " };
 
@@ -23,7 +24,7 @@ async function main() {
   const s = summarise(results);
   console.log(`\n${s.fail} failing, ${s.warn} warning, ${s.ok} ok, ${s.skip} skipped.`);
   if (s.fail) console.log("A failing row means this deployment will not work. See DEPLOY.md section 5.");
-  process.exit(s.fail ? 1 : 0);
+  await exit(s.fail ? 1 : 0);
 }
 
 void main();

@@ -19,7 +19,7 @@
  * is enough to tell two keys apart in a screenshot without putting either in one.
  */
 import { MongoClient } from "mongodb";
-import { explainMongoAuthzError, isMongoAuthzError, judgeMongoAccess, type MongoAuthInfo } from "@/lib/db/access";
+import { explainMongoAuthzError, isMongoAuthzError, judgeMongoAccess, mongoUriDatabase, type MongoAuthInfo } from "@/lib/db/access";
 
 export type Status = "ok" | "warn" | "fail" | "skip";
 export type Group = "URLs" | "Auth" | "Database" | "Payments" | "Storage" | "AI" | "Email" | "Secrets";
@@ -167,20 +167,18 @@ function checkEmailTransport(add: Sink) {
 async function checkMongo(add: Sink, offline: boolean) {
   const uri = env("MONGODB_URI");
   if (!uri) return;
-  const path = (() => {
-    try {
-      return new URL(uri.replace("mongodb+srv://", "https://").replace("mongodb://", "https://")).pathname.replace(/^\//, "");
-    } catch {
-      return "";
-    }
-  })();
+  // Not `new URL()`: a multi-host (non-SRV replica set) string like `mongodb://h1:27017,h2:27017/db`
+  // makes it throw on the port, so the path read as empty and this row failed on a correct URI.
+  // `mongoUriDatabase` does the same string surgery `src/lib/db/localTarget.ts` does.
+  const path = mongoUriDatabase(uri);
   if (!path) add("MONGODB_URI", "Database", "fail", "no database in the path; add the database name, e.g. /lnkdrp-prod (DEPLOY 4.1)");
   if (env("MONGODB_DB_NAME")) add("MONGODB_DB_NAME", "Database", "warn", `set to "${env("MONGODB_DB_NAME")}": it overrides the URI's /${path}`);
   if (offline) return add("MONGODB_URI (connect)", "Database", "skip", "offline");
   const client = new MongoClient(uri, { serverSelectionTimeoutMS: 8000 });
   try {
     await client.connect();
-    const db = client.db();
+    // Probe the database the app will actually open: the override when set, else the URI's path.
+    const db = client.db(env("MONGODB_DB_NAME") || undefined);
     const names = await db.listCollections({}, { nameOnly: true }).toArray();
     add("MONGODB_URI (connect)", "Database", "ok", `connected to "${db.databaseName}", ${names.length} collections`);
   } catch (e) {
