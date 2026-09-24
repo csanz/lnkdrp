@@ -131,7 +131,7 @@ const SHADOW_STYLE_ID = "lnkdrp-plain-chat-style";
 // element inside the shadow tree, which a host-level custom property cannot reach.
 const SHADOW_STYLE = [
   "#plain-chat-root .wrapper--floating { --logo-size: 40px !important; }",
-  "#plain-chat-root .intro_header h1 { font-size: 1.125rem !important; line-height: 1.3 !important; font-weight: 600 !important; letter-spacing: 0 !important; }",
+  "#plain-chat-root .intro_header h1 { font-size: 1.25rem !important; line-height: 1.3 !important; font-weight: 600 !important; letter-spacing: 0 !important; }",
 ].join(" ");
 
 const SHADOW_POLL_MS = 100;
