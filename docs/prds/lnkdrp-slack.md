@@ -39,7 +39,8 @@ email preferences on the Notifications tab.
 ## Non-goals (v1)
 
 - Slash commands, replies, or anything the bot listens for. This is outbound only.
-- Per-member Slack DMs, or more than one channel per workspace.
+- Per-member Slack DMs, or more than one channel per project. A workspace can hold several
+  channels and route projects to them (decision 2); one project posts to one channel.
 - A Slack daily digest. Immediate only; the daily email digest already exists for the rest.
 - Interactive buttons (approve a download request from Slack). Later, and it needs a bot token.
 - Slack as a sign-in method, or Slack as an MCP tool.
