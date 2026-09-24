@@ -1239,7 +1239,7 @@ treat the MCP host as holding a cross-tenant secret, or leave `REALTIME_SECRET` 
 polling is acceptable.
 
 **Everything else the server reads.** `deploy/fly/mcp.fly.toml` `[env]` already sets `NODE_ENV`,
-`MCP_PORT` (8787), `LNKDRP_API_URL` (`https://lnkdrp.com`), `MCP_PUBLIC_URL`
+`MCP_PORT` (8787), `LNKDRP_API_URL` (`https://www.lnkdrp.com`), `MCP_PUBLIC_URL`
 (`https://mcp.lnkdrp.com`) and `NEXT_PUBLIC_REALTIME_URL` (`wss://realtime.lnkdrp.com`); `[env]`
 applies only on deploy (9). The rest are optional and unset by default:
 
@@ -1295,7 +1295,7 @@ Or with Docker anywhere (add `--platform linux/amd64` as in 6.3):
 docker build -f mcp/Dockerfile -t lnkdrp-mcp .
 # mcp.env: REALTIME_SECRET=…
 docker run -d --restart unless-stopped -p 127.0.0.1:8787:8787 \
-  -e NODE_ENV=production -e LNKDRP_API_URL=https://lnkdrp.com \
+  -e NODE_ENV=production -e LNKDRP_API_URL=https://www.lnkdrp.com \
   -e MCP_PUBLIC_URL=https://mcp.lnkdrp.com \
   -e NEXT_PUBLIC_REALTIME_URL=wss://realtime.lnkdrp.com --env-file mcp.env \
   lnkdrp-mcp
@@ -1355,7 +1355,7 @@ Run in this order; each step depends on the previous.
    realtime is not working. Upload another PDF with `/activity` open and watch the progress bar
    move on `upload` frames; `/api/uploads/in-progress` is the snapshot those frames update, and
    with no socket it is polled instead, so a working bar alone does not prove the socket.
-8. `curl -s https://mcp.lnkdrp.com/healthz` → `ok: true`, `apiUrl: "https://lnkdrp.com"`, and
+8. `curl -s https://mcp.lnkdrp.com/healthz` → `ok: true`, `apiUrl: "https://www.lnkdrp.com"`, and
    `fly scale show -a lnkdrp-mcp` → exactly one machine. Add the MCP to Claude Code with that key,
    open a session; the sidebar Agents entry flips to
    "1 connected" with the client listed under it, without a click. Ask it to share a PDF by URL

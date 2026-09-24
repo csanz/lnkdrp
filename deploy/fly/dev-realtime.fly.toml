@@ -1,0 +1,32 @@
+# Dev copy of realtime.fly.toml: the same machine, on the dev database, under a dev- name. Deploy from
+# the repo root: fly deploy -a dev-lnkdrp-realtime --config deploy/fly/dev-realtime.fly.toml --dockerfile realtime/Dockerfile --ha=false
+app = "dev-lnkdrp-realtime"
+primary_region = "iad"
+
+[build]
+  dockerfile = "../../realtime/Dockerfile"
+
+[env]
+  REALTIME_PORT = "8788"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 8788
+  force_https = true
+  auto_stop_machines = false      # sockets must stay up; never scale to zero
+  auto_start_machines = true
+  min_machines_running = 1
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 2000
+    hard_limit = 5000
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

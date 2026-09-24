@@ -123,7 +123,7 @@ Env (read from `.env.local`; the same file the app uses):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `LNKDRP_API_URL` | `http://localhost:3001` (non-production), `https://lnkdrp.com` (production) | Base URL of the Next app the server calls. Share URLs are built as `${LNKDRP_API_URL}/s/<shareId>`. |
+| `LNKDRP_API_URL` | `http://localhost:3001` (non-production), `https://www.lnkdrp.com` (production) | Base URL of the Next app the server calls. Share URLs are built as `${LNKDRP_API_URL}/s/<shareId>`. |
 | `MCP_PORT` | `8787` | Listen port. |
 | `MCP_PUBLIC_URL` | `http://localhost:${MCP_PORT}` | URL advertised in `/.well-known/oauth-protected-resource`. |
 | `NEXT_PUBLIC_REALTIME_URL` | unset | `ws://localhost:8788` locally. When set, `share_pdf` waits on the socket; unset = polling only. |
@@ -227,7 +227,7 @@ only clue (`mcp/src/server.ts`):
   where a write landed and which workspace a "not found" or cap error came from.
 - **Confirmations:** destructive prompts name it: "Delete … (workspace: USAVX)".
  To
-verify a key without a client: `curl -H "Authorization: Bearer lnk_…" https://lnkdrp.com/api/agent/whoami`.
+verify a key without a client: `curl -H "Authorization: Bearer lnk_…" https://www.lnkdrp.com/api/agent/whoami`.
 That counts as "verified" on `/connect`; only an MCP client connecting counts as "connected".
 
 ## Tools
@@ -1365,7 +1365,7 @@ and destroys fifty objects and a human sits answering prompts about rows that ex
 seconds. Two conditions, both required, and the second is the one that matters: the variable is set
 to `1`/`true`/`yes`, **and** `LNKDRP_API_URL` points at localhost — the *data* is a dev database.
 That is not the same as "the process is local", and conflating them would cause the accident the
-flag exists to avoid: a local MCP server pointed at `https://lnkdrp.com` is a normal, supported
+flag exists to avoid: a local MCP server pointed at `https://www.lnkdrp.com` is a normal, supported
 setup (it is how `filePath` uploads work), and a delete there destroys a real document. The process
 being on your laptop says nothing about whose data is at the other end; the API URL does. Set
 against any other API URL the flag is ignored **and the server says so at startup**, because an
@@ -1568,7 +1568,7 @@ release — acceptable for a downsampler whose output is checked rather than tru
 docker build -f mcp/Dockerfile -t lnkdrp-mcp .
 docker run -p 8787:8787 \
   -e NODE_ENV=production \
-  -e LNKDRP_API_URL=https://lnkdrp.com \
+  -e LNKDRP_API_URL=https://www.lnkdrp.com \
   -e MCP_PORT=8787 \
   -e MCP_PUBLIC_URL=https://mcp.lnkdrp.com \
   -e NEXT_PUBLIC_REALTIME_URL=wss://realtime.lnkdrp.com \

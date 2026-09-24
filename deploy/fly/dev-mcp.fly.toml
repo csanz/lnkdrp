@@ -1,8 +1,6 @@
-# Fly.io app for the MCP server.
-# Deploy steps: DEPLOY.md 6.2 and 7 (the only copy of the commands).
-# The first deploy must pass --ha=false, and the app must stay exactly one machine:
-# sessions live in memory, so a second machine answers `404 Session not found`.
-app = "lnkdrp-mcp"
+# Dev copy of mcp.fly.toml under a dev- name; the API URL and public URL are overridden at deploy time.
+# fly deploy -a dev-lnkdrp-mcp --config deploy/fly/dev-mcp.fly.toml --dockerfile mcp/Dockerfile --ha=false -e MCP_PUBLIC_URL=https://dev-lnkdrp-mcp.fly.dev -e NEXT_PUBLIC_REALTIME_URL=
+app = "dev-lnkdrp-mcp"
 primary_region = "iad"
 
 [build]

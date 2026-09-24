@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 893 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 895 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -347,6 +347,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/preferences/NotificationPreferences.tsx`
 - `src/app/preferences/WorkspaceManager.tsx` · default
 - `src/app/preferences/preferencesShell.tsx` · default
+- `src/app/pricing/BillingInterval.tsx` · BillingInterval, BillingIntervalProvider, BillingStatus, BillingStatusPlan, loadBillingStatus, ProPriceBlock, useBillingInterval
 - `src/app/pricing/PricingCta.tsx` · default
 - `src/app/project/[projectSlug]/pageClient.tsx` · default
 - `src/app/providers.tsx` · default, useAuthEnabled, useNavigationLocked, useNavigationLockWhile
@@ -465,7 +466,6 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/modals/DeleteDocModal.tsx` · default
 - `src/components/modals/DeleteProjectModal.tsx` · default
 - `src/components/modals/DeleteRequestRepoModal.tsx` · default, RequestRepoDeleteMode
-- `src/components/modals/DocMetricsModal.tsx` · default
 - `src/components/modals/DocProjectsModal.tsx` · default, DocProjectListItem
 - `src/components/modals/Modal.tsx` · default
 - `src/components/modals/RemoveMemberModal.tsx` · default
@@ -639,6 +639,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/cron/jobs.ts` · CRON_JOBS, CronHealthRowLike, CronJobHealth, CronJobSpec, judgeCronHealth, LATE_AFTER_INTERVALS, RUNNING_STUCK_AFTER_MS, STUCK_MARGIN_MS, …
 - `src/lib/cron/lease.ts` · acquireCronLease, AcquireCronLeaseParams, CronLease, releaseCronLease
 - `src/lib/crypto/randomBase62.ts` · newSecretToken, newShareId, newShareIdWithRetry, randomBase62
+- `src/lib/db/access.ts` · explainMongoAuthzError, isMongoAuthzError, judgeMongoAccess, MongoAccessVerdict, MongoAuthInfo, MongoPrivilege, mongoUriDatabase, mongoUriUser
 - `src/lib/db/localTarget.ts` · isLocalMongoTarget, LocalTargetVerdict, mongoHosts
 - `src/lib/db/mongoRequestLogger.ts` · __getLastMongoRequestLog, withMongoRequestLogging
 - `src/lib/db/mongoose.ts` · connectMongoose
@@ -754,7 +755,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/notifications/sendNotificationEmails.ts` · LOCAL_DEV_EMAIL_BASE_URL, NotificationBucketTotals, NotificationDigestTotals, publicBaseUrl, sendNotificationEmails, SendNotificationEmailsParams, SendNotificationEmailsResult
 - `src/lib/notifications/sendNotificationEmailsCli.ts` · NotificationEmailsCliDeps, parseNotificationEmailsArgs, runNotificationEmailsCli
 - `src/lib/notifications/viewEmailToken.ts` · createEmailsOffToken, createViewEmailsOffToken, EMAIL_OFF_KINDS, EmailOffKind, emailsOffUrl, verifyAnyEmailsOffToken, VerifyAnyResult, verifyViewEmailsOffToken, …
-- `src/lib/notifications/viewNotifications.ts` · buildMetricsUrl, buildPreferencesUrl, buildReaderUrl, capAtTimestampBoundary, CHANGE_HOW_OFTEN_LABEL, combineHorizons, ComposeContext, ComposedEmail, …
+- `src/lib/notifications/viewNotifications.ts` · buildMetricsUrl, buildPreferencesUrl, buildReaderUrl, buildUpsellUrl, capAtTimestampBoundary, CHANGE_HOW_OFTEN_LABEL, combineHorizons, ComposeContext, …
 - `src/lib/notifications/visitBriefEmail.ts` · ComposedVisitBriefEmail, composeVisitBriefEmail, headlineSubject, ordinal, pageRanges, RECAP_LINES, VISIT_BRIEF_ACTION_LABEL, VISIT_BRIEF_DOC_LABEL, …
 - `src/lib/og/imageResponse.tsx` · DEFAULT_OG_SIZE, imageResponseFromBytes, mimeFromPath, OgDims, parseJpegDims, parsePngDims, sniffImageDims
 - `src/lib/onboarding/firstRun.ts` · FIRST_RUN_PATH, FIRST_RUN_SINCE, FirstRunState, markFirstRunDone, needsFirstRun, userNeedsFirstRun
@@ -886,6 +887,7 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `scripts/docchange-from-upload-repair.ts`
 - `scripts/gen-env-secrets.mjs`
 - `scripts/home-shot-brief.ts`
+- `scripts/lib/exit.ts` · exit
 - `scripts/lib/time.mjs` · safeTimestamp
 - `scripts/measure-image-tokens.ts`
 - `scripts/mongo-clear-ai-runs-and-requests.ts`

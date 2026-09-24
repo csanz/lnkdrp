@@ -2,7 +2,7 @@
  * Environment and constants for the lnkdrp MCP server.
  *
  * Env: `LNKDRP_API_URL` (Next app base URL; defaults to `http://localhost:3001` outside production
- * and `https://lnkdrp.com` in production), `MCP_PORT` (default 8787), `MCP_PUBLIC_URL` (advertised
+ * and `https://www.lnkdrp.com` in production), `MCP_PORT` (default 8787), `MCP_PUBLIC_URL` (advertised
  * URL, default `http://localhost:${MCP_PORT}`), `NEXT_PUBLIC_REALTIME_URL` + `REALTIME_SECRET` /
  * `NEXTAUTH_SECRET` (optional; only used by `lnkdrp_share_pdf` to wait for "ready" over the
  * realtime channel instead of polling), `NEXT_PUBLIC_FEATURE_REQUESTS` (same build-time flag the
@@ -51,7 +51,7 @@ function trimSlashes(value: string): string {
 /** Read the server configuration from `env` (defaults to `process.env`). */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const isProduction = env.NODE_ENV === "production";
-  const apiUrl = trimSlashes(env.LNKDRP_API_URL || (isProduction ? "https://lnkdrp.com" : "http://localhost:3001"));
+  const apiUrl = trimSlashes(env.LNKDRP_API_URL || (isProduction ? "https://www.lnkdrp.com" : "http://localhost:3001"));
   const portRaw = Number(env.MCP_PORT || 8787);
   const port = Number.isFinite(portRaw) && portRaw > 0 ? Math.floor(portRaw) : 8787;
   const publicUrl = trimSlashes(env.MCP_PUBLIC_URL || `http://localhost:${port}`);

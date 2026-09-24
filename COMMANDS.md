@@ -55,6 +55,7 @@ The `:prod` scripts need a real `MONGODB_URI` and `NEXTAUTH_SECRET` in `.env.pro
 
 | Suite | Command |
 |---|---|
+| The gate: lib, credits and upload suites in one go (what CI runs) | `npm test` |
 | Library unit tests | `npm run tests:lib:vitest` |
 | Credits | `npm run tests:credits:vitest` |
 | Upload pipeline | `npm run tests:upload:vitest` |
@@ -71,7 +72,7 @@ The `:prod` scripts need a real `MONGODB_URI` and `NEXTAUTH_SECRET` in `.env.pro
 | PDF first page to PNG / PDF to text | `npm run test:pdf2png`, `npm run test:pdf2txt` |
 | Image token cost measurement | `npm run measure:image-tokens` |
 
-The release gate (`DEPLOY.md` 9) is: tsc, eslint, the lib/credits/upload suites, `npx next build`.
+The release gate (`DEPLOY.md` 9) is: tsc, eslint, `npm test`, `npx next build`. The first three also run in GitHub Actions on every pull request (`.github/workflows/test.yml`).
 
 ## Cron jobs, run by hand
 
@@ -140,6 +141,8 @@ for most:
 | Realtime on Fly (full block in `DEPLOY.md` 6.2) | `fly deploy --ha=false --config deploy/fly/realtime.fly.toml --dockerfile realtime/Dockerfile` |
 | MCP on Fly (full block in `DEPLOY.md` 7) | `fly deploy --ha=false --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile` |
 | Service health on Fly | `curl https://lnkdrp-realtime.fly.dev/healthz`, `curl https://lnkdrp-mcp.fly.dev/healthz` |
+| Dev copies on Fly (`dev-lnkdrp-realtime`, `dev-lnkdrp-mcp`, org `lnkdrp`) | `fly deploy -a dev-lnkdrp-realtime --config deploy/fly/dev-realtime.fly.toml --dockerfile realtime/Dockerfile --ha=false`; MCP: `fly deploy -a dev-lnkdrp-mcp --config deploy/fly/dev-mcp.fly.toml --dockerfile mcp/Dockerfile --ha=false -e LNKDRP_API_URL=https://www.lnkdrp.com -e MCP_PUBLIC_URL=https://dev-lnkdrp-mcp.fly.dev -e NEXT_PUBLIC_REALTIME_URL=` |
+| Realtime end to end (ticket, socket, a change-stream frame) | `TEST_REALTIME_URL=wss://dev-lnkdrp-realtime.fly.dev npx tsx --env-file=.env.local scripts/realtime-e2e.ts` |
 | Fly logs | `fly logs -a lnkdrp-realtime`, `fly logs -a lnkdrp-mcp` |
 | Build the service images anywhere | `docker build -f realtime/Dockerfile -t lnkdrp-realtime .`, `docker build -f mcp/Dockerfile -t lnkdrp-mcp .` |
 | Both services with Compose | `docker compose -f deploy/docker-compose.yml --env-file .env.production.services up -d --build` |

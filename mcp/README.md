@@ -30,7 +30,7 @@ an operator checking a deployment from here had nothing to check.
 ## Connect a client
 
 The one thing this server cannot make for you is the key it acts with. Open **`/connect`** in the
-app (`http://localhost:3001/connect` in dev, `https://lnkdrp.com/connect` in production): any
+app (`http://localhost:3001/connect` in dev, `https://www.lnkdrp.com/connect` in production): any
 workspace member can open it, owners and admins create and revoke keys. It creates a key, shows the
 plaintext `lnk_…` **once**, and renders the install snippet for each client with that key and the
 right server URL already filled in — so the fastest path is to copy the snippet from there rather
@@ -81,10 +81,10 @@ workspace; only the process location changes.
 
 ```sh
 # HTTP, alongside the hosted one
-LNKDRP_API_URL=https://lnkdrp.com LNKDRP_ALLOW_LOCAL_FILES=1 npm run mcp
+LNKDRP_API_URL=https://www.lnkdrp.com LNKDRP_ALLOW_LOCAL_FILES=1 npm run mcp
 
 # or stdio, for a client that launches the server itself
-LNKDRP_API_URL=https://lnkdrp.com LNKDRP_ALLOW_LOCAL_FILES=1 LNKDRP_API_KEY=lnk_… npm run mcp -- --stdio
+LNKDRP_API_URL=https://www.lnkdrp.com LNKDRP_ALLOW_LOCAL_FILES=1 LNKDRP_API_KEY=lnk_… npm run mcp -- --stdio
 ```
 
 `LNKDRP_ALLOW_LOCAL_FILES=1` is required and is the whole point: without it the server refuses
@@ -100,7 +100,7 @@ and a retry that crosses between them creates a second document rather than repl
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `LNKDRP_API_URL` | `http://localhost:3001` (dev) / `https://lnkdrp.com` (production) | Base URL of the Next app. Share URLs are `${LNKDRP_API_URL}/s/<shareId>`. |
+| `LNKDRP_API_URL` | `http://localhost:3001` (dev) / `https://www.lnkdrp.com` (production) | Base URL of the Next app. Share URLs are `${LNKDRP_API_URL}/s/<shareId>`. |
 | `MCP_PORT` | `8787` | Listen port. |
 | `MCP_PUBLIC_URL` | `http://localhost:${MCP_PORT}` | Advertised URL (resource metadata, `WWW-Authenticate`). |
 | `NEXT_PUBLIC_REALTIME_URL` | unset | Realtime WebSocket URL. Only used by `lnkdrp_share_pdf` and `lnkdrp_replace_pdf`, to return the moment processing finishes instead of on the next poll. |
@@ -111,7 +111,7 @@ and a retry that crosses between them creates a second document rather than repl
 | `LNKDRP_GHOSTSCRIPT` | unset | Explicit path to the `gs` binary. Without it the optimizer tries `gs`, then `/opt/homebrew/bin/gs`, `/usr/local/bin/gs`, `/usr/bin/gs` — a GUI-launched server often inherits a bare `PATH`. |
 | `LNKDRP_PDF_OPTIMIZE_DPI` | `220` | Image resolution the PDF optimizer downsamples to, clamped to 72–600. Tuned by hand (see `src/optimize.ts`); treat it as a setting, not a default to revisit. |
 | `NEXT_PUBLIC_FEATURE_REQUESTS` | unset | The same build-time flag the web app reads; `1` means request repos exist on this deployment. Surfaced read-only in `lnkdrp_whoami`'s `capabilities.notMcpAccessible` so an agent can tell "not on this deployment" from "no MCP tool covers it". |
-| `NODE_ENV` | unset | `production` switches the `LNKDRP_API_URL` default to `https://lnkdrp.com`. The Docker image sets it. |
+| `NODE_ENV` | unset | `production` switches the `LNKDRP_API_URL` default to `https://www.lnkdrp.com`. The Docker image sets it. |
 
 That is the whole list — `mcp/src/config.ts` is the source of truth for everything the server reads
 at startup, plus the four variables read where they are used: `LNKDRP_ALLOW_LOCAL_FILES`
@@ -718,7 +718,7 @@ it as a container anywhere (Fly, Railway, a VM, next to the realtime server):
 
 ```sh
 docker build -f mcp/Dockerfile -t lnkdrp-mcp .      # from the repo root
-docker run -p 8787:8787 -e LNKDRP_API_URL=https://lnkdrp.com -e MCP_PUBLIC_URL=https://mcp.lnkdrp.com \
+docker run -p 8787:8787 -e LNKDRP_API_URL=https://www.lnkdrp.com -e MCP_PUBLIC_URL=https://mcp.lnkdrp.com \
   -e NEXT_PUBLIC_REALTIME_URL=wss://realtime.lnkdrp.com -e REALTIME_SECRET=… lnkdrp-mcp
 ```
 
