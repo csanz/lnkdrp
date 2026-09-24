@@ -34,6 +34,11 @@ export default function ClientTabs({
   const [client, setClient] = useState<ClientKey>("claude");
   const active = CLIENT_SETUPS.find((c) => c.key === client) ?? CLIENT_SETUPS[0];
   const key = plaintextKey ?? KEY_PLACEHOLDER;
+  // Sign in is the default wherever the client supports it. A key just created on this page is a
+  // strong hint the person wants the key path, so that flips the default until they choose.
+  const [mode, setMode] = useState<"signin" | "key" | null>(null);
+  const canSignIn = Boolean(active.signIn);
+  const useKey = !canSignIn || (mode ? mode === "key" : Boolean(plaintextKey));
   // Commands point at the MCP server that matches this page's origin (local default on a dev
   // server, production on the site). Read after mount so the first frame matches the server render.
   const [origin, setOrigin] = useState(SITE_ORIGIN);
@@ -43,7 +48,9 @@ export default function ClientTabs({
   const mcp = mcpUrlForOrigin(origin);
   const isLocal = mcp !== MCP_URL;
   const serverName = mcpServerName(workspace);
-  const remove = active.remove(serverName);
+  const remove = useKey || !active.signIn ? active.remove(serverName) : active.signIn.remove(serverName);
+  const lines = useKey || !active.signIn ? active.lines(key, mcp, serverName) : active.signIn.lines(mcp, serverName);
+  const note = useKey || !active.signIn ? active.note : active.signIn.note;
 
   return (
     <div>
@@ -94,9 +101,37 @@ export default function ClientTabs({
             )}
           </p>
         ) : null}
-        <CodeBlock lines={active.lines(key, mcp, serverName)} label={`Copy ${active.label} setup`} />
+        {canSignIn ? (
+          <div className="mb-3 flex flex-wrap items-center gap-2" role="radiogroup" aria-label="How to authenticate">
+            {(
+              [
+                { id: "signin", label: "Sign in", hint: "Recommended" },
+                { id: "key", label: "Use a key", hint: "Scripts, no browser" },
+              ] as const
+            ).map((opt) => {
+              const selected = (opt.id === "key") === useKey;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setMode(opt.id)}
+                  className={[
+                    "inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] motion-reduce:transition-none",
+                    selected ? "border-[var(--fg)] bg-[var(--fg)] text-[var(--bg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]",
+                  ].join(" ")}
+                >
+                  {opt.label}
+                  <span className={["text-[10px] font-semibold uppercase tracking-[0.1em]", selected ? "text-[var(--bg)]/70" : "text-[var(--muted-2)]"].join(" ")}>{opt.hint}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        <CodeBlock lines={lines} label={`Copy ${active.label} setup`} />
         <div className="mt-3 flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5 text-[12px] leading-5 text-[var(--muted-2)]">
-          <p className="min-w-0 flex-1">{active.note}</p>
+          <p className="min-w-0 flex-1">{note}</p>
           <Link
             href={`/mcp/${active.slug}`}
             className="shrink-0 font-medium text-[var(--muted)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
@@ -105,16 +140,17 @@ export default function ClientTabs({
           </Link>
         </div>
         <p className="mt-3 text-[12px] leading-5 text-[var(--muted-2)]">
-          The MCP server ships with launch. Your key already works against the verification endpoint below.
-          {plaintextKey ? null : " Commands show a placeholder until you create a key."}
+          {useKey
+            ? `The MCP server ships with launch. Your key already works against the verification endpoint below.${plaintextKey ? "" : " Commands show a placeholder until you create a key under Keys and agents."}`
+            : "The MCP server ships with launch. Signing in works the moment it is up: the client finds lnkdrp's sign-in on its own."}
         </p>
         {/* Rotating a key is the one thing every client makes awkward ("lnkdrp already exists"), so
             this gets a real callout rather than a footnote. Closed by default to keep step 2 short. */}
         <details className="group mt-4 rounded-xl border border-[var(--border)] border-l-4 border-l-[var(--fg)] bg-[var(--panel-2)] px-4 py-3 text-[13px] leading-5 text-[var(--muted)]">
           <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
             <span className="min-w-0">
-              <span className="block font-semibold text-[var(--fg)]">Already added {serverName}? Changing the key or removing it</span>
-              <span className="block text-[12px] text-[var(--muted-2)]">Re-running the add command with a new key fails. Here is the fix for {active.label}.</span>
+              <span className="block font-semibold text-[var(--fg)]">{useKey ? `Already added ${serverName}? Changing the key or removing it` : `Disconnecting ${serverName}, or connecting again`}</span>
+              <span className="block text-[12px] text-[var(--muted-2)]">{useKey ? `Re-running the add command with a new key fails. Here is the fix for ${active.label}.` : `Revoke here, remove in ${active.label}, add again to sign in afresh.`}</span>
             </span>
             <span aria-hidden="true" className="shrink-0 text-[var(--muted-2)] transition-transform group-open:rotate-90">›</span>
           </summary>

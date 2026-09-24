@@ -388,7 +388,7 @@ export default function KeysPanel({
     ) : null;
 
   return (
-    <Panel id="keys" step={1} title="Create a key" caption={status ? `${activeCount} active` : undefined} action={action}>
+    <Panel id="keys" title="Keys and agents" caption={status ? `${activeCount} active` : undefined} action={action}>
       {created ? (
         <div className="mb-4">
           <RevealBox

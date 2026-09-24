@@ -6,7 +6,7 @@ import Link from "next/link";
 /**
  * Client UI for `/connect`.
  *
- * Top to bottom: header with the live agent status, the three-step rail, the keys panel (create
+ * Top to bottom: header with the live agent status, the three-step rail (add, sign in, verify), the client panel, the sign-in note, verify, then the keys panel (create
  * reveals the plaintext once), client tabs rendered with that key, the verify block, the tool
  * catalog and troubleshooting. Status comes from the shared `useAgentStatus()` cache, which the
  * sidebar also reads, so creating or revoking a key updates both.
@@ -43,12 +43,14 @@ export default function ConnectPageClient() {
     return row ? { name: row.name, isPersonal: row.type === "personal" } : null;
   }, [stableOrgs, activeOrgId]);
 
-  const activeKeys = status ? status.keys.filter((k) => !k.revoked).length : 0;
+  // Any active credential, a sign-in grant or a key, means the client has been added and signed
+  // in (or given a key): steps 1 and 2 are behind us and Verify is what remains.
+  const activeCredentials = status ? status.keys.filter((k) => !k.revoked).length : 0;
   const connected = Boolean(status?.connected);
   // A verified key (curl) completes step 3 as well: the key works; the agent's own first call
   // upgrades the pill from "Key verified" to "Connected".
   const verified = Boolean(status?.verified);
-  const currentStep: 1 | 2 | 3 = connected || verified ? 3 : activeKeys > 0 ? 2 : 1;
+  const currentStep: 1 | 2 | 3 = connected || verified ? 3 : activeCredentials > 0 ? 3 : 1;
 
   const onCreated = useCallback((plaintext: string, key: AgentKeyRow) => setCreated({ plaintext, key }), []);
   const onUse = useCallback((plaintext: string) => {
@@ -71,7 +73,7 @@ export default function ConnectPageClient() {
       <AppPageHeader
         icon={CpuChipIcon}
         title="Agents"
-        description="Create links and read the numbers from Claude Code, Cursor, Codex, or any MCP client. One key per agent or machine."
+        description="Create links and read the numbers from Claude Code, Cursor, Codex, or any MCP client. Add lnkdrp to your client and sign in when it asks."
         actions={<StatusPill status={status} loading={loading} href={connected || verified ? "/activity?who=agents" : undefined} />}
       >
         <StepsRail current={currentStep} done={connected || verified} />
@@ -102,15 +104,23 @@ export default function ConnectPageClient() {
         ) : null}
         <div className="grid w-full grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:items-start">
           <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
-            <KeysPanel status={status} loading={loading} plaintextKey={plaintextKey} onCreated={onCreated} onUse={onUse} onRevoked={onRevoked} />
-
-            <Panel id="client" step={2} title="Add lnkdrp to your client" caption="Pick your client">
+            <Panel id="client" step={1} title="Add lnkdrp to your client" caption="Pick your client">
               <ClientTabs plaintextKey={plaintextKey} workspace={workspace} />
+            </Panel>
+
+            <Panel id="sign-in" step={2} title="Sign in when it asks" caption="In your browser">
+              <p className="text-[13px] leading-5 text-[var(--muted)]">
+                Your client opens lnkdrp in the browser. Pick the workspace the agent should work in and click{" "}
+                <span className="font-medium text-[var(--fg)]">Allow</span>. The agent then appears below under Keys and agents, marked
+                Signed in, and you can revoke it there at any time. Nothing to paste, and nothing to keep.
+              </p>
             </Panel>
 
             <Panel id="verify" step={3} title="Verify" caption="Works today">
               <VerifyPanel plaintextKey={plaintextKey} status={status} loading={loading} onCheck={check} />
             </Panel>
+
+            <KeysPanel status={status} loading={loading} plaintextKey={plaintextKey} onCreated={onCreated} onUse={onUse} onRevoked={onRevoked} />
           </div>
 
           <aside className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 xl:sticky xl:top-0">

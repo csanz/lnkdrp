@@ -6,6 +6,11 @@
  * the public guides (`/mcp`, `/mcp/[client]`). Every command takes the key as a parameter so the
  * Connect page can render a freshly created key inline while public pages use `KEY_PLACEHOLDER`.
  *
+ * Two ways in, and the order matters: **signing in** is the way every guide leads with (the client
+ * registers itself, the person picks a workspace on a consent screen, no key changes hands), and a
+ * **key** is the fallback for scripts and for clients that cannot open a browser. Entries with
+ * `signIn` get the sign-in steps first and the key steps under "Using a key instead".
+ *
  * Copy rules: no em-dashes; the MCP server "ships with launch"; the verification endpoint works today.
  */
 
@@ -44,7 +49,7 @@ export const WHOAMI_PATH = "/api/agent/whoami";
 export const WHOAMI_URL = `${SITE_ORIGIN}${WHOAMI_PATH}`;
 export const KEY_PLACEHOLDER = "lnk_your_key_here";
 /** Shown on the public guides as "Last updated". Bump when a client's steps change. */
-export const GUIDES_LAST_UPDATED = "September 13, 2026";
+export const GUIDES_LAST_UPDATED = "September 24, 2026";
 
 export type ClientKey = "claude" | "cowork" | "cursor" | "codex" | "gemini" | "grok" | "json";
 export type ClientSetupKind = "cli" | "ui" | "json";
@@ -78,6 +83,22 @@ export type ClientSetup = {
    * command with a new key fails ("lnkdrp already exists"); the fix is remove, then add again.
    */
   remove: (name?: string) => { body: string; code?: string[] };
+  /**
+   * The sign-in path, for clients that implement MCP authorization: add the server with no header,
+   * then sign in when the client asks. Absent for a client that can only send a header (Grok).
+   */
+  signIn?: {
+    /** Short note under the compact snippet. */
+    note: string;
+    /** Compact snippet (homepage, `/connect` tab). */
+    lines: (mcpUrl?: string, name?: string) => string[];
+    /** The client's own steps, adding the server and signing in; the guide adds Verify after them. */
+    steps: (mcpUrl?: string, name?: string) => SetupStep[];
+    /** For JSON-config clients: the entry to paste when `mcpServers` already has other entries. */
+    mergeSnippet?: (mcpUrl?: string, name?: string) => string[];
+    /** How to disconnect, and reconnect. */
+    remove: (name?: string) => { body: string; code?: string[] };
+  };
 };
 
 /** The connection name for a personal workspace, and the prefix for every other one. */
@@ -124,7 +145,7 @@ export const PERSONAL_WORKSPACE_DEFAULT_NAME = "Personal";
 export const MULTIPLE_WORKSPACES = {
   title: "More than one workspace",
   body:
-    "A key belongs to one workspace, and your client keeps one server per name. To connect another workspace, switch to it in lnkdrp, create a key there, and add it under its own name, such as lnkdrp-acme (Connect names it for you after the workspace; a personal workspace still called Personal is lnkdrp-personal). Existing connections keep working, and your agent sees them all; lnkdrp_whoami on each says which workspace it acts on.",
+    "A connection belongs to one workspace, and your client keeps one server per name. To connect another workspace, add lnkdrp again under its own name, such as lnkdrp-acme (Connect names it for you after the workspace; a personal workspace still called Personal is lnkdrp-personal), and pick that workspace when you sign in, or use a key created there. Existing connections keep working, and your agent sees them all; lnkdrp_whoami on each says which workspace it acts on.",
 };
 
 /** The server entry inside an `mcpServers` object, at the given base indent. */
@@ -147,6 +168,21 @@ function uiFields(key: string, mcp: string = MCP_URL, name: string = DEFAULT_SER
   return [`name   ${name}`, `url    ${mcp}`, `auth   Bearer ${key}`];
 }
 
+/** The same server entry with no header: the client signs in instead. */
+function jsonEntryNoAuth(indent: string, mcp: string = MCP_URL, name: string = DEFAULT_SERVER_NAME): string[] {
+  return [`${indent}"${name}": {`, `${indent}  "url": "${mcp}"`, `${indent}}`];
+}
+
+/** A complete `mcpServers` config with no header. */
+function jsonConfigNoAuth(mcp: string = MCP_URL, name: string = DEFAULT_SERVER_NAME): string[] {
+  return ["{", '  "mcpServers": {', ...jsonEntryNoAuth("    ", mcp, name), "  }", "}"];
+}
+
+/** UI fields with the auth field left empty, for clients that sign in from their settings screen. */
+function uiFieldsNoAuth(mcp: string = MCP_URL, name: string = DEFAULT_SERVER_NAME): string[] {
+  return [`name   ${name}`, `url    ${mcp}`, "auth   leave empty, you sign in instead"];
+}
+
 const D = DEFAULT_SERVER_NAME;
 
 export const CLIENT_SETUPS: ClientSetup[] = [
@@ -155,8 +191,28 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     slug: "claude-code",
     label: "Claude Code",
     kind: "cli",
-    blurb: "One command in a terminal. Claude Code talks to lnkdrp over HTTP with your key, or signs you in.",
-    note: "Run this in a terminal. Add --scope user to make it available in every project. Or leave the header off and run /mcp inside Claude Code to sign in instead of using a key.",
+    blurb: "One command in a terminal, then sign in from Claude Code. Nothing to paste.",
+    note: "Run this in a terminal. Add --scope user to make it available in every project.",
+    signIn: {
+      note: "Run this in a terminal, then /mcp inside Claude Code to sign in. Add --scope user to make it available in every project.",
+      lines: (mcp = MCP_URL, name = D) => [`claude mcp add --transport http ${name} ${mcp}`],
+      steps: (mcp = MCP_URL, name = D) => [
+        {
+          title: "Add lnkdrp to Claude Code",
+          body: "Run this in a terminal. No key and no header: Claude Code asks you to sign in. By default it registers the server for the project you run it from; add --scope user to make it available everywhere.",
+          code: [`claude mcp add --transport http ${name} ${mcp}`],
+        },
+        {
+          title: "Sign in",
+          body: `Start Claude Code, run /mcp, pick ${name} and choose Authenticate. lnkdrp opens in your browser: sign in if you are not already, pick the workspace this agent should work in, and click Allow. Claude Code keeps its own credential from then on and refreshes it by itself.`,
+          code: ["/mcp"],
+        },
+      ],
+      remove: (name = D) => ({
+        body: `To disconnect, revoke the agent on Connect (it stops at once) and remove ${name} from Claude Code. To connect again, add it and sign in. To connect a second workspace, add it under another name and pick that workspace when you sign in.`,
+        code: [`claude mcp remove ${name}`],
+      }),
+    },
     docsUrl: "https://docs.claude.com/en/docs/claude-code/mcp",
     remove: (name = D) => ({
       body: `Claude Code keeps one server per name, so re-running the add command with a new key fails with "${name} already exists". Remove it first, then add it again with the new key. Add -s user if you registered it with --scope user.`,
@@ -174,11 +230,6 @@ export const CLIENT_SETUPS: ClientSetup[] = [
         body: `Run claude mcp list and look for ${name}. Inside a session, /mcp shows the connection state.`,
         code: ["claude mcp list"],
       },
-      {
-        title: "Or sign in instead of using a key",
-        body: "Add the server without the header, then run /mcp inside Claude Code, pick the server and sign in. lnkdrp opens in your browser, you choose the workspace, and Claude Code keeps its own token. Nothing to paste, and the Connect page lists it next to your keys.",
-        code: [`claude mcp add --transport http ${name} ${mcp}`],
-      },
     ],
   },
   {
@@ -186,11 +237,28 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     slug: "cowork",
     label: "Cowork",
     kind: "ui",
-    blurb: "Add lnkdrp as a connector from Cowork's settings. No terminal needed.",
+    blurb: "Add lnkdrp as a connector from Cowork's settings and sign in. No terminal needed.",
     note: "Fill in these fields when Cowork asks for the server details.",
     remove: (name = D) => ({
       body: `Open Cowork › Settings › Connectors, pick ${name}, and either paste the new token into the auth field or remove the connector.`,
     }),
+    signIn: {
+      note: "Leave the authentication field empty. Cowork opens lnkdrp in your browser to sign in.",
+      lines: (mcp = MCP_URL, name = D) => ["Cowork › Settings › Connectors › Add MCP server", ...uiFieldsNoAuth(mcp, name)],
+      steps: (mcp = MCP_URL, name = D) => [
+        { title: "Open Connectors", body: "In Cowork, open Settings, then Connectors, then Add MCP server." },
+        {
+          title: "Enter the name and the URL",
+          body: `Use ${name} as the name and the URL below as the server address. Leave the authentication field empty.`,
+          code: uiFieldsNoAuth(mcp, name),
+        },
+        {
+          title: "Sign in",
+          body: "Cowork opens lnkdrp in your browser. Sign in if you are not already, pick the workspace this agent should work in, and click Allow.",
+        },
+      ],
+      remove: (name = D) => ({ body: `To disconnect, revoke the agent on Connect and remove ${name} under Cowork › Settings › Connectors. To connect again, add it and sign in.` }),
+    },
     lines: (key, mcp = MCP_URL, name = D) => ["Cowork › Settings › Connectors › Add MCP server", ...uiFields(key, mcp, name)],
     steps: (key, mcp = MCP_URL, name = D) => [
       {
@@ -209,8 +277,29 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     slug: "cursor",
     label: "Cursor",
     kind: "json",
-    blurb: "A few lines in Cursor's mcp.json. Works globally or per project.",
+    blurb: "A few lines in Cursor's mcp.json, then click Login. Works globally or per project.",
     note: "Cursor stores servers in ~/.cursor/mcp.json (or .cursor/mcp.json inside a project).",
+    signIn: {
+      note: "Cursor stores servers in ~/.cursor/mcp.json (or .cursor/mcp.json inside a project). After you save, click Login next to the server.",
+      lines: (mcp = MCP_URL, name = D) => jsonConfigNoAuth(mcp, name),
+      steps: (mcp = MCP_URL, name = D) => [
+        {
+          title: "Open Cursor's MCP settings",
+          body: "Open Cursor Settings, then MCP, then Add new global MCP server. This opens ~/.cursor/mcp.json. Use .cursor/mcp.json inside a project to scope the server to that project.",
+        },
+        {
+          title: "Add the lnkdrp server",
+          body: "Paste this if the file is empty, then save. No key and no header.",
+          code: jsonConfigNoAuth(mcp, name),
+        },
+        {
+          title: "Sign in",
+          body: `Back in Cursor's MCP settings, ${name} shows Needs login. Click it: lnkdrp opens in your browser, you pick the workspace this agent should work in and click Allow. Cursor then shows a green dot next to ${name}.`,
+        },
+      ],
+      mergeSnippet: (mcp = MCP_URL, name = D) => jsonEntryNoAuth("", mcp, name),
+      remove: (name = D) => ({ body: `To disconnect, revoke the agent on Connect and delete the "${name}" entry from mcp.json. To connect again, add the entry and click Login.` }),
+    },
     docsUrl: "https://docs.cursor.com/context/mcp",
     remove: (name = D) => ({
       body: `Edit the same mcp.json: replace the value after "Bearer " with the new key, or delete the "${name}" entry. Cursor reloads the file when you save.`,
@@ -234,8 +323,25 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     slug: "codex",
     label: "Codex",
     kind: "cli",
-    blurb: "One command in a terminal. Codex keeps the server in its config file.",
+    blurb: "Two commands in a terminal: add the server, then log in.",
     note: "Run this in a terminal. Codex stores it in ~/.codex/config.toml.",
+    signIn: {
+      note: "Run both in a terminal. The second opens lnkdrp in your browser to sign in.",
+      lines: (mcp = MCP_URL, name = D) => [`codex mcp add ${name} --url ${mcp}`, `codex mcp login ${name}`],
+      steps: (mcp = MCP_URL, name = D) => [
+        {
+          title: "Add lnkdrp to Codex",
+          body: "Run this in a terminal. No key and no header. Codex stores the server in ~/.codex/config.toml.",
+          code: [`codex mcp add ${name} --url ${mcp}`],
+        },
+        {
+          title: "Sign in",
+          body: "This opens lnkdrp in your browser. Sign in if you are not already, pick the workspace this agent should work in, and click Allow.",
+          code: [`codex mcp login ${name}`],
+        },
+      ],
+      remove: (name = D) => ({ body: `To disconnect, revoke the agent on Connect and remove ${name} from Codex. To connect again, add it and log in.`, code: [`codex mcp remove ${name}`] }),
+    },
     docsUrl: "https://developers.openai.com/codex/mcp",
     remove: (name = D) => ({
       body: `Codex keeps one server per name. Remove ${name}, then add it again with the new key.`,
@@ -260,8 +366,25 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     slug: "gemini-cli",
     label: "Gemini CLI",
     kind: "cli",
-    blurb: "One command in a terminal. Gemini CLI connects over HTTP with your key.",
+    blurb: "One command in a terminal, then sign in with /mcp auth.",
     note: "Run this in a terminal. Gemini CLI stores it in ~/.gemini/settings.json.",
+    signIn: {
+      note: "Run this in a terminal, then /mcp auth inside Gemini CLI to sign in.",
+      lines: (mcp = MCP_URL, name = D) => [`gemini mcp add --transport http ${name} ${mcp}`],
+      steps: (mcp = MCP_URL, name = D) => [
+        {
+          title: "Add lnkdrp to Gemini CLI",
+          body: "Run this in a terminal. No key and no header. Gemini CLI stores the server in ~/.gemini/settings.json.",
+          code: [`gemini mcp add --transport http ${name} ${mcp}`],
+        },
+        {
+          title: "Sign in",
+          body: `Start Gemini CLI and run /mcp auth ${name}. lnkdrp opens in your browser: sign in if you are not already, pick the workspace this agent should work in, and click Allow.`,
+          code: [`/mcp auth ${name}`],
+        },
+      ],
+      remove: (name = D) => ({ body: `To disconnect, revoke the agent on Connect and remove ${name} from Gemini CLI. To connect again, add it and run /mcp auth.`, code: [`gemini mcp remove ${name}`] }),
+    },
     docsUrl: "https://geminicli.com/docs/tools/mcp-server/",
     remove: (name = D) => ({
       body: `Gemini CLI keeps one server per name. Remove ${name}, then add it again with the new key.`,
@@ -307,8 +430,21 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     slug: "any-client",
     label: "Any client",
     kind: "json",
-    blurb: "Any MCP client that reads an mcpServers config. Streamable HTTP with a bearer token.",
+    blurb: "Any MCP client that reads an mcpServers config. Sign in if it supports OAuth, or use a key.",
     note: "lnkdrp is a remote server over streamable HTTP, so there is no local process to install.",
+    signIn: {
+      note: "If your client supports OAuth for remote MCP servers, this is enough: it asks you to sign in. If it only takes a header, use a key.",
+      lines: (mcp = MCP_URL, name = D) => jsonConfigNoAuth(mcp, name),
+      steps: (mcp = MCP_URL, name = D) => [
+        {
+          title: "Add the server to your client's MCP config",
+          body: "Most clients read an mcpServers object from a JSON file; check your client's docs for where the file lives. A client that supports OAuth for remote servers finds lnkdrp's sign-in on its own and prompts you: sign in, pick the workspace, click Allow. A client that only takes a header needs a key instead.",
+          code: jsonConfigNoAuth(mcp, name),
+        },
+      ],
+      mergeSnippet: (mcp = MCP_URL, name = D) => jsonEntryNoAuth("", mcp, name),
+      remove: (name = D) => ({ body: `To disconnect, revoke the agent on Connect and delete the "${name}" entry from your client's config.` }),
+    },
     remove: (name = D) => ({
       body: `Edit the "${name}" entry in your client's config: replace the Bearer value with the new key, or delete the entry. Restart the client if it does not watch the file.`,
     }),
@@ -816,6 +952,14 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
 /** Short answers to the questions people hit first. Shared by `/connect` and the public guides. */
 export const TROUBLESHOOTING: Array<{ q: string; a: string }> = [
   {
+    q: "My client never opened the sign-in page.",
+    a: "The client has to support OAuth for remote MCP servers; Claude Code, Cursor, Codex and Gemini CLI do. Look for Authenticate, Login or /mcp auth next to lnkdrp in the client. If there is nothing like it, use a key instead: create one on Connect and add it as a bearer header.",
+  },
+  {
+    q: "I signed in but the agent says unauthorized.",
+    a: "The connection was revoked on Connect, or the sign-in was for a different workspace than you expected. Remove lnkdrp in the client, add it again and sign in afresh, picking the workspace you want.",
+  },
+  {
     q: "My client says lnkdrp already exists.",
     a: "Each client keeps one server per name, so adding again with a new key is refused. If you are changing the key, remove the old entry first (the command or setting is under \"Change the key or remove lnkdrp\" for your client), then add it again. If this key is for a different workspace, don't remove anything: add it under that workspace's own name, such as lnkdrp-acme or lnkdrp-personal.",
   },
@@ -825,7 +969,7 @@ export const TROUBLESHOOTING: Array<{ q: string; a: string }> = [
   },
   {
     q: "The agent sees the wrong workspace.",
-    a: "A key belongs to one workspace. Switch to the workspace you want in lnkdrp, create a key there, and add it under its own name (Connect shows it, such as lnkdrp-acme) so it sits next to your other connections instead of replacing one.",
+    a: "A connection belongs to one workspace: the one you picked when you signed in, or the one the key was created in. Add lnkdrp again under another name (Connect shows it, such as lnkdrp-acme) and pick that workspace when you sign in, or create a key there, so it sits next to your other connections instead of replacing one.",
   },
   {
     q: "How does lnkdrp know which client connected?",

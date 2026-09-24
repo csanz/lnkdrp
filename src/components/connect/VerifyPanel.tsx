@@ -45,23 +45,27 @@ export default function VerifyPanel({
     if (status.verified && status.lastVerified) {
       return `Key verified with ${status.lastVerified.client} ${formatRelative(status.lastVerified.at)}. No agent client has connected yet; that happens on its first tool call once your client is set up.`;
     }
-    return "No agent has connected yet. Run the command above, then check again.";
+    return "No agent has connected yet. Ask your agent to call lnkdrp_whoami, then check again.";
   })();
 
   return (
     <div className="grid gap-4">
-      <div>
-        <p className="mb-2 text-[13px] text-[var(--muted)]">Run this in a terminal. It works today, before the MCP server ships.</p>
-        <CodeBlock lines={whoamiCurl(key, origin)} label="Copy verification command" />
-        {isLocal ? (
-          <p className="mt-2 text-[12px] leading-5 text-[var(--muted-2)]">
-            You are on <code className="font-mono">{origin}</code>, so the command targets this server. Keys created here do not work on {SITE_ORIGIN.replace(/^https?:\/\//, "")}.
-          </p>
-        ) : null}
-      </div>
       <p className="text-[13px] leading-5 text-[var(--muted)]">
-        Or ask your agent: <span className="text-[var(--fg)]">“{ASK_YOUR_AGENT}”</span>
+        Ask your agent: <span className="text-[var(--fg)]">“{ASK_YOUR_AGENT}”</span>. Its first call turns the status to Connected.
       </p>
+      <details className="group">
+        <summary className="cursor-pointer select-none list-none text-[12px] font-medium text-[var(--muted-2)] hover:text-[var(--fg)] [&::-webkit-details-marker]:hidden">
+          Using a key? Check it from a terminal ›
+        </summary>
+        <div className="mt-2">
+          <CodeBlock lines={whoamiCurl(key, origin)} label="Copy verification command" />
+          {isLocal ? (
+            <p className="mt-2 text-[12px] leading-5 text-[var(--muted-2)]">
+              You are on <code className="font-mono">{origin}</code>, so the command targets this server. Keys created here do not work on {SITE_ORIGIN.replace(/^https?:\/\//, "")}.
+            </p>
+          ) : null}
+        </div>
+      </details>
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"

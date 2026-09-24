@@ -1,9 +1,11 @@
 /**
  * Public guide at `/mcp/[client]`: "How to connect <Client> to lnkdrp".
  *
- * Numbered steps (create a key, the client's own steps from `CLIENT_SETUPS`, verify), the merge
- * snippet for JSON-config clients, troubleshooting, last-updated line and links back to `/mcp`
- * and `/connect`. Statically generated for every entry in `CLIENT_SETUPS`.
+ * Signing in first: the client's own steps from `CLIENT_SETUPS[].signIn` (add the server, sign
+ * in), then Verify. Keys come after, under "Using a key instead", as the path for scripts and for
+ * clients that cannot open a browser; a client with no sign-in path (Grok) gets the key steps as
+ * the main list. Merge snippet for JSON-config clients, troubleshooting, last-updated line and
+ * links back to `/mcp` and `/connect`. Statically generated for every entry in `CLIENT_SETUPS`.
  */
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -41,7 +43,9 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   const setup = findClientSetup(client);
   if (!setup) return {};
   const title = `How to connect ${setup.label} to lnkdrp`;
-  const description = `${setup.blurb} Create a key, add the lnkdrp MCP server to ${setup.label}, and verify the connection.`;
+  const description = setup.signIn
+    ? `${setup.blurb} Add the lnkdrp MCP server to ${setup.label}, sign in, and verify the connection. Keys are the fallback.`
+    : `${setup.blurb} Create a key, add the lnkdrp MCP server to ${setup.label}, and verify the connection.`;
   return {
     title,
     description,
@@ -80,10 +84,35 @@ export default async function McpClientGuidePage({ params }: { params: Promise<P
   const setup = findClientSetup(client);
   if (!setup) notFound();
 
-  const clientSteps: SetupStep[] = setup.steps(KEY_PLACEHOLDER);
-  const merge = setup.mergeSnippet?.(KEY_PLACEHOLDER) ?? null;
-  const removal = setup.remove();
-  const verifyIndex = clientSteps.length + 2;
+  const keySteps: SetupStep[] = setup.steps(KEY_PLACEHOLDER);
+  const keyMerge = setup.mergeSnippet?.(KEY_PLACEHOLDER) ?? null;
+  const signIn = setup.signIn ?? null;
+  const signInSteps: SetupStep[] = signIn ? signIn.steps() : [];
+  const signInMerge = signIn?.mergeSnippet?.() ?? null;
+  const removal = signIn ? signIn.remove() : setup.remove();
+
+  /** The client's steps as numbered items, with the merge snippet on the last one that has code. */
+  const renderSteps = (steps: SetupStep[], offset: number, merge: string[] | null, placeholderNote: boolean) =>
+    steps.map((step, i) => (
+      <Step key={step.title} n={i + offset} title={step.title}>
+        {step.body ? <StepBody>{step.body}</StepBody> : null}
+        {step.code ? <CodeBlock lines={step.code} label={`Copy ${setup.label} setup`} className="mt-3" /> : null}
+        {step.code && merge && i === steps.length - 1 ? (
+          <div className="mt-4">
+            <p className="text-sm leading-6 text-white/60">
+              If you already have other servers, add only this entry inside your existing{" "}
+              <code className="font-mono text-[0.92em] text-white/80">mcpServers</code> object:
+            </p>
+            <CodeBlock lines={merge} label="Copy lnkdrp entry" size="sm" className="mt-2" />
+          </div>
+        ) : null}
+        {placeholderNote && step.code?.some((line) => line.includes(KEY_PLACEHOLDER)) ? (
+          <p className="mt-2 text-[12px] text-white/40">
+            Replace <code className="font-mono">{KEY_PLACEHOLDER}</code> with your key.
+          </p>
+        ) : null}
+      </Step>
+    ));
 
   return (
     <PublicGuideShell>
@@ -95,66 +124,83 @@ export default async function McpClientGuidePage({ params }: { params: Promise<P
       <p className="mt-5 max-w-xl text-sm leading-6 text-white/60 sm:text-base">{setup.blurb}</p>
       <p className="mt-3 text-[12px] text-white/35">Last updated: {GUIDES_LAST_UPDATED}</p>
 
-      <ol className="mt-10 space-y-8">
-        <Step n={1} title="Create a key">
-          <StepBody>
-            <Link href="/connect" className="font-medium text-white underline-offset-4 hover:underline">
-              Sign in and open Connect
-            </Link>
-            , then create a key named for this machine. It is shown once, so copy it right away. Keys start with{" "}
-            <code className="font-mono text-[0.92em] text-white/80">lnk_</code> and belong to one workspace.
-          </StepBody>
-        </Step>
-
-        {clientSteps.map((step, i) => (
-          <Step key={step.title} n={i + 2} title={step.title}>
-            {step.body ? <StepBody>{step.body}</StepBody> : null}
-            {step.code ? (
-              <CodeBlock
-                lines={step.code}
-                label={`Copy ${setup.label} setup`}
-                className="mt-3"
-              />
-            ) : null}
-            {step.code && merge && i === clientSteps.length - 1 ? (
-              <div className="mt-4">
-                <p className="text-sm leading-6 text-white/60">
-                  If you already have other servers, add only this entry inside your existing{" "}
-                  <code className="font-mono text-[0.92em] text-white/80">mcpServers</code> object:
-                </p>
-                <CodeBlock lines={merge} label="Copy lnkdrp entry" size="sm" className="mt-2" />
-              </div>
-            ) : null}
-            {step.code?.some((line) => line.includes(KEY_PLACEHOLDER)) ? (
-              <p className="mt-2 text-[12px] text-white/40">
-                Replace <code className="font-mono">{KEY_PLACEHOLDER}</code> with your key.
+      {signIn ? (
+        <>
+          <ol className="mt-10 space-y-8">
+            {renderSteps(signInSteps, 1, signInMerge, false)}
+            <Step n={signInSteps.length + 1} title="Verify">
+              <StepBody>
+                Ask your agent: <span className="text-white/85">“{ASK_YOUR_AGENT}”</span>
+              </StepBody>
+              <p className="mt-2 text-sm leading-6 text-white/60">
+                Back on{" "}
+                <Link href="/connect" className="font-medium text-white underline-offset-4 hover:underline">
+                  Connect
+                </Link>
+                , the agent is listed as Signed in, and the status turns to Connected on its first call. Revoke it there at any time.
               </p>
-            ) : null}
-          </Step>
-        ))}
+            </Step>
+          </ol>
 
-        <Step n={verifyIndex} title={setup.kind === "cli" ? "Verify" : "Restart and verify"}>
-          <StepBody>
-            {setup.kind === "cli"
-              ? "Check the key itself first. This request works today, before the MCP server ships:"
-              : `Restart ${setup.label} so it picks up the new server, then check the key itself. This request works today, before the MCP server ships:`}
-          </StepBody>
-          <CodeBlock lines={whoamiCurl(KEY_PLACEHOLDER)} label="Copy verification command" className="mt-3" />
-          <p className="mt-3 text-sm leading-6 text-white/60">
-            Or ask your agent: <span className="text-white/85">“{ASK_YOUR_AGENT}”</span>
-          </p>
-          <p className="mt-2 text-sm leading-6 text-white/60">
-            Back on{" "}
-            <Link href="/connect" className="font-medium text-white underline-offset-4 hover:underline">
-              Connect
-            </Link>
-            , the status turns to Connected once the key has been used.
-          </p>
-        </Step>
-      </ol>
+          <div className="mt-14">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">Using a key instead</h2>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-white/60">
+              For a script, a server, or a machine with no browser. A key does everything signing in does; it just has to be
+              pasted, and kept.
+            </p>
+            <ol className="mt-6 space-y-8">
+              <Step n={1} title="Create a key">
+                <StepBody>
+                  <Link href="/connect" className="font-medium text-white underline-offset-4 hover:underline">
+                    Sign in and open Connect
+                  </Link>
+                  , then create a key named for this machine. It is shown once, so copy it right away. Keys start with{" "}
+                  <code className="font-mono text-[0.92em] text-white/80">lnk_</code> and belong to one workspace.
+                </StepBody>
+              </Step>
+              {renderSteps(keySteps, 2, keyMerge, true)}
+              <Step n={keySteps.length + 2} title="Verify the key">
+                <StepBody>Check the key itself from a terminal:</StepBody>
+                <CodeBlock lines={whoamiCurl(KEY_PLACEHOLDER)} label="Copy verification command" className="mt-3" />
+              </Step>
+            </ol>
+          </div>
+        </>
+      ) : (
+        <ol className="mt-10 space-y-8">
+          <Step n={1} title="Create a key">
+            <StepBody>
+              <Link href="/connect" className="font-medium text-white underline-offset-4 hover:underline">
+                Sign in and open Connect
+              </Link>
+              , then create a key named for this machine. It is shown once, so copy it right away. Keys start with{" "}
+              <code className="font-mono text-[0.92em] text-white/80">lnk_</code> and belong to one workspace.
+            </StepBody>
+          </Step>
+          {renderSteps(keySteps, 2, keyMerge, true)}
+          <Step n={keySteps.length + 2} title={setup.kind === "cli" ? "Verify" : "Restart and verify"}>
+            <StepBody>
+              {setup.kind === "cli"
+                ? "Check the key itself first. This request works today, before the MCP server ships:"
+                : `Restart ${setup.label} so it picks up the new server, then check the key itself. This request works today, before the MCP server ships:`}
+            </StepBody>
+            <CodeBlock lines={whoamiCurl(KEY_PLACEHOLDER)} label="Copy verification command" className="mt-3" />
+            <p className="mt-3 text-sm leading-6 text-white/60">
+              Or ask your agent: <span className="text-white/85">“{ASK_YOUR_AGENT}”</span>
+            </p>
+            <p className="mt-2 text-sm leading-6 text-white/60">
+              Back on{" "}
+              <Link href="/connect" className="font-medium text-white underline-offset-4 hover:underline">
+                Connect
+              </Link>
+              , the status turns to Connected once the key has been used.
+            </p>
+          </Step>
+        </ol>
+      )}
 
       <div className="mt-14">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">Change the key or remove lnkdrp</h2>
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">{signIn ? "Disconnect or reconnect" : "Change the key or remove lnkdrp"}</h2>
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
           <p className="text-sm leading-6 text-white/70">{removal.body}</p>
           {removal.code ? <CodeBlock lines={removal.code} label={`Copy ${setup.label} remove command`} className="mt-3" /> : null}
@@ -166,12 +212,14 @@ export default async function McpClientGuidePage({ params }: { params: Promise<P
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
           <p className="text-sm leading-6 text-white/70">{MULTIPLE_WORKSPACES.body}</p>
           <CodeBlock
-            lines={setup.lines(KEY_PLACEHOLDER, MCP_URL, `${DEFAULT_SERVER_NAME}-acme`)}
+            lines={signIn ? signIn.lines(MCP_URL, `${DEFAULT_SERVER_NAME}-acme`) : setup.lines(KEY_PLACEHOLDER, MCP_URL, `${DEFAULT_SERVER_NAME}-acme`)}
             label={`Copy ${setup.label} setup for a second workspace`}
             className="mt-3"
           />
           <p className="mt-2 text-[12px] text-white/40">
-            Replace <code className="font-mono">{KEY_PLACEHOLDER}</code> with a key created in that workspace. Connect shows the name to use.
+            {signIn
+              ? "Pick that workspace when you sign in. Connect shows the name to use."
+              : "Replace lnk_your_key_here with a key created in that workspace. Connect shows the name to use."}
           </p>
         </div>
       </div>
@@ -185,7 +233,7 @@ export default async function McpClientGuidePage({ params }: { params: Promise<P
 
       <div className="mt-10 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
         <Link href="/connect" className="font-medium text-white underline-offset-4 hover:underline">
-          Create a key →
+          Open Connect →
         </Link>
         <Link href="/mcp" className="text-white/60 underline-offset-4 hover:text-white hover:underline">
           Other clients

@@ -6,23 +6,22 @@ order: 70
 
 ## What the MCP server is
 
-lnkdrp has an MCP server at `https://mcp.lnkdrp.com/mcp`. Add it to your AI client and your agent can upload PDFs, create and manage share links, set passwords, read stats and replace files in your workspace, using its own key. It is a remote server, so there is nothing to install locally.
+lnkdrp has an MCP server at `https://mcp.lnkdrp.com/mcp`. Add it to your AI client, sign in when it asks, and your agent can upload PDFs, create and manage share links, set passwords, read stats and replace files in your workspace. It is a remote server, so there is nothing to install locally.
 
 Agents work under the same plan limits and credits as you do. They never take a seat.
 
-## Create an agent key
+## Connect by signing in
 
-- Open **Connect** in the app (the sidebar entry or `/connect`). Workspace owners and admins can create keys.
-- Give the key a name, such as the agent or machine it is for.
-- The key is shown once. Copy it straight away; lnkdrp keeps only a hash.
-- A workspace can have up to 10 active keys. Use one per agent so you can revoke a single one without touching the others.
-- Revoke a key from the same page at any time.
+The quickest way, and the one the guides lead with. Add the lnkdrp server to your client without any key or header, and sign in when the client asks. Claude Code, Cursor, Codex and Gemini CLI all support this.
 
-A key belongs to one workspace. To connect another workspace, switch to it, create a key there, and add it to your client under its own name. Connect names it for you, such as `lnkdrp-personal` or `lnkdrp-acme`.
+- lnkdrp opens in your browser. Sign in if you are not already, pick the workspace the agent should work in, and click **Allow**.
+- The agent appears on **Connect** under Keys and agents, marked "Signed in", with a **Revoke** button. Revoking stops it at once.
+- One connection is one workspace. To give an agent a second workspace, add the server again under another name and pick that workspace when you sign in. Connect shows the name to use, such as `lnkdrp-acme`.
+- Viewers can connect an agent too. It can read but not change anything, matching their role.
 
 ## Set up your client
 
-Connect shows the exact command or settings for your client with your key filled in. Guides:
+Connect shows the exact command or settings for your client. Guides:
 
 - [Claude Code](/mcp/claude-code)
 - [Cowork](/mcp/cowork)
@@ -34,14 +33,17 @@ Connect shows the exact command or settings for your client with your key filled
 
 The overview is at [/mcp](/mcp). To check the connection end to end, ask your agent: "Call lnkdrp_whoami and tell me which workspace you are connected to."
 
-## Sign in instead of using a key
+## Use a key instead
 
-Clients that support signing in to MCP servers, including Claude Code, Cursor, Codex and Gemini CLI, can connect without a key. Add the lnkdrp server to the client without an authorization header, then choose to sign in when the client asks. lnkdrp opens in your browser, you pick the workspace the agent should work in, and click **Allow**. The client keeps its own credential from then on.
+A key does everything signing in does. Use one for a script, a server, or a client that cannot open a browser, such as Grok.
 
-- Agents connected this way appear on **Connect** next to your keys, marked "Signed in", with the same **Revoke** button. Revoking stops the agent at once.
-- One connection is one workspace, the same as a key. To give an agent a second workspace, add the server again under another name and pick that workspace when you sign in.
-- Viewers can connect an agent too. It can read but not change anything, matching their role.
-- Keys keep working. Use a key when there is no browser to sign in from, such as a script or a server.
+- Open **Connect** in the app and create a key under Keys and agents. Workspace owners and admins can create keys.
+- Give the key a name, such as the agent or machine it is for.
+- The key is shown once. Copy it straight away; lnkdrp keeps only a hash.
+- A workspace can have up to 10 active keys. Use one per agent so you can revoke a single one without touching the others.
+- Add it to your client as a bearer header; each guide shows how. Revoke it from the same page at any time.
+
+A key belongs to one workspace. To connect another workspace with a key, switch to it, create a key there, and add it to your client under its own name.
 
 ## What your agent can do
 

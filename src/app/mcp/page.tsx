@@ -43,9 +43,9 @@ export default function McpOverviewPage() {
               Connect your AI agent
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
-        lnkdrp is an MCP server at <code className="font-mono text-[0.92em] text-white/80">{MCP_URL}</code>. Add it to your client
-        with a key from your workspace and your agent creates share links, sets passwords and reads the numbers. The server ships
-        with launch; keys and the verification endpoint work today.
+        lnkdrp is an MCP server at <code className="font-mono text-[0.92em] text-white/80">{MCP_URL}</code>. Add it to your client,
+        sign in when it asks, and your agent creates share links, sets passwords and reads the numbers. No key to paste; a key is
+        there for scripts and for clients that cannot sign in.
             </p>
           </div>
 

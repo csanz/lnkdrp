@@ -12,7 +12,8 @@ import { CLIENT_SETUPS, KEY_PLACEHOLDER, type ClientKey } from "@/lib/mcp/client
  * public `/mcp` guides) rendered with the placeholder key; the exchange below is illustrative.
  */
 
-const CLIENTS = CLIENT_SETUPS.map((c) => ({ key: c.key, label: c.label, lines: c.lines(KEY_PLACEHOLDER) }));
+// Sign-in snippets where the client supports it; the key snippet is the fallback (Grok).
+const CLIENTS = CLIENT_SETUPS.map((c) => ({ key: c.key, label: c.label, lines: c.signIn ? c.signIn.lines() : c.lines(KEY_PLACEHOLDER) }));
 
 const EXCHANGE: Array<{ who: "you" | "agent"; text: string }> = [
   {
@@ -63,7 +64,7 @@ export default function McpInstallExample() {
         </span>
       </div>
       <p className="mt-3 max-w-md text-pretty text-sm leading-6 text-white/55">
-        It takes one line in your MCP client. After that, your agent creates links and reads the numbers.{" "}
+        One line in your MCP client, then sign in when it asks. After that, your agent creates links and reads the numbers.{" "}
         {/* This panel is one client's one line. The full guide is every client, every tool and
             what each one asks before it acts — the thing a reader who is about to paste a key
             into an agent wants to have read. */}

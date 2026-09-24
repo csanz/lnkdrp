@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 899 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 911 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -60,6 +60,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/accept/page.tsx` — `/accept` · default, dynamic, metadata, runtime
 - `src/app/billing/cancel/page.tsx` — `/billing/cancel` · default
 - `src/app/billing/success/page.tsx` — `/billing/success` · default
+- `src/app/connect/authorize/page.tsx` — `/connect/authorize` · default, dynamic, metadata
 - `src/app/costs/page.tsx` — `/costs` · default, metadata
 - `src/app/credits/page.tsx` — `/credits` · default, dynamic, metadata, runtime
 - `src/app/dashboard/[tab]/page.tsx` — `/dashboard/:tab` · default
@@ -210,6 +211,10 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/metrics/workspace/route.ts` — `/api/metrics/workspace` · dynamic, GET, runtime
 - `src/app/api/monitor/crons/route.ts` — `/api/monitor/crons` · dynamic, GET, runtime
 - `src/app/api/notifications/views/off/route.ts` — `/api/notifications/views/off` · dynamic, GET, HEAD, POST, runtime
+- `src/app/api/oauth/authorize/route.ts` — `/api/oauth/authorize` · dynamic, POST, runtime
+- `src/app/api/oauth/register/route.ts` — `/api/oauth/register` · dynamic, OPTIONS, POST, runtime
+- `src/app/api/oauth/revoke/route.ts` — `/api/oauth/revoke` · dynamic, OPTIONS, POST, runtime
+- `src/app/api/oauth/token/route.ts` — `/api/oauth/token` · dynamic, OPTIONS, POST, runtime
 - `src/app/api/org-invites/claim/route.ts` — `/api/org-invites/claim` · POST, runtime
 - `src/app/api/org-invites/email/route.ts` — `/api/org-invites/email` · POST, runtime
 - `src/app/api/org-invites/revoke/route.ts` — `/api/org-invites/revoke` · POST, runtime
@@ -543,6 +548,10 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/admin/useAdminAccess.ts` · AdminAccess, useAdminAccess
 - `src/lib/admin/workspaceHub.ts` · billableLabel, cancelText, creditSummary, CreditSummary, fmtCap, fmtCents, fmtCount, graceState, …
 - `src/lib/agents/apiKeys.ts` · API_KEY_DISPLAY_PREFIX_LENGTH, API_KEY_LENGTH, API_KEY_LIST_LIMIT, API_KEY_MAX_ACTIVE_PER_ORG, API_KEY_NAME_MAX_LENGTH, API_KEY_PREFIX, API_KEY_SECRET_LENGTH, API_KEY_TOUCH_THROTTLE_MS, …
+- `src/lib/agents/oauth.ts` · authenticateClient, authorizationServerMetadata, ClientRegistration, createAuthorizationCode, CreateCodeInput, findClient, hashOAuthToken, IssuedTokens, …
+- `src/lib/agents/oauthAuthorize.ts` · AUTHORIZE_PARAM_NAMES, AuthorizeParams, authorizeParamsFrom, AuthorizeValidation, redirectWith, validateAuthorizeRequest, WorkspaceChoice, workspacesForUser
+- `src/lib/agents/oauthHttp.ts` · clientCredentialsFrom, OAUTH_CORS_HEADERS, OAUTH_JSON_HEADERS, oauthError, OAuthErrorCode, oauthOptions, readOAuthBody
+- `src/lib/agents/owners.ts` · KeyOwner, resolveOwners
 - `src/lib/ai/agentSummary.ts` · AGENT_KEY_POINT_MAX_CHARS, AGENT_KEY_POINTS_MAX, AGENT_KEY_POINTS_MIN, AGENT_SUMMARY_MAX_CHARS, AGENT_SUMMARY_MIN_CHARS, AgentSummary, agentSummaryToAnalysis, cleanAgentText, …
 - `src/lib/ai/aiRunRecorder.ts` · AiRunKind, AiRunMeta, completeAiRun, failAiRun, startAiRun
 - `src/lib/ai/analyzePdfText.ts` · AiDocAnalysis, AiDocAnalysisSchema, analysisTelemetry, AnalysisTelemetry, analyzePdfText, isFallbackAnalysis, normalizeAiDocAnalysis
@@ -724,6 +733,9 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/models/ErrorEvent.ts` · ErrorEvent, ErrorEventModel
 - `src/lib/models/NotificationEmailCursor.ts` · NotificationEmailCursor, NotificationEmailCursorKey, NotificationEmailCursorModel
 - `src/lib/models/NotificationQueue.ts` · NOTIFICATION_QUEUE_KINDS, NOTIFICATION_QUEUE_STATUSES, NotificationQueue, NotificationQueueKind, NotificationQueueModel, NotificationQueueStatus
+- `src/lib/models/OAuthClient.ts` · OAUTH_CLIENT_AUTH_METHODS, OAuthClient, OAuthClientAuthMethod, OAuthClientModel
+- `src/lib/models/OAuthCode.ts` · OAuthCode, OAuthCodeModel
+- `src/lib/models/OAuthGrant.ts` · OAuthGrant, OAuthGrantModel
 - `src/lib/models/Org.ts` · ensurePersonalOrgForUserId, Org, OrgModel
 - `src/lib/models/OrgInvite.ts` · OrgInvite, OrgInviteModel
 - `src/lib/models/OrgMembership.ts` · OrgMembership, OrgMembershipModel, ViewEmailMode

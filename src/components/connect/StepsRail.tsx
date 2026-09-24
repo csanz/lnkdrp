@@ -1,6 +1,6 @@
 import { CheckIcon } from "@heroicons/react/24/outline";
 
-const STEPS = ["Create a key", "Add lnkdrp to your client", "Verify"] as const;
+const STEPS = ["Add lnkdrp to your client", "Sign in when it asks", "Verify"] as const;
 
 /**
  * The three-step rail at the top of the Connect page. `current` is 1-based; `done` marks every
