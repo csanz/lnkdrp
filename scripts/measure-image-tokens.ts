@@ -36,6 +36,7 @@ import "dotenv/config";
 import sharp from "sharp";
 import { generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { exit } from "./lib/exit";
 
 const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -102,8 +103,8 @@ async function main() {
 }
 
 main()
-  .then(() => process.exit(0))
+  .then(() => exit(0))
   .catch((e) => {
     console.error("\n  Failed:", e instanceof Error ? e.message : e, "\n");
-    process.exit(1);
+    return exit(1);
   });

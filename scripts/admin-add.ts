@@ -22,6 +22,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { UserModel } from "@/lib/models/User";
 import { approveUser } from "@/lib/waitlist/waitlist";
+import { exit } from "./lib/exit";
 
 function args(argv: string[]): Record<string, string | true> {
   const out: Record<string, string | true> = {};
@@ -156,8 +157,8 @@ async function main() {
 }
 
 main()
-  .then(() => process.exit(0))
+  .then(() => exit(0))
   .catch((e) => {
     console.error("\n  Failed:", e instanceof Error ? e.message : e, "\n");
-    process.exit(1);
+    return exit(1);
   });

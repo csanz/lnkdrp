@@ -67,6 +67,7 @@ import { approveUser } from "@/lib/waitlist/waitlist";
 import { createAcceptToken, WAITLIST_ACCEPT_TTL_MS } from "@/lib/waitlist/acceptToken";
 import { sendWaitlistApprovedEmail } from "@/lib/email/sendWaitlistApprovedEmail";
 import { getPublicSiteBase } from "@/lib/urls";
+import { exit } from "./lib/exit";
 
 /** `--key=value` and bare `--flag`, which is all these scripts ever need. */
 function args(argv: string[]): Record<string, string | true> {
@@ -229,8 +230,8 @@ async function main() {
 }
 
 main()
-  .then(() => process.exit(0))
+  .then(() => exit(0))
   .catch((e) => {
     console.error("\n  Failed:", e instanceof Error ? e.message : e, "\n");
-    process.exit(1);
+    return exit(1);
   });

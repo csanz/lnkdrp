@@ -30,6 +30,7 @@
  */
 import { buildPreviews, type PreviewRow } from "@/lib/email/previews";
 import { EMAIL_CATALOG } from "@/lib/email/templates";
+import { exit } from "./lib/exit";
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | null => {
@@ -175,7 +176,7 @@ async function main() {
 
   const verb = dryRun ? "would be sent" : consoleOnly ? "printed, NOT delivered" : "sent";
   console.log(`\n${sent} ${verb}, ${failures.length} failed.`);
-  if (failures.length) process.exit(1);
+  if (failures.length) await exit(1);
 }
 
 void main();

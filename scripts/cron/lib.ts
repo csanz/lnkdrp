@@ -11,6 +11,8 @@
  * Flags: `--dry-run` (adds `?dryRun=1` for routes that support it), `--limit=N`,
  * `--target=https://…` (overrides CRON_TARGET_URL), `--post` (POST instead of GET; both work).
  */
+import { exit } from "../lib/exit";
+
 export async function runCronJob(job: string): Promise<void> {
   const args = process.argv.slice(2);
   const flag = (name: string) => args.includes(`--${name}`);
@@ -43,5 +45,5 @@ export async function runCronJob(job: string): Promise<void> {
   }
   console.log(`[cron.${job}] ${res.status} in ${Date.now() - started}ms`);
   console.log(typeof body === "string" ? body.slice(0, 2000) : JSON.stringify(body, null, 2).slice(0, 4000));
-  process.exit(res.ok ? 0 : 1);
+  await exit(res.ok ? 0 : 1);
 }
