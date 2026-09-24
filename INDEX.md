@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 898 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 899 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -591,6 +591,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/billing/pricing.ts` · USD_CENTS_PER_CREDIT
 - `src/lib/billing/proPriceLabel.ts` · getBillingProPriceLabel, ProPriceLabels, revalidateBillingProPriceLabel
 - `src/lib/billing/stripePeriods.ts` · getInvoiceSubscriptionId, getSubscriptionPeriod, parseStripeUnixSeconds
+- `src/lib/billing/stripeSubscriptionCancel.ts` · cancelStripeSubscriptionNow, scheduleStripeCancelAtPeriodEnd, StripeCancelOutcome
 - `src/lib/billing/subscriptionState.ts` · creditPacksAllowed, hasOpenSubscription, isAnnualProSubscription, isBillableStatus, isBillableSubscription, isOpenStatus, isPaygSubscription, isProSubscription, …
 - `src/lib/billing/usageAggregation.ts` · aggregateBillingUsage, BillingIncludedRow, BillingLedgerRow, BillingOnDemandRow, onDemandCostCentsOrNull
 - `src/lib/billing/workspaceCustomer.ts` · ensureWorkspaceStripeCustomer, WorkspaceCustomer
