@@ -170,14 +170,34 @@ async function readVisit(
   plan: { pages: number[]; dwellMs: number[] },
   pacing: Pacing,
   realtime: boolean,
+  /** First sitting only: a returning reader is already known. */
+  introduce = false,
 ): Promise<number> {
   const visitId = `v_${randomUUID().replace(/-/g, "")}`;
   const total = plan.dwellMs.reduce((a, b) => a + b, 0);
   // The virtual clock: the sitting ends now, so it began `total` ago.
   let cursor = Date.now() - total;
 
+  // The stored profile every later heartbeat replays (no `introduced` flag), as the viewer does.
   const intro = reader.name || reader.email ? { viewerName: reader.name, viewerEmail: reader.email } : {};
-  await postStats(shareId, { botId, visitId, pageNumber: plan.pages[0], ...intro });
+  await postStats(shareId, { botId, visitId, pageNumber: plan.pages[0] });
+  /**
+   * Introducing is its own post, after the sitting has started, with `introduced: true`. That flag
+   * is what the ingest reads as "this is the act of introducing" (`viewer.introduced`, the owner's
+   * email about a named reader); a name riding on the load heartbeat is stored on the row and
+   * fires nothing, which is exactly what `PdfJsViewer` never does. Sending the name on the first
+   * post made three named readers invisible to the feed.
+   */
+  if (introduce && (reader.name || reader.email)) {
+    await pause(pacing);
+    await postStats(shareId, {
+      botId,
+      visitId,
+      ...(reader.name ? { viewerName: reader.name } : {}),
+      ...(reader.email ? { viewerEmail: reader.email } : {}),
+      introduced: true,
+    });
+  }
 
   for (let i = 0; i < plan.pages.length; i++) {
     const page = plan.pages[i]!;
@@ -326,7 +346,7 @@ async function main(): Promise<void> {
     }
 
     if (i) await pauseBetweenActors(pacing);
-    const firstMs = await readVisit(link.shareId, botId, reader, { pages: reader.pages, dwellMs: reader.dwellMs }, pacing, realtime);
+    const firstMs = await readVisit(link.shareId, botId, reader, { pages: reader.pages, dwellMs: reader.dwellMs }, pacing, realtime, true);
     visits += 1;
     let detail = `${reader.label}, pages ${reader.pages.join("→")}, ${Math.round(firstMs / 1000)}s`;
 

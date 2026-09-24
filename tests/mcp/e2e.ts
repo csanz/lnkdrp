@@ -1001,9 +1001,23 @@ async function main(): Promise<void> {
         return r.status;
       };
 
-      await setHistory(true);
-      const onStatus = await changes();
-      const sharePro = onStatus === 200;
+      /**
+       * On Free the write itself is refused, not merely ineffective: `version_history` is a plan
+       * feature gate (planLimits.ts), so `update_share_link { allowRevisionHistory: true }` answers
+       * `plan_limit` with `limit: "version_history"`. The step assumed the flag could always be set
+       * and only the route would withhold, and failed on every Free workspace as soon as the gate
+       * shipped. A refusal with exactly that limit is the Free branch; any other error is real.
+       */
+      let sharePro = true;
+      try {
+        await setHistory(true);
+        sharePro = (await changes()) === 200;
+      } catch (err) {
+        const limit = (err as ToolCallError | null)?.details && ((err as ToolCallError).details as { limit?: unknown }).limit;
+        if (!(err instanceof ToolCallError && err.code === "plan_limit" && limit === "version_history")) throw err;
+        sharePro = false;
+        info("history", "plan_limit version_history: this workspace is Free, the setting cannot be turned on");
+      }
       // `ownerIsPro` is ANDed in, so on a Free workspace the route answers 403 whether the setting
       // is on or off - deliberately, so the setting and the plan are indistinguishable to a
       // recipient. The off-assertion therefore holds on every plan; the on-assertion only where
@@ -1130,6 +1144,18 @@ async function main(): Promise<void> {
       info("default link", `${def.id} ${def.shareId} status=${def.status}`);
     });
 
+    /**
+     * A second link on a project is Pro-only (`capabilities.projectLinks.available`; the gate is
+     * `project_links` in planLimits.ts). The five steps below create, duplicate, update and delete
+     * such a link, so on a Free workspace they are skipped as a block rather than failing at the
+     * first `plan_limit`; the refusal itself is what tests/mcp/freeplan.ts asserts. Read live, not
+     * from step 5c's local, so a plan change between the two is seen.
+     */
+    const meNow = await callTool<WhoAmI & { capabilities?: { projectLinks?: { available?: boolean } } }>(live, "lnkdrp_whoami", {});
+    const projectLinksAvailable = meNow.capabilities?.projectLinks?.available === true;
+    if (!projectLinksAvailable) {
+      info("project links", "capabilities.projectLinks.available is false on this plan; the five second-link steps are skipped");
+    } else {
     const projLink = await step('lnkdrp_create_project_link { label: "Vantridge", allowDownload: true, password }', async () => {
       const res = await callTool<CreateProjectLinkResult>(live, "lnkdrp_create_project_link", {
         projectId: proj.projectId,
@@ -1244,6 +1270,8 @@ async function main(): Promise<void> {
       assert(after.links.length === 1 && after.links[0]?.isDefault === true, `expected only the default link left, got ${after.links.length}`);
       info("preview", `${d.preview?.headline} · severity ${String(d.preview?.severity)}`);
     });
+
+    }
 
     /**
      * The eleven tools the 2026-09-21 coverage audit found in no harness at all, two of which
