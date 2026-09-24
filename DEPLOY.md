@@ -373,14 +373,19 @@ correct. Ids for the sandbox are in `docs/SUBSCRIPTION.md`; the live ones will d
 credit packs on `/credits` have no products or prices in Stripe on purpose (see Credit packs after
 step 9), so don't go looking for them.
 
-1. Product **Pro** with one recurring licensed price: $29 / month. Description:
-   "Unlimited share links and projects, deep viewer analytics, a version list recipients can
-   browse, 1 collaborator included, and 300 AI credits a month (about 60 standard AI compares)."
-   No unit label. Earlier revisions of this runbook said "version history with AI compare" and
-   "Summaries never use credits"; both stopped being true on 2026-09-13 (the summary costs 1
-   credit and version history with AI compare runs on credits on every plan). If the sandbox
-   product was created from that text, update it as well. Checkout shows a promotion code field,
-   so every active live promotion code applies to Pro; create codes deliberately.
+1. Product **Pro** with two recurring licensed prices: $29 / month, and $290 / year (twelve
+   months for the price of ten; nickname "Pro annual (2 months free)", lookup key `pro_annual`).
+   Description: "Unlimited share links and projects, deep viewer analytics, a version list
+   recipients can browse, 3 teammates included, and 300 AI credits a month (about 60 standard AI
+   compares)." No unit label. Earlier revisions of this runbook said "version history with AI
+   compare", "1 collaborator" and "Summaries never use credits"; none is true now (the summary
+   costs 1 credit, version history with AI compare runs on credits on every plan, and Pro includes
+   `PRO_INCLUDED_COLLABORATORS` = 3). The sandbox product was updated to this text on 2026-09-23.
+   Checkout shows a promotion code field, so every active live promotion code applies to Pro;
+   create codes deliberately. The yearly price is optional: without `STRIPE_PRICE_ID_ANNUAL` the
+   app sells monthly only. A yearly subscription carries **only** the yearly price — Stripe
+   refuses to add the monthly metered credits price (step 3) to it — so annual workspaces have no
+   on-demand usage and buy credit packs instead; the app enforces both.
 2. Billing Meter **AI credits (on-demand)**: event name `ai_credits`, aggregation sum, customer
    mapped by `stripe_customer_id`, value key `value`.
 3. Product **On-demand AI credits** with one metered monthly price at $0.10 per unit on that
@@ -402,7 +407,10 @@ step 9), so don't go looking for them.
    arrive. Card payments are granted from `checkout.session.completed`.
 5. Customer portal (live mode): enable cancel, payment-method update and invoice history. Turn
    **off** subscription updates (switch plans, change quantity): the app sells one Pro seat at
-   quantity 1 and ignores quantity, so a change only raises the bill. Click Save once; until the
+   quantity 1 and ignores quantity, so a change only raises the bill. That also means a customer
+   cannot move between monthly and yearly in the portal; it is a support action (cancel at period
+   end, then the other Checkout), which is right, because a yearly subscription must not carry the
+   metered item the monthly one has. Click Save once; until the
    live configuration is saved, `/api/stripe/portal` returns 400 and Manage subscription fails.
    The app sets the return URL on every session (`NEXT_PUBLIC_APP_URL` + `/dashboard?tab=overview`).
    The same portal serves a Free workspace's pay-as-you-go subscription too — it is looked up by
@@ -416,8 +424,12 @@ step 9), so don't go looking for them.
    the next successful payment (`invoice.paid`). For pay-as-you-go there are no limits to drop —
    the workspace was already Free — only the card to fix and on-demand to turn back on.
 7. Env: `STRIPE_SECRET_KEY` (sk_live), `STRIPE_PRICE_ID` (the $29 price),
+   `STRIPE_PRICE_ID_ANNUAL` (the $290 price; leave unset to sell monthly only),
    `STRIPE_AI_CREDITS_PRICE_ID` (the $0.10 price). `STRIPE_CREDITS_METER_EVENT_NAME` defaults to
-   `ai_credits`; set it only if the live meter uses another event name.
+   `ai_credits`; set it only if the live meter uses another event name. After setting the price
+   ids, run the price refresh on `/a/tools/billing` (5.4): it stores the monthly and yearly labels
+   `/pricing` and the plan card print, and refuses an annual id that is not a yearly licensed
+   price.
    `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is optional; no current page reads it.
 8. Set `STRIPE_AI_CREDITS_PRICE_ID` before the first live Checkout. Nothing checks it at startup.
    Without it Checkout still sells Pro, but with no metered item; workspaces can still turn
@@ -1116,7 +1128,13 @@ first log line is a stack trace from a request is the old symptom, not the curre
   first deploy; under `0.0.0.0/0` (4.1 step 2) the allocation adds nothing. Without it the server exits on start and Fly restarts it in
   a loop (`fly logs -a lnkdrp-realtime` shows `[realtime] fatal`); a good start logs
   `mongo connected`.
-- `MONGODB_URI` must end in `/lnkdrp`: the realtime server does not read `MONGODB_DB_NAME`.
+- `MONGODB_URI` must end in the production database's exact name (`PRODUCTION.md` records it as
+  `lnkdrp-prod`, so `/lnkdrp-prod`): the realtime server does not read `MONGODB_DB_NAME`. The
+  `lnkdrp-realtime` user's `read` role must be on that same name — Atlas roles are per exact
+  database name, and `lnkdrp` versus `lnkdrp-prod` (or a hyphen for an underscore) is two
+  databases. Since 2026-09-23 the server checks this once at boot and exits with
+  `[realtime] fatal: Mongo user "…" has no privileges on database "…"` naming both sides, instead
+  of seven change-stream failures and a 30 s wait.
 - The server checks only `MONGODB_URI` at boot. Without `REALTIME_SECRET` `/healthz` answers, but
   the first browser connection crashes the machine; a secret that differs from Vercel's rejects
   every socket with 401. 8 step 7 catches both.

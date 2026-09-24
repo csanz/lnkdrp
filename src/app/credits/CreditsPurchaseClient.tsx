@@ -61,6 +61,11 @@ type Workspace = {
   name: string | null;
   avatarUrl: string | null;
   plan: "free" | "pro";
+  /**
+   * How Pro bills. Yearly Pro has no on-demand (Stripe will not put the monthly metered price on
+   * a yearly subscription), so it buys packs like Free does. `null` off Pro.
+   */
+  interval: "month" | "year" | null;
   /** Credits held: included + starter + purchased. Never on-demand headroom. */
   credits: number | null;
   purchased: number | null;
@@ -101,6 +106,7 @@ function Body({
       ]);
       const status = (await statusRes.json().catch(() => null)) as {
         plan?: string;
+        interval?: string | null;
         org?: { name?: string | null; avatarUrl?: string | null };
         stripeCurrentPeriodEnd?: string | null;
         stripeCancelAtPeriodEnd?: boolean;
@@ -117,14 +123,16 @@ function Body({
       }
       const num = (v: unknown) => (creditsRes.ok && typeof v === "number" ? v : null);
       const plan = status.plan === "pro" ? "pro" : "free";
+      const interval = plan === "pro" ? (status.interval === "year" ? "year" : "month") : null;
       setWorkspace({
         name: status.org?.name ?? null,
         avatarUrl: status.org?.avatarUrl ?? null,
         plan,
+        interval,
         credits: num(credits?.creditsRemaining),
         purchased: num(credits?.purchasedRemaining),
         onDemand:
-          plan === "pro" && creditsRes.ok
+          plan === "pro" && interval !== "year" && creditsRes.ok
             ? { limitCents: num(credits?.onDemandMonthlyLimitCents) ?? 0, usedCredits: num(credits?.onDemandUsedCreditsThisCycle) ?? 0 }
             : null,
         periodEnd: status.stripeCurrentPeriodEnd ?? null,
@@ -195,9 +203,11 @@ function Body({
 
   const best = packs.reduce((a, b) => (b.priceCents / b.credits < a.priceCents / a.credits ? b : a));
   const isProWorkspace = signedIn && workspace?.plan === "pro";
+  // Yearly Pro buys packs: it has no on-demand to point at.
+  const isMonthlyPro = isProWorkspace && workspace?.interval !== "year";
   const showPro = !isProWorkspace;
-  // Signed in: wait for the plan before showing packs, so a Pro workspace never flashes them.
-  const showPacks = !signedIn || workspaceFailed || workspace?.plan === "free";
+  // Signed in: wait for the plan before showing packs, so a monthly Pro workspace never flashes them.
+  const showPacks = !signedIn || workspaceFailed || workspace?.plan === "free" || workspace?.interval === "year";
   const packsPending = signedIn && !workspace && !workspaceFailed;
 
   return (
@@ -251,7 +261,7 @@ function Body({
         <div className="mt-10 h-[196px] rounded-2xl border border-white/10 bg-white/[0.02]" aria-hidden="true" />
       )}
 
-      {isProWorkspace && workspace ? <OnDemandCard workspace={workspace} proCredits={proCredits} /> : null}
+      {isMonthlyPro && workspace ? <OnDemandCard workspace={workspace} proCredits={proCredits} /> : null}
       {packsPending ? <div className="mt-4 h-[260px] rounded-2xl border border-white/10 bg-white/[0.02]" aria-hidden="true" /> : null}
 
       <div className={cn("mt-4 grid gap-4 md:grid-cols-3 md:gap-5", !showPacks && "hidden")}>
@@ -344,9 +354,10 @@ function WorkspacePanel({
   // What the plan grants, not what is left of it: "Included with Free: 9" read as a live counter
   // and hid the 50 the account actually came with. What is left is the first column's job.
   const planCredits = isPro ? proCredits : freeCredits;
+  // Yearly Pro still gets its credits every month; only the renewal is yearly.
   const planDetail = isPro
     ? workspace.periodEnd
-      ? `Every month · ${workspace.cancelAtPeriodEnd ? "ends" : "renews"} ${formatShortDate(workspace.periodEnd)}`
+      ? `Every month · ${workspace.interval === "year" ? "yearly plan " : ""}${workspace.cancelAtPeriodEnd ? "ends" : "renews"} ${formatShortDate(workspace.periodEnd)}`
       : "Every month"
     : "One time, when the workspace was created";
 
@@ -392,7 +403,7 @@ function WorkspacePanel({
       <dl className="grid grid-cols-1 border-t border-white/10 sm:grid-cols-3">
         <div className="px-6 py-4">
           <dt className="text-[12px] text-white/50">Credits left</dt>
-          <dd className="mt-1 font-serif text-4xl leading-none tabular-nums text-white">{workspace.credits ?? "—"}</dd>
+          <dd className="mt-1 font-serif text-4xl leading-none tabular-nums text-white">{workspace.credits ?? "–"}</dd>
           {isPro && workspace.purchased ? (
             <div className="mt-2 text-[12px] text-white/45">Includes {workspace.purchased} purchased</div>
           ) : null}
@@ -406,7 +417,7 @@ function WorkspacePanel({
           <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
             <dt className="text-[12px] text-white/50">On-demand this cycle</dt>
             <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">
-              {!workspace.onDemand ? "—" : onDemandLabel(workspace.onDemand)}
+              {!workspace.onDemand ? "–" : onDemandLabel(workspace.onDemand)}
             </dd>
             <div className="mt-1 text-[12px] text-white/45">
               {workspace.onDemand && workspace.onDemand.limitCents > 0
@@ -417,7 +428,7 @@ function WorkspacePanel({
         ) : (
           <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
             <dt className="text-[12px] text-white/50">Purchased</dt>
-            <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{workspace.purchased ?? "—"}</dd>
+            <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{workspace.purchased ?? "–"}</dd>
             <div className="mt-1 text-[12px] text-white/45">Used after starter credits</div>
           </div>
         )}

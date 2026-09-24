@@ -13,6 +13,10 @@ const billingConfigSchema = new Schema(
 
     /** UI display label for the Pro subscription price (e.g. "$20/mo"). */
     proPriceLabel: { type: String, trim: true, default: null },
+    /** The yearly Pro price, e.g. "$290/yr". `null` when the deployment has no annual price. */
+    proAnnualPriceLabel: { type: String, trim: true, default: null },
+    /** The yearly price spread over twelve months, e.g. "$24/mo", for the "billed yearly" line. */
+    proAnnualPerMonthLabel: { type: String, trim: true, default: null },
   },
   {
     timestamps: { createdAt: "createdDate", updatedAt: "updatedDate" },

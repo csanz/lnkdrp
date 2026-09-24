@@ -12,7 +12,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActorForStats } from "@/lib/gating/actor";
 import { SubscriptionModel } from "@/lib/models/Subscription";
-import { isPaygSubscription, isProSubscription } from "@/lib/billing/subscriptionState";
+import { isPaygSubscription, isProSubscription, subscriptionInterval } from "@/lib/billing/subscriptionState";
 import { OrgModel } from "@/lib/models/Org";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
@@ -52,16 +52,19 @@ export async function GET(request: Request) {
       const [org, sub, price] = await Promise.all([
         OrgModel.findOne({ _id: orgId, isDeleted: { $ne: true } }).select({ name: 1, avatarUrl: 1 }).lean(),
         SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-          .select({ status: 1, kind: 1, currentPeriodEnd: 1, cancelAtPeriodEnd: 1 })
+          .select({ status: 1, kind: 1, interval: 1, currentPeriodEnd: 1, cancelAtPeriodEnd: 1 })
           .lean(),
         benchmarkMode
           ? (async () => {
-              const doc = await BillingConfigModel.findOne({ key: "global" })
-                .select({ proPriceLabel: 1 })
-                .lean();
-              const proPriceLabel =
-                typeof (doc as any)?.proPriceLabel === "string" ? String((doc as any).proPriceLabel).trim() : "";
-              return { proPriceLabel: proPriceLabel || null };
+              const doc = (await BillingConfigModel.findOne({ key: "global" })
+                .select({ proPriceLabel: 1, proAnnualPriceLabel: 1, proAnnualPerMonthLabel: 1 })
+                .lean()) as Record<string, unknown> | null;
+              const s = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+              return {
+                proPriceLabel: s(doc?.proPriceLabel),
+                proAnnualPriceLabel: s(doc?.proAnnualPriceLabel),
+                proAnnualPerMonthLabel: s(doc?.proAnnualPerMonthLabel),
+              };
             })()
           : getBillingProPriceLabel(),
       ]);
@@ -73,8 +76,12 @@ export async function GET(request: Request) {
       const stripeSubscriptionStatus = statusRaw || "free";
       // A pay-as-you-go subscription is active in Stripe and still Free here; `payg` says the
       // workspace can be billed for on-demand credits, which is what the credits card needs.
-      const plan = isProSubscription(sub as { status?: unknown; kind?: unknown } | null) ? "pro" : "free";
-      const payg = isPaygSubscription(sub as { status?: unknown; kind?: unknown } | null);
+      const subState = sub as { status?: unknown; kind?: unknown; interval?: unknown } | null;
+      const plan = isProSubscription(subState) ? "pro" : "free";
+      const payg = isPaygSubscription(subState);
+      // Which Pro this workspace is on. `null` off Pro; the annual plan has no on-demand and buys
+      // packs instead, and the plan card prints the yearly price for it.
+      const interval = plan === "pro" ? subscriptionInterval(subState) : null;
       const stripeCurrentPeriodEnd =
         (sub as any)?.currentPeriodEnd ? new Date((sub as any).currentPeriodEnd).toISOString() : null;
       const stripeCancelAtPeriodEnd = Boolean((sub as any)?.cancelAtPeriodEnd);
@@ -83,10 +90,13 @@ export async function GET(request: Request) {
         org: { id: String(orgId), name: orgName || null, avatarUrl: orgAvatarUrl || null },
         plan,
         payg,
+        interval,
         stripeSubscriptionStatus: stripeSubscriptionStatus || null,
         stripeCurrentPeriodEnd,
         stripeCancelAtPeriodEnd,
-        proPriceLabel: (price as any)?.proPriceLabel ? String((price as any).proPriceLabel).trim() || null : null,
+        proPriceLabel: price?.proPriceLabel ?? null,
+        proAnnualPriceLabel: price?.proAnnualPriceLabel ?? null,
+        proAnnualPerMonthLabel: price?.proAnnualPerMonthLabel ?? null,
       };
 
       if (!benchmarkMode) {

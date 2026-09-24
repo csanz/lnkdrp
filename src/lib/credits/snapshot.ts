@@ -7,7 +7,7 @@ import { defaultBalanceForWorkspace } from "@/lib/credits/creditService";
 
 import { connectMongo } from "@/lib/mongodb";
 import { SubscriptionModel } from "@/lib/models/Subscription";
-import { isProSubscription } from "@/lib/billing/subscriptionState";
+import { isProSubscription, onDemandEligible } from "@/lib/billing/subscriptionState";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
@@ -18,6 +18,8 @@ import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 /** Lean document shape from SubscriptionModel query */
 type SubscriptionDoc = {
   status?: string;
+  kind?: string | null;
+  interval?: string | null;
   stripeSubscriptionId?: string;
   currentPeriodStart?: Date;
   currentPeriodEnd?: Date;
@@ -141,7 +143,7 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   const t0 = Date.now();
   const [sub, balRaw] = await Promise.all([
     SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-      .select({ status: 1, kind: 1, stripeSubscriptionId: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
+      .select({ status: 1, kind: 1, interval: 1, stripeSubscriptionId: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
       .lean() as Promise<SubscriptionDoc>,
     WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
       .select({
@@ -201,11 +203,12 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   // upgrade (or Pro credits left after a downgrade) are still spendable and belong in the count.
   const includedRemaining = subscriptionRemaining + trialRemaining;
 
-  // On-demand is a Pro feature: once the monthly credits run out, keep going and pay per credit.
-  // Free workspaces buy credit packs instead, so a stored toggle on a non-Pro workspace (a legacy
-  // pay-as-you-go subscription, or a Pro that lapsed) counts as off.
+  // On-demand is a monthly-Pro feature: once the monthly credits run out, keep going and pay per
+  // credit. Free workspaces buy credit packs instead, and so does annual Pro (its yearly
+  // subscription cannot carry the monthly metered price), so a stored toggle on either (a legacy
+  // pay-as-you-go subscription, a Pro that lapsed, a Pro that moved to yearly) counts as off.
   const storedOnDemandLimitCents = clampNonNegInt(bal?.onDemandMonthlyLimitCents ?? 0);
-  const onDemandAllowed = pro && Boolean(bal?.onDemandEnabled) && storedOnDemandLimitCents > 0;
+  const onDemandAllowed = onDemandEligible(sub) && Boolean(bal?.onDemandEnabled) && storedOnDemandLimitCents > 0;
   const onDemandEnabled = onDemandAllowed;
   const onDemandMonthlyLimitCents = onDemandAllowed ? storedOnDemandLimitCents : 0;
   const centsPerCredit = USD_CENTS_PER_CREDIT;

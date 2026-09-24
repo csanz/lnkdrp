@@ -57,7 +57,8 @@ BLOB_BASE_URL=https://your-store-id.public.blob.vercel-storage.com
 ```bash
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...                 # From Stripe CLI or Dashboard
-STRIPE_PRICE_ID=price_...                       # Pro plan recurring price
+STRIPE_PRICE_ID=price_...                       # Pro plan recurring price, monthly
+STRIPE_PRICE_ID_ANNUAL=price_...                # Pro plan recurring price, yearly (optional; unset = monthly only)
 STRIPE_AI_CREDITS_PRICE_ID=price_...            # Metered price for AI credits (canonical name)
 # STRIPE_USAGE_PRICE_ID=price_...               # Legacy alias for STRIPE_AI_CREDITS_PRICE_ID (still honoured; prefer the canonical name)
 STRIPE_CREDITS_METER_EVENT_NAME=ai_credits      # Billing Meter event_name attached to the metered price (default: ai_credits)

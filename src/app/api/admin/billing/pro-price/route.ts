@@ -70,10 +70,27 @@ export async function POST(request: Request) {
   }
   const proPriceLabel = formatPriceLabel({ unitAmount, currency, interval });
 
+  // The yearly price, when the deployment has one. Its per-month figure is what /pricing prints
+  // under the toggle ("$24/mo, billed yearly"); rounded down so the page never overstates the saving.
+  const annualPriceId = (process.env.STRIPE_PRICE_ID_ANNUAL ?? "").trim();
+  let proAnnualPriceLabel: string | null = null;
+  let proAnnualPerMonthLabel: string | null = null;
+  if (annualPriceId) {
+    const annual = await stripe.prices.retrieve(annualPriceId);
+    const annualAmount = typeof (annual as any)?.unit_amount === "number" ? (annual as any).unit_amount : null;
+    const annualCurrency = typeof (annual as any)?.currency === "string" ? String((annual as any).currency) : currency;
+    const annualInterval = typeof (annual as any)?.recurring?.interval === "string" ? String((annual as any).recurring.interval) : "";
+    if (typeof annualAmount !== "number" || !Number.isFinite(annualAmount) || annualInterval !== "year") {
+      return NextResponse.json({ error: "STRIPE_PRICE_ID_ANNUAL must be a licensed price with interval=year" }, { status: 400 });
+    }
+    proAnnualPriceLabel = formatPriceLabel({ unitAmount: annualAmount, currency: annualCurrency, interval: "year" });
+    proAnnualPerMonthLabel = formatPriceLabel({ unitAmount: Math.floor(annualAmount / 12), currency: annualCurrency, interval: "month" });
+  }
+
   await connectMongo();
   await BillingConfigModel.updateOne(
     { key: "global" },
-    { $setOnInsert: { key: "global" }, $set: { proPriceLabel } },
+    { $setOnInsert: { key: "global" }, $set: { proPriceLabel, proAnnualPriceLabel, proAnnualPerMonthLabel } },
     { upsert: true },
   );
 
@@ -84,7 +101,7 @@ export async function POST(request: Request) {
     .select({ proPriceLabel: 1, updatedDate: 1 })
     .lean();
   const updatedDate = (updated as any)?.updatedDate instanceof Date ? (updated as any).updatedDate.toISOString() : null;
-  return NextResponse.json({ ok: true, proPriceLabel, updatedDate });
+  return NextResponse.json({ ok: true, proPriceLabel, proAnnualPriceLabel, proAnnualPerMonthLabel, updatedDate });
 }
 
 

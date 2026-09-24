@@ -24,10 +24,13 @@ import { usePlan } from "@/lib/client/usePlan";
 
 type BillingStatusResponse = {
   plan?: string;
+  /** `"month"` or `"year"` on Pro; the yearly plan prints its own price and has no on-demand. */
+  interval?: "month" | "year" | null;
   stripeSubscriptionStatus?: string | null;
   stripeCurrentPeriodEnd?: string | null;
   stripeCancelAtPeriodEnd?: boolean;
   proPriceLabel?: string | null;
+  proAnnualPriceLabel?: string | null;
   error?: string;
 };
 
@@ -88,7 +91,12 @@ export default function SubscriptionCard() {
   const plan: "free" | "pro" | null = planRaw.trim() ? normalizePlan(planRaw) : null;
   const status = (data?.stripeSubscriptionStatus ?? "").trim() || (plan === "pro" ? "active" : "");
   const showStatusPill = plan === "pro" && status && status !== "active";
-  const proPriceLabel = typeof data?.proPriceLabel === "string" ? data.proPriceLabel.trim() : "";
+  const annual = plan === "pro" && data?.interval === "year";
+  const annualPriceLabel = typeof data?.proAnnualPriceLabel === "string" ? data.proAnnualPriceLabel.trim() : "";
+  const monthlyPriceLabel = typeof data?.proPriceLabel === "string" ? data.proPriceLabel.trim() : "";
+  // The price this workspace actually pays: the yearly label on the annual plan, else monthly.
+  const proPriceLabel = annual ? annualPriceLabel || monthlyPriceLabel : monthlyPriceLabel;
+  const annualOffered = plan === "free" && Boolean(annualPriceLabel);
   // Cancelled but still inside the paid period: Pro until the end date, then Free. Used to be a muted
   // "Cancels on <date>." inside the Pro card, which read as nothing having changed.
   const ending = plan === "pro" && Boolean(data?.stripeCancelAtPeriodEnd);
@@ -130,12 +138,12 @@ export default function SubscriptionCard() {
     return "Your current plan and its limits.";
   }, [busy, error, plan]);
 
-  async function startCheckout() {
+  async function startCheckout(interval: "month" | "year" = "month") {
     if (upgradeBusy) return;
     setUpgradeBusy(true);
     setError(null);
     try {
-      await startCheckoutAction();
+      await startCheckoutAction({ interval });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start checkout");
     } finally {
@@ -274,7 +282,7 @@ export default function SubscriptionCard() {
           </div>
         ) : plan === "pro" ? (
           <PlanPanel
-            planLabel={ending ? (endDate ? `Pro until ${endDate}` : "Pro, ending") : "Pro"}
+            planLabel={ending ? (endDate ? `Pro until ${endDate}` : "Pro, ending") : annual ? "Pro, yearly" : "Pro"}
             price={ending ? undefined : proPriceLabel || undefined}
             banner={
               ending ? (
@@ -339,6 +347,17 @@ export default function SubscriptionCard() {
                 >
                   {upgradeBusy ? "Opening…" : "Upgrade to Pro"}
                 </button>
+                {annualOffered ? (
+                  <button
+                    type="button"
+                    className="w-full whitespace-normal rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60 md:w-auto"
+                    disabled={busy || upgradeBusy}
+                    onClick={() => void startCheckout("year")}
+                    title={`${annualPriceLabel}, twelve months for the price of ten`}
+                  >
+                    Yearly, 2 months free
+                  </button>
+                ) : null}
                 {FEATURE_CREDITS_ENABLED ? (
                   <Link
                     href="/credits"

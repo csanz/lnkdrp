@@ -16,6 +16,7 @@ import { useAuthEnabled } from "@/app/providers";
 import { openBillingPortal, startCheckout } from "@/lib/billing/clientActions";
 import { cn } from "@/lib/cn";
 import Spinner from "@/components/ui/Spinner";
+import { useBillingInterval } from "./BillingInterval";
 
 type Plan = "free" | "pro";
 
@@ -91,6 +92,8 @@ function SignedInCta({ plan, variant, helper }: Required<Props>) {
   const [status, setStatus] = useState<BillingStatus | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Monthly or yearly, from the toggle on the Pro card (monthly when there is no toggle).
+  const { interval } = useBillingInterval();
 
   useEffect(() => {
     let cancelled = false;
@@ -157,7 +160,7 @@ function SignedInCta({ plan, variant, helper }: Required<Props>) {
         onClick={() =>
           void act(async () => {
             try {
-              await startCheckout();
+              await startCheckout({ interval });
             } catch (e) {
               // Already subscribed (409): the portal is the right place.
               if (e instanceof Error && /already/i.test(e.message)) return openBillingPortal();
@@ -166,7 +169,7 @@ function SignedInCta({ plan, variant, helper }: Required<Props>) {
           })
         }
       >
-        {busy ? "Opening Stripe…" : "Upgrade to Pro"}
+        {busy ? "Opening Stripe…" : interval === "year" ? "Upgrade to Pro, yearly" : "Upgrade to Pro"}
       </button>
     );
   }

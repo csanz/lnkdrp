@@ -57,6 +57,11 @@ const subscriptionSchema = new Schema(
      * `src/lib/billing/subscriptionState.ts`, never by comparing `status` alone.
      */
     kind: { type: String, enum: ["pro", "payg"], default: null },
+    /**
+     * How the Pro price bills: `month` or `year` (the annual plan). Written by the webhook from the
+     * licensed item's `recurring.interval`. `null` on rows from before annual existed, read as monthly.
+     */
+    interval: { type: String, enum: ["month", "year"], default: null },
 
     /**
      * Stripe billing period boundaries (source of truth for the billing cycle).

@@ -260,7 +260,7 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
 - `plan` comes from `GET /api/plan` when readable, else from whoami. `creditsRemaining`, `creditsResetAt` and
   `onDemand` come from `GET /api/credits/snapshot?fast=1` (`creditsResetAt` is the snapshot's reset date, falling
   back to `cycleEnd`; both are `null` when the snapshot cannot be read, and `onDemand` is `false`). whoami never
-  fails because of them. `onDemand` is Pro-only (`src/lib/credits/snapshot.ts`): it means AI runs continue past
+  fails because of them. `onDemand` is monthly-Pro-only (`src/lib/credits/snapshot.ts`; a yearly Pro subscription has no metered item, so it buys credit packs instead): it means AI runs continue past
   `creditsRemaining: 0`, billed per credit up to the workspace's spend limit. On Free the snapshot can only ever
   return `false`, so a Free workspace that spends its credits stops running AI until the cycle resets. `false` is
   also what an unreadable snapshot returns, and the two are indistinguishable here — read it as "not known to be

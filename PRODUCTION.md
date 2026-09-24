@@ -90,11 +90,17 @@ In the order they bite:
 
 ## Open product and pricing decisions that touch production
 
-- Price stays $29 Pro. Annual agreed at $290/yr ("$24/month, billed yearly") but **blocked**: Stripe
-  refuses a Checkout that mixes an annual Pro price with the monthly metered credits price. Chosen
-  way out is an annual Checkout without the metered item (annual subscribers buy packs at
-  ~$0.093/credit instead of on-demand at $0.10). Needs `STRIPE_PRICE_ID_ANNUAL` and an interval
-  branch in `/api/stripe/checkout`. Not built.
+- Price stays $29 Pro. Annual is $290/yr ("$24/mo, billed yearly", two months free). **Built
+  2026-09-23** in the sandbox: price `price_1UJ4gXBxWJYhcWkZCk8GKuo9` on the Pro product,
+  `STRIPE_PRICE_ID_ANNUAL` in `.env.local`, `POST /api/stripe/checkout { interval: "year" }`, a
+  monthly/yearly toggle on `/pricing` and in the upgrade modal, and a "Yearly" button on the
+  dashboard plan card. Stripe refuses a Checkout that mixes a yearly price with the monthly metered
+  credits price, so an annual subscription has no on-demand: `/api/billing/spend` refuses to turn
+  it on and says why, and annual Pro may buy credit packs (`creditPacksAllowed` in
+  `src/lib/billing/subscriptionState.ts`). The included credits are still granted monthly (the
+  `:m<N>` cycle keys). **Not yet live:** the live-mode price does not exist (DEPLOY 4.2 step 1), and
+  `STRIPE_PRICE_ID_ANNUAL` is not set on Vercel, so production offers monthly only until both are
+  done and an admin runs the price refresh on `/a/tools/billing`.
 - Credit packs were repriced on 2026-09-23 (75/$7, 150/$14, 400/$37). Old pack ids live in
   `RETIRED_CREDIT_PACKS` because the webhook throws after payment otherwise. `DEPLOY.md` 4.2 still
   quotes the old 30/60/300 packs.

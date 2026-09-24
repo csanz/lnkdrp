@@ -22,7 +22,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { resolveActor, resolveActorForStats, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SubscriptionModel } from "@/lib/models/Subscription";
-import { isProSubscription } from "@/lib/billing/subscriptionState";
+import { isAnnualProSubscription, onDemandEligible } from "@/lib/billing/subscriptionState";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
@@ -99,7 +99,7 @@ export async function GET(request: Request) {
       const [membership, sub, bal] = await Promise.all([
         OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
         SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-          .select({ status: 1, kind: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
+          .select({ status: 1, kind: 1, interval: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
           .lean(),
         WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
           .select({ onDemandEnabled: 1, onDemandMonthlyLimitCents: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
@@ -107,15 +107,21 @@ export async function GET(request: Request) {
       ]);
       if (!membership) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-      const pro = isProSubscription(sub as { status?: unknown; kind?: unknown } | null);
+      const subState = sub as { status?: unknown; kind?: unknown; interval?: unknown } | null;
+      // Monthly Pro only: an annual subscription cannot carry the monthly metered price that bills
+      // on-demand usage, so it buys credit packs instead (`onDemandEligible`).
+      const pro = onDemandEligible(subState);
+      const annual = isAnnualProSubscription(subState);
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       const roleAllowsEdit = role === "owner" || role === "admin";
       const canEdit = pro && roleAllowsEdit;
-      const editDisabledReason = !pro
-        ? "On-demand usage comes with Pro. On Free, you can buy a credit pack instead."
-        : !roleAllowsEdit
-          ? "Only workspace owners/admins can edit limits."
-          : null;
+      const editDisabledReason = annual
+        ? "On-demand usage is not available on yearly billing. Buy a credit pack at /credits to keep going past your monthly credits."
+        : !pro
+          ? "On-demand usage comes with Pro. On Free, you can buy a credit pack instead."
+          : !roleAllowsEdit
+            ? "Only workspace owners/admins can edit limits."
+            : null;
 
       const limitCents =
         typeof (bal as any)?.onDemandMonthlyLimitCents === "number" && Number.isFinite((bal as any).onDemandMonthlyLimitCents)
@@ -261,10 +267,16 @@ export async function POST(request: Request) {
       // On-demand is Pro's overage. Turning it off (limit 0) is always allowed; turning it on or
       // raising it needs Pro.
       if (limitCents > 0) {
-        const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1, kind: 1 }).lean();
-        if (!isProSubscription(sub as { status?: unknown; kind?: unknown } | null)) {
+        const sub = (await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
+          .select({ status: 1, kind: 1, interval: 1 })
+          .lean()) as { status?: unknown; kind?: unknown; interval?: unknown } | null;
+        if (!onDemandEligible(sub)) {
           return NextResponse.json(
-            { error: "On-demand usage comes with Pro. On Free, you can buy a credit pack instead." },
+            {
+              error: isAnnualProSubscription(sub)
+                ? "On-demand usage is not available on yearly billing. Buy a credit pack at /credits instead."
+                : "On-demand usage comes with Pro. On Free, you can buy a credit pack instead.",
+            },
             { status: 403 },
           );
         }

@@ -32,6 +32,7 @@ import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
 import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import { cn } from "@/lib/cn";
 import PricingCta from "./PricingCta";
+import { BillingIntervalProvider, ProPriceBlock } from "./BillingInterval";
 
 /** "from $7": the entry pack, never retyped. */
 const CHEAPEST_PACK_PRICE = formatPackPrice(Math.min(...CREDIT_PACKS.map((p) => p.priceCents)));
@@ -44,13 +45,13 @@ export const metadata: Metadata = {
   description: `Free to send a few. Pro to send every day. ${FREE_DOCUMENTS} shared documents free, forever, each with unlimited links; deep analytics and ${INCLUDED_CREDITS_PER_CYCLE} AI credits a month on Pro.`,
 };
 
-/** Read the Pro price label without letting a database hiccup take the page down. */
-async function readProPriceLabel(): Promise<string | null> {
+/** Read the Pro price labels without letting a database hiccup take the page down. */
+async function readProPriceLabels(): Promise<{ monthly: string | null; annual: string | null; annualPerMonth: string | null }> {
   try {
-    const { proPriceLabel } = await getBillingProPriceLabel();
-    return proPriceLabel;
+    const labels = await getBillingProPriceLabel();
+    return { monthly: labels.proPriceLabel, annual: labels.proAnnualPriceLabel, annualPerMonth: labels.proAnnualPerMonthLabel };
   } catch {
-    return null;
+    return { monthly: null, annual: null, annualPerMonth: null };
   }
 }
 
@@ -81,7 +82,10 @@ function FeatureList({ items, muted }: { items: string[]; muted: string }) {
  * Render the PricingPage UI.
  */
 export default async function PricingPage() {
-  const proPriceLabel = await readProPriceLabel();
+  const proPrice = await readProPriceLabels();
+  // Yearly is offered when the deployment has a yearly price (STRIPE_PRICE_ID_ANNUAL, refreshed
+  // into the billing config by the admin's price refresh). Without one the card is monthly only.
+  const annualAvailable = Boolean(proPrice.annual);
 
   return (
     <main className="relative min-h-[100svh] w-full overflow-hidden bg-[#050506] text-white">
@@ -164,7 +168,9 @@ export default async function PricingPage() {
               />
             </div>
 
-            {/* Pro */}
+            {/* Pro. The monthly/yearly choice lives in a client context around the card so the
+                price block and the CTA at the bottom agree (src/app/pricing/BillingInterval.tsx). */}
+            <BillingIntervalProvider annualAvailable={annualAvailable}>
             <div className="relative flex flex-col rounded-2xl border border-transparent bg-white p-7 text-black shadow-[0_30px_80px_-30px_rgba(255,255,255,0.25)] sm:p-8">
               <div className="flex min-h-[24px] items-center justify-between">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-black/55">Pro</div>
@@ -172,16 +178,7 @@ export default async function PricingPage() {
                   Per workspace
                 </span>
               </div>
-              <div className="mt-4 flex items-baseline gap-2">
-                {proPriceLabel ? (
-                  <span className="font-serif text-5xl tracking-tight text-black">{proPriceLabel}</span>
-                ) : (
-                  <>
-                    <span className="font-serif text-5xl tracking-tight text-black">Monthly</span>
-                    <span className="text-sm text-black/50">price shown at checkout</span>
-                  </>
-                )}
-              </div>
+              <ProPriceBlock monthlyLabel={proPrice.monthly} annualLabel={proPrice.annual} annualPerMonthLabel={proPrice.annualPerMonth} />
               <p className="mt-3 text-sm leading-6 text-black/60">
                 For workspaces and agents that send documents every day.
               </p>
@@ -204,6 +201,7 @@ export default async function PricingPage() {
               <div className="mt-8 flex-1" />
               <PricingCta plan="pro" variant="light" helper="Stripe checkout · Cancel anytime, Pro stays active until the billing period ends" />
             </div>
+            </BillingIntervalProvider>
           </div>
 
           {/* What is included, and why */}
@@ -383,11 +381,11 @@ export default async function PricingPage() {
                 },
                 {
                   q: "Is Pro per person or per workspace?",
-                  a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} people beyond the owner who can upload, share and replace. Anyone else can be invited as a viewer — free, unlimited, and able to see every document and all the analytics, but not to change anything. Agents never take a seat.`,
+                  a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} people beyond the owner who can upload, share and replace. Anyone else can be invited as a viewer: free, unlimited, and able to see every document and all the analytics, but not to change anything. Agents never take a seat.`,
                 },
                 {
                   q: `I already have more than ${FREE_DOCUMENTS} shared documents. What happens?`,
-                  a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new documents and projects wait until you archive some or upgrade. Existing links never stop working, and you can keep adding links to the documents you already have — document links are not capped on any plan.",
+                  a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new documents and projects wait until you archive some or upgrade. Existing links never stop working, and you can keep adding links to the documents you already have. Document links are not capped on any plan.",
                 },
                 {
                   q: "What do credits pay for?",

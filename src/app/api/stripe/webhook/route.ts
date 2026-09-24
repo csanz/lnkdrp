@@ -25,10 +25,14 @@ import { grantCycleIncludedCredits, buildCycleKey, creditWindowIndex } from "@/l
 import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
 import { requeueSkippedSummaries } from "@/lib/credits/summaryRequeue";
 import { grantCreditPack } from "@/lib/credits/purchases";
+import { FREE_DAILY_CREDIT_CAP } from "@/lib/credits/creditService";
 import {
   PAYG_DEFAULT_SPEND_LIMIT_CENTS,
   isBillableStatus,
+  isOpenStatus,
+  subscriptionIntervalFromItems,
   subscriptionKindFromPriceIds,
+  type SubscriptionInterval,
   type SubscriptionKind,
 } from "@/lib/billing/subscriptionState";
 import { getInvoiceSubscriptionId, getSubscriptionPeriod } from "@/lib/billing/stripePeriods";
@@ -81,6 +85,7 @@ function kindFromStripeSubscription(sub: unknown): SubscriptionKind | null {
   const fromItems = subscriptionKindFromPriceIds({
     priceIds,
     proPriceId: (process.env.STRIPE_PRICE_ID ?? "").trim() || null,
+    proAnnualPriceId: (process.env.STRIPE_PRICE_ID_ANNUAL ?? "").trim() || null,
     creditsPriceId: getAiCreditsPriceId(),
   });
   if (fromItems) return fromItems;
@@ -236,6 +241,16 @@ function priceIdFromSubscriptionItem(it: any): string {
   return typeof pid === "string" ? pid.trim() : "";
 }
 
+/**
+ * Monthly or yearly, from the licensed item's `recurring.interval`. The metered credits item is
+ * always monthly and is skipped. `null` when the payload carries no interval, so the stored value
+ * is left alone rather than reset to monthly.
+ */
+function intervalFromStripeSubscription(sub: unknown): SubscriptionInterval | null {
+  const items = (sub as any)?.items?.data;
+  return Array.isArray(items) ? subscriptionIntervalFromItems(items) : null;
+}
+
 /** Find the metered AI-credits subscription item id (by configured price id), or `null`. */
 function creditsSubscriptionItemId(sub: unknown): string | null {
   const creditsPriceId = getAiCreditsPriceId();
@@ -278,6 +293,54 @@ async function disableOnDemandForSubscription(params: {
     orgId: String(orgId),
     modified: (res as any)?.modifiedCount ?? null,
   });
+}
+
+/** The workspace a subscription query points at, or null when the row is gone. */
+async function workspaceIdFor(query: Record<string, unknown>): Promise<Types.ObjectId | null> {
+  const sub = await SubscriptionModel.findOne({ ...query, isDeleted: { $ne: true } }).select({ orgId: 1 }).lean();
+  const orgId = (sub as { orgId?: Types.ObjectId } | null)?.orgId;
+  return orgId ?? null;
+}
+
+/**
+ * Put the Free daily credit brake back when a workspace stops being Pro.
+ *
+ * `grantCycleIncludedCredits` sets `dailyCreditCap: null` on the way up and nothing set it back on
+ * the way down, so a cancelled Pro workspace kept its remaining subscription and starter credits
+ * with no per-day limit: the brake exists to stop free-credit farming, and a lapsed Pro could burn
+ * hundreds in a day. A pack purchase lifts the cap for good (`purchases.ts`), so a workspace
+ * holding purchased credits is left alone.
+ */
+async function restoreFreeDailyCap(params: { query: Record<string, unknown>; reason: string; eventId: string }): Promise<void> {
+  const orgId = await workspaceIdFor(params.query);
+  if (!orgId) return;
+  const res = await WorkspaceCreditBalanceModel.updateOne(
+    {
+      workspaceId: orgId,
+      dailyCreditCap: null,
+      $or: [{ purchasedCreditsRemaining: { $exists: false } }, { purchasedCreditsRemaining: { $lte: 0 } }],
+    },
+    { $set: { dailyCreditCap: FREE_DAILY_CREDIT_CAP } },
+  );
+  debugLog(1, "[stripe:webhook] free daily cap restored", {
+    id: params.eventId,
+    reason: params.reason,
+    orgId: String(orgId),
+    modified: (res as { modifiedCount?: number })?.modifiedCount ?? null,
+  });
+}
+
+/** Pro has no daily brake; clear one left over from a lapse inside the current cycle. */
+async function liftDailyCapForPro(params: { query: Record<string, unknown>; eventId: string }): Promise<void> {
+  const orgId = await workspaceIdFor(params.query);
+  if (!orgId) return;
+  const res = await WorkspaceCreditBalanceModel.updateOne(
+    { workspaceId: orgId, dailyCreditCap: { $ne: null } },
+    { $set: { dailyCreditCap: null } },
+  );
+  if ((res as { modifiedCount?: number })?.modifiedCount) {
+    debugLog(1, "[stripe:webhook] daily cap lifted for Pro", { id: params.eventId, orgId: String(orgId) });
+  }
 }
 
 /**
@@ -375,6 +438,7 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
     let cancelAtPeriodEnd = parseStripeBool((sub as any)?.cancel_at_period_end) ?? false;
     let stripeSubscriptionItemId = creditsSubscriptionItemId(sub);
     let kind = kindFromStripeSubscription(sub);
+    let interval = intervalFromStripeSubscription(sub);
     let usedStripeFetch = false;
 
     // Robustness: if the webhook payload is missing key fields (API version differences),
@@ -406,6 +470,7 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
         cancelAtPeriodEnd = parseStripeBool((fresh as any)?.cancel_at_period_end) ?? cancelAtPeriodEnd;
         stripeSubscriptionItemId = creditsSubscriptionItemId(fresh) ?? stripeSubscriptionItemId;
         kind = kindFromStripeSubscription(fresh) ?? kind;
+        interval = intervalFromStripeSubscription(fresh) ?? interval;
       } catch {
         // ignore; fall back to webhook payload best-effort
       }
@@ -440,6 +505,34 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       return;
     }
 
+    /**
+     * Ignore events for a subscription this workspace no longer tracks.
+     *
+     * The row is keyed by `metadata.orgId` first, so any subscription carrying this org's id can
+     * write it. When a workspace ends up with two (a second Checkout while the first was
+     * `past_due`, before Checkout refused that), events from either one overwrote the single row
+     * in arrival order: `unpaid` from the old one downgraded a workspace that was paying for the
+     * new one. The stored id wins while it is still open; a finished subscription (`free`,
+     * `canceled`) leaves the row free for whatever replaces it, which is the resubscribe case.
+     */
+    if (orgId && subscriptionId) {
+      const stored = (await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
+        .select({ stripeSubscriptionId: 1, status: 1 })
+        .lean()) as { stripeSubscriptionId?: string | null; status?: string } | null;
+      const storedId = (stored?.stripeSubscriptionId ?? "").trim();
+      if (storedId && storedId !== subscriptionId && isOpenStatus(stored?.status)) {
+        debugLog(1, "[stripe:webhook] ignored event for a subscription this workspace does not track", {
+          id: event.id,
+          type: event.type,
+          orgId: String(orgId),
+          eventSubscriptionId: subscriptionId,
+          storedSubscriptionId: storedId,
+          storedStatus: stored?.status ?? null,
+        });
+        return;
+      }
+    }
+
     const billable = isBillableStatus(status);
     const pro = isProFor(status, kind);
     const setFields: Record<string, unknown> = {
@@ -447,6 +540,7 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       planName: planNameFor(status, kind),
       cancelAtPeriodEnd: effectiveCancels,
       ...(kind ? { kind } : {}),
+      ...(interval ? { interval } : {}),
       ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
       ...(customerId ? { stripeCustomerId: customerId } : {}),
       ...(stripeSubscriptionItemId ? { stripeSubscriptionItemId } : {}),
@@ -472,17 +566,33 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       ? { ...query, $or: [{ lastStripeEventAt: null }, { lastStripeEventAt: { $exists: false } }, { lastStripeEventAt: { $lte: eventCreatedAt } }] }
       : query;
 
-    const res = await SubscriptionModel.updateOne(
-      orderedQuery,
-      {
-        $setOnInsert: orgId ? { orgId, isDeleted: false } : {},
-        $set: {
-          ...setFields,
-          ...(eventCreatedAt ? { lastStripeEventAt: eventCreatedAt } : {}),
-        },
+    const update = {
+      $set: {
+        ...setFields,
+        ...(eventCreatedAt ? { lastStripeEventAt: eventCreatedAt } : {}),
       },
-      { upsert: Boolean(orgId) },
-    );
+    };
+    let res: { matchedCount: number; upsertedCount: number; modifiedCount?: number; upsertedId?: unknown };
+    try {
+      res = await SubscriptionModel.updateOne(
+        orderedQuery,
+        { $setOnInsert: orgId ? { orgId, isDeleted: false } : {}, ...update },
+        { upsert: Boolean(orgId) },
+      );
+    } catch (err) {
+      /**
+       * The ordering filter and the upsert fight when the row exists with a newer stamp: the
+       * filter matches nothing, the upsert tries to insert a second row for the org, and the
+       * unique `{orgId}` index refuses. That made the "ignored out-of-order" branch below
+       * unreachable for any row carrying `metadata.orgId`: a delayed `updated` after a `deleted`
+       * threw, this route answered 400, and Stripe retried the same event for three days, failing
+       * identically each time. A duplicate key here is that case (or two first events for a new
+       * org racing, which the retry below also settles): run the ordered update once more without
+       * the upsert and let `matchedCount` decide.
+       */
+      if ((err as { code?: unknown } | null)?.code !== 11000) throw err;
+      res = await SubscriptionModel.updateOne(orderedQuery, update);
+    }
     if (eventCreatedAt && res.matchedCount === 0 && res.upsertedCount === 0) {
       debugLog(1, "[stripe:webhook] ignored out-of-order subscription event", {
         id: event.id,
@@ -518,8 +628,14 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
     // workspace just added a card to buy credits, so on-demand comes on.
     if (!billable) {
       await disableOnDemandForSubscription({ query, reason: `subscription.${status || "unknown"}`, eventId: event.id });
+      await restoreFreeDailyCap({ query, reason: `subscription.${status || "unknown"}`, eventId: event.id });
     } else if (kind === "payg" && orgId) {
       await activatePayAsYouGo({ orgId, eventId: event.id });
+    }
+    if (pro) {
+      // A subscription that recovered from `past_due` inside the same cycle gets no new cycle
+      // grant (it is idempotent per cycle), so the brake restored while it was lapsed is lifted here.
+      await liftDailyCapForPro({ query, eventId: event.id });
     }
 
     // Idempotent cycle grant: open this billing cycle's included credits
@@ -558,6 +674,7 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       const orgId = orgIdRaw && Types.ObjectId.isValid(orgIdRaw) ? new Types.ObjectId(orgIdRaw) : null;
       const status = typeof fresh.status === "string" ? fresh.status : "";
       const kind = kindFromStripeSubscription(fresh);
+      const interval = intervalFromStripeSubscription(fresh);
       const pro = isProFor(status, kind);
       const { start: currentPeriodStart, end: currentPeriodEnd } = getSubscriptionPeriod(fresh);
       const stripeSubscriptionItemId = creditsSubscriptionItemId(fresh);
@@ -571,6 +688,7 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
               status: status || "free",
               planName: planNameFor(status, kind),
               ...(kind ? { kind } : {}),
+              ...(interval ? { interval } : {}),
               stripeSubscriptionId: subscriptionId,
               ...(currentPeriodStart ? { currentPeriodStart } : {}),
               ...(currentPeriodEnd ? { currentPeriodEnd } : {}),
@@ -634,8 +752,10 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
     }
 
     const query = { stripeSubscriptionId: subscriptionId, isDeleted: { $ne: true } };
-    // Disable on-demand first (needs the workspace mapping, which the row still holds).
+    // Disable on-demand first (needs the workspace mapping, which the row still holds), and put
+    // the Free daily brake back for the same reason.
     await disableOnDemandForSubscription({ query, reason: "customer.subscription.deleted", eventId: event.id });
+    await restoreFreeDailyCap({ query, reason: "customer.subscription.deleted", eventId: event.id });
 
     /**
      * The same ordering guard the update handler carries, in the other direction.

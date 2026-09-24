@@ -7,7 +7,8 @@ This app implements **workspace-bound** subscriptions using **Stripe Checkout** 
 Server (required):
 - `STRIPE_SECRET_KEY` — Stripe secret key (test/live).
 - `STRIPE_WEBHOOK_SECRET` — webhook signing secret (`whsec_...` from Stripe CLI or Dashboard).
-- `STRIPE_PRICE_ID` — recurring price id (`price_...`) for the Pro plan.
+- `STRIPE_PRICE_ID` — recurring price id (`price_...`) for the Pro plan, monthly.
+- `STRIPE_PRICE_ID_ANNUAL` — recurring price id for the Pro plan, yearly ($290, twelve months for the price of ten). Optional: unset means monthly only. Checkout with `{ interval: "year" }` uses it alone (no metered item; Stripe refuses the mix), so annual workspaces have no on-demand usage and may buy credit packs instead (`creditPacksAllowed`, `onDemandEligible` in `src/lib/billing/subscriptionState.ts`). The webhook stores `interval` on the subscription row from the licensed item's `recurring.interval`.
 - `STRIPE_AI_CREDITS_PRICE_ID` — metered price id (`price_...`) used to bill **AI credits** (usage is reported in credits only). Canonical name; `STRIPE_USAGE_PRICE_ID` is accepted as a legacy alias (resolved by `getAiCreditsPriceId()` in `src/lib/credits/stripeReporting.ts`). Added automatically as a second, quantity-less line item on Checkout.
 - `STRIPE_CREDITS_METER_EVENT_NAME` — Billing Meter `event_name` the metered price is attached to (default `ai_credits`). Optional.
 
@@ -32,7 +33,7 @@ Public (optional, pricing-table embed component only):
 - Creates/reuses a Stripe customer stored on the workspace subscription record (`SubscriptionModel` for the active org).
 - Creates a Stripe Checkout Session (`mode=subscription`) with `metadata.orgId` and `subscription_data.metadata.orgId`.
 - Line items: `STRIPE_PRICE_ID` (qty 1) plus `STRIPE_AI_CREDITS_PRICE_ID` (metered; no quantity) when configured.
-- Returns **409** (`code: "SUBSCRIPTION_ALREADY_ACTIVE"`, with a `portalUrl` hint) when the workspace already has an `active`/`trialing` subscription — use the billing portal instead.
+- Returns **409** (`code: "SUBSCRIPTION_ALREADY_ACTIVE"`, with a `portalUrl` hint and a same-origin `redirectTo` to the Billing tab) when the workspace already has a subscription Stripe has not finished with: `active`/`trialing`, and also `past_due`/`unpaid`/`incomplete`/`paused` (`hasOpenSubscription` in `src/lib/billing/subscriptionState.ts`). A workspace whose card is failing is Free meanwhile, but starting a second Checkout would stack a second subscription on the same customer; the fix is the portal's payment-method flow.
 - There is no static Payment Link: the Checkout Session is minted per request by this route.
 
 2) Stripe redirects to `/billing/success`
@@ -45,6 +46,17 @@ Public (optional, pricing-table embed component only):
   - `currentPeriodStart`, `currentPeriodEnd`
 - For portal cancellation schedules, Stripe may send `cancel_at` (timestamp). We treat `cancel_at` as “Cancels on <date>” and persist it into the workspace subscription period end.
 - Webhook idempotency is enforced via a tiny `StripeEvent` collection (unique Stripe `event.id`): the row is inserted **before** processing and `processedAt` is set **after**. A retry for an event with `processedAt=null` (previous attempt failed → 400) is processed again; a retry for a processed event is ACKed with no side effects.
+- Ordering: every subscription write carries `lastStripeEventAt` and refuses an event older than the row's stamp. A stale event is ACKed and ignored (the upsert used to collide with the unique `{orgId}` index and answer 400, which made Stripe retry the same stale event for three days).
+- One subscription per workspace: while the row's `stripeSubscriptionId` is still open in Stripe, `customer.subscription.*` events for a *different* subscription id carrying the same `metadata.orgId` are ignored. A finished subscription (`free`/`canceled`) leaves the row free for its replacement, which is the resubscribe case.
+- Free daily brake: when a subscription stops being billable (`past_due`, `unpaid`, `deleted`), `WorkspaceCreditBalance.dailyCreditCap` is set back to `FREE_DAILY_CREDIT_CAP` unless the workspace holds purchased credits (a pack lifts the cap for good). A subscription that recovers to `active` inside the same cycle has the cap lifted again, since the idempotent cycle grant would not.
+- These four guards are pinned by `tests/lib/stripeWebhook.test.ts`.
+
+## Cancelling from inside the product
+
+`src/lib/billing/stripeSubscriptionCancel.ts` is the one place the app cancels a subscription itself; both callers refuse their own action when Stripe cannot be reached rather than orphan a live subscription.
+
+- `DELETE /api/orgs/:orgId` (team workspace) cancels the workspace's subscription **immediately** before soft-deleting anything, then marks the `Subscription` row deleted and turns on-demand off. A cancel failure answers 502 `STRIPE_CANCEL_FAILED` and deletes nothing.
+- `POST /api/account/delete` sets `cancel_at_period_end` on every subscription in a workspace the person owns alone **or** owns with others but where no other owner/admin exists (nobody left could open the portal). What is already paid for keeps working until the period ends; the purge then hard-cancels solo workspaces as before. Each affected workspace gets a `plan.subscription_ending` activity row. Reversible from the portal or `POST /api/stripe/subscription/resume` until the period ends; note there is no undo for the deletion request itself.
 - `customer.subscription.deleted` and `invoice.payment_failed` also set `WorkspaceCreditBalance.onDemandEnabled=false` (no overage on a dead/failing subscription).
 - Stripe API `2025-12-15.clover` (stripe@20): billing periods are read from subscription **items** (`items.data[0].current_period_start/end`) and the invoice's subscription from `invoice.parent.subscription_details.subscription`, via `src/lib/billing/stripePeriods.ts` (`getSubscriptionPeriod`, `getInvoiceSubscriptionId`).
 - Debug logging is available via `DEBUG_LEVEL=2` (logs safe subsets of payload fields + update outcomes).
@@ -133,6 +145,7 @@ UI:
 |---|---|---|
 | Product Pro | `prod_Thzz8ih0J5i8W1` | metadata `type=pro`; no unit label |
 | Price Pro $29/month (licensed) | `price_1SkZzUBxWJYhcWkZQTSQBzyG` | `STRIPE_PRICE_ID` |
+| Price Pro $290/year (licensed, "Pro annual (2 months free)", lookup key `pro_annual`) | `price_1UJ4gXBxWJYhcWkZCk8GKuo9` | `STRIPE_PRICE_ID_ANNUAL` |
 | Product On-demand AI credits | `prod_VFYHmHCuaZeApP` | unit label `credit`, metadata `type=ai_credits` |
 | Price $0.10 per credit (metered, monthly) | `price_1UF3AYBxWJYhcWkZplMvZOi8` | `STRIPE_AI_CREDITS_PRICE_ID` |
 | Billing Meter `ai_credits` | `mtr_test_61VOR6JFQe5B7caqU41BxWJYhcWkZN56` | sum, customer by `stripe_customer_id`, value key `value` |

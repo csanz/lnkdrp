@@ -37,14 +37,19 @@ type Props = {
 };
 
 /** What the modal needs from `GET /api/billing/status`. */
-type BillingEntry = { proPriceLabel: string | null; checkoutEligible: boolean };
+type BillingEntry = {
+  proPriceLabel: string | null;
+  /** The yearly price ("$290/yr"); `null` when the deployment sells monthly only. */
+  proAnnualPriceLabel: string | null;
+  checkoutEligible: boolean;
+};
 
 // Fetched once per browser session: the price label does not change mid-session and the
 // signed-in check is stable until a reload.
 let billingEntryCache: BillingEntry | null = null;
 let billingEntryInflight: Promise<BillingEntry> | null = null;
 
-const NOT_ELIGIBLE: BillingEntry = { proPriceLabel: null, checkoutEligible: false };
+const NOT_ELIGIBLE: BillingEntry = { proPriceLabel: null, proAnnualPriceLabel: null, checkoutEligible: false };
 
 /** Load (and cache) the Pro price label plus whether this visitor can start Checkout. */
 async function loadBillingEntry(): Promise<BillingEntry> {
@@ -58,9 +63,10 @@ async function loadBillingEntry(): Promise<BillingEntry> {
         return NOT_ELIGIBLE;
       }
       if (!res.ok) return NOT_ELIGIBLE;
-      const json = (await res.json().catch(() => null)) as { proPriceLabel?: unknown } | null;
+      const json = (await res.json().catch(() => null)) as { proPriceLabel?: unknown; proAnnualPriceLabel?: unknown } | null;
       const label = typeof json?.proPriceLabel === "string" ? json.proPriceLabel.trim() : "";
-      const entry: BillingEntry = { proPriceLabel: label || null, checkoutEligible: true };
+      const annual = typeof json?.proAnnualPriceLabel === "string" ? json.proAnnualPriceLabel.trim() : "";
+      const entry: BillingEntry = { proPriceLabel: label || null, proAnnualPriceLabel: annual || null, checkoutEligible: true };
       billingEntryCache = entry;
       return entry;
     } catch {
@@ -100,6 +106,9 @@ export default function UpgradeModal({
   const [billing, setBilling] = useState<BillingEntry | null>(() => billingEntryCache);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
+  // Yearly is offered only when the deployment has a yearly price; otherwise monthly, as before.
+  const [yearly, setYearly] = useState(false);
+  const annualAvailable = Boolean(billing?.proAnnualPriceLabel);
 
   // Never show the modal to a Pro workspace, even if a stale caller opened it.
   useEffect(() => {
@@ -122,18 +131,21 @@ export default function UpgradeModal({
     setCheckoutBusy(true);
     setCheckoutError(null);
     try {
-      await startCheckout();
+      await startCheckout({ interval: yearly && annualAvailable ? "year" : "month" });
     } catch (e) {
       setCheckoutError(e instanceof Error ? e.message : "Failed to start checkout");
       setCheckoutBusy(false);
     }
-  }, [checkoutBusy]);
+  }, [checkoutBusy, yearly, annualAvailable]);
 
   if (!open || isPro) return null;
 
   const usage = planLimitUsageSuffix({ used, max });
   const reason = [copy.reason, usage, graceHint ?? ""].filter(Boolean).join(" ");
-  const { amount, period } = splitPriceLabel(billing?.proPriceLabel || PRO_PRICE_FALLBACK);
+  const showYearly = yearly && annualAvailable;
+  const { amount, period } = splitPriceLabel(
+    showYearly ? (billing?.proAnnualPriceLabel as string) : billing?.proPriceLabel || PRO_PRICE_FALLBACK,
+  );
   const canCheckout = checkoutEnabled && Boolean(billing?.checkoutEligible);
   const primaryLabel = copy.primaryLabel ?? "Upgrade to Pro";
   const primaryClass =
@@ -172,11 +184,42 @@ export default function UpgradeModal({
       </ul>
 
       <div className="mt-5 flex flex-wrap items-end justify-between gap-x-6 gap-y-1.5 sm:mt-7 sm:gap-y-3">
-        <div className="flex items-baseline gap-2">
-          <span className="text-[32px] font-semibold leading-none sm:text-[36px] tracking-[-0.02em] text-[var(--fg)] tabular-nums">{amount}</span>
-          {period ? <span className="text-[14px] leading-5 text-[var(--muted-2)]">{period}</span> : null}
+        <div>
+          <div className="flex items-baseline gap-2">
+            <span className="text-[32px] font-semibold leading-none sm:text-[36px] tracking-[-0.02em] text-[var(--fg)] tabular-nums">{amount}</span>
+            {period ? <span className="text-[14px] leading-5 text-[var(--muted-2)]">{period}</span> : null}
+          </div>
+          {annualAvailable ? (
+            <div role="radiogroup" aria-label="Billing period" className="mt-2 inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-2)] p-0.5">
+              {(
+                [
+                  ["month", "Monthly"],
+                  ["year", "Yearly, 2 months free"],
+                ] as const
+              ).map(([value, label]) => {
+                const active = showYearly ? value === "year" : value === "month";
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    className={[
+                      "rounded-full px-2.5 py-1 text-[12px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                      active ? "bg-[var(--fg)] text-[var(--bg)]" : "text-[var(--muted-2)] hover:text-[var(--fg)]",
+                    ].join(" ")}
+                    onClick={() => setYearly(value === "year")}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
-        <p className="text-[13px] leading-5 text-[var(--muted)]">Per workspace. Cancel anytime.</p>
+        <p className="text-[13px] leading-5 text-[var(--muted)]">
+          {showYearly ? "Per workspace, billed yearly. Cancel anytime." : "Per workspace. Cancel anytime."}
+        </p>
       </div>
 
       <div className="mt-4 sm:mt-5">
