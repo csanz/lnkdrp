@@ -96,6 +96,7 @@ export function redirectWith(redirectUri: string, params: Record<string, string 
 export type WorkspaceChoice = {
   id: string;
   name: string;
+  /** The workspace created with the account. Only used to list it first; it is not labelled, a workspace is just its name. */
   isPersonal: boolean;
   role: OrgRole;
   /** What a grant in this workspace may carry: viewers get read only. */

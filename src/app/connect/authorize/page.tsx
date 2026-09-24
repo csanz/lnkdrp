@@ -107,7 +107,7 @@ export default async function AuthorizePage({ searchParams }: { searchParams: Pr
                       <span className="min-w-0 flex-1">
                         <span className="block text-[14px] font-medium text-white">{w.name}</span>
                         <span className="mt-0.5 block text-[12px] text-white/50">
-                          {w.isPersonal ? "Personal workspace" : `Team workspace · you are ${w.role}`}
+                          {`You are ${w.role}`}
                           {readOnly ? " · read only for your role" : ""}
                         </span>
                       </span>
