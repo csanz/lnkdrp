@@ -39,6 +39,7 @@ import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
 import { useSkeletonDelay } from "@/lib/client/useSkeletonDelay";
 import { readPageCache, writePageCache } from "@/lib/client/pageCache";
+import { peekKnownEmpty } from "@/lib/client/knownEmpty";
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import AgentMark from "@/components/AgentMark";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -705,14 +706,19 @@ export default function ActivityPageClient() {
       drainTimerRef.current = null;
     }
     // The first page this tab last saw for this filter paints at once and refreshes underneath
-    // (`src/lib/client/pageCache.ts`). No "known empty" shortcut here: a workspace with no
-    // documents can still have member and agent rows, and a wrong "No activity yet" is worse
-    // than a fifth of a second of blank.
+    // (`src/lib/client/pageCache.ts`). Failing that, a workspace the sidebar snapshot says has no
+    // activity row at all gets "No activity yet" on the first frame; the snapshot carries that
+    // fact precisely because document and project counts cannot stand in for it (member and
+    // agent rows exist without either). The response still wins when it lands.
     const cacheKey = `activity:${filter}:${who}`;
     const cached = readPageCache<{ items: ActivityItem[]; nextCursor: string | null }>(cacheKey);
     if (cached) {
       setItems(cached.items);
       setNextCursor(cached.nextCursor);
+      setLoading(false);
+    } else if (peekKnownEmpty().activity === true) {
+      setItems([]);
+      setNextCursor(null);
       setLoading(false);
     }
     fetchPage(null)

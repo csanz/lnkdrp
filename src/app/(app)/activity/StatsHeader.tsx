@@ -27,6 +27,7 @@ import { subscribeRealtime } from "@/lib/client/realtime";
 import { CartesianGrid, Cell, Label, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 
 import { formatDayKey } from "@/lib/format/date";
+import { useKnownEmpty } from "@/lib/client/knownEmpty";
 import { formatShare } from "@/lib/charts/donut";
 import {
   ACTIVITY_SUMMARY_BUCKETS,
@@ -98,6 +99,7 @@ function actionsLabel(n: number): string {
 export default function ActivityStatsHeader() {
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const knownEmpty = useKnownEmpty();
   const lastFetchRef = useRef(0);
   const timerRef = useRef<number | null>(null);
 
@@ -152,6 +154,9 @@ export default function ActivityStatsHeader() {
   }, [load]);
 
   if (loading) {
+    // A workspace the sidebar snapshot already knows has no activity gets no placeholder either:
+    // the card below would render nothing, and a pulsing box that becomes nothing reads as broken.
+    if (knownEmpty.activity === true) return null;
     // Reserves the card's height so the first feed row does not jump once the numbers land.
     return <div aria-hidden="true" className="mb-6 h-[104px] rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] motion-safe:animate-pulse" />;
   }

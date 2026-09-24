@@ -23,18 +23,21 @@ export type KnownEmpty = {
   docs: boolean | null;
   projects: boolean | null;
   requests: boolean | null;
+  /** From the sidebar snapshot's `activity.any`; `null` on a snapshot written before it existed. */
+  activity: boolean | null;
 };
 
 /** Synchronous read; safe on the server (answers all-unknown). */
 export function peekKnownEmpty(): KnownEmpty {
-  if (typeof window === "undefined") return { docs: null, projects: null, requests: null };
+  if (typeof window === "undefined") return { docs: null, projects: null, requests: null, activity: null };
   const snap = getSidebarCacheSnapshot();
   const plan = peekPlan();
   const fromTotal = (total: number | undefined): boolean | null => (typeof total === "number" ? total === 0 : null);
   const docs = fromTotal(snap?.docs?.total) ?? (plan ? plan.usage.documents === 0 : null);
   const projects = fromTotal(snap?.projects?.total) ?? (plan ? plan.usage.projects === 0 : null);
   const requests = fromTotal(snap?.requests?.total);
-  return { docs, projects, requests };
+  const activity = typeof snap?.activity?.any === "boolean" ? !snap.activity.any : null;
+  return { docs, projects, requests, activity };
 }
 
 /** Subscribe to the same answer; re-reads when the sidebar snapshot or the plan changes. */

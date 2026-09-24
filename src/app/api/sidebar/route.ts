@@ -9,6 +9,7 @@ import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
@@ -234,7 +235,12 @@ export async function GET(request: Request) {
       limit: requestsLimit,
     };
 
-    const payload = { docs, projects, requests };
+    // One indexed existence check, so the Activity page can paint "No activity yet" on its first
+    // frame for a workspace that has none, instead of after a round trip that only confirms it
+    // (`src/lib/client/knownEmpty.ts`). `any: true` says nothing about how much; the page asks.
+    const activityAny = await ActivityEventModel.exists({ orgId }).then((hit) => Boolean(hit));
+
+    const payload = { docs, projects, requests, activity: { any: activityAny } };
     const etag = etagFromJson(payload);
     const ifNoneMatch = request.headers.get("if-none-match") ?? "";
     const cacheControl = sidebar ? "private, max-age=0, must-revalidate" : "no-store";

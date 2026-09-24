@@ -59,6 +59,11 @@ export type SidebarCacheSnapshot = {
   docs: Paged<SidebarDocListItem>;
   projects: Paged<SidebarProjectListItem>;
   requests: Paged<SidebarProjectListItem>;
+  /**
+   * Whether the workspace has any activity row at all. Optional: snapshots written before it
+   * existed stay valid and simply do not know. Read by `src/lib/client/knownEmpty.ts`.
+   */
+  activity?: { any: boolean };
 };
 
 const STORAGE_KEY_BASE = "lnkdrp-sidebar-cache-v3";
@@ -366,11 +371,13 @@ async function storeSnapshot(orgId: string, res: Response): Promise<void> {
     docs?: Paged<SidebarDocListItem>;
     projects?: Paged<SidebarProjectListItem>;
     requests?: Paged<SidebarProjectListItem>;
+    activity?: { any?: unknown };
   } | null) ?? {};
 
   const next: SidebarCacheSnapshot = {
     updatedAt: Date.now(),
     etag,
+    ...(typeof json.activity?.any === "boolean" ? { activity: { any: json.activity.any } } : {}),
     docs: {
       items: Array.isArray(json.docs?.items) ? json.docs!.items : [],
       total: typeof json.docs?.total === "number" ? json.docs.total : 0,
@@ -398,6 +405,7 @@ async function storeSnapshot(orgId: string, res: Response): Promise<void> {
     prev.docs.total === next.docs.total &&
     prev.projects.total === next.projects.total &&
     prev.requests.total === next.requests.total &&
+    prev.activity?.any === next.activity?.any &&
     JSON.stringify(prev.docs.items) === JSON.stringify(next.docs.items) &&
     JSON.stringify(prev.projects.items) === JSON.stringify(next.projects.items) &&
     JSON.stringify(prev.requests.items) === JSON.stringify(next.requests.items);
