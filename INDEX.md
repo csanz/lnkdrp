@@ -347,7 +347,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/preferences/NotificationPreferences.tsx`
 - `src/app/preferences/WorkspaceManager.tsx` · default
 - `src/app/preferences/preferencesShell.tsx` · default
-- `src/app/pricing/BillingInterval.tsx` · BillingInterval, BillingIntervalProvider, BillingStatus, BillingStatusPlan, loadBillingStatus, ProPriceBlock, useBillingInterval
+- `src/app/pricing/BillingInterval.tsx` · BillingInterval, BillingIntervalProvider, BillingIntervalToggle, BillingStatus, BillingStatusPlan, loadBillingStatus, ProPriceBlock, useBillingInterval
 - `src/app/pricing/PricingCta.tsx` · default
 - `src/app/project/[projectSlug]/pageClient.tsx` · default
 - `src/app/providers.tsx` · default, useAuthEnabled, useNavigationLocked, useNavigationLockWhile

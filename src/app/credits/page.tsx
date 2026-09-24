@@ -27,12 +27,12 @@ export const metadata: Metadata = {
   description: `Prepaid AI credit packs for LinkDrop: ${CREDIT_PACKS.map((p) => p.credits).join(", ")} credits, used after your included credits and valid for ${PURCHASED_CREDITS_EXPIRY_MONTHS} months.`,
 };
 
-async function readProPriceLabel(): Promise<string | null> {
+async function readProPriceLabels(): Promise<{ monthly: string | null; annual: string | null }> {
   try {
-    const { proPriceLabel } = await getBillingProPriceLabel();
-    return proPriceLabel;
+    const labels = await getBillingProPriceLabel();
+    return { monthly: labels.proPriceLabel, annual: labels.proAnnualPriceLabel };
   } catch {
-    return null;
+    return { monthly: null, annual: null };
   }
 }
 
@@ -43,7 +43,8 @@ export default async function CreditsPage() {
   const session = await getServerSession(authOptions);
   await enforceEntryGates(session?.user?.id);
 
-  const proPriceLabel = await readProPriceLabel();
+  const proPrice = await readProPriceLabels();
+  const proPriceLabel = proPrice.monthly;
 
   return (
     <main className="relative min-h-[100svh] w-full overflow-hidden bg-[#050506] text-white">
@@ -72,7 +73,13 @@ export default async function CreditsPage() {
             </p>
           </div>
 
-          <CreditsPurchaseClient packs={[...CREDIT_PACKS]} proPriceLabel={proPriceLabel} proCredits={INCLUDED_CREDITS_PER_CYCLE} freeCredits={FREE_STARTER_CREDITS} />
+          <CreditsPurchaseClient
+            packs={[...CREDIT_PACKS]}
+            proPriceLabel={proPriceLabel}
+            proAnnualPriceLabel={proPrice.annual}
+            proCredits={INCLUDED_CREDITS_PER_CYCLE}
+            freeCredits={FREE_STARTER_CREDITS}
+          />
 
           <div className="mt-20 grid gap-10 md:grid-cols-3 md:gap-8">
             <div>

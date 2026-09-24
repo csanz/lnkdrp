@@ -20,6 +20,7 @@ import { signIn, useSession } from "next-auth/react";
 import { useAuthEnabled } from "@/app/providers";
 import Spinner from "@/components/ui/Spinner";
 import PricingCta from "@/app/pricing/PricingCta";
+import { BillingIntervalProvider, BillingIntervalToggle, useBillingInterval } from "@/app/pricing/BillingInterval";
 import { type CreditPack, formatPackPrice, formatPerCredit } from "@/lib/credits/packs";
 import { PRO_SEATS_COPY } from "@/lib/client/planNumbers";
 import { formatShortDate } from "@/lib/format/date";
@@ -29,7 +30,14 @@ import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { cn } from "@/lib/cn";
 import WorkspaceIcon from "@/components/WorkspaceIcon";
 
-type Props = { packs: CreditPack[]; proPriceLabel: string | null; proCredits: number; freeCredits: number };
+type Props = {
+  packs: CreditPack[];
+  proPriceLabel: string | null;
+  /** The yearly Pro price ("$290/yr"); `null` when the deployment sells monthly only. */
+  proAnnualPriceLabel: string | null;
+  proCredits: number;
+  freeCredits: number;
+};
 
 const BUTTON =
   "relative inline-flex w-full items-center justify-center rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10 disabled:opacity-70";
@@ -79,6 +87,7 @@ type Workspace = {
 function Body({
   packs,
   proPriceLabel,
+  proAnnualPriceLabel,
   proCredits,
   freeCredits,
   signedIn,
@@ -312,21 +321,16 @@ function Body({
       ) : null}
 
       {showPro ? (
-        <div className="mt-5 grid gap-6 rounded-2xl bg-white p-7 text-black shadow-[0_30px_80px_-30px_rgba(255,255,255,0.25)] sm:p-8 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] md:items-center md:gap-12">
-          <div>
-            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-black/55">Or get Pro</div>
-            <h2 className="mt-3 font-serif text-3xl leading-tight tracking-tight sm:text-4xl">
-              {proCredits} credits every month{proPriceLabel ? `, for ${proPriceLabel}` : ""}.
-            </h2>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-black/60">
-              Buying credits more than once a month? A month of Pro costs less than the {best.credits}-credit pack, and
-              adds unlimited documents and projects, deep analytics on who read what, and {PRO_SEATS_COPY} teammates plus unlimited free viewers.
-            </p>
-          </div>
-          <div className={cn("w-full")}>
-            <PricingCta plan="pro" variant="light" helper="Stripe checkout · Cancel anytime" />
-          </div>
-        </div>
+        // The same Monthly / Yearly choice as the pricing page: the provider wraps the card so the
+        // heading, the toggle and the CTA agree on which Checkout opens.
+        <BillingIntervalProvider annualAvailable={Boolean(proAnnualPriceLabel)}>
+          <ProOffer
+            proCredits={proCredits}
+            proPriceLabel={proPriceLabel}
+            proAnnualPriceLabel={proAnnualPriceLabel}
+            bestPackCredits={best.credits}
+          />
+        </BillingIntervalProvider>
       ) : null}
     </>
   );
@@ -458,6 +462,43 @@ function onDemandLabel(onDemand: { limitCents: number; usedCredits: number }): s
  * Pro's answer to "more credits": on-demand usage, set up in Limits. Shown in place of the packs,
  * which Pro can't buy (it would pay more per credit than on-demand).
  */
+/** The "Or get Pro" card: price for the chosen interval, the toggle, and the CTA that honours it. */
+function ProOffer({
+  proCredits,
+  proPriceLabel,
+  proAnnualPriceLabel,
+  bestPackCredits,
+}: {
+  proCredits: number;
+  proPriceLabel: string | null;
+  proAnnualPriceLabel: string | null;
+  bestPackCredits: number;
+}) {
+  const { interval, annualAvailable } = useBillingInterval();
+  const yearly = annualAvailable && interval === "year";
+  const label = yearly ? proAnnualPriceLabel : proPriceLabel;
+  return (
+    <div className="mt-5 grid gap-6 rounded-2xl bg-white p-7 text-black shadow-[0_30px_80px_-30px_rgba(255,255,255,0.25)] sm:p-8 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] md:items-center md:gap-12">
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-black/55">Or get Pro</div>
+        <h2 className="mt-3 font-serif text-3xl leading-tight tracking-tight sm:text-4xl">
+          {proCredits} credits every month{label ? `, for ${label}` : ""}
+          {yearly ? ", billed yearly" : ""}.
+        </h2>
+        <p className="mt-3 max-w-xl text-sm leading-6 text-black/60">
+          Buying credits more than once a month? A month of Pro costs less than the {bestPackCredits}-credit pack, and
+          adds unlimited documents and projects, deep analytics on who read what, and {PRO_SEATS_COPY} teammates plus unlimited free viewers.
+          {yearly ? " Yearly is twelve months for the price of ten." : ""}
+        </p>
+        <BillingIntervalToggle className="mt-4" />
+      </div>
+      <div className={cn("w-full")}>
+        <PricingCta plan="pro" variant="light" helper="Stripe checkout · Cancel anytime" />
+      </div>
+    </div>
+  );
+}
+
 function OnDemandCard({ workspace, proCredits }: { workspace: Workspace; proCredits: number }) {
   const on = Boolean(workspace.onDemand && workspace.onDemand.limitCents > 0);
   const unlimited = on && (workspace.onDemand?.limitCents ?? 0) >= UNLIMITED_LIMIT_CENTS;

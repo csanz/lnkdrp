@@ -1,10 +1,11 @@
 /**
- * Monthly or yearly, chosen once on the Pro card and read by everything on it.
+ * Monthly or yearly, chosen once on a Pro card and read by everything on it.
  *
  * The pricing page is a server component and the price block and the CTA are two different
  * corners of the same card, so the choice lives in a small client context that wraps the card:
- * `ProPriceBlock` draws the toggle and the price for the chosen interval, `useBillingInterval`
- * hands the interval to `PricingCta` when it starts Checkout. Without a yearly price on this
+ * `BillingIntervalToggle` draws the switch, `ProPriceBlock` the price for the chosen interval,
+ * and `useBillingInterval` hands the interval to `PricingCta` when it starts Checkout. The
+ * `/credits` page's Pro card uses the same provider and toggle. Without a yearly price on this
  * deployment the toggle is not drawn and everything reads as monthly, exactly as before.
  *
  * Yearly is twelve months for the price of ten. The per-month figure under the toggle comes from
@@ -22,7 +23,7 @@ export type BillingInterval = "month" | "year";
 export type BillingStatusPlan = "free" | "pro";
 export type BillingStatus = { plan: BillingStatusPlan; orgName: string | null };
 
-// One status fetch shared by the price block and both CTAs; the endpoint is also cached server-side.
+// One status fetch shared by the toggle and both CTAs; the endpoint is also cached server-side.
 let statusPromise: Promise<BillingStatus | null> | null = null;
 
 /** Read the active workspace's plan once per page load; null when the request fails. */
@@ -54,7 +55,7 @@ export function useBillingInterval(): Ctx {
   return useContext(BillingIntervalContext);
 }
 
-/** Wrap the Pro card in this so the price block and the CTA agree. */
+/** Wrap a Pro card in this so its price, toggle and CTA agree. */
 export function BillingIntervalProvider({ annualAvailable, children }: { annualAvailable: boolean; children: ReactNode }) {
   const [interval, setInterval] = useState<BillingInterval>("month");
   return (
@@ -67,7 +68,52 @@ export function BillingIntervalProvider({ annualAvailable, children }: { annualA
 const TOGGLE_BTN = "rounded-full px-3 py-1 text-[12px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/40";
 
 /**
- * The Pro card's price: the toggle when a yearly price exists, then the amount for the chosen
+ * The Monthly / Yearly switch. Renders nothing when the deployment has no yearly price, and
+ * nothing for a workspace already on Pro: Checkout refuses a second subscription while one is
+ * open (409), and the CTA beside it says "Manage subscription", so drawing the toggle for that
+ * reader offered a choice that ended in an error. Interval changes for an existing subscription
+ * are a portal or support action.
+ */
+export function BillingIntervalToggle({ className }: { className?: string }) {
+  const { interval, setInterval, annualAvailable } = useBillingInterval();
+  const [alreadyPro, setAlreadyPro] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void loadBillingStatus().then((s) => {
+      if (!cancelled && s?.plan === "pro") setAlreadyPro(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (!annualAvailable || alreadyPro) return null;
+  const yearly = interval === "year";
+  return (
+    <div role="radiogroup" aria-label="Billing period" className={cn("inline-flex items-center gap-1 rounded-full bg-black/[0.06] p-1", className)}>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={!yearly}
+        className={cn(TOGGLE_BTN, !yearly ? "bg-black text-white shadow-sm" : "text-black/60 hover:text-black")}
+        onClick={() => setInterval("month")}
+      >
+        Monthly
+      </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={yearly}
+        className={cn(TOGGLE_BTN, yearly ? "bg-black text-white shadow-sm" : "text-black/60 hover:text-black")}
+        onClick={() => setInterval("year")}
+      >
+        Yearly <span className={cn("ml-1 font-normal", yearly ? "text-white/70" : "text-black/45")}>2 months free</span>
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The pricing card's price: the toggle when a yearly price exists, then the amount for the chosen
  * interval and, on yearly, the per-month figure and what it saves.
  */
 export function ProPriceBlock({
@@ -79,50 +125,13 @@ export function ProPriceBlock({
   annualLabel: string | null;
   annualPerMonthLabel: string | null;
 }) {
-  const { interval, setInterval, annualAvailable } = useBillingInterval();
+  const { interval, annualAvailable } = useBillingInterval();
   const yearly = annualAvailable && interval === "year";
   const label = yearly ? annualLabel : monthlyLabel;
-  /**
-   * A workspace already on Pro cannot switch interval from here: Checkout refuses a second
-   * subscription while one is open (409), and the CTA beside this block says "Manage
-   * subscription". Drawing the toggle for that reader offered a choice that ended in an error.
-   * Interval changes for an existing subscription are a portal or support action.
-   */
-  const [alreadyPro, setAlreadyPro] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    void loadBillingStatus().then((s) => {
-      if (!cancelled && s?.plan === "pro") setAlreadyPro(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   return (
     <div className="mt-4">
-      {annualAvailable && !alreadyPro ? (
-        <div role="radiogroup" aria-label="Billing period" className="mb-3 inline-flex items-center gap-1 rounded-full bg-black/[0.06] p-1">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={!yearly}
-            className={cn(TOGGLE_BTN, !yearly ? "bg-black text-white shadow-sm" : "text-black/60 hover:text-black")}
-            onClick={() => setInterval("month")}
-          >
-            Monthly
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={yearly}
-            className={cn(TOGGLE_BTN, yearly ? "bg-black text-white shadow-sm" : "text-black/60 hover:text-black")}
-            onClick={() => setInterval("year")}
-          >
-            Yearly <span className={cn("ml-1 font-normal", yearly ? "text-white/70" : "text-black/45")}>2 months free</span>
-          </button>
-        </div>
-      ) : null}
+      <BillingIntervalToggle className="mb-3" />
       <div className="flex items-baseline gap-2">
         {label ? (
           <span className="font-serif text-5xl tracking-tight text-black">{label}</span>
