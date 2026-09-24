@@ -4,7 +4,8 @@
  *
  * Run: `npm run realtime` (tsx, reads .env.local) or `node --import tsx realtime/server.ts`.
  * Deploy anywhere that can hold a socket (Fly, Railway, a VM, the worker host); it is NOT a
- * Vercel function. Env: MONGODB_URI (must be a replica set; change streams), REALTIME_SECRET or
+ * Vercel function. Env: REALTIME_MONGODB_URI, falling back to MONGODB_URI (must be a replica set;
+ * change streams; the path must name the database the app writes), REALTIME_SECRET or
  * NEXTAUTH_SECRET (shared with the Next app), REALTIME_PORT (default 8788).
  *
  * Protocol
@@ -43,14 +44,16 @@ import { explainMongoAuthzError, isMongoAuthzError, judgeMongoAccess, mongoUriDa
 import { splitProjectViewerKey } from "../src/lib/analytics/project/viewerKey";
 
 const PORT = Number(process.env.REALTIME_PORT || 8788);
-const MONGODB_URI = (process.env.MONGODB_URI || "").trim();
+// Its own variable, so one env file can hold the app's read-write credential as MONGODB_URI and
+// this server's read-only one beside it. MONGODB_URI stays as the fallback for a single-user setup.
+const MONGODB_URI = (process.env.REALTIME_MONGODB_URI || process.env.MONGODB_URI || "").trim();
 const PING_MS = 25_000;
 // Longer than serverSelectionTimeoutMS below, the most a driver resume waits before giving up.
 const STREAM_RESUME_GRACE_MS = 30_000;
 const STREAM_EXIT_DELAY_MS = 5_000;
 
 if (!MONGODB_URI) {
-  console.error("[realtime] MONGODB_URI is required");
+  console.error("[realtime] REALTIME_MONGODB_URI (or MONGODB_URI) is required");
   process.exit(1);
 }
 

@@ -21,7 +21,7 @@ When a section says "see", that document has the why and the caveats; this file 
 | Typecheck | `npx tsc --noEmit -p .` |
 | Regenerate `INDEX.md` (the code map) | `npm run index` |
 
-All three servers read `.env.local`. The realtime server needs `MONGODB_URI` to name the database the
+All three servers read `.env.local`. The realtime server reads `REALTIME_MONGODB_URI` (falling back to `MONGODB_URI`), which must name the database the
 Atlas user actually has a role on; a mismatch now fails at boot with a message naming both sides.
 
 ## People: waitlist and admins

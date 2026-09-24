@@ -4,7 +4,7 @@
 #   docker build -f realtime/Dockerfile -t lnkdrp-realtime .
 # Run:
 #   docker run --rm -p 8788:8788 \
-#     -e MONGODB_URI='mongodb+srv://…' -e REALTIME_SECRET=… \
+#     -e REALTIME_MONGODB_URI='mongodb+srv://…' -e REALTIME_SECRET=… \
 #     lnkdrp-realtime
 #
 # Needs a Mongo replica set (Atlas is one) because it uses change streams. Holds long-lived
@@ -31,7 +31,7 @@ RUN printf '%s\n' \
 
 COPY tsconfig.json ./tsconfig.json
 COPY src/lib/realtime/ticket.ts ./src/lib/realtime/ticket.ts
-# Names a wrong database in MONGODB_URI at boot instead of seven change-stream failures. Import-free.
+# Names a wrong database in REALTIME_MONGODB_URI at boot instead of seven change-stream failures. Import-free.
 COPY src/lib/db/access.ts ./src/lib/db/access.ts
 # The project-link key rule. Import-free on purpose — see the note on `splitProjectViewerKey`.
 COPY src/lib/analytics/project/viewerKey.ts ./src/lib/analytics/project/viewerKey.ts

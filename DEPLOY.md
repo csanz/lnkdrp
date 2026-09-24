@@ -73,7 +73,7 @@ off before announcing (G); section 11 is for after launch.
 
 **C. Realtime on Fly (6)**
 
-The realtime server reads only `MONGODB_URI`, `REALTIME_PORT` and its ticket secret; it does not
+The realtime server reads only `REALTIME_MONGODB_URI` (falling back to `MONGODB_URI`), `REALTIME_PORT` and its ticket secret; it does not
 need the web app, so it goes up first and the first web build already carries its URL.
 
 - [ ] Realtime: `fly launch`, egress IP **only if Atlas uses an allowlist** (add it before the first
@@ -1101,9 +1101,9 @@ fly launch --no-deploy --copy-config --config deploy/fly/realtime.fly.toml \
 # Only with a strict Atlas allowlist (4.1 step 2 b); skip both lines under 0.0.0.0/0:
 fly ips allocate-egress -a lnkdrp-realtime -r iad   # static outbound IPv4, $3.60/month
 fly ips list -a lnkdrp-realtime                     # add the egress IPv4 to the Atlas allowlist
-# realtime.env holds MONGODB_URI (the read-only lnkdrp-realtime user, /lnkdrp in the path) and REALTIME_SECRET
+# realtime.env holds REALTIME_MONGODB_URI (the read-only lnkdrp-realtime user, /lnkdrp-prod in the path) and REALTIME_SECRET
 fly secrets import -a lnkdrp-realtime < realtime.env; rm -f realtime.env   # delete it even if the import failed
-fly secrets list -a lnkdrp-realtime                 # exactly MONGODB_URI and REALTIME_SECRET; never NEXTAUTH_SECRET
+fly secrets list -a lnkdrp-realtime                 # exactly REALTIME_MONGODB_URI and REALTIME_SECRET; never NEXTAUTH_SECRET
 fly deploy --ha=false --config deploy/fly/realtime.fly.toml --dockerfile realtime/Dockerfile \
   --image-label "$(git rev-parse --short=7 HEAD)"
 fly scale show -a lnkdrp-realtime                   # expect one machine
@@ -1128,14 +1128,14 @@ first log line is a stack trace from a request is the old symptom, not the curre
   first deploy; under `0.0.0.0/0` (4.1 step 2) the allocation adds nothing. Without it the server exits on start and Fly restarts it in
   a loop (`fly logs -a lnkdrp-realtime` shows `[realtime] fatal`); a good start logs
   `mongo connected`.
-- `MONGODB_URI` must end in the production database's exact name (`PRODUCTION.md` records it as
+- `REALTIME_MONGODB_URI` must end in the production database's exact name (`PRODUCTION.md` records it as
   `lnkdrp-prod`, so `/lnkdrp-prod`): the realtime server does not read `MONGODB_DB_NAME`. The
   `lnkdrp-realtime` user's `read` role must be on that same name — Atlas roles are per exact
   database name, and `lnkdrp` versus `lnkdrp-prod` (or a hyphen for an underscore) is two
   databases. Since 2026-09-23 the server checks this once at boot and exits with
   `[realtime] fatal: Mongo user "…" has no privileges on database "…"` naming both sides, instead
   of seven change-stream failures and a 30 s wait.
-- The server checks only `MONGODB_URI` at boot. Without `REALTIME_SECRET` `/healthz` answers, but
+- The server checks only `REALTIME_MONGODB_URI` at boot. Without `REALTIME_SECRET` `/healthz` answers, but
   the first browser connection crashes the machine; a secret that differs from Vercel's rejects
   every socket with 401. 8 step 7 catches both.
 - `fly deploy` creates two machines on an app's first deploy unless `--ha=false` is passed. Two
@@ -1159,12 +1159,12 @@ and run on another.
 
 ```
 docker build -f realtime/Dockerfile -t lnkdrp-realtime .
-# realtime.env: MONGODB_URI=mongodb+srv://…/lnkdrp (read-only user) and REALTIME_SECRET=…
+# realtime.env: REALTIME_MONGODB_URI=mongodb+srv://…/lnkdrp-prod (read-only user) and REALTIME_SECRET=…
 docker run -d --restart unless-stopped -p 127.0.0.1:8788:8788 \
   --env-file realtime.env lnkdrp-realtime
 ```
 
-Or with the compose file that runs both services. Put `MONGODB_URI`, `REALTIME_SECRET`,
+Or with the compose file that runs both services. Put `REALTIME_MONGODB_URI`, `REALTIME_SECRET`,
 `LNKDRP_API_URL`, `MCP_PUBLIC_URL` and `NEXT_PUBLIC_REALTIME_URL` in `.env.production.services` at
 the repository root, then run from the repository root:
 

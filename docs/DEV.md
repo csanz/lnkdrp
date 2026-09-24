@@ -82,6 +82,7 @@ NEXT_PUBLIC_SITE_URL=http://localhost:3001      # Public site URL (for emails, O
 # NEXT_PUBLIC_MCP_URL=http://localhost:8787/mcp  # MCP endpoint shown in /connect and /mcp guides (default: production; /connect falls back to this local URL on a dev server)
 NEXT_PUBLIC_REALTIME_URL=ws://localhost:8788    # Realtime WebSocket server (npm run realtime); unset = polling only. See docs/REALTIME.md
 REALTIME_PORT=8788                              # Port the realtime server listens on
+# REALTIME_MONGODB_URI=mongodb+srv://…/lnkdrp_dev  # Realtime server only: a read-only credential on the same database (falls back to MONGODB_URI)
 # REALTIME_SECRET=…                             # Ticket HMAC secret shared by the app and the realtime server (defaults to NEXTAUTH_SECRET)
 LNKDRP_API_URL=http://localhost:3001            # MCP server (npm run mcp): base URL of the Next app it calls (default when NODE_ENV != production). See docs/MCP.md
 MCP_PORT=8787                                   # Port the MCP server listens on
