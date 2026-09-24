@@ -209,6 +209,12 @@ export default function MetricsPageClient() {
     () => Boolean(data) && data!.docsOpened.shared === 0 && data!.output.docsShared === 0 && data!.headline.views.value === 0,
     [data],
   );
+  // Known empty before the numbers arrive. The plan snapshot is already in memory from the sidebar
+  // and counts the workspace's documents; at zero there is nothing the aggregation can find, so
+  // "No shared documents yet" paints at once instead of after a spinner-length wait for a payload
+  // that only confirms it. The payload still wins when it lands (a deleted document's history can
+  // leave views behind), which is why the request is not skipped.
+  const knownEmpty = !data && plan?.usage.documents === 0;
 
   return (
     <div className="flex h-full flex-col">
@@ -254,10 +260,12 @@ export default function MetricsPageClient() {
         ) : null}
 
         {loading || !data ? (
-          // Nothing for the first fifth of a second. A workspace with no documents was drawing a
-          // full dashboard of tiles and charts and then replacing it with "No shared documents
-          // yet" — a promise of numbers that were never coming. See `useSkeletonDelay`.
-          error || !showSkeleton ? null : <MetricsSkeleton />
+          // A workspace the plan snapshot already knows has no documents gets its empty state on
+          // the first paint. Otherwise nothing for the first fifth of a second: a workspace with
+          // no documents was drawing a full dashboard of tiles and charts and then replacing it
+          // with "No shared documents yet" — a promise of numbers that were never coming. See
+          // `useSkeletonDelay`.
+          knownEmpty ? <MetricsEmptyWorkspace /> : error || !showSkeleton ? null : <MetricsSkeleton />
         ) : emptyWorkspace ? (
           <MetricsEmptyWorkspace />
         ) : (
