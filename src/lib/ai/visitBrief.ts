@@ -149,12 +149,24 @@ const INTEREST_MAX = 3;
 const INTEREST_MAX_CHARS = 200;
 const FOLLOW_UP_MAX_CHARS = 200;
 
+/** Keys a model reaches for when it wraps a line in an object; the first one present is the line. */
+const LINE_KEYS = ["text", "value", "interest", "highlight", "summary", "description", "note", "headline", "content"] as const;
+/** JSON Schema type names: a model echoing the schema shape (`{ type: "string", text: … }`) is not saying "string". */
+const SCHEMA_TYPE_NAMES = new Set(["string", "number", "integer", "boolean", "object", "array", "null"]);
+
 function oneLine(v: unknown, max: number): string {
   if (v && typeof v === "object" && !Array.isArray(v)) {
-    // An object where a line was asked for: its string values, in order, as one line.
-    v = Object.values(v as Record<string, unknown>)
-      .filter((x) => typeof x === "string" && x.trim())
-      .join(" · ");
+    const obj = v as Record<string, unknown>;
+    // An object where a line was asked for. Prefer the field that plainly carries the line;
+    // otherwise its string values in order, minus any that are only a schema type name. A brief
+    // once read "string · Revenue model with land-and-expand strategy (p. 6)" because the model
+    // answered `{ type: "string", text: "Revenue model…" }` and every value was joined.
+    const named = LINE_KEYS.map((k) => obj[k]).find((x) => typeof x === "string" && x.trim());
+    v =
+      named ??
+      Object.values(obj)
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 0 && !SCHEMA_TYPE_NAMES.has(x.trim().toLowerCase()))
+        .join(" · ");
   }
   if (typeof v !== "string") return "";
   return v.replace(/\s+/g, " ").trim().slice(0, max);

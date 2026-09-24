@@ -82,6 +82,22 @@ Driven against the live deck on a second MCP server (`:8790`, since the one on `
 
 The `agents` tally reads the activity log and so counts replacements on documents deleted since; `contributors` reads the change records through the workspace's live documents and does not. Both tool descriptions say so.
 
+## Fifth pass: a live agent session over OAuth
+
+With the server restarted, this Claude Code session connected as `lnkdrp-local` through the new sign-in flow (`whoami`: `credentialKind: "oauth"`, client "Claude Code", Pro, 36 tools) and drove 40 tool calls the way an agent would, all on the live deck plus throwaway objects it created and removed:
+
+- **Reads**: whoami, list_docs (all, by query, by tag, archived view), get_share, get_share_stats with viewers and visits (20 readers named and timed, five briefs with headline, body, interests and follow-up), list_share_links, find_share_link, get_activity filtered by type and by `who: agents`, list_projects, list_tags, list_starred, the three revision tools.
+- **Links**: create a password-protected download link "Sequoia", verify the password (right and wrong), find it by name, disable it with an expiry, re-enable and clear the password, per-link stats, delete it.
+- **Project**: create "MCP live test room", add two documents, create a password-protected project link "Vantridge", list both links, turn the public page off, delete the project (documents detached, not deleted).
+- **Filing**: tag "Fundraising" and "Series A", list by `tag: "series a"` (folded match), untag with mixed case, star and unstar.
+- **Lifecycle**: share a throwaway document from a local file with an agent-written summary and key points (0 credits, confirmed by `creditsRemaining`), replace it with a revised file (summary 1 + compare 5 credits), read its revision through `get_revision` (default version resolved to v2), archive, list the archive, unarchive, delete.
+- **Attribution**: every write showed in the feed with `agent: claude-code` and `via: oauth`; `revision_contributors` gained a `claude-code` agent row with one replacement.
+
+Every call answered correctly; nothing needed a retry. Two findings:
+
+1. **A stray "string ·" in a visit brief's interest line.** The model answered an interest as `{ type: "string", text: "…" }` and `oneLine` in `src/lib/ai/visitBrief.ts` joined every string value of the object. Fixed: the joiner now takes the field that plainly carries the line (`text`, `value`, `interest`, …) and otherwise drops JSON Schema type names; `tests/lib/visitBriefs.test.ts` pins it.
+2. **Tags cannot be deleted through the MCP or an API key**, so the harness leaves zero-count tags behind (four now: two `E2E …`, plus the `Fundraising` and `Series A` this pass created). Known from the coverage doc; a `lnkdrp_delete_tag` tool, or the harness deleting its tags through a signed-in session, would close it.
+
 ## Fixes made during the run
 
 - `/connect`: a renamed personal workspace is now named after its real name (`mcpServerName`), the copy says the workspace's name instead of "Personal", and the Copy button sits in its own column instead of floating over the scrolling code.

@@ -297,6 +297,26 @@ describe("the model output", () => {
     expect(() => normalizeVisitBriefOutput({ headline: "", body: "x" })).toThrow();
     expect(() => normalizeVisitBriefOutput({ headline: "x", body: "  " })).toThrow();
   });
+
+  test("an interest the model wrapped in a schema-shaped object is the line, not 'string · the line'", () => {
+    // A live brief on 2026-09-24 read "string · Revenue model with land-and-expand strategy (p. 6)":
+    // the model answered `{ type: "string", text: "…" }` and every string value was joined.
+    const out = normalizeVisitBriefOutput({
+      headline: "spent 10 sec on the revenue model",
+      body: "Body.",
+      interests: [
+        { type: "string", text: "Revenue model with land-and-expand strategy (p. 6)" } as unknown as string,
+        { label: "Faster deployment (p. 8)", why: "assessing competitive advantage" } as unknown as string,
+        { type: "string" } as unknown as string,
+      ],
+      highlights: [{ type: "string", value: "Spent 10 seconds on page 6" } as unknown as string],
+    });
+    expect(out.interests).toEqual([
+      "Revenue model with land-and-expand strategy (p. 6)",
+      "Faster deployment (p. 8) · assessing competitive advantage",
+    ]);
+    expect(out.highlights).toEqual(["Spent 10 seconds on page 6"]);
+  });
 });
 
 describe("the outline and the email helpers", () => {
