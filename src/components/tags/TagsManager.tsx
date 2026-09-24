@@ -110,20 +110,6 @@ export default function TagsManager() {
   const load = useCallback(async () => {
     const mine = ++seq.current;
     const q = query.trim();
-    // Paint first from what the tab knows: the last unfiltered first page, or, when the sidebar
-    // already learned the workspace has no tags, the empty state outright. The request still
-    // runs and wins (`src/lib/client/pageCache.ts`).
-    if (!q && page === 1) {
-      const cached = readPageCache<{ tags: Tag[]; total: number }>("tags:1");
-      if (cached) {
-        setTags(cached.tags);
-        setTotal(cached.total);
-        setWorkspaceTotal(cached.total);
-      } else if (readPageCache<number>("tags:total") === 0) {
-        setTags([]);
-        setTotal(0);
-      }
-    }
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
       if (q) params.set("q", q);
@@ -166,6 +152,23 @@ export default function TagsManager() {
       setTotal(0);
     }
   }, [page, query, countWorkspace]);
+
+  // Paint first from what the tab knows: the last unfiltered first page, or, when the sidebar
+  // already learned the workspace has no tags, the empty state outright. Its own effect, before
+  // `load`'s, and never inside `load`: every write there sits behind the request-sequence guard
+  // (`tests/lib/tagsManagerState.test.ts`), and a seed is not a response. The request still runs
+  // and wins (`src/lib/client/pageCache.ts`).
+  useEffect(() => {
+    const cached = readPageCache<{ tags: Tag[]; total: number }>("tags:1");
+    if (cached) {
+      setTags(cached.tags);
+      setTotal(cached.total);
+      setWorkspaceTotal(cached.total);
+    } else if (readPageCache<number>("tags:total") === 0) {
+      setTags([]);
+      setTotal(0);
+    }
+  }, []);
 
   useEffect(() => {
     void load();

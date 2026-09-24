@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 895 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 898 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -604,7 +604,9 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/client/docUploadPipeline.ts` · apiCreateDoc, apiCreateUpload, CreateDocResponse, CreateUploadInput, CreateUploadResponse, isPdfFile, isPdfMeta, PDF_ONLY_MESSAGE, …
 - `src/lib/client/entityIdentity.ts` · EntityIdentity, EntityIdentityState, EntityProjectPill, loadEntityIdentity, noteEntityName, useEntityIdentity
 - `src/lib/client/entityTitles.ts` · clearEntityTitles, EntityKind, forgetEntityTitle, recallEntityTitle, rememberEntityTitle, rememberEntityTitles, resolveEntityTitle, useEntityTitle
+- `src/lib/client/knownEmpty.ts` · KnownEmpty, peekKnownEmpty, useKnownEmpty
 - `src/lib/client/outOfCredits.ts` · dispatchOutOfCredits, OUT_OF_CREDITS_EVENT, OutOfCreditsReason, outOfCreditsReasonFromCode
+- `src/lib/client/pageCache.ts` · clearPageCache, readPageCache, writePageCache
 - `src/lib/client/planLimit.ts` · clearPlanLimitHit, comparesFor, CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, markPlanLimitHit, parsePlanLimitError, PLAN_LIMIT_HIT_EVENT, …
 - `src/lib/client/planNumbers.ts` · COMPARE_CREDITS, comparesFor, CREDITS_COPY, FREE_PLAN_LIMITS_COPY, plural, PRO_SEATS_COPY
 - `src/lib/client/realtime.ts` · REALTIME_STATE_EVENT, RealtimeFrame, realtimeState, RealtimeState, subscribeRealtime
@@ -902,6 +904,7 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `scripts/project-doc-count-recount.mjs`
 - `scripts/project-shareid-backfill.mjs`
 - `scripts/publish-email-logo.ts`
+- `scripts/realtime-e2e.ts`
 - `scripts/recreate-error-ttl-index.ts`
 - `scripts/request-docs-projectids-backfill.mjs`
 - `scripts/reset-local.ts`
