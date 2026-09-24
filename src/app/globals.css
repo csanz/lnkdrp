@@ -516,3 +516,41 @@ body {
     transform: translateY(0);
   }
 }
+
+/*
+  A scrollbar that stays out of the way: no arrows, no track, a thin rounded thumb that only
+  exists when there is somewhere to scroll — the one on ChatGPT's sidebar. Pair with
+  `overflow-y: auto` and `scrollbar-gutter: stable` on the element so nothing shifts when it appears.
+
+  Chromium honours the ::-webkit-scrollbar parts only while `scrollbar-width` is left at `auto`,
+  so the standard properties go in a block Chromium skips (it supports the pseudo-element,
+  Firefox does not). Firefox gets its own thin bar with the same colours.
+*/
+.lnkdrp-scroll-subtle::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.lnkdrp-scroll-subtle::-webkit-scrollbar-track {
+  background: transparent;
+}
+.lnkdrp-scroll-subtle::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.lnkdrp-scroll-subtle::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--fg) 22%, transparent);
+  border: 3px solid transparent; /* 10px lane, 4px visible thumb */
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.lnkdrp-scroll-subtle::-webkit-scrollbar-thumb:hover,
+.lnkdrp-scroll-subtle::-webkit-scrollbar-thumb:active {
+  background-color: color-mix(in srgb, var(--fg) 40%, transparent);
+}
+@supports not selector(::-webkit-scrollbar) {
+  .lnkdrp-scroll-subtle {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--fg) 22%, transparent) transparent;
+  }
+}

@@ -1965,10 +1965,15 @@ export default function LeftSidebar({
           you have left stays put at the bottom. Pinning the header was wrong (it ate half a laptop
           screen); letting the account block float up under a short list was wrong too, because it
           is not part of the list. A stable gutter keeps rows from shifting sideways when a section
-          expands past the fold. */}
+          expands past the fold — and the gutter alone does that. `overflow-y: scroll` was doing it
+          too, and on Windows, where scrollbars are not overlays, it painted a full-height track with
+          greyed arrows beside a list that did not scroll. `auto` draws the bar only when there is
+          somewhere to go; the reserved gutter keeps the width the same either way.
+          `lnkdrp-scroll-subtle` (globals.css) is the bar itself: a thin rounded thumb, no arrows,
+          no track. */}
       <div className="flex h-full flex-col">
         <div
-          className="min-h-0 flex-1 overflow-y-scroll overflow-x-hidden"
+          className="lnkdrp-scroll-subtle min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
           style={{ scrollbarGutter: "stable" }}
         >
         {/* The logo row centres on the same line as a page title: AppPageHeader is `pt-6` above an
