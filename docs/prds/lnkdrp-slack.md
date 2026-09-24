@@ -33,8 +33,9 @@ screen. From then on the events they pick post there as short messages with a li
 - a request inbox received a file.
 
 Messages are immediate, one per event, and carry exactly what the equivalent email carries at the
-workspace's plan tier. The connection is per workspace, not per member, and lives beside the
-email preferences on the Notifications tab.
+workspace's plan tier. The connection is per workspace, not per member, and lives on a new
+**Integrations** page in the app, reached from its own entry in the left sidebar. Slack is the
+first integration listed there; the page is built to list more.
 
 ## Non-goals (v1)
 
@@ -194,12 +195,22 @@ mirroring what it does for brief emails. No new cron entry.
 
 ### Surfaces
 
-- Notifications tab: a "Slack" card above the email preferences. Nothing connected: a
-  paragraph and an "Add to Slack" button. Connected: one row per channel (team, channel, the
-  four switches, "Send a test message", "Disconnect", the last error if any), a "Default"
-  marker with "Make default", an "Add channel" button, and under it a projects table with a
-  channel dropdown per project defaulting to "workspace default". The dropdown is the whole
-  mapping UI.
+- **Sidebar: an "Integrations" entry** below Agents, in the same hand-written button pattern
+  as the other five entries in `LeftSidebar.tsx` (`pathname.startsWith("/integrations")` for
+  the active state). Visible to every member; connecting takes admin (decision 2).
+- **`/integrations`** (`src/app/(app)/integrations/page.tsx` + `pageClient.tsx`, the same
+  header band as Agents via `AppPageHeader`): a list of integrations, one card each, with a
+  logo, a one-line description, a status pill ("Not connected", "#deals", "Disconnected: the
+  channel was removed") and a button. Slack is the only card at launch; the list is data-driven
+  so the next integration is one more entry. Under the list, a short "More coming" line.
+- **`/integrations/slack`** (the detail page the card opens): nothing connected, a paragraph
+  and "Add to Slack". Connected: one row per channel (team, channel, the four switches, "Send
+  a test message", "Disconnect", the last error if any), a "Default" marker with "Make
+  default", an "Add channel" button, and under it a projects table with a channel dropdown per
+  project defaulting to "workspace default". The dropdown is the whole mapping UI. The OAuth
+  callback lands here (`?slack=connected` / `?slack=error`).
+- Notifications tab: one line under the email preferences, "Slack posts are set up under
+  Integrations", linking there, so a person looking for "how do I hear about this" finds it.
 - Activity feed: `integration.slack_connected` / `integration.slack_disconnected` rows with the
   channel name, so the team can see who wired it up.
 - `/a/data/workspaces/:id`: team, channel, status, last post, failures. Not the URL.
@@ -244,8 +255,8 @@ this deployment" and nothing else changes.
 
 ## Milestones
 
-**M1 — Connect.** Slack app, the two env variables, `SlackConnection`, install and callback
-routes with signed state, encrypted storage, the Notifications card with connect, test message,
+**M1 — Connect.** The Integrations sidebar entry and `/integrations` list page, the Slack detail page, the Slack app, the two env variables, `SlackConnection`, install and callback
+routes with signed state, encrypted storage, connect, test message,
 reconnect and disconnect, activity rows, admin panel fields. Proves 1, 2, 3, 11, 12 and
 verification 1, 2, 7, 10, 11.
 
@@ -269,9 +280,9 @@ CHANGELOG, DEPLOY.md env table and the Slack app checklist in section 4, PRODUCT
    quiet (a cheap "they're back")? Proposed no for v1; the brief says it better.
 3. **Burst cap number.** 30 per minute per connection is a guess at "busy but readable". A
    blast to 200 investors would post 30 lines and one summary. Tune after the first real blast.
-4. **Where the card lives.** The Notifications tab is where the email modes are; the Workspace
-   tab is where per-workspace settings live. Proposed Notifications, since that is where a
-   person goes when asking "how do I hear about this".
+4. **Where it lives.** Resolved 2026-09-24: a new Integrations entry in the left sidebar with
+   its own page, listing Slack first and built for more; the Notifications tab only points
+   there.
 
 ## Future
 
