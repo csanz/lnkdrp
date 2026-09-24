@@ -4,6 +4,8 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+Every command in one place: [`COMMANDS.md`](COMMANDS.md).
+
 First, run the development server:
 
 ```bash
