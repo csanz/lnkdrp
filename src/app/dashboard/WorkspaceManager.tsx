@@ -444,7 +444,7 @@ export default function WorkspaceManager() {
         <div className="min-w-0">
           <div className="text-[13px] font-semibold text-[var(--fg)]">Active workspace</div>
           <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-            {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "—"}
+            {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "–"}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Shared"}</Pill> : null}
@@ -603,7 +603,7 @@ export default function WorkspaceManager() {
         <div>
                         <div className="min-w-0">
             <div className="text-base font-semibold text-[var(--fg)]">Manage workspace</div>
-            <div className="mt-1 truncate text-[12px] text-[var(--muted-2)]">{manageOrgName || "—"}</div>
+            <div className="mt-1 truncate text-[12px] text-[var(--muted-2)]">{manageOrgName || "–"}</div>
                         </div>
 
           {/**
@@ -755,7 +755,7 @@ export default function WorkspaceManager() {
             ) : countsError ? (
               <div className="mt-2 text-[12px] text-red-600 dark:text-red-500">{countsError}</div>
             ) : (
-              <div className="mt-1 text-[12px] text-[var(--muted-2)]">Be careful—these actions are hard to undo.</div>
+              <div className="mt-1 text-[12px] text-[var(--muted-2)]">Be careful: these actions are hard to undo.</div>
             )}
 
             {leaveError ? <div className="mt-2 text-[12px] text-red-600 dark:text-red-500">{leaveError}</div> : null}

@@ -888,11 +888,11 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           typeof data.upload?.version === "number" && Number.isFinite(data.upload.version) ? data.upload.version : null;
         const key = [
           `d:${docStatus}`,
-          `dUp:${docUploadId || "—"}`,
-          `dV:${docVersion ?? "—"}`,
-          `u:${uploadStatus || "—"}`,
-          `uId:${uploadId || "—"}`,
-          `uV:${uploadVersion ?? "—"}`,
+          `dUp:${docUploadId || "–"}`,
+          `dV:${docVersion ?? "–"}`,
+          `u:${uploadStatus || "–"}`,
+          `uId:${uploadId || "–"}`,
+          `uV:${uploadVersion ?? "–"}`,
         ].join("|");
         if (key !== lastDocPollLogKeyRef.current) {
           lastDocPollLogKeyRef.current = key;
@@ -2914,9 +2914,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           if (!show) return null;
                           return (
                             <div className="hidden flex-wrap items-center gap-1 sm:flex">
-                              <span className={relPill}>Relevancy: {relevancy ? relKey : "—"}</span>
+                              <span className={relPill}>Relevancy: {relevancy ? relKey : "–"}</span>
                               <span className={stagePill}>
-                                Stage match: {stageMatch === null ? "—" : stageMatch ? "yes" : "no"}
+                                Stage match: {stageMatch === null ? "–" : stageMatch ? "yes" : "no"}
                               </span>
                             </div>
                           );
@@ -2974,7 +2974,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         <div className="grid grid-cols-[120px_1fr] gap-2">
                           <div className="text-[12px] font-medium text-[var(--muted)]">Name</div>
                           <div className="min-w-0 text-[12px] text-[var(--fg)]">
-                            {intel.companyName ?? <span className="text-[var(--muted)]">—</span>}
+                            {intel.companyName ?? <span className="text-[var(--muted)]">–</span>}
                           </div>
                         </div>
                         <div className="grid grid-cols-[120px_1fr] gap-2">
@@ -2990,7 +2990,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                                 {intel.companyUrl}
                               </a>
                             ) : (
-                              <span className="text-[var(--muted)]">—</span>
+                              <span className="text-[var(--muted)]">–</span>
                             )}
                           </div>
                         </div>
@@ -3005,7 +3005,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         <div className="grid grid-cols-[120px_1fr] gap-2">
                           <div className="text-[12px] font-medium text-[var(--muted)]">Name</div>
                           <div className="min-w-0 text-[12px] text-[var(--fg)]">
-                            {intel.contactName ?? <span className="text-[var(--muted)]">—</span>}
+                            {intel.contactName ?? <span className="text-[var(--muted)]">–</span>}
                           </div>
                         </div>
                         <div className="grid grid-cols-[120px_1fr] gap-2">
@@ -3019,7 +3019,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                                 {intel.contactEmail}
                               </a>
                             ) : (
-                              <span className="text-[var(--muted)]">—</span>
+                              <span className="text-[var(--muted)]">–</span>
                             )}
                           </div>
                         </div>
@@ -3036,7 +3036,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                                 {intel.contactUrl}
                               </a>
                             ) : (
-                              <span className="text-[var(--muted)]">—</span>
+                              <span className="text-[var(--muted)]">–</span>
                             )}
                           </div>
                         </div>
@@ -3085,7 +3085,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                                   {String(qualityReview.agentOutput.relevancy).toUpperCase()}
                                 </span>
                               ) : (
-                                <span className="text-[var(--muted)]">—</span>
+                                <span className="text-[var(--muted)]">–</span>
                               )}
                             </div>
                           </div>
@@ -3095,7 +3095,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {qualityReview.agentOutput?.notes ? (
                                 qualityReview.agentOutput.notes
                               ) : (
-                                <span className="text-[var(--muted)]">—</span>
+                                <span className="text-[var(--muted)]">–</span>
                               )}
                             </div>
                           </div>
@@ -3105,7 +3105,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {qualityReview.agentOutput?.relevancy_reason ? (
                                 qualityReview.agentOutput.relevancy_reason
                               ) : (
-                                <span className="text-[var(--muted)]">—</span>
+                                <span className="text-[var(--muted)]">–</span>
                               )}
                             </div>
                           </div>
@@ -3156,7 +3156,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         <div className="grid grid-cols-[140px_1fr] gap-2">
                           <div className="text-[12px] font-medium text-[var(--muted)]">Overall assessment</div>
                           <div className="min-w-0 text-[12px] text-[var(--fg)]">
-                            {intel.overallAssessment ?? <span className="text-[var(--muted)]">—</span>}
+                            {intel.overallAssessment ?? <span className="text-[var(--muted)]">–</span>}
                           </div>
                         </div>
                         <div className="grid grid-cols-[140px_1fr] gap-2">
@@ -3165,14 +3165,14 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             {typeof intel.effectivenessScore === "number" ? (
                               <span className="font-semibold">{intel.effectivenessScore} / 10</span>
                             ) : (
-                              <span className="text-[var(--muted)]">—</span>
+                              <span className="text-[var(--muted)]">–</span>
                             )}
                           </div>
                         </div>
                         <div className="grid grid-cols-[140px_1fr] gap-2">
                           <div className="text-[12px] font-medium text-[var(--muted)]">Relevance rationale</div>
                           <div className="min-w-0 text-[12px] text-[var(--fg)]">
-                            {intel.scoreRationale ?? <span className="text-[var(--muted)]">—</span>}
+                            {intel.scoreRationale ?? <span className="text-[var(--muted)]">–</span>}
                           </div>
                         </div>
 

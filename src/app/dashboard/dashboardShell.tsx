@@ -442,7 +442,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                       <span className="ml-1">{Math.max(0, Math.floor(credits.creditsRemaining)).toLocaleString()}</span>
                     )
                   ) : (
-                    <span className="ml-1">—</span>
+                    <span className="ml-1">–</span>
                   )}
                 </Link>
               ) : null}
@@ -476,7 +476,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           <div className="rounded-xl bg-[var(--panel-2)] p-4">
             <div className="text-[12px] font-semibold text-[var(--muted-2)]">Credits remaining</div>
             <div className="mt-2 text-[26px] font-semibold tracking-tight text-[var(--fg)]">
-              {credits ? Math.max(0, Math.floor(credits.creditsRemaining)).toLocaleString() : "—"}
+              {credits ? Math.max(0, Math.floor(credits.creditsRemaining)).toLocaleString() : "–"}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -485,16 +485,16 @@ export default function DashboardShell({ children }: { children: React.ReactNode
               <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
                 {credits?.includedThisCycle != null
                   ? Math.max(0, Math.floor(credits.includedThisCycle)).toLocaleString()
-                  : "—"}
+                  : "–"}
               </div>
               <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-                Remaining: {credits ? Math.max(0, Math.floor(credits.includedRemaining)).toLocaleString() : "—"}
+                Remaining: {credits ? Math.max(0, Math.floor(credits.includedRemaining)).toLocaleString() : "–"}
               </div>
             </div>
             <div className="rounded-xl bg-[var(--panel-2)] p-4">
               <div className="text-[12px] font-semibold text-[var(--muted-2)]">Purchased</div>
               <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
-                {credits ? Math.max(0, Math.floor(credits.paidRemaining)).toLocaleString() : "—"}
+                {credits ? Math.max(0, Math.floor(credits.paidRemaining)).toLocaleString() : "–"}
               </div>
               <div className="mt-1 text-[12px] text-[var(--muted-2)]">
                 Credit packs, used after included credits.
@@ -504,7 +504,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           <div className="rounded-xl bg-[var(--panel-2)] p-4">
             <div className="text-[12px] font-semibold text-[var(--muted-2)]">Used this month</div>
             <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
-              {credits ? Math.max(0, Math.floor(credits.usedThisCycle)).toLocaleString() : "—"}
+              {credits ? Math.max(0, Math.floor(credits.usedThisCycle)).toLocaleString() : "–"}
             </div>
             {credits && credits.onDemandMonthlyLimitCents > 0 ? (
               <div className="mt-1 text-[12px] text-[var(--muted-2)]">
@@ -521,7 +521,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
               <div className="mt-1 text-[12px] text-[var(--muted-2)]">
                 Resets on:{" "}
                 <span className="font-semibold text-[var(--fg)]">
-                  {credits?.cycleEnd ? formatShortDate(credits.cycleEnd) : "—"}
+                  {credits?.cycleEnd ? formatShortDate(credits.cycleEnd) : "–"}
                 </span>
               </div>
             )}

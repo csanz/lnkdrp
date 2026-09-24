@@ -5,9 +5,9 @@
  */
 import { dayKeyInZone } from "./days";
 
-/** "28s", "1m 39s", "10m", "1h 5m"; "—" for null. */
+/** "28s", "1m 39s", "10m", "1h 5m"; "–" for null. */
 export function formatDwell(ms: number | null | undefined): string {
-  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "–";
   if (ms <= 0) return "0s";
   if (ms < 1000) return "<1s";
   if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
@@ -24,19 +24,19 @@ export function formatDwell(ms: number | null | undefined): string {
 
 /**
  * A typical (median) time printed beside a ratio: rounded, not floored, with tenths under 10s, so
- * "17s · typical 4.7s · 3.6×" divides the way it reads. "4.7s", "5s", "47s", "1m 5s"; "—" for null.
+ * "17s · typical 4.7s · 3.6×" divides the way it reads. "4.7s", "5s", "47s", "1m 5s"; "–" for null.
  */
 export function formatTypical(ms: number | null | undefined): string {
-  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "–";
   if (ms < 1000) return "<1s";
   if (ms < 9950) return `${(Math.round(ms / 100) / 10).toFixed(1).replace(/\.0$/, "")}s`;
   if (ms < 59_500) return `${Math.round(ms / 1000)}s`;
   return formatDwell(Math.round(ms / 1000) * 1000);
 }
 
-/** Single-unit form for narrow cells: "<1s", "12s", "4m", "2h"; "—" for null. */
+/** Single-unit form for narrow cells: "<1s", "12s", "4m", "2h"; "–" for null. */
 export function formatDwellCompact(ms: number | null | undefined): string {
-  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "–";
   if (ms < 1000) return "<1s";
   if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
@@ -91,7 +91,7 @@ export function dwellRatio(ms: number, typicalMs: number): number {
  */
 export function formatRelative(isoOrMs: string | number | Date, now: number, tz?: string): string {
   const t = isoOrMs instanceof Date ? isoOrMs.getTime() : typeof isoOrMs === "number" ? isoOrMs : Date.parse(isoOrMs);
-  if (!Number.isFinite(t)) return "—";
+  if (!Number.isFinite(t)) return "–";
   const diff = now - t;
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min ago`;

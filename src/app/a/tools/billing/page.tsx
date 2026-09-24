@@ -114,7 +114,7 @@ export default function AdminBillingToolsPage() {
           <div className="text-[13px] font-semibold leading-5 text-[var(--fg)]">Pro price label</div>
           <p className={`mt-1 ${ADMIN_PANEL_TEXT}`}>
             What the dashboard&apos;s Plan card prints. Served by <span className="font-mono text-[12px]">/api/billing/status</span>{" "}
-            from Mongo — a normal dashboard load never calls Stripe.
+            from Mongo. A normal dashboard load never calls Stripe.
           </p>
 
           <dl className="mt-4 grid gap-3 sm:grid-cols-2">

@@ -373,9 +373,9 @@ function formatDateShort(iso: string | null): string {
 
 /** "3h ago" / "12 Sep" for the LINKS card's mini lists, matching `QuickStats`. */
 export function relativeAge(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "–";
   const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return "—";
+  if (!Number.isFinite(ms)) return "–";
   const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
   if (mins < 2) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -2874,7 +2874,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                           </>
                         ) : (
                           <>
-                            <span className="tabular-nums">—</span>{" "}
+                            <span className="tabular-nums">–</span>{" "}
                             authenticated viewers
                           </>
                         )}
@@ -3084,7 +3084,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                         {l.views === 1 ? "view" : "views"}
                       </span>
                       <span className="w-20 shrink-0 text-right text-[12px] text-[var(--muted-2)]">
-                        {l.lastViewedAt ? relativeAge(l.lastViewedAt) : "—"}
+                        {l.lastViewedAt ? relativeAge(l.lastViewedAt) : "–"}
                       </span>
                     </li>
                   ))}
@@ -3503,7 +3503,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                 <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
                                   {row.lastSeen
                                     ? relativeAge(row.lastSeen)
-                                    : "—"}
+                                    : "–"}
                                 </div>
                               </div>
                             </>
@@ -3608,7 +3608,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                         {row.stats}
                       </div>
                       <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
-                        {row.lastSeen ? relativeAge(row.lastSeen) : "—"}
+                        {row.lastSeen ? relativeAge(row.lastSeen) : "–"}
                       </div>
                     </div>
                   </>
@@ -3752,7 +3752,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                       "Time spent",
                       viewerTimeTotalMs > 0
                         ? `${viewerTimeApproxPrefix}${formatDurationShort(viewerTimeTotalMs)}`
-                        : "—",
+                        : "–",
                     )}
                     {/* Same four tiles, same order; only the unit under the scope's own noun changes. */}
                     {supportsPageDetail
@@ -3769,7 +3769,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                           "Avg per page",
                           viewerTrackedAvgPerPageMs > 0
                             ? formatDurationShort(viewerTrackedAvgPerPageMs)
-                            : "—",
+                            : "–",
                         )
                       : stat(
                           "Avg per doc",
@@ -3779,7 +3779,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                   viewerTimeTotalMs / viewerDetail.docs.length,
                                 ),
                               )
-                            : "—",
+                            : "–",
                         )}
                     {/* The two that answer "where did their attention actually go": the page that
                       held them longest, and what a typical visit was worth. An average across
@@ -3789,7 +3789,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                       "Longest page",
                       longestPage
                         ? `p${longestPage.page} · ${formatDurationShort(longestPage.ms)}`
-                        : "—",
+                        : "–",
                     )}
                     {stat(
                       "Avg per session",
@@ -3797,7 +3797,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                         ? formatDurationShort(
                             Math.round(viewerTimeTotalMs / sessions),
                           )
-                        : "—",
+                        : "–",
                     )}
                   </div>
 
@@ -3845,13 +3845,13 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                 ? formatDurationShort(
                                     viewerDoc.data.timeSpentMs,
                                   )
-                                : "—",
+                                : "–",
                             )}
                             {stat(
                               "Pages",
                               viewerDoc.data.pagesViewed
                                 ? String(viewerDoc.data.pagesViewed)
-                                : "—",
+                                : "–",
                             )}
                           </div>
                           <div className="mt-3 text-[13px] font-semibold text-[var(--fg)]">
@@ -3937,7 +3937,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                   <span className="shrink-0 tabular-nums text-[12px] text-[var(--muted)]">
                                     {d.timeSpentMs > 0
                                       ? formatDurationShort(d.timeSpentMs)
-                                      : "—"}
+                                      : "–"}
                                   </span>
                                 </div>
                                 <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
@@ -3999,7 +3999,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                 <span className="w-14 shrink-0 text-right text-[12px] tabular-nums text-[var(--fg)]">
                                   {row.ms > 0
                                     ? formatDurationShort(row.ms)
-                                    : "—"}
+                                    : "–"}
                                 </span>
                               </li>
                             ))}
@@ -4090,7 +4090,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                 <span className="shrink-0 text-[12px] tabular-nums text-[var(--muted)]">
                                   {v.timeSpentMs > 0
                                     ? formatDurationShort(v.timeSpentMs)
-                                    : "—"}
+                                    : "–"}
                                   {v.pagesSeen?.length
                                     ? ` · ${v.pagesSeen.length === 1 ? "page" : "pages"} ${formatPageRanges(v.pagesSeen)}`
                                     : ""}

@@ -184,7 +184,7 @@ export default function UsageTable({
         <div className="mt-3 text-[12px] text-[var(--muted-2)]">
           Month-to-date spend (credits × $0.10):{" "}
           <span className="font-semibold text-[var(--fg)]">
-            {monthSpendCents === null ? "—" : formatUsdFromCents(monthSpendCents)}
+            {monthSpendCents === null ? "–" : formatUsdFromCents(monthSpendCents)}
           </span>
         </div>
       ) : null}
@@ -225,7 +225,7 @@ export default function UsageTable({
               ) : (
                 rows.map((r) => {
                   const docTitle = (r.doc?.title ?? "").trim() || "Untitled";
-                  const userLabel = (r.user?.name ?? "").trim() || (r.user?.email ?? "").trim() || "—";
+                  const userLabel = (r.user?.name ?? "").trim() || (r.user?.email ?? "").trim() || "–";
                   return (
                     <tr key={r.id} className="border-t border-[var(--border)]">
                       <td className="whitespace-nowrap px-4 py-3 text-[var(--muted-2)]">{fmtDateTime(r.createdAt)}</td>
@@ -257,12 +257,12 @@ export default function UsageTable({
                             {docTitle}
                           </a>
                         ) : (
-                          <span className="text-[var(--muted-2)]">—</span>
+                          <span className="text-[var(--muted-2)]">–</span>
                         )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-[var(--muted-2)]">{userLabel}</td>
                       <td className="px-4 py-3 text-right text-[var(--muted-2)]">
-                        {Number.isFinite(r.credits) ? r.credits.toLocaleString() : "—"}
+                        {Number.isFinite(r.credits) ? r.credits.toLocaleString() : "–"}
                       </td>
                       <td className="px-4 py-3 text-[var(--muted-2)]">
                         {r.status === "charged"

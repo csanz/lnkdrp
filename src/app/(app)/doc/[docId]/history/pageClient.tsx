@@ -1176,7 +1176,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                   <div className="flex items-center justify-between gap-2">
                     <span>Current version</span>
                     <span className="font-medium text-[var(--fg)]">
-                      {overview.currentVersion ? `v${overview.currentVersion}` : "—"}
+                      {overview.currentVersion ? `v${overview.currentVersion}` : "–"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -1196,13 +1196,13 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                   <div className="flex items-center justify-between gap-2">
                     <span>First change</span>
                     <span className="font-medium text-[var(--fg)]">
-                      {overview.firstMs ? new Date(overview.firstMs).toLocaleDateString() : "—"}
+                      {overview.firstMs ? new Date(overview.firstMs).toLocaleDateString() : "–"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span>Last change</span>
                     <span className="font-medium text-[var(--fg)]">
-                      {overview.lastMs ? new Date(overview.lastMs).toLocaleDateString() : "—"}
+                      {overview.lastMs ? new Date(overview.lastMs).toLocaleDateString() : "–"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -1211,7 +1211,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                       className="font-medium text-[var(--fg)]"
                       title={overview.avgDeltaMs ? undefined : "Needs at least two replacements"}
                     >
-                      {overview.avgDeltaMs ? formatDuration(overview.avgDeltaMs) : "—"}
+                      {overview.avgDeltaMs ? formatDuration(overview.avgDeltaMs) : "–"}
                     </span>
                   </div>
                 </div>

@@ -100,7 +100,7 @@ function LoginPageInner() {
     // what the account *is*, leaving the queue to a banner above it — which put "signing in puts
     // you on the list" directly above "New accounts start free" and a Sign up button.
     if (queued) {
-      return "One button, no password to remember. Signing in puts you on the list rather than opening an account — we let people in a few at a time, and there is nothing to pay.";
+      return "One button, no password to remember. Signing in puts you on the list rather than opening an account. We let people in a few at a time, and there is nothing to pay.";
     }
     return "One button, no password to remember. Accounts are free and nothing is charged until you choose a plan.";
   }, [authEnabled, signedOut, next, queued]);

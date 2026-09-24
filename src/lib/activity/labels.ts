@@ -397,7 +397,7 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
         subject: who,
         verb: "finished reading",
         object: what,
-        suffix: headline ? `— ${headline}` : duration ? `(${duration})` : linkSuffix(item.meta),
+        suffix: headline ? `· ${headline}` : duration ? `(${duration})` : linkSuffix(item.meta),
       };
     }
     case "download_request.created":
@@ -440,6 +440,15 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject: "Grace period", verb: "ended for", object: "this workspace", suffix: "Free limits now apply" };
     case "plan.upgraded":
       return { subject, verb: "upgraded", object: "this workspace", suffix: "to Pro" };
+    case "plan.subscription_ending": {
+      const periodEnd = metaString(item.meta, "periodEnd");
+      return {
+        subject: "Pro",
+        verb: "ends for",
+        object: "this workspace",
+        suffix: periodEnd ? `at the end of the paid period (${periodEnd.slice(0, 10)}): the account that paid for it is being deleted` : "the account that paid for it is being deleted",
+      };
+    }
     case "summary.generated": {
       // A skipped summary written later (doc page action or the monthly re-queue).
       const by = agentSummarySuffix(item.meta);

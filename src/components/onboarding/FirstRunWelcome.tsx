@@ -89,7 +89,7 @@ export default function FirstRunWelcome({
       </h2>
       <p className="mt-2 max-w-[62ch] text-[14px] leading-6 text-[var(--muted)]">
         Drop a PDF and you get a link to send. From the first time someone opens it you can see who
-        they were, how far they read, and which pages they skipped — and when you replace the file,
+        they were, how far they read, and which pages they skipped. When you replace the file,
         the link stays the same and everyone gets the new version.
       </p>
 

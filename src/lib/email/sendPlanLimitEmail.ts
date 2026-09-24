@@ -101,7 +101,7 @@ export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): EmailCont
   if (kind === "started") {
     return transactional({
       subject: "Your LinkDrop workspace is over the Free limits",
-      preheader: `Nothing changes today — you have until ${endsOn}.`,
+      preheader: `Nothing changes today. You have until ${endsOn}.`,
       blocks: blocks(
         { kind: "heading", text: `"${name}" is over the Free plan limits` },
         { kind: "p", text: "Nothing is paused yet." },

@@ -89,7 +89,7 @@ export default function PageReadingDetail({
               />
             </span>
             <span className="w-16 shrink-0 text-right text-[12px] tabular-nums text-[var(--fg)]">
-              {row.ms > 0 ? formatDurationShort(row.ms) : "—"}
+              {row.ms > 0 ? formatDurationShort(row.ms) : "–"}
             </span>
           </li>
         ))}

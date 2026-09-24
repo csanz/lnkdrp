@@ -650,7 +650,7 @@ export default function ViewerProfile({
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {stat("Sessions", visitsLoading && !visits.length && scopeKind === "doc" ? "…" : String(sessions || 0))}
-        {stat("Time spent", timeMs > 0 ? formatDurationShort(timeMs) : "—")}
+        {stat("Time spent", timeMs > 0 ? formatDurationShort(timeMs) : "–")}
         {scopeKind === "doc"
           ? stat("Pages viewed", String(viewer.pagesViewed || pagesSeen.length))
           : stat("Documents", String(viewer.docs?.length ?? 0))}
@@ -660,9 +660,9 @@ export default function ViewerProfile({
             // A project's documents carry the same clock as its total, so the plain average holds.
             if (scopeKind !== "doc") {
               const n = viewer.docs?.length ?? 0;
-              return timeMs > 0 && n > 0 ? formatDurationShort(Math.round(timeMs / n)) : "—";
+              return timeMs > 0 && n > 0 ? formatDurationShort(Math.round(timeMs / n)) : "–";
             }
-            return timedPages.length > 0 ? formatDurationShort(Math.round(timedTotalMs / timedPages.length)) : "—";
+            return timedPages.length > 0 ? formatDurationShort(Math.round(timedTotalMs / timedPages.length)) : "–";
           })(),
           // Why this average times the page count does not equal "Time spent": the pages they have
           // not left yet have no measured time. Shown only when the two actually differ, so a
@@ -678,19 +678,19 @@ export default function ViewerProfile({
             "Longest page" was a dead tile on this scope — a project reader's payload carries no
             `pagesSeen` and no `pageTimeMsByPage` at all (their pages belong to whichever document
             they were in, and page 3 of the deck is not page 3 of the term sheet), so it rendered a
-            permanent "—". The honest analogue is the document that held them longest, which the
+            permanent "–". The honest analogue is the document that held them longest, which the
             payload already sorts to the front for us. */}
         {scopeKind === "doc"
-          ? stat("Longest page", longest ? `p${longest.page} · ${formatDurationShort(longest.ms)}` : "—")
+          ? stat("Longest page", longest ? `p${longest.page} · ${formatDurationShort(longest.ms)}` : "–")
           : (() => {
               const top = (viewer.docs ?? []).find((d) => (d.timeSpentMs ?? 0) > 0) ?? null;
               return stat(
                 "Longest document",
-                top ? formatDurationShort(top.timeSpentMs) : "—",
+                top ? formatDurationShort(top.timeSpentMs) : "–",
                 top ? top.title?.trim() || "Untitled document" : null,
               );
             })()}
-        {stat("Avg per session", sessions > 0 && timeMs > 0 ? formatDurationShort(Math.round(timeMs / sessions)) : "—")}
+        {stat("Avg per session", sessions > 0 && timeMs > 0 ? formatDurationShort(Math.round(timeMs / sessions)) : "–")}
       </div>
 
       {scopeKind === "doc" ? (
@@ -749,7 +749,7 @@ export default function ViewerProfile({
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-[13px] text-[var(--fg)]">{formatDateTime(v.startedAt)}</span>
                       <span className="text-[12px] tabular-nums text-[var(--muted)]">
-                        {v.timeSpentMs > 0 ? formatDurationShort(v.timeSpentMs) : "—"}
+                        {v.timeSpentMs > 0 ? formatDurationShort(v.timeSpentMs) : "–"}
                         {v.docs?.length
                           ? ` · ${v.docs.length} ${v.docs.length === 1 ? "document" : "documents"}`
                           : v.pagesSeen?.length
@@ -768,7 +768,7 @@ export default function ViewerProfile({
                           >
                             <DocumentTextIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
                             <span className="truncate">{d.title || "Untitled"}</span>
-                            <span className="tabular-nums">{d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "—"}</span>
+                            <span className="tabular-nums">{d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "–"}</span>
                           </span>
                         ))}
                       </div>

@@ -81,7 +81,7 @@ export function trendPct(current: number, previous: number): number | null {
 
 /** Cents as a compact money string for a tile: $1,240 (no cents above $100, which only adds noise). */
 export function fmtMoney(cents: number | null | undefined): string {
-  if (typeof cents !== "number" || !Number.isFinite(cents)) return "—";
+  if (typeof cents !== "number" || !Number.isFinite(cents)) return "–";
   const dollars = cents / 100;
   return dollars >= 100 || Number.isInteger(dollars)
     ? `$${Math.round(dollars).toLocaleString("en-US")}`

@@ -154,7 +154,7 @@ function oneLine(v: unknown, max: number): string {
     // An object where a line was asked for: its string values, in order, as one line.
     v = Object.values(v as Record<string, unknown>)
       .filter((x) => typeof x === "string" && x.trim())
-      .join(" — ");
+      .join(" · ");
   }
   if (typeof v !== "string") return "";
   return v.replace(/\s+/g, " ").trim().slice(0, max);

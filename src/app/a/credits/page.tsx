@@ -601,7 +601,7 @@ export default function AdminCreditsPage() {
             </span>
           ) : typedWorkspaceId ? (
             <span className="text-[12px] leading-5 text-[var(--muted-2)]">
-              Not a complete ObjectId yet — still showing all workspaces.
+              Not a complete ObjectId yet, so all workspaces are still shown.
             </span>
           ) : null}
         </AdminFilterBar>
@@ -644,7 +644,7 @@ export default function AdminCreditsPage() {
             <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
               <div className="text-[13px] font-semibold leading-5 text-[var(--fg)]">Snapshot for this workspace</div>
               <div className="text-[12px] leading-5 text-[var(--muted-2)]">
-                The customer-facing view. Reading it seeds a balance row — the one read on this page that writes.
+                The customer-facing view. Reading it seeds a balance row: the one read on this page that writes.
               </div>
             </div>
             <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
@@ -739,7 +739,7 @@ export default function AdminCreditsPage() {
                     columns do not need: the cell contributes nothing to the table's intrinsic
                     width, so it fills the slack instead of forcing a scrollbar. */}
                 <AdminTd truncate="w-full max-w-0">
-                  <span title={[a.reason, a.detail].filter(Boolean).join(" — ")}>{a.reason}</span>
+                  <span title={[a.reason, a.detail].filter(Boolean).join(": ")}>{a.reason}</span>
                 </AdminTd>
                 <AdminTd align="right" numeric>
                   <TimeCell value={a.at} />
@@ -1166,7 +1166,7 @@ export default function AdminCreditsPage() {
                 ? `This cycle (${onDemand.cycle.cycleKey}): ${fmtCredits(
                     onDemand.cycle.onDemandUsedCredits,
                   )} on-demand of ${fmtCredits(onDemand.cycle.totalUsedCredits)} credits used.`
-                : `No cycle total — ${onDemand.cycleUnavailableReason ?? "unavailable"}.`
+                : `No cycle total: ${onDemand.cycleUnavailableReason ?? "unavailable"}.`
               : `A rolling ${onDemand.windowDays}-day window: billing cycles start on a different day per workspace.`
             : "Metered credits billed beyond a workspace's included allowance."}
         </p>

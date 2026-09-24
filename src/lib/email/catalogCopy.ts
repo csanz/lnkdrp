@@ -73,7 +73,7 @@ export const EMAIL_COPY: Record<string, EmailCopy> = {
     when: "When a reader asks for the file on a link that has downloads switched off.",
     audience: "you",
     setting: null,
-    why: "It is a request waiting on your answer — approve or deny — not a notification about something already done.",
+    why: "It is a request waiting on your answer (approve or deny), not a notification about something already done.",
   },
   viewer_introduced: {
     label: "A reader said who they are",
@@ -90,7 +90,7 @@ export const EMAIL_COPY: Record<string, EmailCopy> = {
     setting: "views",
   },
   "share_views.daily": {
-    label: "When someone opens a link — daily digest",
+    label: "When someone opens a link: daily digest",
     when: "One email at the end of the day, covering every reader since the last.",
     audience: "you",
     setting: "views",
@@ -102,7 +102,7 @@ export const EMAIL_COPY: Record<string, EmailCopy> = {
     setting: "briefs",
   },
   "visit_brief.daily": {
-    label: "When someone finishes reading — daily digest",
+    label: "When someone finishes reading: daily digest",
     when: "One email at the end of the day, with every visit since the last and its brief.",
     audience: "you",
     setting: "briefs",
@@ -114,7 +114,7 @@ export const EMAIL_COPY: Record<string, EmailCopy> = {
     setting: "docUploads",
   },
   "doc_upload.daily": {
-    label: "Documents teammates added — daily digest",
+    label: "Documents teammates added: daily digest",
     when: "One email at the end of the day listing what your teammates added since the last.",
     audience: "you",
     setting: "docUploads",
@@ -126,7 +126,7 @@ export const EMAIL_COPY: Record<string, EmailCopy> = {
     setting: "docUpdates",
   },
   "doc_update.daily": {
-    label: "Documents replaced — daily digest",
+    label: "Documents replaced: daily digest",
     when: "One email at the end of the day listing every document replaced since the last.",
     audience: "you",
     setting: "docUpdates",
@@ -139,7 +139,7 @@ export const EMAIL_COPY: Record<string, EmailCopy> = {
     flagged: true,
   },
   "repo_link_request.daily": {
-    label: "Repository link requests — daily digest",
+    label: "Repository link requests: daily digest",
     when: "One email at the end of the day covering every request since the last.",
     audience: "you",
     setting: "repoRequests",

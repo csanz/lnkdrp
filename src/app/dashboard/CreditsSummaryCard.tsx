@@ -180,22 +180,22 @@ function CreditsSummaryCardInner({
         <div className="rounded-xl bg-[var(--panel-2)] p-4 lg:col-span-2">
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">Credits remaining</div>
           <div className="mt-2 text-[26px] font-semibold tracking-tight text-[var(--fg)]">
-            {creditsRemaining === null ? "—" : creditsRemaining.toLocaleString()}
+            {creditsRemaining === null ? "–" : creditsRemaining.toLocaleString()}
           </div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">{isFree ? "Starter and purchased" : "Included and purchased"}</div>
         </div>
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">{isFree ? "Starter" : "Included"}</div>
-          <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{includedRemaining !== null ? includedRemaining.toLocaleString() : "—"}</div>
+          <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{includedRemaining !== null ? includedRemaining.toLocaleString() : "–"}</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-            {isFree ? `${starterGrant.toLocaleString()} to start, one time` : `Per month: ${includedThisCycle !== null ? includedThisCycle.toLocaleString() : "—"}`}
+            {isFree ? `${starterGrant.toLocaleString()} to start, one time` : `Per month: ${includedThisCycle !== null ? includedThisCycle.toLocaleString() : "–"}`}
           </div>
         </div>
         {isFree ? (
           <div className="rounded-xl bg-[var(--panel-2)] p-4">
             <div className="text-[12px] font-semibold text-[var(--muted-2)]">Purchased</div>
             <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
-              {purchasedRemaining === null ? "—" : purchasedRemaining.toLocaleString()}
+              {purchasedRemaining === null ? "–" : purchasedRemaining.toLocaleString()}
             </div>
             <div className="mt-1 text-[12px] text-[var(--muted-2)]">Credit packs</div>
           </div>
@@ -226,7 +226,7 @@ function CreditsSummaryCardInner({
         )}
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">Used</div>
-          <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{usedThisCycle !== null ? usedThisCycle.toLocaleString() : "—"}</div>
+          <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{usedThisCycle !== null ? usedThisCycle.toLocaleString() : "–"}</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
             This month{usedCentsThisCycle !== null ? ` • ≈ ${formatUsdFromCents(usedCentsThisCycle)} @ $0.10/credit` : ""}
           </div>

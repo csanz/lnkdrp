@@ -58,14 +58,14 @@ const SHOTS: Shot[] = [
     height: 975,
     title: "Your agent gets real tools",
     body: "One key, and your MCP client can share a document, replace the file behind a link, and read the numbers back. The destructive ones ask a human first.",
-    alt: "The agents page: a connected key, the one-line MCP command, and the tool list — share, replace, read stats — each marked read, write, or asks first.",
+    alt: "The agents page: a connected key, the one-line MCP command, and the tool list (share, replace, read stats), each marked read, write, or asks first.",
   },
   {
     src: "/images/home/metrics.png",
     width: 1816,
     height: 1069,
     title: "Know who read it",
-    body: "Every open is recorded: who came, how long they stayed, how many came back. Not a delivery receipt — a reading report.",
+    body: "Every open is recorded: who came, how long they stayed, how many came back. Not a delivery receipt but a reading report.",
     alt: "The metrics page: recent visitors with read and skimmed badges, views, opens, reading time, and a views-per-day chart.",
   },
   {

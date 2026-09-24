@@ -143,7 +143,7 @@ function headerRows(headers: Record<string, string>): { name: string; value: str
 
 const VIEW_EVENT_INPUTS: PreviewInput[] = [
   { label: "doc", value: `"${SAMPLE_TITLE}", 18 pages` },
-  { label: "link", value: `${SAMPLE_LINK.shareId} — label "Sequoia", audience "Sequoia partners"` },
+  { label: "link", value: `${SAMPLE_LINK.shareId}, label "Sequoia", audience "Sequoia partners"` },
   { label: "offUrl", value: `${SAMPLE_OFF_URL} (placeholder, not a signed token)` },
 ];
 
@@ -174,7 +174,7 @@ export function buildPreviews(): PreviewRow[] {
     ],
     [
       "repo_link_request.daily",
-      "Request inboxes \u2014 daily digest",
+      "Request inboxes: daily digest",
       true,
       [
         { requestName: "Q3 diligence", docTitle: "Cap table (signed)", docUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}` },
@@ -236,8 +236,8 @@ export function buildPreviews(): PreviewRow[] {
         body:
           "Priya Natarajan came back for a second look and stayed six minutes, four times longer than last time. Pricing (p. 7) held her for close to three minutes and she returned to it once; traction (p. 4) was next. She never opened the last three pages, and downloaded the deck before leaving.",
         interests: [
-          "Pricing tiers and the enterprise minimum commitment — nearly 3 minutes on p. 7, opened twice",
-          "Net revenue retention and the cohort chart — over a minute on p. 4",
+          "Pricing tiers and the enterprise minimum commitment: nearly 3 minutes on p. 7, opened twice",
+          "Net revenue retention and the cohort chart: over a minute on p. 4",
         ],
         highlights: ["Nearly 3 minutes on pricing (p. 7), opened twice", "Downloaded the PDF", "Skipped the appendix (p. 10–12)"],
         followUp: "Pricing is the question. Lead with it when you follow up.",
@@ -267,7 +267,7 @@ export function buildPreviews(): PreviewRow[] {
     };
     for (const [key, label, daily, entries] of [
       ["visit_brief.immediate", "When someone finishes reading", false, [briefed]],
-      ["visit_brief.daily", "When someone finishes reading \u2014 daily digest", true, [briefed, recap]],
+      ["visit_brief.daily", "When someone finishes reading: daily digest", true, [briefed, recap]],
     ] as const) {
       const mail = composeVisitBriefEmail({
         entries,
@@ -305,7 +305,7 @@ export function buildPreviews(): PreviewRow[] {
     ],
     [
       "doc_upload.daily",
-      "Documents teammates added \u2014 daily digest",
+      "Documents teammates added: daily digest",
       true,
       [
         { title: SAMPLE_TITLE, uploadedBy: "Dana Lee", pages: 18, url: `${SITE_URL}/doc/${SAMPLE_DOC_ID}` },
@@ -349,9 +349,9 @@ export function buildPreviews(): PreviewRow[] {
           version: 4,
           summary: "Pricing page rewritten; two slides added.",
           changes: [
-            "Pricing — three tiers replaced with two, annual discount removed",
-            "Team — two new slides for the engineering hires",
-            "Traction — ARR chart updated through August",
+            "Pricing: three tiers replaced with two, annual discount removed",
+            "Team: two new slides for the engineering hires",
+            "Traction: ARR chart updated through August",
           ],
           pagesChanged: [4, 9, 10, 12],
           historyUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/history#v-4`,
@@ -361,7 +361,7 @@ export function buildPreviews(): PreviewRow[] {
     ],
     [
       "doc_update.daily",
-      "Documents replaced \u2014 daily digest",
+      "Documents replaced: daily digest",
       true,
       [
         {
@@ -572,7 +572,7 @@ export function buildPreviews(): PreviewRow[] {
     rows.push({
       key: `viewer_introduced.${verified ? "verified" : "claimed"}`,
       catalogId: "viewer_introduced",
-      label: `Reader introduced themselves — ${verified ? "confirmed" : "unconfirmed"}`,
+      label: `Reader introduced themselves, ${verified ? "confirmed" : "unconfirmed"}`,
       inputs: [
         { label: "verified", value: String(verified) },
         { label: "viewerName", value: "Dana Lee" },
@@ -596,7 +596,7 @@ export function buildPreviews(): PreviewRow[] {
     rows.push({
       key: `plan_limit.${kind}`,
       catalogId: "plan_limit",
-      label: `Plan limit — ${kind}`,
+      label: `Plan limit: ${kind}`,
       inputs: [
         { label: "kind", value: kind },
         { label: "workspaceName", value: "Acme" },
@@ -629,7 +629,7 @@ export function buildPreviews(): PreviewRow[] {
     rows.push({
       key: `share_views.immediate.${plan}`,
       catalogId: "share_views.immediate",
-      label: `Share view — immediate (${plan})`,
+      label: `Share view: immediate (${plan})`,
       inputs: [
         { label: "plan", value: plan },
         { label: "events", value: "2 new viewers on one link" },
@@ -652,7 +652,7 @@ export function buildPreviews(): PreviewRow[] {
     rows.push({
       key: `share_views.daily.${plan}`,
       catalogId: "share_views.daily",
-      label: `Share view — daily digest (${plan})`,
+      label: `Share view: daily digest (${plan})`,
       inputs: [
         { label: "plan", value: plan },
         { label: "views", value: "2 new viewers" },

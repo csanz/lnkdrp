@@ -149,7 +149,7 @@ function OutcomeCell({ outcome }: { outcome: SendOutcome }) {
   const when = outcome.at ? new Date(outcome.at).toLocaleString() : null;
   if (outcome.state === "failed") {
     return (
-      <StatusPill tone="danger" title={[when, outcome.error].filter(Boolean).join(" — ") || undefined}>
+      <StatusPill tone="danger" title={[when, outcome.error].filter(Boolean).join(": ") || undefined}>
         {outcome.error ? outcome.error : sendStateLabel(outcome.state)}
       </StatusPill>
     );
@@ -200,7 +200,7 @@ function JobSnapshot({ snapshot }: { snapshot: SnapshotRow }) {
       </Fact>
       <Fact label="Schedule">
         {snapshot.schedule ? (
-          <span title={`${snapshot.schedule} — ${snapshot.scheduleHuman}`}>
+          <span title={`${snapshot.schedule} (${snapshot.scheduleHuman})`}>
             <span className="font-mono text-[12px]">{snapshot.schedule}</span>{" "}
             <span className="text-[var(--muted-2)]">({snapshot.scheduleHuman})</span>
           </span>
@@ -379,7 +379,7 @@ export default function AdminEmailsPage() {
           description={
             <>
               From <span className="font-mono text-[12px]">EMAIL_CATALOG</span>, hand-maintained, so it can drift from
-              what actually sends. Recorded says what proof a send leaves — per message, run totals only, or nothing.
+              what actually sends. Recorded says what proof a send leaves: per message, run totals only, or nothing.
             </>
           }
         >
@@ -524,7 +524,7 @@ export default function AdminEmailsPage() {
               </dl>
             ) : (
               <p className={ADMIN_NOTE}>
-                No queue counts on this response — the collection could not be read. That is not the same as an empty
+                No queue counts on this response: the collection could not be read. That is not the same as an empty
                 queue.
               </p>
             )}
@@ -606,8 +606,8 @@ export default function AdminEmailsPage() {
 
         {/* ------------------------------------------- notification job last run */}
         <AdminSection
-          title="Notification job — last run"
-          description="One snapshot per job, overwritten every tick — there is no run history, so nothing here adds up over time. Emails are messages sent; events are the source rows folded into them. The daily gate says the digest window was open this tick, not that a digest went out."
+          title="Notification job: last run"
+          description="One snapshot per job, overwritten every tick. There is no run history, so nothing here adds up over time. Emails are messages sent; events are the source rows folded into them. The daily gate says the digest window was open this tick, not that a digest went out."
         >
           <Panel padding="md" rounded="xl" className="min-w-0">
             {overview ? <JobSnapshot snapshot={overview.notification.snapshot} /> : null}
@@ -736,7 +736,7 @@ export default function AdminEmailsPage() {
 
         {/* --------------------------------------------- plan limits job last run */}
         <AdminSection
-          title="Plan-limit job — last run"
+          title="Plan-limit job: last run"
           description="Started, reminded and blocked count state transitions; each one sends one email to the owner. Errors mixes failed sends with failed writes, so a nonzero count does not say how many owners went unmailed."
         >
         <Panel padding="md" rounded="xl" className="min-w-0">
@@ -855,7 +855,7 @@ export default function AdminEmailsPage() {
                     <iframe
                       sandbox=""
                       srcDoc={preview.html}
-                      title={`${preview.label} — HTML part`}
+                      title={`${preview.label}: HTML part`}
                       className="mt-2.5 h-[460px] w-full rounded-lg border border-[var(--border)] bg-white"
                     />
                   ) : (

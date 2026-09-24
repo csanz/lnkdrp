@@ -164,7 +164,7 @@ export function visitBriefSubject(entries: readonly VisitBriefEntry[], daily: bo
 function pageLine(p: VisitBriefPageLine): string {
   const dur = formatDuration(p.ms) ?? "under a second";
   const times = p.opened > 1 ? ` ×${p.opened}` : "";
-  return p.heading ? `p. ${p.page} — ${p.heading}: ${dur}${times}` : `p. ${p.page}: ${dur}${times}`;
+  return p.heading ? `p. ${p.page}, ${p.heading}: ${dur}${times}` : `p. ${p.page}: ${dur}${times}`;
 }
 
 /** "Sep 20" for a date in this year, "Sep 20, 2025" otherwise. */
@@ -194,7 +194,7 @@ function entryBlocks(entry: VisitBriefEntry, opts: { heading: boolean }): Block[
   facts.push(["Link", entry.linkLabel ?? "Default link"]);
   if (entry.audience) facts.push(["Audience", entry.audience]);
   facts.push(["When", formatWhenUtc(entry.startedAt)]);
-  facts.push(["How much", howMuch(entry) || "—"]);
+  facts.push(["How much", howMuch(entry) || "–"]);
   // Always, not only on a return: "First visit" is itself the answer to "have they been before?"
   facts.push(["Visit", visitLine(entry)]);
   if (entry.docsOpened.length > 1) facts.push(["Opened", entry.docsOpened.join(", ")]);
@@ -302,7 +302,7 @@ export function composeVisitBriefEmail(params: {
     : entries
         .slice(0, 3)
         .map((e) => `${who(e)} · ${formatDuration(e.timeSpentMs) ?? "a moment"}`)
-        .join(" — ");
+        .join(" · ");
 
   return {
     subject,

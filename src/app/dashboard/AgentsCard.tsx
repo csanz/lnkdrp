@@ -51,7 +51,7 @@ export default function AgentsCard() {
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <Stat label="Tools" value={String(total)} hint="Read and write, over MCP" />
         <Stat label="Ask you first" value={String(confirming)} hint="Deletes and archives confirm before acting" />
-        <Stat label="Keys" value={status?.activeKeys != null ? String(status.activeKeys) : "—"} hint="Active API keys on this workspace" />
+        <Stat label="Keys" value={status?.activeKeys != null ? String(status.activeKeys) : "–"} hint="Active API keys on this workspace" />
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">

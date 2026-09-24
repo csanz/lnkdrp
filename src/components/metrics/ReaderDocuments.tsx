@@ -106,7 +106,7 @@ export default function ReaderDocuments({
                 />
               </span>
               <span className="w-16 shrink-0 text-right text-[12px] tabular-nums text-[var(--muted)]">
-                {d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "—"}
+                {d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "–"}
               </span>
             </button>
 

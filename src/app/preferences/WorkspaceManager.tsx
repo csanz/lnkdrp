@@ -237,7 +237,7 @@ export default function WorkspaceManager() {
         <div className="min-w-0">
           <div className="text-[13px] font-semibold text-[var(--fg)]">Active workspace</div>
           <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-            {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "—"}
+            {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "–"}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Org"}</Pill> : null}
@@ -488,7 +488,7 @@ export default function WorkspaceManager() {
                     </div>
                     {filteredInvites.map((inv, idx) => {
                       const url = typeof inv.inviteUrl === "string" ? inv.inviteUrl : "";
-                      const expiresLabel = inv.expiresAt ? new Date(inv.expiresAt).toLocaleDateString() : "—";
+                      const expiresLabel = inv.expiresAt ? new Date(inv.expiresAt).toLocaleDateString() : "–";
                       return (
                         <div
                           key={`${inv.id ?? inv.createdDate ?? "x"}:${idx}`}

@@ -240,7 +240,7 @@ export default function AdminCacheToolsPage() {
                     {r.bytes.toLocaleString()}
                   </AdminTd>
                   <AdminTd mono truncate="max-w-[380px]">
-                    <span title={preview}>{preview || "—"}</span>
+                    <span title={preview}>{preview || "–"}</span>
                   </AdminTd>
                   <AdminTd align="right" sticky actions>
                     <RowActions>

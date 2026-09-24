@@ -227,7 +227,7 @@ export default function AdminErrorsPage() {
         {recurring.length ? (
           <AdminSection
             title="Repeating"
-            description="The same fault more than once in the rows loaded — not a count over the whole collection. Open one to filter down to it."
+            description="The same fault more than once in the rows loaded, not a count over the whole collection. Open one to filter down to it."
           >
             <div className="grid gap-2 sm:grid-cols-2">
               {recurring.map((g) => (

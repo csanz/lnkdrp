@@ -197,7 +197,7 @@ export default function AdminDataProjectsPage() {
                       className={cn("block truncate rounded hover:underline", ADMIN_FOCUS_RING)}
                       title={[p.name ?? "Untitled", p.slug ? `/${p.slug}` : "", p.description ?? ""]
                         .filter(Boolean)
-                        .join(" — ")}
+                        .join(" · ")}
                     >
                       {p.name ?? ADMIN_DASH}
                     </Link>

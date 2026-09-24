@@ -39,7 +39,7 @@ describe("revenue helpers", () => {
     expect(fmtMoney(5800)).toBe("$58");
     expect(fmtMoney(123456)).toBe("$1,235");
     expect(fmtMoney(250)).toBe("$2.50");
-    expect(fmtMoney(null)).toBe("—");
-    expect(fmtMoney(undefined)).toBe("—");
+    expect(fmtMoney(null)).toBe("–");
+    expect(fmtMoney(undefined)).toBe("–");
   });
 });

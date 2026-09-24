@@ -169,7 +169,7 @@ export function buildCronRows(heartbeats: HeartbeatLike[], now: Date = new Date(
       // Asking the registry for the window keeps the two surfaces in step when a schedule changes.
       if (runningFor > stuckAfterMs(spec)) {
         state = "stuck";
-        detail = `Claimed running for ${since(runningFor)} — the function was probably killed mid-run`;
+        detail = `Claimed running for ${since(runningFor)} . The function was probably killed mid-run`;
       } else {
         state = "running";
         detail = startedAt ? `Started ${since(runningFor)} ago` : "Started just now";

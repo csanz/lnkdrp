@@ -222,7 +222,7 @@ export function rangeLabel(page: number, pageSize: number, total: number): strin
 }
 
 /** The em dash used for "no value". Never render an empty cell. */
-export const ADMIN_DASH = "—";
+export const ADMIN_DASH = "–";
 
 /* -------------------------------------------------------------------- labels */
 

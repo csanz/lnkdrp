@@ -148,7 +148,7 @@ export function reachablePageCount(params: { total: number; pageSize: number; ma
   return Math.max(1, Math.min(byTotal, Math.floor(maxWindow / pageSize)));
 }
 
-/** Which buckets paid for one ledger row: "subscription", "starter + purchased", or "—" for none. */
+/** Which buckets paid for one ledger row: "subscription", "starter + purchased", or "–" for none. */
 export function bucketSplitLabel(split: AdminCreditBucketSplit): string {
   const parts: string[] = [];
   if (split.subscription > 0) parts.push("subscription");
@@ -156,7 +156,7 @@ export function bucketSplitLabel(split: AdminCreditBucketSplit): string {
   if (split.purchased > 0) parts.push("purchased");
   if (split.onDemand > 0) parts.push("on-demand");
   // Grants, refunds and the 0-credit recipient/agent rows draw on no bucket at all.
-  return parts.length ? parts.join(" + ") : "—";
+  return parts.length ? parts.join(" + ") : "–";
 }
 
 /** "$39", "$4.50", "$0.10". */

@@ -62,7 +62,7 @@ export type EmailCatalogEntry = {
 type EmailFacts = Omit<EmailCatalogRow, keyof EmailCatalogEntry>;
 
 const PER_SEND_NOTE =
-  "ShareDownloadRequest stores a sent-at and an error per message — the only per-send record in the product.";
+  "ShareDownloadRequest stores a sent-at and an error per message, the only per-send record in the product.";
 const VIEW_RUN_NOTE = "Not recorded per send. Only the notification-emails run counters below (views.*).";
 const DOC_RUN_NOTE = "Not recorded per send. Only the notification-emails run counters below (docUpdate.*).";
 const REPO_RUN_NOTE = "Not recorded per send. Only the notification-emails run counters below (repoLinkRequests.*).";
@@ -107,7 +107,7 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
   welcome: {
     trace: "none",
     traceNote:
-      "Not recorded: sent from the NextAuth signIn callback on the call that inserted the user row, and swallowed on failure so a mail outage cannot fail a sign-in. User.createdAt records that the account was made, not that the mail arrived. Never sent to a waitlisted signup — waitlist_approved is their first email instead.",
+      "Not recorded: sent from the NextAuth signIn callback on the call that inserted the user row, and swallowed on failure so a mail outage cannot fail a sign-in. User.createdAt records that the account was made, not that the mail arrived. Never sent to a waitlisted signup; waitlist_approved is their first email instead.",
     previewable: true,
     previewNote: null,
     flagGated: null,
@@ -123,7 +123,7 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
   viewer_verify: {
     trace: "none",
     traceNote:
-      "Not recorded: sent best-effort when a reader introduces themselves, and deliberately gates nothing — the document is already open either way. The introduction itself is what we store; the delivery is not.",
+      "Not recorded: sent best-effort when a reader introduces themselves, and deliberately gates nothing: the document is already open either way. The introduction itself is what we store; the delivery is not.",
     previewable: true,
     previewNote: null,
     flagGated: null,
@@ -142,7 +142,7 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
       "Not recorded: OrgInvite has recipientEmail but no emailSentAt/emailError, so an invite row means we tried, nothing more.",
     previewable: false,
     previewNote:
-      "Body is inline in sendOrgInviteEmail, which posts to Resend directly — calling it would send a real email.",
+      "Body is inline in sendOrgInviteEmail, which posts to Resend directly, so calling it would send a real email.",
     flagGated: null,
   },
   plan_limit: {
@@ -229,7 +229,7 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
 
 const UNCLASSIFIED: EmailFacts = {
   trace: "none",
-  traceNote: "Not classified here — this id was added to EMAIL_CATALOG after the admin page was written.",
+  traceNote: "Not classified here: this id was added to EMAIL_CATALOG after the admin page was written.",
   previewable: false,
   previewNote: "No preview wired up for this id.",
   flagGated: null,
@@ -353,12 +353,12 @@ export type NotificationRunSummary = {
 };
 
 const BUCKET_LABELS: readonly { path: [string, string]; label: string }[] = [
-  { path: ["views", "immediate"], label: "Share views — immediate" },
-  { path: ["views", "daily"], label: "Share views — daily digest" },
-  { path: ["docUpdate", "immediate"], label: "Doc updates — immediate" },
-  { path: ["docUpdate", "daily"], label: "Doc updates — daily digest" },
-  { path: ["repoLinkRequests", "immediate"], label: "Repo link requests — immediate" },
-  { path: ["repoLinkRequests", "daily"], label: "Repo link requests — daily digest" },
+  { path: ["views", "immediate"], label: "Share views: immediate" },
+  { path: ["views", "daily"], label: "Share views: daily digest" },
+  { path: ["docUpdate", "immediate"], label: "Doc updates: immediate" },
+  { path: ["docUpdate", "daily"], label: "Doc updates: daily digest" },
+  { path: ["repoLinkRequests", "immediate"], label: "Repo link requests: immediate" },
+  { path: ["repoLinkRequests", "daily"], label: "Repo link requests: daily digest" },
 ];
 
 /**

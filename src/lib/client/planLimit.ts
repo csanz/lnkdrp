@@ -160,7 +160,7 @@ export function planLimitPrompt(limit: PlanLimitKey, opts: { used?: number; max?
       title: `This workspace includes ${max} ${max === 1 ? "collaborator" : "collaborators"}`,
       message:
         `Pro includes ${max} ${max === 1 ? "person" : "people"} beyond the owner who can upload and share. ` +
-        "Invite anyone else as a viewer — viewers are free and unlimited, and can see every document and all the analytics.",
+        "Invite anyone else as a viewer: viewers are free and unlimited, and can see every document and all the analytics.",
       secondaryLabel: "Manage members",
     };
   }

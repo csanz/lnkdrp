@@ -651,7 +651,7 @@ export default function AdminDataRequestDetailPage() {
               <DetailPanel
                 title="Run detail"
                 description={
-                  selectedAiRunId ? "Parameters, timing and failure — not the prompts." : "Select a run from the table."
+                  selectedAiRunId ? "Parameters, timing and failure, not the prompts." : "Select a run from the table."
                 }
                 actions={
                   aiRunDetail ? (

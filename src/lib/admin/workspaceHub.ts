@@ -177,7 +177,7 @@ export function isProPlan(plan: WorkspacePlanDTO | null | undefined): boolean {
 
 /** The `kind` column, spelled out. Legacy rows have no `kind` and read as Pro. */
 export function kindLabel(plan: WorkspacePlanDTO | null | undefined): string {
-  if (!plan || !plan.hasSubscription) return "—";
+  if (!plan || !plan.hasSubscription) return "–";
   if (plan.kind === null) return "pro (legacy, no kind stored)";
   return subscriptionKind({ status: plan.status, kind: plan.kind });
 }
@@ -189,7 +189,7 @@ export function kindLabel(plan: WorkspacePlanDTO | null | undefined): string {
 export function cancelText(cancelAtPeriodEnd: boolean, periodEndLabel: string): string {
   if (!cancelAtPeriodEnd) return "No";
   const end = periodEndLabel.trim();
-  return end ? `Yes — ends ${end}` : "Yes — end date unknown";
+  return end ? `Yes, ends ${end}` : "Yes, end date unknown";
 }
 
 /** Whether Stripe may charge this workspace at all, either kind. */
@@ -280,7 +280,7 @@ export function ledgerBucketLabel(row: WorkspaceLedgerRowDTO): string {
   if (row.creditsFromTrial > 0) parts.push(`starter ${row.creditsFromTrial}`);
   if (row.creditsFromPurchased > 0) parts.push(`purchased ${row.creditsFromPurchased}`);
   if (row.creditsFromOnDemand > 0) parts.push(`on-demand ${row.creditsFromOnDemand}`);
-  return parts.length ? parts.join(" + ") : "—";
+  return parts.length ? parts.join(" + ") : "–";
 }
 
 /**
@@ -297,7 +297,7 @@ export function ledgerBucketNames(row: WorkspaceLedgerRowDTO): string {
   if (row.creditsFromTrial > 0) parts.push("starter");
   if (row.creditsFromPurchased > 0) parts.push("purchased");
   if (row.creditsFromOnDemand > 0) parts.push("on-demand");
-  return parts.length ? parts.join(" + ") : "—";
+  return parts.length ? parts.join(" + ") : "–";
 }
 
 export type GraceState = { state: "none" | "active" | "blocked"; daysLeft: number | null };
@@ -317,20 +317,20 @@ export function graceState(grace: WorkspaceGraceDTO, now: Date): GraceState {
 
 /** `3 / 3` against a plan cap, or plain `12` when the plan has no cap. `over` drives the warning colour. */
 export function usageVsLimit(used: number, limit: number | null): { text: string; over: boolean } {
-  if (!Number.isFinite(used)) return { text: "—", over: false };
+  if (!Number.isFinite(used)) return { text: "–", over: false };
   if (limit === null || !Number.isFinite(limit)) return { text: fmtCount(used), over: false };
   return { text: `${fmtCount(used)} / ${fmtCount(limit)}`, over: used > limit };
 }
 
 /** A count, or an em dash when the number never arrived. Never renders blank. */
 export function fmtCount(n: number | null | undefined): string {
-  if (typeof n !== "number" || !Number.isFinite(n)) return "—";
+  if (typeof n !== "number" || !Number.isFinite(n)) return "–";
   return n.toLocaleString();
 }
 
 /** Cents as dollars, for the on-demand spend limit. */
 export function fmtCents(cents: number | null | undefined): string {
-  if (typeof cents !== "number" || !Number.isFinite(cents)) return "—";
+  if (typeof cents !== "number" || !Number.isFinite(cents)) return "–";
   return `$${(cents / 100).toFixed(2)}`;
 }
 

@@ -590,7 +590,7 @@ function DashboardPageInner() {
 
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-4 sm:px-6 text-[12px] text-[var(--muted-2)]">
                 Everything here is set per workspace, because a workspace can be an entirely different company. Turning
-                something off in one leaves the others alone — including the one-click link at the bottom of the emails
+                something off in one leaves the others alone, including the one-click link at the bottom of the emails
                 themselves, which only ever affects the workspace that email came from.
               </div>
             </div>
@@ -819,7 +819,7 @@ function StatCard({
     <div className="rounded-xl bg-[var(--panel-2)] p-4">
       <div className="text-[12px] font-semibold text-[var(--muted-2)]">{label}</div>
       <div className="mt-2 text-[26px] font-semibold tracking-tight text-[var(--fg)]">
-        {typeof value === "number" ? value.toLocaleString() : "—"}
+        {typeof value === "number" ? value.toLocaleString() : "–"}
       </div>
       {hint ? <div className="mt-1 text-[12px] text-[var(--muted-2)]">{hint}</div> : null}
     </div>
@@ -831,7 +831,7 @@ function StatMini({ label, value }: { label: string; value: number | null }) {
     <div className="rounded-xl bg-[var(--panel-hover)] p-3">
       <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">{label}</div>
       <div className="mt-1 text-[16px] font-semibold text-[var(--fg)]">
-        {typeof value === "number" ? value.toLocaleString() : "—"}
+        {typeof value === "number" ? value.toLocaleString() : "–"}
       </div>
     </div>
   );

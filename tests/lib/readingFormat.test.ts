@@ -24,7 +24,7 @@ import {
 
 describe("formatDwell", () => {
   test.each([
-    [null, "—"],
+    [null, "–"],
     [0, "0s"],
     [-5, "0s"],
     [999, "<1s"],
@@ -44,8 +44,8 @@ describe("formatDwell", () => {
 
 describe("formatTypical", () => {
   test.each([
-    [null, "—"],
-    [undefined, "—"],
+    [null, "–"],
+    [undefined, "–"],
     [600, "<1s"],
     [4677, "4.7s"],
     [5000, "5s"],
@@ -63,7 +63,7 @@ describe("formatTypical", () => {
 
 describe("formatDwellCompact", () => {
   test.each([
-    [null, "—"],
+    [null, "–"],
     [500, "<1s"],
     [12_500, "12s"],
     [250_000, "4m"],

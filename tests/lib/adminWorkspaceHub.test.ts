@@ -115,7 +115,7 @@ describe("planLabel", () => {
     expect(planLabel(plan({ kind: null }))).toBe("Pro");
     expect(kindLabel(plan({ kind: null }))).toBe("pro (legacy, no kind stored)");
     expect(kindLabel(plan({ kind: "payg" }))).toBe("payg");
-    expect(kindLabel(null)).toBe("—");
+    expect(kindLabel(null)).toBe("–");
   });
 });
 
@@ -133,11 +133,11 @@ describe("billableLabel", () => {
 
 describe("cancelText", () => {
   test("names the end date when there is one", () => {
-    expect(cancelText(true, "1 Oct 2026")).toBe("Yes — ends 1 Oct 2026");
+    expect(cancelText(true, "1 Oct 2026")).toBe("Yes, ends 1 Oct 2026");
   });
 
   test("says the date is unknown rather than trailing off", () => {
-    expect(cancelText(true, "")).toBe("Yes — end date unknown");
+    expect(cancelText(true, "")).toBe("Yes, end date unknown");
   });
 
   test("not cancelling", () => {
@@ -151,7 +151,7 @@ describe("creditSummary", () => {
     expect(s.hasRow).toBe(false);
     expect(s.total).toBeNull();
     expect(s.starter).toBeNull();
-    expect(fmtCount(s.total)).toBe("—");
+    expect(fmtCount(s.total)).toBe("–");
   });
 
   test("totals the three buckets", () => {
@@ -208,9 +208,9 @@ describe("ledgerBucketLabel", () => {
     expect(ledgerBucketLabel(r)).toBe("included 3 + starter 2 + on-demand 1");
   });
 
-  test("a grant row paid from nothing renders an em dash", () => {
+  test("a grant row paid from nothing renders a dash", () => {
     const r = ledgerRow({ eventType: "cycle_grant_included", creditsFromTrial: 0, creditsCharged: 0 });
-    expect(ledgerBucketLabel(r)).toBe("—");
+    expect(ledgerBucketLabel(r)).toBe("–");
   });
 });
 
@@ -224,9 +224,9 @@ describe("ledgerBucketNames", () => {
     expect(ledgerBucketNames(r)).toBe("included + starter + on-demand");
   });
 
-  test("a grant row paid from nothing renders an em dash", () => {
+  test("a grant row paid from nothing renders a dash", () => {
     const r = ledgerRow({ eventType: "cycle_grant_included", creditsFromTrial: 0, creditsCharged: 0 });
-    expect(ledgerBucketNames(r)).toBe("—");
+    expect(ledgerBucketNames(r)).toBe("–");
   });
 });
 
@@ -266,22 +266,22 @@ describe("usageVsLimit", () => {
     expect(usageVsLimit(11, null)).toEqual({ text: "11", over: false });
   });
 
-  test("a missing count is an em dash, not zero", () => {
-    expect(usageVsLimit(Number.NaN, 3)).toEqual({ text: "—", over: false });
+  test("a missing count is a dash, not zero", () => {
+    expect(usageVsLimit(Number.NaN, 3)).toEqual({ text: "–", over: false });
   });
 });
 
 describe("small formatters", () => {
   test("fmtCount", () => {
     expect(fmtCount(0)).toBe("0");
-    expect(fmtCount(null)).toBe("—");
-    expect(fmtCount(undefined)).toBe("—");
+    expect(fmtCount(null)).toBe("–");
+    expect(fmtCount(undefined)).toBe("–");
   });
 
   test("fmtCents", () => {
     expect(fmtCents(1000)).toBe("$10.00");
     expect(fmtCents(0)).toBe("$0.00");
-    expect(fmtCents(null)).toBe("—");
+    expect(fmtCents(null)).toBe("–");
   });
 
   test("keyStateLabel", () => {

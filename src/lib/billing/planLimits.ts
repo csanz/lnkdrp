@@ -271,7 +271,7 @@ export async function getWorkspaceGrace(orgId: string | Types.ObjectId): Promise
 /** Human message for a blocked limit, e.g. "Free workspaces can share 3 documents. Archive one or upgrade to Pro." */
 function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): string {
   if (plan === "pro" && limit === "collaborators") {
-    return `Pro includes ${max} ${max === 1 ? "person" : "people"} beyond the owner. Invite anyone else as a viewer — viewers are free and unlimited, and can see every document and all the analytics.`;
+    return `Pro includes ${max} ${max === 1 ? "person" : "people"} beyond the owner. Invite anyone else as a viewer: viewers are free and unlimited, and can see every document and all the analytics.`;
   }
   switch (limit) {
     case "documents":

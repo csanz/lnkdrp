@@ -193,7 +193,7 @@ export default function AdminDataRequestsPage() {
                   <Link
                     href={`/a/data/requests/${encodeURIComponent(r.id)}`}
                     className="rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
-                    title={r.description ? `${r.name ?? "Untitled"} — ${r.description}` : (r.name ?? "Open request")}
+                    title={r.description ? `${r.name ?? "Untitled"}: ${r.description}` : (r.name ?? "Open request")}
                   >
                     {r.name ?? ADMIN_DASH}
                   </Link>

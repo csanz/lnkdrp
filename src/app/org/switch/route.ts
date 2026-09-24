@@ -250,7 +250,7 @@ export async function GET(request: Request) {
       // This overlay is a standalone document, so next-themes is not here to stamp the theme for it.
       // It used to theme off prefers-color-scheme alone, which meant a user on a dark OS who had
       // explicitly chosen Light got a near-black full-viewport flash mid-navigation and then landed
-      // back on a light app — the exact bug the @custom-variant at the top of globals.css exists to
+      // back on a light app: the exact bug the @custom-variant at the top of globals.css exists to
       // prevent. Read the same stored choice next-themes writes and stamp it ourselves.
       (function () {
         try {
@@ -260,7 +260,7 @@ export async function GET(request: Request) {
       })();
     </script>
     <style>
-      /* Light is the bare :root default and dark is the override, mirroring globals.css — and the
+      /* Light is the bare :root default and dark is the override, mirroring globals.css, and the
          five values below are the app's real tokens, so the overlay matches the screens it sits
          between instead of approximating them. */
       :root {

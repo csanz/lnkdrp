@@ -134,7 +134,7 @@ export default function CronHealthAdminPage() {
               {failing.map((row) => (
                 <div key={row.jobKey}>
                   <span className="font-mono text-[12px]">{row.jobKey}</span>
-                  {row.detail ? <> — {row.detail}</> : null}
+                  {row.detail ? <>: {row.detail}</> : null}
                 </div>
               ))}
             </div>
@@ -146,7 +146,7 @@ export default function CronHealthAdminPage() {
             <span className="font-semibold text-[var(--fg)]">
               {late.length} {late.length === 1 ? "job is" : "jobs are"} late
             </span>{" "}
-            — they last ran longer ago than two of their own intervals. On a local machine that is normal: Vercel Cron only
+            because they last ran longer ago than two of their own intervals. On a local machine that is normal: Vercel Cron only
             fires against a deployment, so nothing here runs on its own until it is deployed.
           </div>
         ) : null}
@@ -242,7 +242,7 @@ export default function CronHealthAdminPage() {
                     {queueFigures.length ? (
                       <span
                         className="block truncate text-[12px] leading-4 text-[var(--muted-2)]"
-                        title="The notification queue as it stands now — emails owed, not emails the last run sent."
+                        title="The notification queue as it stands now: emails owed, not emails the last run sent."
                       >
                         <span className="mr-2 font-medium">Queue</span>
                         {queueFigures.map((f) => (

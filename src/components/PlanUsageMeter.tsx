@@ -24,7 +24,7 @@ type Props = {
 /** Render a single usage meter row. */
 export default function PlanUsageMeter({ label, used, max, warn = false, compact = false, className }: Props) {
   const fraction = used === null || max === null || max <= 0 ? 0 : Math.min(1, used / max);
-  const value = used === null ? "—" : max === null ? `${used}` : `${used} of ${max}`;
+  const value = used === null ? "–" : max === null ? `${used}` : `${used} of ${max}`;
   const pct = `${Math.round(fraction * 100)}%`;
   return (
     <div className={cn("min-w-0", className)}>

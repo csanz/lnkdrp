@@ -640,7 +640,7 @@ export default function QuickStats({
             href={cfg.linkMetricsHref}
             rows={recentLinks}
             empty="Nothing opened yet"
-            right={(r) => <span className="whitespace-nowrap">{relativeAge(r.lastViewedAt) ?? "—"}</span>}
+            right={(r) => <span className="whitespace-nowrap">{relativeAge(r.lastViewedAt) ?? "–"}</span>}
           />
         </div>
       ) : null}

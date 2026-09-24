@@ -495,10 +495,10 @@ const LinksManager = forwardRef<LinksManagerHandle, Props>(function LinksManager
   // The counters on the link row (`viewCount`, `downloadCount`) only started counting when links
   // shipped, so on a document with older traffic they disagree with the analytics — a card would
   // read "Views 1 · Viewers 18", which is nonsense. One source keeps the numbers coherent, and
-  // when the request fails the cells say "—" rather than quietly swapping in a lifetime counter.
+  // when the request fails the cells say "–" rather than quietly swapping in a lifetime counter.
   //
   // It used to be one request per link, capped at 8: link 9 onwards then fell back to those
-  // counters and printed "—" for viewers forever, so a busy link that happened to sort last read
+  // counters and printed "–" for viewers forever, so a busy link that happened to sort last read
   // as a dead one. One request has no cap to hit.
   useEffect(() => {
     if (variant !== "page") return;
@@ -1052,12 +1052,12 @@ const LinksManager = forwardRef<LinksManagerHandle, Props>(function LinksManager
                         ) : null}
                         {expires ? <CalendarDaysIcon className="h-4 w-4" title={`Expires ${expires}`} /> : null}
                         {!link.allowDownload && !link.passwordEnabled && !(cfg.showRevisionHistory && link.allowRevisionHistory) && !expires ? (
-                          <span className="text-[12px] text-[var(--muted-2)]">—</span>
+                          <span className="text-[12px] text-[var(--muted-2)]">–</span>
                         ) : null}
                       </div>
                     </td>
 
-                    {/* "—" when the analytics request failed, never `link.viewCount` /
+                    {/* "–" when the analytics request failed, never `link.viewCount` /
                         `link.downloadCount`: those are all-time counters, and printing them under a
                         windowed heading put two different quantities in one column depending on
                         whether a fetch happened to succeed.
@@ -1076,7 +1076,7 @@ const LinksManager = forwardRef<LinksManagerHandle, Props>(function LinksManager
                           {stats.viewers.toLocaleString()}
                         </Link>
                       ) : (
-                        "—"
+                        "–"
                       )}
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-[var(--fg)]">
@@ -1088,7 +1088,7 @@ const LinksManager = forwardRef<LinksManagerHandle, Props>(function LinksManager
                           {stats.downloads.toLocaleString()}
                         </Link>
                       ) : (
-                        "—"
+                        "–"
                       )}
                     </td>
                     {/* Prefer the analytics timestamp (newest row activity on this link) over the
@@ -1202,7 +1202,7 @@ const LinksManager = forwardRef<LinksManagerHandle, Props>(function LinksManager
                 </td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{deletedLinkResidual.viewers.toLocaleString()}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{deletedLinkResidual.downloads.toLocaleString()}</td>
-                <td className="px-3 py-2.5 text-[var(--muted-2)]">—</td>
+                <td className="px-3 py-2.5 text-[var(--muted-2)]">–</td>
                 <td className="px-4 py-2.5" />
               </tr>
             ) : null}

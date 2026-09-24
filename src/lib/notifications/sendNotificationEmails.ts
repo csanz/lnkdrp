@@ -1065,7 +1065,7 @@ async function buildDocUpdateRound(params: {
           .map((ch) => {
             const t = typeof ch?.title === "string" ? ch.title.trim() : "";
             const d = typeof ch?.detail === "string" ? ch.detail.trim() : "";
-            return t && d ? `${t} — ${d}` : t || d;
+            return t && d ? `${t}: ${d}` : t || d;
           })
           .filter(Boolean)
           .slice(0, 6)

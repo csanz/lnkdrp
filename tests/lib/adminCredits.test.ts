@@ -230,8 +230,8 @@ describe("admin/creditsAdmin — shaping", () => {
     expect(bucketSplitLabel({ starter: 0, subscription: 1, purchased: 0, onDemand: 4 })).toBe("subscription + on-demand");
   });
 
-  test("a row that drew on no bucket — a grant, or a 0-credit recipient run — shows an em dash", () => {
-    expect(bucketSplitLabel({ starter: 0, subscription: 0, purchased: 0, onDemand: 0 })).toBe("—");
+  test("a row that drew on no bucket — a grant, or a 0-credit recipient run — shows a dash", () => {
+    expect(bucketSplitLabel({ starter: 0, subscription: 0, purchased: 0, onDemand: 0 })).toBe("–");
   });
 
   test("money and credits format the way the pricing page writes them", () => {

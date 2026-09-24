@@ -148,7 +148,7 @@ export default function AdminHomePage() {
 
   const t = overview?.totals;
   const planLimits = Array.isArray(overview?.planLimits) ? overview.planLimits : [];
-  const num = (n: number | undefined) => (typeof n === "number" ? n.toLocaleString() : "—");
+  const num = (n: number | undefined) => (typeof n === "number" ? n.toLocaleString() : "–");
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">

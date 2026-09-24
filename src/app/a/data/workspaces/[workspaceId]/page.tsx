@@ -278,7 +278,7 @@ export default function AdminWorkspaceDetailPage() {
                   </StatusPill>
                 ) : (
                   <StatusPill tone="warning">
-                    {`${grace.daysLeft === null ? ADMIN_DASH : `${grace.daysLeft} day(s) left`} — ends ${
+                    {`${grace.daysLeft === null ? ADMIN_DASH : `${grace.daysLeft} day(s) left`}, ends ${
                       fmtAdminDate(hub?.grace?.endsAt ?? null) || ADMIN_DASH
                     }`}
                   </StatusPill>
@@ -349,7 +349,7 @@ export default function AdminWorkspaceDetailPage() {
           description={
             credits.hasRow
               ? "The stored balance row, bucket by bucket."
-              : "No balance row yet — one is written the first time this workspace runs or opens credits."
+              : "No balance row yet. One is written the first time this workspace runs or opens credits."
           }
         >
           <DetailGrid columns={2}>

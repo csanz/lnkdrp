@@ -45,7 +45,7 @@ const EXPLAINERS: Record<string, Explainer> = {
     ],
     contains: [
       "Which link they used, and the audience it was made for",
-      "How far they read — pages reached and time spent",
+      "How far they read: pages reached and time spent",
       "A link straight to that reader's activity",
     ],
     note:
@@ -73,12 +73,12 @@ const EXPLAINERS: Record<string, Explainer> = {
       "A link straight to that reader's activity",
     ],
     note:
-      "A glance — under twenty seconds on one page — is not written up and sends nothing immediately; it shows in the digest. When credits run out you still get the facts of the visit, without the write-up. Most people keep either this or the link-open email, not both.",
+      "A glance, under twenty seconds on one page, is not written up and sends nothing immediately; it shows in the digest. When credits run out you still get the facts of the visit, without the write-up. Most people keep either this or the link-open email, not both.",
   },
   docUploads: {
     title: "When a teammate adds a document",
     trigger:
-      "Someone else in this workspace uploads a new document. Your own uploads never send you anything — you were there.",
+      "Someone else in this workspace uploads a new document. Your own uploads never send you anything, because you were there.",
     options: [
       { label: "Off", what: "Nothing is sent. The document still appears in the workspace and in the activity feed." },
       {
@@ -104,7 +104,7 @@ const EXPLAINERS: Record<string, Explainer> = {
       "Which document was replaced, and its new version number",
       "A summary of what changed between the two versions",
     ],
-    note: "This is about documents changing, not about people reading them — those are the link-open emails above.",
+    note: "This is about documents changing, not about people reading them. Those are the link-open emails above.",
   },
 };
 

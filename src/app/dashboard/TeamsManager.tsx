@@ -39,9 +39,9 @@ type MemberRow = {
 const initials = initialsFromNameOrEmail;
 
 function formatDate(s: string | null): string {
-  if (!s) return "—";
+  if (!s) return "–";
   const t = Date.parse(s);
-  if (!Number.isFinite(t)) return "—";
+  if (!Number.isFinite(t)) return "–";
   return new Date(t).toLocaleDateString();
 }
 
@@ -410,7 +410,7 @@ export default function TeamsManager() {
     const e = inv.expiresAt ? Date.parse(inv.expiresAt) : NaN;
     const isExpired = !isUsed && Number.isFinite(e) && e <= now;
     const status = isUsed ? "Used" : isExpired ? "Expired" : "Not used";
-    const expiresLabel = inv.expiresAt ? new Date(inv.expiresAt).toLocaleDateString() : "—";
+    const expiresLabel = inv.expiresAt ? new Date(inv.expiresAt).toLocaleDateString() : "–";
     return { status, expiresLabel };
   }, []);
 
@@ -573,7 +573,7 @@ export default function TeamsManager() {
         <div className="min-w-0">
           <div className="text-[13px] font-semibold text-[var(--fg)]">Active workspace</div>
           <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-            {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "—"}
+            {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "–"}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Shared"}</Pill> : null}
@@ -663,7 +663,7 @@ export default function TeamsManager() {
                           <div className="min-w-0">
                             <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{label}</div>
                             <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--muted-2)]">
-                              <span>{m.email ?? "—"}</span>
+                              <span>{m.email ?? "–"}</span>
                               <span>{m.memberRole ?? "member"}</span>
                               <span>Joined {formatDate(m.joinedAt)}</span>
                             </div>
@@ -1015,7 +1015,7 @@ export default function TeamsManager() {
 
         <div className="mt-3 text-sm leading-6 text-[var(--muted)]">
           The link stops working immediately, for anyone who has it. Nobody is removed from the
-          workspace — this only cancels an invite that has not been used yet. You can send a new one
+          workspace. This only cancels an invite that has not been used yet. You can send a new one
           any time.
         </div>
 

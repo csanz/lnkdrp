@@ -107,7 +107,7 @@ async function handle(request: Request) {
 
     const problems: string[] = [];
     if (dead > 0) problems.push(`${dead} notification${dead === 1 ? "" : "s"} dead-lettered and will not be retried`);
-    if (truncated) problems.push(`stopped at limitMembers — some members got nothing this tick`);
+    if (truncated) problems.push(`stopped at limitMembers: some members got nothing this tick`);
 
     try {
       await connectMongo();
