@@ -109,8 +109,8 @@ first integration listed there; the page is built to list more.
 
 9. **Slack's answer decides the connection's state.** `ok` → `lastPostAt`. `404`/`410` with
    `no_service`, `channel_not_found`, `invalid_token` → the connection becomes `revoked` with
-   `lastError`; the outbox stops for it; the Notifications tab shows "Slack disconnected, the
-   channel or app was removed. Reconnect." `429` → honour `Retry-After` and requeue. `5xx` →
+   `lastError`; the outbox stops for it; the Integrations page shows "Slack disconnected, the
+   channel or app was removed. Reconnect." on the card and the detail page. `429` → honour `Retry-After` and requeue. `5xx` →
    retry. Five failures in a row also flip `revoked`, with the error shown.
 
 10. **A cap, not a flood.** Slack allows roughly one post per second per webhook. The drain
