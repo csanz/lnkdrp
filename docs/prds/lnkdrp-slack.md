@@ -229,7 +229,7 @@ this deployment" and nothing else changes.
 ## Verification
 
 1. Connect from a Free workspace as owner; Slack's screen shows the channel picker; the callback
-   lands on the Notifications tab with the channel name; a `SlackConnection` row exists with an
+   lands on the Slack detail page under Integrations with the channel name; a `SlackConnection` row exists with an
    encrypted URL and no plaintext anywhere (grep the database dump for `hooks.slack.com`).
 2. "Send a test message" arrives in the channel within two seconds.
 3. Open a share link as a new recipient: one "opened" message, under three seconds after the
