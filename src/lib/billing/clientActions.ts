@@ -50,8 +50,9 @@ function parseUrl(json: StripeRedirectResponse): string {
  * Always Pro: pay-as-you-go for Free was retired (Free buys credit packs at `/credits`).
  * `interval` picks monthly (default) or yearly billing; yearly is twelve months for the price of
  * ten and has no on-demand credits (it buys packs instead).
- * Errors: throws when the API responds with an error (409 when the workspace already has a
- * billable subscription) or returns an invalid redirect URL.
+ * Errors: throws when the API responds with an error or returns an invalid redirect URL. The 409
+ * for a workspace that already has a subscription Stripe has not finished with (active, or a card
+ * that is failing) is not thrown: it carries `redirectTo` to the Billing tab and is followed.
  * Side effects: navigates via `window.location.assign`.
  */
 export type CheckoutInterval = "month" | "year";

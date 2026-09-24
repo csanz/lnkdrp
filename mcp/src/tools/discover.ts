@@ -65,6 +65,8 @@ const ACTIVITY_TYPES = [
   "agent.key_verified",
   "account.deletion_requested",
   "account.purged",
+  // Pro is ending because the account whose card paid for it is being deleted.
+  "plan.subscription_ending",
   "member.invited",
   "member.joined",
   "member.removed",

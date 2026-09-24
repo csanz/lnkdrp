@@ -3,12 +3,16 @@ import { creditsForRun } from "@/lib/credits/schedule";
 import type { CreditStore, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { SubscriptionModel } from "@/lib/models/Subscription";
-import { isProSubscription } from "@/lib/billing/subscriptionState";
+import { onDemandEligible } from "@/lib/billing/subscriptionState";
 
 /**
- * Default on-demand eligibility check: the workspace must be on Pro (`active` or `trialing`, Pro
- * price). On-demand is Pro's overage; Free workspaces buy credit packs instead, so a legacy
- * pay-as-you-go subscription (a Free workspace with a card on file) is not eligible.
+ * Default on-demand eligibility check: the workspace must be on **monthly** Pro (`active` or
+ * `trialing`, Pro price, billed monthly). On-demand is Pro's overage; Free workspaces buy credit
+ * packs instead, so a legacy pay-as-you-go subscription (a Free workspace with a card on file) is
+ * not eligible. Neither is yearly Pro: Stripe will not attach the monthly metered price to a
+ * yearly subscription, so there is no line item that could bill the usage. This asked
+ * `isProSubscription` and ignored `interval`, so a row switched to yearly with `onDemandEnabled`
+ * still set kept allocating on-demand credits that nothing invoiced.
  *
  * Only invoked when the balance has on-demand enabled AND the run would actually spill into
  * on-demand credits, so the extra query is paid rarely. Callers (tests) may inject their own
@@ -16,9 +20,9 @@ import { isProSubscription } from "@/lib/billing/subscriptionState";
  */
 async function defaultIsProWorkspace(workspaceId: string): Promise<boolean> {
   const sub = await SubscriptionModel.findOne({ orgId: workspaceId, isDeleted: { $ne: true } })
-    .select({ status: 1, kind: 1 })
+    .select({ status: 1, kind: 1, interval: 1 })
     .lean();
-  return isProSubscription(sub as { status?: unknown; kind?: unknown } | null);
+  return onDemandEligible(sub as { status?: unknown; kind?: unknown; interval?: unknown } | null);
 }
 
 function startOfUtcDay(d: Date): Date {

@@ -543,7 +543,10 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       ...(interval ? { interval } : {}),
       ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
       ...(customerId ? { stripeCustomerId: customerId } : {}),
-      ...(stripeSubscriptionItemId ? { stripeSubscriptionItemId } : {}),
+      // A yearly subscription carries no metered item (Stripe refuses the mix), so a stored item id
+      // is stale from a monthly past and must not survive the switch: the reporter would post
+      // meter events against an item that no longer exists.
+      ...(interval === "year" ? { stripeSubscriptionItemId: null } : stripeSubscriptionItemId ? { stripeSubscriptionItemId } : {}),
     };
     if (currentPeriodStart) setFields.currentPeriodStart = currentPeriodStart;
     // Only overwrite the stored period end when we have a real date. This avoids losing the date
@@ -629,6 +632,10 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
     if (!billable) {
       await disableOnDemandForSubscription({ query, reason: `subscription.${status || "unknown"}`, eventId: event.id });
       await restoreFreeDailyCap({ query, reason: `subscription.${status || "unknown"}`, eventId: event.id });
+    } else if (interval === "year") {
+      // Yearly Pro has nothing that could bill on-demand usage; a toggle left on from a monthly
+      // past would keep allocating credits nobody invoices.
+      await disableOnDemandForSubscription({ query, reason: "subscription.yearly", eventId: event.id });
     } else if (kind === "payg" && orgId) {
       await activatePayAsYouGo({ orgId, eventId: event.id });
     }

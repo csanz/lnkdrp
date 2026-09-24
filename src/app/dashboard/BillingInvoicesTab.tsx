@@ -715,8 +715,11 @@ export default function BillingInvoicesTab() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMonth, invoices]);
+    // `canManageBilling` is in the deps on purpose: it is `false` while `usePlan()` is still loading
+    // on a cold load of this tab, so the early return above fires first, and without it here the
+    // effect never re-ran once the plan resolved. Owners who landed straight on Billing saw the
+    // skeleton forever; only visiting Overview first (which warms the plan cache) masked it.
+  }, [selectedMonth, invoices, canManageBilling]);
 
   useEffect(() => {
     // Widen (never narrow) the invoice-month floor the period selector is sized from. See
@@ -1171,7 +1174,7 @@ export default function BillingInvoicesTab() {
                   <tr key={`${inv.date}-${inv.description}`} className="border-t border-[var(--border)]">
                     <td className="whitespace-nowrap px-4 py-3 text-[13px] text-[var(--muted-2)]">{formatShortDate(inv.date)}</td>
                     <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{inv.description}</td>
-                    <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{inv.status ? inv.status.charAt(0).toUpperCase() + inv.status.slice(1) : "—"}</td>
+                    <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{inv.status ? inv.status.charAt(0).toUpperCase() + inv.status.slice(1) : "–"}</td>
                     <td className="px-4 py-3 text-right text-[13px] text-[var(--muted-2)]">
                       {inv.currency === "USD"
                         ? formatUsdFromCents(inv.amountCents)

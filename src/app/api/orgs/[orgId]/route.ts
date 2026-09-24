@@ -15,6 +15,10 @@ import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
+import { SubscriptionModel } from "@/lib/models/Subscription";
+import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
+import { cancelStripeSubscriptionNow } from "@/lib/billing/stripeSubscriptionCancel";
+import { logErrorEvent } from "@/lib/errors/logger";
 import { resolveActor } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { forbidApiKey } from "@/lib/gating/forbidApiKey";
@@ -157,10 +161,59 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ orgId: s
     return NextResponse.json({ error: `Confirm by typing: ${expected}` }, { status: 400 });
   }
 
+  /**
+   * Cancel in Stripe *before* soft-deleting anything.
+   *
+   * This route soft-deleted the org, its memberships, documents and uploads and never touched the
+   * subscription. Stripe kept charging the card every month, and because the billing portal only
+   * opens for the actor's *active* workspace (which needs a live membership), nobody could ever
+   * reach that customer again from inside the product. If Stripe refuses or cannot be reached,
+   * nothing is deleted: a workspace that still exists can be retried; an orphaned subscription
+   * cannot.
+   */
+  const sub = (await SubscriptionModel.findOne({ orgId: orgObjectId, isDeleted: { $ne: true } })
+    .select({ stripeSubscriptionId: 1, status: 1, interval: 1 })
+    .lean()) as { stripeSubscriptionId?: string | null; status?: string; interval?: string | null } | null;
+  const subscriptionId = (sub?.stripeSubscriptionId ?? "").trim();
+  if (subscriptionId) {
+    // Yearly Pro is prepaid: cancel with proration so the unused months land on the Stripe
+    // customer's balance for support to refund, instead of vanishing with the workspace.
+    const cancelled = await cancelStripeSubscriptionNow(subscriptionId, { prorate: sub?.interval === "year" });
+    if (!cancelled.ok) {
+      await logErrorEvent({
+        severity: "error",
+        category: "stripe",
+        code: "STRIPE_CANCEL_FAILED",
+        message: cancelled.error,
+        request,
+        route: "/api/orgs/[orgId]",
+        method: "DELETE",
+        statusCode: 502,
+        ids: { workspaceId: orgId, userId: actor.userId },
+      });
+      return NextResponse.json(
+        {
+          error: "The workspace's subscription could not be cancelled, so nothing was deleted. Try again in a moment, or contact support.",
+          code: "STRIPE_CANCEL_FAILED",
+        },
+        { status: 502 },
+      );
+    }
+  }
+
   const now = new Date();
 
   // Soft-delete the org and detach access. We also soft-delete org-scoped content so it doesn't linger.
   await OrgModel.updateOne({ _id: orgObjectId }, { $set: { isDeleted: true, updatedDate: now } });
+  if (sub) {
+    // The Stripe side is already gone (above); mark the row so the webhook's `deleted` event for
+    // it is a no-op and no read path can mistake this workspace for Pro.
+    await SubscriptionModel.updateOne(
+      { orgId: orgObjectId },
+      { $set: { isDeleted: true, status: "free", planName: "Free", cancelAtPeriodEnd: false, currentPeriodEnd: null, updatedDate: now } },
+    );
+    await WorkspaceCreditBalanceModel.updateOne({ workspaceId: orgObjectId, onDemandEnabled: true }, { $set: { onDemandEnabled: false } });
+  }
   await OrgMembershipModel.updateMany({ orgId: orgObjectId }, { $set: { isDeleted: true, updatedDate: now } });
   await OrgInviteModel.updateMany({ orgId: orgObjectId }, { $set: { isRevoked: true, updatedDate: now } });
 

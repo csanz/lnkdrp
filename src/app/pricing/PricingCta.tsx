@@ -16,7 +16,7 @@ import { useAuthEnabled } from "@/app/providers";
 import { openBillingPortal, startCheckout } from "@/lib/billing/clientActions";
 import { cn } from "@/lib/cn";
 import Spinner from "@/components/ui/Spinner";
-import { useBillingInterval } from "./BillingInterval";
+import { loadBillingStatus, useBillingInterval, type BillingStatus } from "./BillingInterval";
 
 type Plan = "free" | "pro";
 
@@ -29,8 +29,6 @@ type Props = {
   helper: string;
 };
 
-type BillingStatus = { plan: Plan; orgName: string | null };
-
 const BASE =
   "inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:opacity-70";
 const VARIANT = {
@@ -39,23 +37,8 @@ const VARIANT = {
 };
 const HELPER = { light: "text-black/45", dark: "text-white/40" };
 
-// One status fetch shared by both cards; the endpoint is also cached server-side.
-let statusPromise: Promise<BillingStatus | null> | null = null;
-
-/** Read the active workspace's plan once per page load; null when the request fails. */
-function loadBillingStatus(): Promise<BillingStatus | null> {
-  if (!statusPromise) {
-    statusPromise = fetch("/api/billing/status")
-      .then(async (res): Promise<BillingStatus | null> => {
-        const json = (await res.json().catch(() => null)) as { plan?: string; org?: { name?: string | null } } | null;
-        if (!res.ok || !json) return null;
-        const plan: Plan = json.plan === "pro" ? "pro" : "free";
-        return { plan, orgName: json.org?.name ?? null };
-      })
-      .catch(() => null);
-  }
-  return statusPromise;
-}
+// The shared status fetch (`loadBillingStatus`) lives in ./BillingInterval so the price block can
+// hide the interval toggle for a workspace that is already on Pro.
 
 /** Button + helper for a signed-out visitor: Google sign-in, then land in the app. */
 function SignedOutCta({ plan, variant, helper }: Required<Props>) {
@@ -157,17 +140,10 @@ function SignedInCta({ plan, variant, helper }: Required<Props>) {
         className={cn(BASE, VARIANT[variant])}
         disabled={busy || status === undefined}
         aria-busy={busy}
-        onClick={() =>
-          void act(async () => {
-            try {
-              await startCheckout({ interval });
-            } catch (e) {
-              // Already subscribed (409): the portal is the right place.
-              if (e instanceof Error && /already/i.test(e.message)) return openBillingPortal();
-              throw e;
-            }
-          })
-        }
+        // A 409 (the workspace already has a subscription, billable or with a failing card)
+        // carries a same-origin `redirectTo` to the Billing tab, which `startCheckout` follows
+        // itself; there is no "already subscribed" error left to catch here.
+        onClick={() => void act(() => startCheckout({ interval }))}
       >
         {busy ? "Opening Stripe…" : interval === "year" ? "Upgrade to Pro, yearly" : "Upgrade to Pro"}
       </button>

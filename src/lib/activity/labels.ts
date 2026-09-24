@@ -442,6 +442,16 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "upgraded", object: "this workspace", suffix: "to Pro" };
     case "plan.subscription_ending": {
       const periodEnd = metaString(item.meta, "periodEnd");
+      const otherAdmins = Number(metaString(item.meta, "otherAdmins") ?? 0);
+      // Another owner/admin remains: billing carries on, but the card belongs to the leaver.
+      if (otherAdmins > 0) {
+        return {
+          subject: "Pro billing",
+          verb: "needs a new payment method for",
+          object: "this workspace",
+          suffix: "the account whose card pays for it is being deleted; update it from Billing",
+        };
+      }
       return {
         subject: "Pro",
         verb: "ends for",

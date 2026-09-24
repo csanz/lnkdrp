@@ -67,8 +67,8 @@ export default async function CreditsPage() {
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
               Credits pay for AI summaries and AI compare. On Free, buy a pack once: the credits land in your
-              workspace right away and last {PURCHASED_CREDITS_EXPIRY_MONTHS} months. On Pro, on-demand usage keeps
-              AI running past your monthly credits.
+              workspace right away and last {PURCHASED_CREDITS_EXPIRY_MONTHS} months. On monthly Pro, on-demand usage
+              keeps AI running past your monthly credits; yearly Pro buys packs too.
             </p>
           </div>
 

@@ -350,6 +350,9 @@ function WorkspacePanel({
   const name = workspace.name ?? "Personal";
   const initial = name.trim().charAt(0).toUpperCase() || "W";
   const isPro = workspace.plan === "pro";
+  // Yearly Pro has no on-demand (no metered item on a yearly subscription), so like Free it buys
+  // packs here; only monthly Pro is pointed at on-demand.
+  const buysPacks = !isPro || workspace.interval === "year";
   const planLabel = isPro ? "Pro" : "Free";
   // What the plan grants, not what is left of it: "Included with Free: 9" read as a live counter
   // and hid the 50 the account actually came with. What is left is the first column's job.
@@ -375,7 +378,7 @@ function WorkspacePanel({
         />
         <div className="min-w-0 flex-1">
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/45">
-            {isPro ? "Credits for" : "Buying credits for"}
+            {buysPacks ? "Buying credits for" : "Credits for"}
           </div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
             <span className="truncate text-lg font-semibold text-white">{name}</span>
@@ -413,7 +416,7 @@ function WorkspacePanel({
           <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{planCredits}</dd>
           <div className="mt-1 text-[12px] text-white/45">{planDetail}</div>
         </div>
-        {isPro ? (
+        {!buysPacks ? (
           <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
             <dt className="text-[12px] text-white/50">On-demand this cycle</dt>
             <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">
@@ -429,12 +432,12 @@ function WorkspacePanel({
           <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
             <dt className="text-[12px] text-white/50">Purchased</dt>
             <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{workspace.purchased ?? "–"}</dd>
-            <div className="mt-1 text-[12px] text-white/45">Used after starter credits</div>
+            <div className="mt-1 text-[12px] text-white/45">{isPro ? "Used after the monthly credits" : "Used after starter credits"}</div>
           </div>
         )}
       </dl>
 
-      {isPro ? null : (
+      {!buysPacks ? null : (
         <div className="border-t border-white/10 bg-black/20 px-6 py-3 text-[13px] leading-5 text-white/60">
           Packs you buy below go to <span className="font-semibold text-white">{name}</span> and can’t be moved to another
           workspace later. Wrong workspace? Switch first.

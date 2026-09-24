@@ -13,11 +13,32 @@
  */
 "use client";
 
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
 export type BillingInterval = "month" | "year";
+
+export type BillingStatusPlan = "free" | "pro";
+export type BillingStatus = { plan: BillingStatusPlan; orgName: string | null };
+
+// One status fetch shared by the price block and both CTAs; the endpoint is also cached server-side.
+let statusPromise: Promise<BillingStatus | null> | null = null;
+
+/** Read the active workspace's plan once per page load; null when the request fails. */
+export function loadBillingStatus(): Promise<BillingStatus | null> {
+  if (!statusPromise) {
+    statusPromise = fetch("/api/billing/status")
+      .then(async (res): Promise<BillingStatus | null> => {
+        const json = (await res.json().catch(() => null)) as { plan?: string; org?: { name?: string | null } } | null;
+        if (!res.ok || !json) return null;
+        const plan: BillingStatusPlan = json.plan === "pro" ? "pro" : "free";
+        return { plan, orgName: json.org?.name ?? null };
+      })
+      .catch(() => null);
+  }
+  return statusPromise;
+}
 
 type Ctx = {
   interval: BillingInterval;
@@ -61,10 +82,26 @@ export function ProPriceBlock({
   const { interval, setInterval, annualAvailable } = useBillingInterval();
   const yearly = annualAvailable && interval === "year";
   const label = yearly ? annualLabel : monthlyLabel;
+  /**
+   * A workspace already on Pro cannot switch interval from here: Checkout refuses a second
+   * subscription while one is open (409), and the CTA beside this block says "Manage
+   * subscription". Drawing the toggle for that reader offered a choice that ended in an error.
+   * Interval changes for an existing subscription are a portal or support action.
+   */
+  const [alreadyPro, setAlreadyPro] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void loadBillingStatus().then((s) => {
+      if (!cancelled && s?.plan === "pro") setAlreadyPro(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="mt-4">
-      {annualAvailable ? (
+      {annualAvailable && !alreadyPro ? (
         <div role="radiogroup" aria-label="Billing period" className="mb-3 inline-flex items-center gap-1 rounded-full bg-black/[0.06] p-1">
           <button
             type="button"

@@ -255,7 +255,7 @@ export default async function PricingPage() {
                   <Link href="/credits" className="underline underline-offset-4 hover:text-white/70">
                     Buy a credit pack
                   </Link>{" "}
-                  from {CHEAPEST_PACK_PRICE} on Free. On Pro, turn on on-demand instead: {CREDITS_COPY.perCreditUsd} per credit, billed through Stripe,
+                  from {CHEAPEST_PACK_PRICE} on Free{annualAvailable ? " and on yearly Pro" : ""}. On {annualAvailable ? "monthly " : ""}Pro, turn on on-demand instead: {CREDITS_COPY.perCreditUsd} per credit, billed through Stripe,
                   under a hard spend limit you set. Unused included credits do not roll over.
                 </p>
               </div>
@@ -389,11 +389,11 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What do credits pay for?",
-                  a: `AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Every Free workspace, personal or team, starts with ${FREE_STARTER_CREDITS} credits, one time, and uses at most ${CREDITS_COPY.freeDailyCap} credits a day; once they run out, ${whatHappensAfterFreeCredits()}. Pro includes ${INCLUDED_CREDITS_PER_CYCLE} credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are ${CREDITS_COPY.perCreditUsd} each, billed monthly through Stripe under a hard spend limit you set.`,
+                  a: `AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Every Free workspace, personal or team, starts with ${FREE_STARTER_CREDITS} credits, one time, and uses at most ${CREDITS_COPY.freeDailyCap} credits a day; once they run out, ${whatHappensAfterFreeCredits()}. Pro includes ${INCLUDED_CREDITS_PER_CYCLE} credits a month, which reset monthly and do not roll over; ${annualAvailable ? "on monthly Pro, " : ""}if you turn on on-demand, extra credits are ${CREDITS_COPY.perCreditUsd} each, billed monthly through Stripe under a hard spend limit you set.${annualAvailable ? " Yearly Pro has no on-demand (Stripe cannot bill monthly usage on a yearly plan) and buys a credit pack instead." : ""}`,
                 },
                 {
                   q: "What happens when I run out of credits?",
-                  a: `Uploads still complete and links keep working. The AI summary is skipped, and you can write it later from the document page for 1 credit. AI compare and other AI actions stop until you add credits. On Free, ${whatHappensAfterFreeCredits()}. On Pro, turn on on-demand usage or wait for the next billing cycle.`,
+                  a: `Uploads still complete and links keep working. The AI summary is skipped, and you can write it later from the document page for 1 credit. AI compare and other AI actions stop until you add credits. On Free, ${whatHappensAfterFreeCredits()}. On ${annualAvailable ? "monthly " : ""}Pro, turn on on-demand usage or wait for the next billing cycle${annualAvailable ? "; on yearly Pro, buy a credit pack" : ""}.`,
                 },
                 {
                   q: "Can I replace a file on Free?",

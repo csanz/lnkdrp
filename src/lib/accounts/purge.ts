@@ -276,9 +276,15 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
    */
   if (!dryRun && soloOrgIds.length) {
     const subs = (await SubscriptionModel.find({ orgId: { $in: soloOrgIds }, stripeSubscriptionId: { $ne: null } })
-      .select({ stripeSubscriptionId: 1 })
-      .lean()) as Array<{ stripeSubscriptionId?: string | null }>;
-    const ids = subs.map((r) => (r.stripeSubscriptionId ?? "").trim()).filter(Boolean);
+      .select({ stripeSubscriptionId: 1, cancelAtPeriodEnd: 1 })
+      .lean()) as Array<{ stripeSubscriptionId?: string | null; cancelAtPeriodEnd?: boolean }>;
+    // A subscription already set to stop at period end (the deletion request does this, see
+    // `POST /api/account/delete`) charges nothing more and ends by itself. Hard-cancelling it here
+    // only forfeits what was prepaid: on yearly Pro, up to eleven months. Leave it to expire.
+    const ids = subs
+      .filter((r) => !r.cancelAtPeriodEnd)
+      .map((r) => (r.stripeSubscriptionId ?? "").trim())
+      .filter(Boolean);
     if (ids.length) {
       const key = (process.env.STRIPE_SECRET_KEY ?? "").trim();
       if (!key) return stop(`${ids.length} live subscription(s) but STRIPE_SECRET_KEY is unset; refusing to orphan them`);

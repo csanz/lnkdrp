@@ -54,6 +54,10 @@ export type ActivityType =
   | "plan.grace_reminder"
   | "plan.grace_blocked"
   | "plan.upgraded"
+  // The workspace's Pro subscription was set to stop at the end of the paid period because the
+  // person whose card paid for it asked for their account to be deleted. `meta.periodEnd` says
+  // when; `meta.otherAdmins` says whether anyone else could have taken billing over.
+  | "plan.subscription_ending"
   | "credits.exhausted"
   | "summary.generated"
   | "agent.key_created"
