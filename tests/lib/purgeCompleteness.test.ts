@@ -31,7 +31,9 @@ describe("every model that holds user data is deleted", () => {
    * signed-in request reads it to end the session, and a token whose user vanished would be
    * treated as a stranger and mint a fresh workspace.
    */
-  const NOT_PER_ACCOUNT = new Set(["BillingConfig", "CronHealth", "RateLimit", "StripeEvent", "User"]);
+  // `OAuthClient` is a client registration (Claude Code, Cursor, a hosted connector), shared by
+  // everyone who connects with that client and holding no one's data; the grants are per account.
+  const NOT_PER_ACCOUNT = new Set(["BillingConfig", "CronHealth", "RateLimit", "StripeEvent", "User", "OAuthClient"]);
 
   const models = readdirSync(join(ROOT, "src/lib/models"))
     .filter((f) => f.endsWith(".ts"))

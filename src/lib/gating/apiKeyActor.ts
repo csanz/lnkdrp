@@ -1,11 +1,18 @@
 /**
  * Bearer-token auth seam for agent / MCP clients.
  *
- * `verifyBearer(request)` reads `Authorization: Bearer <token>`. Tokens starting with `lnk_` are
- * workspace API keys (see `src/lib/agents/apiKeys.ts`): the token is sha256-hashed and looked up by
- * `keyHash`; on success the caller gets a regular `Actor` (`kind: "user"`, attributed to the member
- * who minted the key, scoped to the key's workspace) plus the key's id/scopes. Any other token
- * shape is rejected as `unauthorized` today; this is the seam where OAuth tokens will plug in.
+ * `verifyBearer(request)` reads `Authorization: Bearer <token>`. Two token shapes resolve here:
+ *
+ * - `lnk_…`: a workspace API key (`src/lib/agents/apiKeys.ts`), sha256-hashed and looked up by
+ *   `keyHash`.
+ * - `lnko_…`: an OAuth access token (`src/lib/agents/oauth.ts`), the credential an agent holds
+ *   after a person connected it by signing in. Looked up the same way, on the grant.
+ *
+ * Either way the caller gets the same `Actor` (`kind: "user"`, attributed to the member who made
+ * the credential, scoped to its workspace) and a `VerifiedApiKey` whose `id` is the key's or the
+ * grant's. Every gate downstream is therefore indifferent to how the agent authenticated, which
+ * is the point: a revoked grant fails the way a revoked key does, on the next request.
+ * Any other token shape is `unauthorized`.
  *
  * The plaintext token is never logged. The MCP server calls `verifyBearer` on every request; the
  * web app uses it only on `GET /api/agent/whoami` (no session / temp-user fallback there).
@@ -16,6 +23,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ApiKeyModel, type ApiKeyScope } from "@/lib/models/ApiKey";
 import { OrgModel } from "@/lib/models/Org";
 import { API_KEY_PREFIX, hashApiKey, looksLikeApiKey, touchApiKeyUse } from "@/lib/agents/apiKeys";
+import { OAUTH_ACCESS_PREFIX, touchGrantUse, verifyAccessToken } from "@/lib/agents/oauth";
 import { agentFromRequest, agentLabel } from "@/lib/activity/log";
 import { guardApiKeyRequest } from "@/lib/gating/actorRateLimit";
 import type { Actor } from "@/lib/gating/actor";
@@ -23,9 +31,13 @@ import { isActiveMember } from "@/lib/gating/actor";
 
 /** Client label stored on a key when the request carries no agent identification. */
 export const UNKNOWN_AGENT_CLIENT = "API key";
+/** What an OAuth grant shows where a key shows its first characters (`keyPrefix` in whoami, the Connect rows). */
+export const OAUTH_DISPLAY_PREFIX = "signed in";
 
 export type VerifiedApiKey = {
+  /** Key id, or grant id for an OAuth token; stable across token refreshes, so sessions can bind to it. */
   id: string;
+  kind: "key" | "oauth";
   name: string;
   prefix: string;
   scopes: ApiKeyScope[];
@@ -36,7 +48,7 @@ export type VerifiedApiKey = {
   lastUsedClient: string | null;
 };
 
-export type VerifyBearerFailureCode = "unauthorized" | "key_revoked" | "owner_removed";
+export type VerifyBearerFailureCode = "unauthorized" | "key_revoked" | "owner_removed" | "token_expired";
 
 export type VerifyBearerResult =
   | { ok: true; actor: Extract<Actor, { kind: "user" }>; key: VerifiedApiKey }
@@ -60,6 +72,7 @@ export function clientLabelFromRequest(request: Request): string {
  * Non-`lnk_` tokens and unknown keys are `unauthorized`; a known but revoked key is `key_revoked`.
  */
 export async function verifyBearerToken(token: string | null | undefined): Promise<VerifyBearerResult> {
+  if (typeof token === "string" && token.startsWith(OAUTH_ACCESS_PREFIX)) return verifyOAuthBearerToken(token);
   if (typeof token !== "string" || !token.startsWith(API_KEY_PREFIX)) return { ok: false, code: "unauthorized" };
   if (!looksLikeApiKey(token)) return { ok: false, code: "unauthorized" };
 
@@ -106,12 +119,47 @@ export async function verifyBearerToken(token: string | null | undefined): Promi
     },
     key: {
       id: String(doc._id),
+      kind: "key",
       name: doc.name,
       prefix: doc.prefix,
       scopes: (doc.scopes ?? []) as ApiKeyScope[],
       orgId,
       useCount: typeof doc.useCount === "number" ? doc.useCount : 0,
       lastUsedClient: typeof doc.lastUsedClient === "string" ? doc.lastUsedClient : null,
+    },
+  };
+}
+
+/**
+ * The OAuth half of `verifyBearerToken`: the grant is the key. Same membership rule (a grant acts
+ * as the person who gave consent, and stops when they leave the workspace), same `Actor`.
+ */
+async function verifyOAuthBearerToken(token: string): Promise<VerifyBearerResult> {
+  const verified = await verifyAccessToken(token);
+  if (!verified.ok) return { ok: false, code: verified.code };
+  const { grant } = verified;
+  if (!Types.ObjectId.isValid(grant.orgId) || !Types.ObjectId.isValid(grant.userId)) return { ok: false, code: "unauthorized" };
+  if (!(await isActiveMember({ orgId: grant.orgId, userId: grant.userId }))) return { ok: false, code: "owner_removed" };
+  await connectMongo();
+  const personalOrg = await OrgModel.findOne({ personalForUserId: new Types.ObjectId(grant.userId) }).select({ _id: 1 }).lean();
+  return {
+    ok: true,
+    actor: {
+      kind: "user",
+      userId: grant.userId,
+      orgId: grant.orgId,
+      personalOrgId: personalOrg ? String(personalOrg._id) : "",
+      viaApiKey: { keyId: grant.id, scopes: grant.scopes },
+    },
+    key: {
+      id: grant.id,
+      kind: "oauth",
+      name: grant.clientName,
+      prefix: OAUTH_DISPLAY_PREFIX,
+      scopes: grant.scopes,
+      orgId: grant.orgId,
+      useCount: grant.useCount,
+      lastUsedClient: grant.lastUsedClient,
     },
   };
 }
@@ -132,7 +180,9 @@ export async function verifyBearer(request: Request): Promise<VerifyBearerResult
   // Charged per key, not per IP: every agent's REST call leaves the MCP server from one address,
   // so an IP limit would make one runaway loop everybody else's problem.
   await guardApiKeyRequest(request, result.key.id);
-  await touchApiKeyUse({ keyId: result.key.id, client: clientLabelFromRequest(request) });
+  const client = clientLabelFromRequest(request);
+  if (result.key.kind === "oauth") await touchGrantUse({ grantId: result.key.id, client });
+  else await touchApiKeyUse({ keyId: result.key.id, client });
   return result;
 }
 
@@ -144,8 +194,8 @@ export async function verifyBearer(request: Request): Promise<VerifyBearerResult
  */
 export class ApiKeyAuthError extends Error {
   status: number;
-  code: "unauthorized" | "key_revoked" | "owner_removed" | "forbidden";
-  constructor(code: "unauthorized" | "key_revoked" | "owner_removed" | "forbidden", message: string) {
+  code: VerifyBearerFailureCode | "forbidden";
+  constructor(code: VerifyBearerFailureCode | "forbidden", message: string) {
     super(message);
     this.name = "ApiKeyAuthError";
     this.code = code;
@@ -167,17 +217,24 @@ export async function tryResolveApiKeyActor(request: Request): Promise<Actor | n
   const token = bearerTokenFromRequest(request);
   // Anything that claims to be a key is judged as one: a malformed `lnk_…` must 401, never fall
   // through to a session or a fresh temp workspace.
-  if (!token || !token.startsWith(API_KEY_PREFIX)) return null;
+  if (!token || !(token.startsWith(API_KEY_PREFIX) || token.startsWith(OAUTH_ACCESS_PREFIX))) return null;
   const result = await verifyBearer(request);
   if (!result.ok) {
     // Distinct message per cause: an agent told "invalid key" when the real answer is "the person
     // who made this key is no longer in the workspace" will retry forever with a good key.
+    const oauth = token.startsWith(OAUTH_ACCESS_PREFIX);
     const message =
       result.code === "key_revoked"
-        ? "This API key was revoked."
+        ? oauth
+          ? "This connection was revoked. Connect again from the app."
+          : "This API key was revoked."
         : result.code === "owner_removed"
-          ? "The member who created this API key is no longer in this workspace."
-          : "Invalid API key.";
+          ? "The member who connected this agent is no longer in this workspace."
+          : result.code === "token_expired"
+            ? "The access token has expired. Refresh it."
+            : oauth
+              ? "Invalid access token."
+              : "Invalid API key.";
     throw new ApiKeyAuthError(result.code, message);
   }
   const method = (request.method || "GET").toUpperCase();

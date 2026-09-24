@@ -52,6 +52,8 @@ import { TagModel } from "@/lib/models/Tag";
 import { TagAssignmentModel } from "@/lib/models/TagAssignment";
 import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
 import { UsageAggDailyModel } from "@/lib/models/UsageAggDaily";
+import { OAuthGrantModel } from "@/lib/models/OAuthGrant";
+import { OAuthCodeModel } from "@/lib/models/OAuthCode";
 
 export type PurgePlan = {
   userId: string;
@@ -353,6 +355,11 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
         AiRunModel.deleteMany({ userId: id }),
         DocReportModel.deleteMany({ userId: id }),
         ShareDownloadRequestModel.deleteMany({ ownerUserId: id }),
+        // Agents this person connected by signing in, in any workspace: the grant acts as them, so
+        // it must not outlive them. Pending consent codes go the same way. (`OAuthClient` rows are
+        // software registrations shared by every person using that client, and belong to no one.)
+        OAuthGrantModel.deleteMany({ $or: [orgFilter, { createdByUserId: id }] }),
+        OAuthCodeModel.deleteMany({ userId: id }),
         // Keyed to the documents and projects that are about to go.
         ...(docIds.length
           ? [

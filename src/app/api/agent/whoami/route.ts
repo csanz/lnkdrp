@@ -53,7 +53,7 @@ export async function GET(request: Request) {
         userId: actor.userId,
         actorKind: "api_key",
         type: tool ? "agent.key_verified" : "agent.connected",
-        meta: { keyId: key.id, name: key.name, prefix: key.prefix, client },
+        meta: { keyId: key.id, name: key.name, prefix: key.prefix, client, ...(key.kind === "oauth" ? { via: "oauth" } : {}) },
         request,
       });
     }
@@ -70,6 +70,10 @@ export async function GET(request: Request) {
         keyPrefix: key.prefix,
         scopes: key.scopes,
         client,
+        // The credential's identity, stable across OAuth token refreshes. The MCP server binds a
+        // session to this rather than to the bearer, which for a grant changes every hour.
+        credentialId: key.id,
+        credentialKind: key.kind,
       },
       { headers: NO_STORE },
     );

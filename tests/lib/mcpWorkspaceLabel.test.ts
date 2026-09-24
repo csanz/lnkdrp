@@ -25,6 +25,8 @@ const usavx: Whoami = {
   keyPrefix: "lnk_abc",
   scopes: [],
   client: "test",
+  credentialId: "k1",
+  credentialKind: "key",
 };
 
 describe("workspaceInstructions", () => {

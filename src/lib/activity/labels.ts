@@ -419,6 +419,15 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       const keyName = metaString(item.meta, "name");
       return { subject: user || "Someone", verb: "verified an agent key", object: keyName ? `“${keyName}”` : "", suffix: `with ${client}` };
     }
+    case "agent.authorized": {
+      const name = metaString(item.meta, "name") || "an agent";
+      const workspace = metaString(item.meta, "workspace");
+      return { subject: user || "Someone", verb: "connected", object: `“${name}”`, suffix: workspace ? `to ${workspace} by signing in` : "by signing in" };
+    }
+    case "agent.disconnected": {
+      const name = metaString(item.meta, "name") || "an agent";
+      return { subject: user || "Someone", verb: "disconnected", object: `“${name}”`, suffix: null };
+    }
     case "agent.connected": {
       const client = item.agent?.label || metaString(item.meta, "client") || "An agent";
       const keyName = metaString(item.meta, "name");

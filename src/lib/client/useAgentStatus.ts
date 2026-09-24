@@ -25,6 +25,12 @@ export type AgentKeyRow = {
   revoked: boolean;
   /** Who created the key; shown in shared workspaces so a team can see whose agents are connected. */
   createdBy: { id: string; name: string | null; email: string | null } | null;
+  /**
+   * `"oauth"` for an agent that connected by signing in (`src/lib/agents/oauth.ts`) rather than
+   * with a pasted key. Same row shape, since a person does not distinguish the two and should not
+   * have to; the UI hides the key-only affordances (prefix, "Use in commands"). Absent means key.
+   */
+  kind?: "key" | "oauth";
 };
 
 /** One connected client (distinct `lastUsedClient` across active, used keys), most recent first. */

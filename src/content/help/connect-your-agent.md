@@ -34,6 +34,15 @@ Connect shows the exact command or settings for your client with your key filled
 
 The overview is at [/mcp](/mcp). To check the connection end to end, ask your agent: "Call lnkdrp_whoami and tell me which workspace you are connected to."
 
+## Sign in instead of using a key
+
+Clients that support signing in to MCP servers, including Claude Code, Cursor, Codex and Gemini CLI, can connect without a key. Add the lnkdrp server to the client without an authorization header, then choose to sign in when the client asks. lnkdrp opens in your browser, you pick the workspace the agent should work in, and click **Allow**. The client keeps its own credential from then on.
+
+- Agents connected this way appear on **Connect** next to your keys, marked "Signed in", with the same **Revoke** button. Revoking stops the agent at once.
+- One connection is one workspace, the same as a key. To give an agent a second workspace, add the server again under another name and pick that workspace when you sign in.
+- Viewers can connect an agent too. It can read but not change anything, matching their role.
+- Keys keep working. Use a key when there is no browser to sign in from, such as a script or a server.
+
 ## What your agent can do
 
 - Share a PDF from a URL or a local file and get the link back, with an optional password and download setting.

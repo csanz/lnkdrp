@@ -68,6 +68,9 @@ export type Whoami = {
   keyPrefix: string;
   scopes: string[];
   client: string;
+  /** Key id or OAuth grant id: the credential's identity, unchanged when an OAuth token refreshes. */
+  credentialId: string;
+  credentialKind: "key" | "oauth";
 };
 
 /** `used` is what the workspace holds now; `requested` is what the call asked to add. */
@@ -686,7 +689,7 @@ export type ApiClientOptions = {
 /** REST client bound to one API key and one agent identity. */
 export class ApiClient {
   readonly baseUrl: string;
-  private readonly key: string;
+  private key: string;
   private readonly agent: () => string;
   private readonly timeoutMs: number;
 
@@ -695,6 +698,15 @@ export class ApiClient {
     this.key = opts.key;
     this.agent = opts.agent;
     this.timeoutMs = opts.timeoutMs ?? API_TIMEOUT_MS;
+  }
+
+  /**
+   * Swap the bearer this client sends. An OAuth client rotates its access token every hour and
+   * keeps the same session; `main.ts` verifies the new token belongs to the same grant, then
+   * points the session's client at it here.
+   */
+  setKey(key: string): void {
+    this.key = key;
   }
 
   /** Public share URL for a doc. */
@@ -777,6 +789,8 @@ export class ApiClient {
       keyPrefix: strOrNull(w.keyPrefix) ?? "",
       scopes: Array.isArray(w.scopes) ? w.scopes.filter((s): s is string => typeof s === "string") : [],
       client: strOrNull(w.client) ?? "",
+      credentialId: strOrNull(w.credentialId) ?? "",
+      credentialKind: w.credentialKind === "oauth" ? "oauth" : "key",
     };
   }
 

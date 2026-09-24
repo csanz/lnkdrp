@@ -150,7 +150,13 @@ function KeyRow({
       <div className="min-w-[14rem] flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px]">
           <span className="font-medium text-[var(--fg)]">{row.name}</span>
-          <code className="font-mono text-[12px] text-[var(--muted-2)]">{row.prefix}…</code>
+          {row.kind === "oauth" ? (
+            <span className="rounded-md px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)] ring-1 ring-[var(--border)]" title="Connected by signing in, not with a key">
+              Signed in
+            </span>
+          ) : (
+            <code className="font-mono text-[12px] text-[var(--muted-2)]">{row.prefix}…</code>
+          )}
           {row.revoked ? (
             <span className="rounded-md px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)] ring-1 ring-[var(--border)]">
               Revoked
@@ -178,7 +184,7 @@ function KeyRow({
           </div>
         ) : null}
       </div>
-      {!row.revoked && onUse && !inUse && !confirming ? (
+      {!row.revoked && row.kind !== "oauth" && onUse && !inUse && !confirming ? (
         pasteOpen ? (
           <form
             className="flex basis-full flex-wrap items-center gap-2"
@@ -222,7 +228,10 @@ function KeyRow({
           // Own row under the key so the question does not fight the buttons for one line.
           <div className="flex basis-full flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
             <span className="min-w-0 flex-1 text-[12px] leading-5 text-[var(--muted)]">
-              <span className="font-medium text-[var(--fg)]">Revoke this key?</span> Clients using it stop working until you remove lnkdrp there and add it again with a new key. Step 2 explains how.
+              <span className="font-medium text-[var(--fg)]">{row.kind === "oauth" ? "Disconnect this agent?" : "Revoke this key?"}</span>{" "}
+              {row.kind === "oauth"
+                ? "It stops working at once. To reconnect, remove lnkdrp in that client and add it again; it will ask you to sign in."
+                : "Clients using it stop working until you remove lnkdrp there and add it again with a new key. Step 2 explains how."}
             </span>
             <span className="flex shrink-0 items-center gap-2">
               <button type="button" onClick={() => void revoke()} disabled={busy} className={PRIMARY_BUTTON}>
@@ -455,7 +464,7 @@ export default function KeysPanel({
               row={row}
               canManage={canManage}
               showOwner={showKeyOwner}
-              inUse={Boolean(plaintextKey && plaintextKey.startsWith(row.prefix))}
+              inUse={Boolean(row.kind !== "oauth" && plaintextKey && plaintextKey.startsWith(row.prefix))}
               onUse={onUse}
               onRevoked={onRevoked}
             />

@@ -7,14 +7,17 @@
  *
  * HTTP surface
  * - `POST/GET/DELETE /mcp` — Streamable HTTP transport with stateful sessions (`Mcp-Session-Id`).
- *   Every request must carry `Authorization: Bearer lnk_…`; missing/malformed → 401 before the
- *   transport sees it. A session is bound to the key that opened it (other keys → 401).
+ *   Every request must carry `Authorization: Bearer lnk_…` (an API key) or `Bearer lnko_…` (an
+ *   OAuth access token); missing/malformed → 401 before the transport sees it. A session is bound
+ *   to the credential that opened it: the key, or for OAuth the grant, since its token rotates
+ *   every hour and the same session must survive the refresh (other credentials → 401).
  * - `initialize` (a POST without a session id) calls `GET /api/agent/whoami` with the key and the
  *   `x-lnkdrp-agent: <client>/<version>` header from `clientInfo`. That call registers the
  *   connection (the key records the client name, which the realtime channel pushes to the
  *   dashboard). 401 from whoami → the session is refused with 401.
  * - `GET /healthz` → `{ ok, sessions, version, apiUrl, confirmations }`.
- * - `GET /.well-known/oauth-protected-resource` → placeholder resource metadata (bearer keys only).
+ * - `GET /.well-known/oauth-protected-resource` → RFC 9728 resource metadata naming the app as
+ *   the authorization server, which is how an OAuth-capable client finds the consent flow.
  *
  * The server never touches Mongo: every tool maps to REST calls made with the caller's own key,
  * so realtime fan-out to the browser happens for free when the API writes.
@@ -43,8 +46,10 @@ const idempotency = new IdempotencyStore();
 
 type Session = {
   id: string | null;
-  /** sha256 of the bearer key, used to bind later requests to the session without comparing plaintext. */
+  /** sha256 of the bearer that last authenticated this session; compared before any plaintext work. */
   keyHash: Buffer;
+  /** The key id or OAuth grant id from whoami: what the session is really bound to. */
+  credentialId: string;
   agentHeader: string;
   whoami: Whoami;
   api: ApiClient;
@@ -57,13 +62,15 @@ type Session = {
 const sessions = new Map<string, Session>();
 
 const API_KEY_PREFIX = "lnk_";
+/** OAuth access tokens minted by the app's authorization server (`src/lib/agents/oauth.ts`). */
+const OAUTH_ACCESS_PREFIX = "lnko_";
 
-/** The `lnk_…` bearer token from the request, or null when missing or not an API key. */
+/** The bearer token from the request, or null when missing or of a shape we never issued. */
 function bearerFrom(req: Request): string | null {
   const raw = req.header("authorization") ?? "";
   const m = /^\s*Bearer\s+(.+?)\s*$/i.exec(raw);
   const token = m ? m[1] : "";
-  return token.startsWith(API_KEY_PREFIX) ? token : null;
+  return token.startsWith(API_KEY_PREFIX) || token.startsWith(OAUTH_ACCESS_PREFIX) ? token : null;
 }
 
 /** sha256 of a key, for constant-time comparison. */
@@ -91,8 +98,8 @@ function sameKey(session: Session, key: string): boolean {
 function unauthorized(res: Response, code: "unauthorized" | "key_revoked" = "unauthorized"): void {
   const message =
     code === "key_revoked"
-      ? `That API key has been revoked. Create a new one at ${config.apiUrl}/connect and update this client's Authorization header.`
-      : `This server authenticates with a lnkdrp API key, not OAuth. Send "Authorization: Bearer lnk_…" with a key from ${config.apiUrl}/connect. If your client can only authenticate by OAuth, it cannot connect to this server yet.`;
+      ? `That credential has been revoked. Sign in again from your client, or create a new key at ${config.apiUrl}/connect and update this client's Authorization header.`
+      : `This server takes a lnkdrp API key ("Authorization: Bearer lnk_…", from ${config.apiUrl}/connect) or an OAuth access token from the authorization server at ${config.apiUrl}. Most clients handle OAuth for you: add the server with no header and sign in when prompted.`;
   res
     .status(401)
     .set("www-authenticate", `Bearer resource_metadata="${config.publicUrl}/.well-known/oauth-protected-resource"`)
@@ -137,6 +144,27 @@ async function closeSession(session: Session, reason: string): Promise<void> {
   await Promise.allSettled([session.transport.close(), session.server.close()]);
 }
 
+/**
+ * Accept a new bearer on an existing session when it resolves to the same credential.
+ *
+ * One REST call, and only on the request where the token changed. Returns `true` when rebound,
+ * otherwise the failure code to answer with.
+ */
+async function rebindSession(session: Session, key: string): Promise<true | "unauthorized" | "key_revoked"> {
+  try {
+    const probe = new ApiClient({ baseUrl: config.apiUrl, key, agent: () => session.agentHeader });
+    const who = await probe.whoami();
+    if (!who.credentialId || who.credentialId !== session.credentialId) return "unauthorized";
+    session.keyHash = keyHashOf(key);
+    session.api.setKey(key);
+    log("session rebound to refreshed token", { id: session.id, agent: session.agentHeader });
+    return true;
+  } catch (err) {
+    if (isToolError(err) && err.code === "key_revoked") return "key_revoked";
+    return "unauthorized";
+  }
+}
+
 /** Bearer gate, session lookup or creation, then hand the request to the session transport. */
 async function handleMcp(req: Request, res: Response): Promise<void> {
   const key = bearerFrom(req);
@@ -153,8 +181,14 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
       return;
     }
     if (!sameKey(session, key)) {
-      unauthorized(res);
-      return;
+      // An OAuth client rotates its access token every hour and keeps the session. The new token
+      // is accepted when whoami says it belongs to the credential this session was opened with;
+      // anything else is another workspace's credential on someone else's session, and is refused.
+      const rebound = key.startsWith(OAUTH_ACCESS_PREFIX) && (await rebindSession(session, key));
+      if (rebound !== true) {
+        unauthorized(res, rebound === "key_revoked" ? "key_revoked" : "unauthorized");
+        return;
+      }
     }
     session.lastSeenAt = Date.now();
     await session.transport.handleRequest(req, res, req.body);
@@ -189,6 +223,7 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
   const session: Session = {
     id: null,
     keyHash: keyHashOf(key),
+    credentialId: whoami.credentialId,
     agentHeader,
     whoami,
     api,
@@ -279,18 +314,19 @@ function createApp() {
   });
 
   /**
-   * RFC 9728 protected-resource metadata.
-   *
-   * `authorization_servers` is empty and that is the honest answer: there is no OAuth authorization
-   * server, keys are issued by the app. A client that discovers this document and finds the list
-   * empty has nowhere to send its user, so `resource_documentation` points at the page that does
-   * issue keys — the one thing that turns a dead end into an instruction.
+   * RFC 9728 protected-resource metadata: the document an OAuth-capable client reads after its
+   * first 401. `authorization_servers` names the app, whose
+   * `/.well-known/oauth-authorization-server` lists registration, consent and token endpoints
+   * (`src/lib/agents/oauth.ts`). `resource_documentation` still points at the page that issues
+   * keys, for a client or a person who would rather paste one.
    */
   app.get("/.well-known/oauth-protected-resource", (_req, res) => {
+    res.set("access-control-allow-origin", "*");
     res.json({
       resource: config.publicUrl,
-      authorization_servers: [],
+      authorization_servers: [config.apiUrl],
       bearer_methods_supported: ["header"],
+      scopes_supported: ["read", "write"],
       resource_documentation: `${config.apiUrl}/connect`,
     });
   });

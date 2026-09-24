@@ -146,12 +146,12 @@ Endpoints:
 - `GET /healthz` → `{ ok, sessions, version, apiUrl }`. `apiUrl` is there so a glance at the health
   endpoint says which lnkdrp a server is pointed at, which is the one thing a misconfigured
   deployment gets wrong.
-- `GET /.well-known/oauth-protected-resource` → `{ resource: MCP_PUBLIC_URL, authorization_servers: [],
-  bearer_methods_supported: ["header"], resource_documentation: "${LNKDRP_API_URL}/connect" }`.
-  A placeholder for the OAuth 2.1 seam; there is no authorization server yet, keys are the only
-  credential. `authorization_servers` is empty on purpose, and `resource_documentation` is what
-  keeps that from being a dead end: a client that discovers the document has somewhere to send
-  its user for a key.
+- `GET /.well-known/oauth-protected-resource` → `{ resource: MCP_PUBLIC_URL, authorization_servers:
+  [LNKDRP_API_URL], bearer_methods_supported: ["header"], scopes_supported, resource_documentation:
+  "${LNKDRP_API_URL}/connect" }` (RFC 9728). The document an OAuth-capable client reads after its
+  first 401: it names the app as the authorization server, and the app's
+  `/.well-known/oauth-authorization-server` lists the endpoints. See "Signing in instead of a key"
+  under "Connecting a client".
 - Request bodies are capped by Express at the `fileBase64` ceiling plus 2 MB of envelope, so a
   payload at the documented limit reaches the tool's own validation instead of being refused by
   the framework with raw HTML.
@@ -201,11 +201,51 @@ claude mcp add --transport http lnkdrp https://mcp.lnkdrp.com/mcp \
 
 Clients keep one server per name, so to change the key remove `lnkdrp` and add it again.
 
+### Signing in instead of a key
+
+Any client that implements MCP authorization (Claude Code, Cursor, Codex CLI, Gemini CLI, the
+Claude.ai and ChatGPT connectors) can connect with no key at all:
+
+```bash
+claude mcp add --transport http lnkdrp https://mcp.lnkdrp.com/mcp
+# then, inside Claude Code: /mcp → lnkdrp → sign in
+```
+
+What happens, and where the code is (`src/lib/agents/oauth.ts` is the map):
+
+1. The client's first request has no bearer and gets a 401 with `WWW-Authenticate` pointing at
+   `/.well-known/oauth-protected-resource` on the MCP host, which names the app as the
+   authorization server. The client then reads `/.well-known/oauth-authorization-server` on the app
+   (`src/app/.well-known/oauth-authorization-server/route.ts`).
+2. It registers itself: `POST /api/oauth/register` (RFC 7591 dynamic client registration; rate
+   limited per address, redirect URIs restricted to https, loopback http, or a private-use scheme).
+   Rows are `OAuthClient`.
+3. It opens `/connect/authorize` in the browser (`src/app/connect/authorize/page.tsx`). The person
+   signs in if needed, picks the workspace the agent will act in, clicks Allow. The form posts to
+   `/api/oauth/authorize`, which mints a one-use code bound to the client's PKCE challenge
+   (`OAuthCode`) and redirects back to the client.
+4. `POST /api/oauth/token` exchanges the code for an access token (`lnko_…`, 1 hour) and a
+   refresh token (`lnkr_…`, 30 days), creating an `OAuthGrant`: the same `{ orgId, createdByUserId,
+   scopes }` a key carries. Refresh rotates both tokens on the same grant.
+5. Every request then carries `Authorization: Bearer lnko_…`. `verifyBearer` in the app resolves it
+   like a key, to the same `Actor`, so every tool, gate, plan limit and activity row is unchanged.
+   The MCP server binds the session to the grant id (`credentialId` from whoami), not the token, so
+   the hourly refresh keeps the session; a token from a different grant on an existing session is
+   refused.
+
+Revocation: the grant appears on `/connect` next to the keys, marked "Signed in", with the same
+Revoke button (`DELETE /api/agent/keys/:id` accepts either id). A client that removes the server
+may also call `POST /api/oauth/revoke` (RFC 7009). Either way the next request fails with
+`key_revoked`. A viewer's grant carries `read` only. Keys keep working exactly as before; OAuth adds
+a way in and closes none.
+
 **More than one workspace.** A key belongs to one workspace, so each workspace is its own
 connection with its own name. `/connect` names it for you from the active workspace
-(`mcpServerName` in `clientSetups.ts`): `lnkdrp-<workspace>` for every workspace, `lnkdrp-personal`
-for the personal one (lowercase letters, digits and hyphens, up to 24 characters of the name). Plain
-`lnkdrp` is only the public guides' placeholder, and an existing `lnkdrp` connection keeps working.
+(`mcpServerName` in `clientSetups.ts`): `lnkdrp-<workspace>` for every workspace, a renamed personal
+workspace included (lowercase letters, digits and hyphens, up to 24 characters of the name);
+`lnkdrp-personal` for a personal workspace still called Personal; plain `lnkdrp` for a workspace named
+after the product. Otherwise plain `lnkdrp` is only the public guides' placeholder, and an existing
+`lnkdrp` connection keeps working.
 Adding a second workspace under a name already in use would replace or collide with the first; under
 its own name both stay connected and
 `lnkdrp_whoami` on each reports which workspace it acts on:
@@ -1540,8 +1580,13 @@ retry guard, not as a durable dedupe. Use a fresh key per intent (a UUID is fine
   size and time limits), not by the MCP server.
 - **Revocation is immediate**: the next API call with a revoked key fails, and the session's
   subsequent tools return `key_revoked`.
-- **No OAuth yet.** `/.well-known/oauth-protected-resource` is a placeholder; bearer keys are the
-  only credential. The `verifyBearer` seam in the app is where OAuth tokens will slot in.
+- **OAuth tokens are keys with an expiry.** An `lnko_` access token resolves through the same
+  `verifyBearer` seam to the same `Actor` as a key, is stored hashed like a key, and dies with its
+  grant on revocation. It is opaque, not a JWT: nothing can be minted or extended offline. PKCE S256
+  is mandatory, codes are one-use and five minutes, a replayed code revokes the grant it produced,
+  refresh tokens rotate, and the consent form only ever redirects to the URI the client registered.
+  CORS is open on the OAuth endpoints and the metadata documents (they hold no session), and still
+  closed on `/mcp`.
 
 ## Deployment
 

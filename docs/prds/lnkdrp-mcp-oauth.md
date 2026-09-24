@@ -1,8 +1,8 @@
 # PRD — OAuth for the MCP server
 
-**Status:** Draft 2026-09-20, not started
+**Status:** Implemented 2026-09-24 (M1–M3, on `next-release`, untested against a live client until the MCP is hosted). M4 (CORS on `/mcp`, per-client rate limits, shared session store) not started. See the review and the implementation note at the end.
 **Owner:** chrissanz
-**Last updated:** 2026-09-20
+**Last updated:** 2026-09-24
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-mcp](./lnkdrp-mcp.md) · [lnkdrp-enterprise](./lnkdrp-enterprise.md)
 
@@ -149,3 +149,73 @@ agent I connected" and should not have to.
   gain a second path rather than being replaced.
 - `agent.connected`, `agent.key_created`, `agent.key_revoked` activity types already exist and are
   the right vocabulary for authorisations too.
+
+## Review, 2026-09-24
+
+Read against the code as it stands. The PRD holds; four things sharpen it.
+
+**1. The authorization server goes in the Next app, and the reason is stronger than the PRD says.**
+The MCP server never verifies a credential itself: it forwards the caller's bearer on every REST
+call and the app's `verifyBearer` (`src/lib/gating/apiKeyActor.ts`) is the single verifier. So an
+OAuth access token is only a second token shape that function accepts, and the "introspection
+vs JWT" question in section 3 dissolves: the app looks the token up the same way it looks a key
+up, and revocation is immediate for free. The MCP server changes are two lines: `bearerFrom` in
+`mcp/src/main.ts` stops requiring the `lnk_` prefix, and the well-known document lists
+`https://www.lnkdrp.com` under `authorization_servers`.
+
+**2. Do not use the SDK's OAuth server router.** `@modelcontextprotocol/sdk` ships
+`server/auth` (DCR, authorize, token, revoke handlers behind an `OAuthServerProvider`), but it is
+Express middleware for the MCP process, which has no database and no user session. The consent
+screen has to live where the sign-in cookie lives. Reuse only `shared/auth` (the request schemas)
+from the Next app's routes.
+
+**3. What to build, by file.**
+- `src/lib/models/OAuthClient.ts`: id, name, redirect URIs, created via DCR.
+- `src/lib/models/OAuthGrant.ts`: one row per authorisation = `{ userId, orgId, scopes, clientId,
+  accessHash, accessExpiresAt, refreshHash, revokedAt }`. Tokens opaque, prefix `lnko_`, sha256
+  like keys. Access 1 h, refresh 30 d, refresh rotates.
+- `src/app/.well-known/oauth-authorization-server/route.ts` (RFC 8414 metadata).
+- `src/app/api/oauth/register/route.ts` (RFC 7591; only `https` or loopback redirect URIs; rate
+  limited by IP because anyone may call it).
+- `src/app/connect/authorize/page.tsx`: signed-in consent with the workspace picker, plain
+  sentence of what the agent can do, CSRF-bound, then redirect with `code` + `state`. Codes are
+  one-use, 5 min, bound to the PKCE challenge and the `resource`.
+- `src/app/api/oauth/token/route.ts`: `authorization_code` with PKCE S256, and `refresh_token`.
+- `src/app/api/oauth/revoke/route.ts` (RFC 7009), plus the grant listed on `/connect` next to the
+  keys with the same Revoke button, writing `agent.connected` / `agent.key_revoked` activity.
+- `verifyBearer`: `lnk_` → key path as today; `lnko_` → grant lookup → the same `Actor`.
+
+**4. One real change inside the MCP server: session binding.** A session is bound to the sha256
+of the bearer that opened it (`sameKey`). An OAuth client rotates its access token every hour, so
+the next request after a refresh would be refused as a different credential. Bind sessions to a
+stable id returned by the app (the grant id, or the key id) rather than to the token hash.
+
+**Clients this unlocks.** Claude Code already does this flow natively (`claude mcp add --transport
+http`, then `/mcp` to sign in), as do Cursor, Codex CLI and Gemini CLI. The larger gain is the
+clients that cannot set a header at all: Claude.ai and Claude Desktop connectors, ChatGPT
+connectors, Cowork. Today `/connect` cannot serve any of them.
+
+**Effort.** M1 + M2 about three days, M3 one day, CORS half a day. Nothing new to deploy.
+
+**Blocker that is not this PRD.** `mcp.lnkdrp.com` does not resolve (checked 2026-09-24). OAuth
+is worthless until the server is hosted; `deploy/fly/mcp.fly.toml` and `DEPLOY.md` section 7 are
+ready for that. Host first, then this.
+
+## Implementation note, 2026-09-24
+
+Built as the review describes. Files: `src/lib/agents/oauth.ts` (the library and the map of the
+flow), `oauthHttp.ts`, `oauthAuthorize.ts`, models `OAuthClient` / `OAuthCode` / `OAuthGrant`,
+routes under `src/app/api/oauth/*`, the consent page `src/app/connect/authorize/page.tsx`, the
+metadata document `src/app/.well-known/oauth-authorization-server/route.ts`; `verifyBearer` accepts
+`lnko_` tokens; whoami returns `credentialId`; `mcp/src/main.ts` names the app as authorization
+server and rebinds a session across token refresh; grants list on `/connect` beside keys with one
+Revoke. `docs/MCP.md` "Signing in instead of a key" is the operator-facing description.
+
+Open questions from above, as decided: (1) an in-flight session survives a refresh because the
+binding is the grant id, not the token; (2) one grant names one workspace, chosen on the consent
+screen, so a second workspace is a second connection, as with keys; (3) consent copy is two bullets
+per scope in the person's terms; (4) unchanged, single machine; (5) DCR is rate limited per address
+(20/hour), per-client request limits reuse the per-key ceiling keyed on the grant id.
+
+Untested against a real client until `mcp.lnkdrp.com` is up: the first live run should be
+Claude Code (`claude mcp add --transport http lnkdrp https://mcp.lnkdrp.com/mcp`, then `/mcp`).

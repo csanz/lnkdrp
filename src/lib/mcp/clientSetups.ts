@@ -96,8 +96,14 @@ export const DEFAULT_SERVER_NAME = "lnkdrp";
  */
 export function mcpServerName(workspace: { name?: string | null; isPersonal: boolean } | null | undefined): string {
   if (!workspace) return DEFAULT_SERVER_NAME;
-  if (workspace.isPersonal) return `${DEFAULT_SERVER_NAME}-personal`;
-  const slug = (workspace.name ?? "")
+  // A personal workspace is `lnkdrp-personal` only while it still carries the default name. Once
+  // its owner has renamed it, the name they chose is the one they will look for in their client's
+  // server list; answering "personal" for a workspace called LNKDRP read as the rename not taking.
+  const name = (workspace.name ?? "").trim();
+  if (workspace.isPersonal && (!name || name.toLowerCase() === PERSONAL_WORKSPACE_DEFAULT_NAME.toLowerCase())) {
+    return `${DEFAULT_SERVER_NAME}-personal`;
+  }
+  const slug = name
     .toLowerCase()
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -105,14 +111,20 @@ export function mcpServerName(workspace: { name?: string | null; isPersonal: boo
     .replace(/^-+|-+$/g, "")
     .slice(0, 24)
     .replace(/-+$/g, "");
+  // A workspace named after the product would come out as `lnkdrp-lnkdrp`; plain `lnkdrp` is the
+  // name every guide already uses, so it is the one that reads right here.
+  if (slug === DEFAULT_SERVER_NAME) return DEFAULT_SERVER_NAME;
   return `${DEFAULT_SERVER_NAME}-${slug || "workspace"}`;
 }
+
+/** The name a personal workspace is created with (`ensurePersonalOrgForUserId` in `src/lib/models/Org.ts`). */
+export const PERSONAL_WORKSPACE_DEFAULT_NAME = "Personal";
 
 /** One-paragraph explanation of connecting more than one workspace, shared by `/connect` and the guides. */
 export const MULTIPLE_WORKSPACES = {
   title: "More than one workspace",
   body:
-    "A key belongs to one workspace, and your client keeps one server per name. To connect another workspace, switch to it in lnkdrp, create a key there, and add it under its own name, such as lnkdrp-acme (Connect names it for you: lnkdrp-personal for your personal workspace). Existing connections keep working, and your agent sees them all; lnkdrp_whoami on each says which workspace it acts on.",
+    "A key belongs to one workspace, and your client keeps one server per name. To connect another workspace, switch to it in lnkdrp, create a key there, and add it under its own name, such as lnkdrp-acme (Connect names it for you after the workspace; a personal workspace still called Personal is lnkdrp-personal). Existing connections keep working, and your agent sees them all; lnkdrp_whoami on each says which workspace it acts on.",
 };
 
 /** The server entry inside an `mcpServers` object, at the given base indent. */
@@ -143,8 +155,8 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     slug: "claude-code",
     label: "Claude Code",
     kind: "cli",
-    blurb: "One command in a terminal. Claude Code talks to lnkdrp over HTTP with your key.",
-    note: "Run this in a terminal. Add --scope user to make it available in every project.",
+    blurb: "One command in a terminal. Claude Code talks to lnkdrp over HTTP with your key, or signs you in.",
+    note: "Run this in a terminal. Add --scope user to make it available in every project. Or leave the header off and run /mcp inside Claude Code to sign in instead of using a key.",
     docsUrl: "https://docs.claude.com/en/docs/claude-code/mcp",
     remove: (name = D) => ({
       body: `Claude Code keeps one server per name, so re-running the add command with a new key fails with "${name} already exists". Remove it first, then add it again with the new key. Add -s user if you registered it with --scope user.`,
@@ -161,6 +173,11 @@ export const CLIENT_SETUPS: ClientSetup[] = [
         title: "Check it registered",
         body: `Run claude mcp list and look for ${name}. Inside a session, /mcp shows the connection state.`,
         code: ["claude mcp list"],
+      },
+      {
+        title: "Or sign in instead of using a key",
+        body: "Add the server without the header, then run /mcp inside Claude Code, pick the server and sign in. lnkdrp opens in your browser, you choose the workspace, and Claude Code keeps its own token. Nothing to paste, and the Connect page lists it next to your keys.",
+        code: [`claude mcp add --transport http ${name} ${mcp}`],
       },
     ],
   },

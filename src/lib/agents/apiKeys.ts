@@ -14,9 +14,10 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { newSecretToken } from "@/lib/crypto/randomBase62";
 import { API_KEY_SCOPES, ApiKeyModel, type ApiKeyScope } from "@/lib/models/ApiKey";
-import { UserModel } from "@/lib/models/User";
+import { resolveOwners, type KeyOwner } from "@/lib/agents/owners";
 import type { AgentClient, AgentKeyRow, AgentStatus } from "@/lib/client/useAgentStatus";
 import { debugLog } from "@/lib/debug";
+import { listGrants, listUsedActiveGrants } from "@/lib/agents/oauth";
 
 export const API_KEY_PREFIX = "lnk_";
 /** Random base62 chars after the `lnk_` prefix. */
@@ -91,8 +92,7 @@ export type ApiKeyRowSource = {
   createdByUserId?: Types.ObjectId | string | null;
 };
 
-/** Owner display info resolved from `User` for `createdBy`. */
-export type KeyOwner = { id: string; name: string | null; email: string | null };
+export type { KeyOwner } from "@/lib/agents/owners";
 
 /** ISO string for a Date/string, or null when missing/invalid. */
 function toIso(v: Date | string | null | undefined): string | null {
@@ -177,20 +177,6 @@ export async function createApiKey(input: CreateApiKeyInput): Promise<{ plaintex
     updatedDate: now,
   });
   return { plaintext, key: toAgentKeyRow(doc) };
-}
-
-/** Resolve `createdByUserId`s to display info in one query (missing users map to null). */
-async function resolveOwners(ids: Array<Types.ObjectId | string | null>): Promise<Map<string, KeyOwner>> {
-  const unique = Array.from(new Set(ids.filter(Boolean).map((v) => String(v)))).filter((v) => Types.ObjectId.isValid(v));
-  const out = new Map<string, KeyOwner>();
-  if (unique.length === 0) return out;
-  const users = await UserModel.find({ _id: { $in: unique.map((v) => new Types.ObjectId(v)) } })
-    .select({ name: 1, email: 1 })
-    .lean();
-  for (const u of users as Array<{ _id: Types.ObjectId; name?: string | null; email?: string | null }>) {
-    out.set(String(u._id), { id: String(u._id), name: u.name ?? null, email: u.email ?? null });
-  }
-  return out;
 }
 
 /** Keys for a workspace, newest first, revoked included (`revoked: true`), capped at `API_KEY_LIST_LIMIT`. */
@@ -310,11 +296,18 @@ export function resetApiKeyTouchThrottle(): void {
 export async function getAgentStatus(orgId: string | Types.ObjectId): Promise<Omit<AgentStatus, "canManage" | "isPersonalOrg">> {
   // `keys` is the management list (newest-created, capped); connectivity reads `used` instead so a
   // long-lived key that has fallen off the end of that list still reports as connected.
-  const [keys, used, activeKeys] = await Promise.all([
+  // Keys and OAuth grants side by side: to the person looking, both are "an agent I connected".
+  // Only keys count toward `activeKeys`, which is the minting cap; a grant is not minted.
+  const [keyRows, grantRows, usedKeys, usedGrants, activeKeys] = await Promise.all([
     listApiKeys(orgId),
+    listGrants(orgId),
     listUsedActiveApiKeys(orgId),
+    listUsedActiveGrants(orgId),
     countActiveApiKeys(orgId),
   ]);
+  const byNewest = (a: AgentKeyRow, b: AgentKeyRow) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0);
+  const keys = [...keyRows, ...grantRows].sort(byNewest).slice(0, API_KEY_LIST_LIMIT);
+  const used = [...usedKeys, ...usedGrants];
   // `latest` = most recent use by an agent client; `latestTool` = most recent use by curl & co.
   let latest: AgentKeyRow | null = null;
   let latestTool: AgentKeyRow | null = null;

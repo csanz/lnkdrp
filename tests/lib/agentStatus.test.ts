@@ -11,6 +11,8 @@ vi.mock("@/lib/models/ApiKey", () => ({
   ApiKeyModel: { find: apiKeyFind, countDocuments: apiKeyCountDocuments },
 }));
 vi.mock("@/lib/models/User", () => ({ UserModel: { find: userFind } }));
+// Grants sit beside keys in the status; these tests are about keys, so the workspace has none.
+vi.mock("@/lib/agents/oauth", () => ({ listGrants: async () => [], listUsedActiveGrants: async () => [], revokeGrant: async () => null }));
 
 const { getAgentStatus, API_KEY_LIST_LIMIT } = await import("@/lib/agents/apiKeys");
 

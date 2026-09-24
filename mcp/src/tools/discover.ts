@@ -63,6 +63,9 @@ const ACTIVITY_TYPES = [
   "agent.key_revoked",
   "agent.connected",
   "agent.key_verified",
+  // Connected by signing in (OAuth) and disconnected from the Connect page.
+  "agent.authorized",
+  "agent.disconnected",
   "account.deletion_requested",
   "account.purged",
   // Pro is ending because the account whose card paid for it is being deleted.

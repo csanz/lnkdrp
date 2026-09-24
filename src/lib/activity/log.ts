@@ -64,6 +64,10 @@ export type ActivityType =
   | "agent.key_revoked"
   | "agent.connected"
   | "agent.key_verified"
+  // An agent connected by signing in (OAuth) rather than with a key, and the person revoking that
+  // from the Connect page. `meta.name` is the client's own name ("Claude Code").
+  | "agent.authorized"
+  | "agent.disconnected"
   | "account.deletion_requested"
   | "account.purged"
   // Who is in this workspace. A member arriving or leaving changes who can read every document in

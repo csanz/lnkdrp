@@ -224,6 +224,7 @@ describe("gating/apiKeyActor.verifyBearerToken", () => {
       },
       key: {
         id: String(KEY_ID),
+        kind: "key",
         name: "Claude Code on my laptop",
         prefix: "lnk_ab12cd34",
         scopes: ["read", "write"],
