@@ -75,10 +75,15 @@ export default function ClientTabs({
           <p className="mb-3 text-[13px] leading-5 text-[var(--muted)]">
             {workspace.isPersonal ? (
               <>
-                This connects your <span className="font-semibold text-[var(--fg)]">Personal</span> workspace as{" "}
+                This connects your personal workspace, <span className="font-semibold text-[var(--fg)]">{workspace.name}</span>, as{" "}
                 <code className="font-mono text-[var(--fg)]">{serverName}</code>. Other workspaces get their own name, such as{" "}
-                <code className="font-mono">{DEFAULT_SERVER_NAME}-acme</code>, so they sit next to this one. Already added it as plain{" "}
-                <code className="font-mono">{DEFAULT_SERVER_NAME}</code>? That keeps working.
+                <code className="font-mono">{DEFAULT_SERVER_NAME}-acme</code>, so they sit next to this one.
+                {serverName === DEFAULT_SERVER_NAME ? null : (
+                  <>
+                    {" "}
+                    Already added it as plain <code className="font-mono">{DEFAULT_SERVER_NAME}</code>? That keeps working.
+                  </>
+                )}
               </>
             ) : (
               <>
