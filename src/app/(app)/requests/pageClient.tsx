@@ -10,6 +10,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { useSkeletonDelay } from "@/lib/client/useSkeletonDelay";
+import { peekKnownEmpty } from "@/lib/client/knownEmpty";
+import { readPageCache, writePageCache } from "@/lib/client/pageCache";
 
 type RequestRepoListItem = {
   id: string;
@@ -53,6 +55,18 @@ export default function RequestsPageClient() {
     async function load() {
       setLoading(true);
       setError(null);
+      // Paint first from what the tab knows: the last first page, or the empty state when the
+      // sidebar snapshot says there are no inboxes. The request still runs and wins.
+      if (!q.trim() && data.page === 1) {
+        const cached = readPageCache<Paged<RequestRepoListItem>>("requests:1");
+        if (cached) {
+          setData(cached);
+          setLoading(false);
+        } else if (peekKnownEmpty().requests === true) {
+          setData({ items: [], total: 0, page: 1, limit: data.limit });
+          setLoading(false);
+        }
+      }
       try {
         const qStr = q.trim() ? `&q=${encodeURIComponent(q.trim())}` : "";
         const res = await fetchWithTempUser(`/api/requests?limit=${data.limit}&page=${data.page}${qStr}`, {
@@ -64,12 +78,14 @@ export default function RequestsPageClient() {
           setError(json?.error || "Failed to load request inboxes.");
           return;
         }
-        setData({
+        const next: Paged<RequestRepoListItem> = {
           items: Array.isArray(json.items) ? json.items : [],
           total: typeof json.total === "number" ? json.total : 0,
           page: typeof json.page === "number" ? json.page : data.page,
           limit: typeof json.limit === "number" ? json.limit : data.limit,
-        });
+        };
+        setData(next);
+        if (!q.trim() && next.page === 1) writePageCache("requests:1", next);
       } catch {
         if (!cancelled) setError("Failed to load request inboxes.");
       } finally {

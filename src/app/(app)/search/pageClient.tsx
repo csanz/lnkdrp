@@ -19,6 +19,8 @@ import { rememberEntityTitles } from "@/lib/client/entityTitles";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { DocResultRow, ProjectResultRow, SearchSkeleton, type SearchDoc, type SearchProject } from "./SearchResultRow";
 import { useSkeletonDelay } from "@/lib/client/useSkeletonDelay";
+import { peekKnownEmpty } from "@/lib/client/knownEmpty";
+import { readPageCache, writePageCache } from "@/lib/client/pageCache";
 import { SCOPES, SORTS, buildSearch, parseSort, readUrlState, type UrlState } from "./searchUrl";
 
 const PAGE_SIZE = 20;
@@ -134,6 +136,22 @@ export default function SearchPageClient() {
     const minWait = new Promise<void>((r) => window.setTimeout(r, wasLeaving && !prefersReducedMotion() ? PAGE_TRANSITION_MIN_MS : 0));
     const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
     if (q) params.set("q", q);
+    // The default view paints from what the tab already knows: the last first page it saw, or,
+    // for a workspace the sidebar snapshot says has no documents, the empty state outright. The
+    // request still runs and its answer wins (`src/lib/client/pageCache.ts`, `knownEmpty.ts`).
+    if (!q && page === 1 && firstLoadRef.current) {
+      const cached = readPageCache<{ docs: SearchDoc[]; total: number }>("search:docs:1");
+      if (cached) {
+        setDocs(cached.docs);
+        setDocsTotal(cached.total);
+        setLoading(false);
+        setDocsPending(true);
+      } else if (peekKnownEmpty().docs === true) {
+        setDocs([]);
+        setDocsTotal(0);
+        setLoading(false);
+      }
+    }
     void (async () => {
       try {
         const [res] = await Promise.all([fetchWithTempUser(`/api/docs?${params}`, { cache: "no-store", signal: ctrl.signal }), minWait]);
@@ -146,6 +164,7 @@ export default function SearchPageClient() {
         // with that name rather than a skeleton it fills in a fetch later.
         rememberEntityTitles("doc", nextDocs);
         setDocsTotal(typeof json.total === "number" ? json.total : 0);
+        if (!q && page === 1) writePageCache("search:docs:1", { docs: nextDocs, total: typeof json.total === "number" ? json.total : 0 });
         if (wasLeaving) setPageKey((k) => k + 1);
       } catch (e) {
         if (ctrl.signal.aborted || id !== docsReqRef.current) return;
@@ -188,6 +207,11 @@ export default function SearchPageClient() {
     // `sidebar=1` skips slug backfills (like `lite=1`) but still returns description + docCount.
     const params = new URLSearchParams({ sidebar: "1", limit: String(PROJECTS_LIMIT) });
     if (q) params.set("q", q);
+    if (!q) {
+      const cached = readPageCache<SearchProject[]>("search:projects");
+      if (cached) setProjects(cached);
+      else if (peekKnownEmpty().projects === true) setProjects([]);
+    }
     void (async () => {
       try {
         const res = await fetchWithTempUser(`/api/projects?${params}`, { cache: "no-store", signal: ctrl.signal });
@@ -196,6 +220,7 @@ export default function SearchPageClient() {
         if (id !== projectsReqRef.current) return;
         const nextProjects = Array.isArray(json.projects) ? json.projects : [];
         setProjects(nextProjects);
+        if (!q) writePageCache("search:projects", nextProjects);
         rememberEntityTitles("project", nextProjects);
       } catch (e) {
         if (ctrl.signal.aborted || id !== projectsReqRef.current) return;

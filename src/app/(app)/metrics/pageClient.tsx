@@ -23,6 +23,7 @@ import HeadlineStrip from "@/components/workspaceMetrics/HeadlineStrip";
 import HeroChart from "@/components/workspaceMetrics/HeroChart";
 import MetricsSkeleton, { MetricsEmptyWorkspace } from "@/components/workspaceMetrics/MetricsSkeleton";
 import { useSkeletonDelay } from "@/lib/client/useSkeletonDelay";
+import { readPageCache, writePageCache } from "@/lib/client/pageCache";
 import RangeControl from "@/components/workspaceMetrics/RangeControl";
 import {
   ContributorsSection,
@@ -103,9 +104,16 @@ export default function MetricsPageClient() {
   const [now, setNow] = useState(() => Date.now());
 
   // The remembered range is read after mount, not during render, and the fetch below waits for it.
+  // The last payload for that range, if this tab has one, paints at once; the request then
+  // refreshes it under the pending bar (`src/lib/client/pageCache.ts`).
   useEffect(() => {
     const stored = readStoredRange();
     if (stored) setRange(stored);
+    const cached = readPageCache<WorkspaceMetricsResponse>(`metrics:${stored ?? WORKSPACE_DEFAULT_RANGE}`);
+    if (cached) {
+      setData(cached);
+      setLoading(false);
+    }
     setRangeReady(true);
   }, []);
 
@@ -159,6 +167,7 @@ export default function MetricsPageClient() {
         if (!res.ok || !json || json.ok !== true) throw new Error(json?.error || "Failed to load metrics.");
         if (cancelled) return;
         setData(json as WorkspaceMetricsResponse);
+        writePageCache(`metrics:${effectiveRange}`, json);
         setNow(Date.now());
       })
       .catch((e: unknown) => {

@@ -38,6 +38,7 @@ import {
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
 import { useSkeletonDelay } from "@/lib/client/useSkeletonDelay";
+import { readPageCache, writePageCache } from "@/lib/client/pageCache";
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import AgentMark from "@/components/AgentMark";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -703,11 +704,23 @@ export default function ActivityPageClient() {
       window.clearTimeout(drainTimerRef.current);
       drainTimerRef.current = null;
     }
+    // The first page this tab last saw for this filter paints at once and refreshes underneath
+    // (`src/lib/client/pageCache.ts`). No "known empty" shortcut here: a workspace with no
+    // documents can still have member and agent rows, and a wrong "No activity yet" is worse
+    // than a fifth of a second of blank.
+    const cacheKey = `activity:${filter}:${who}`;
+    const cached = readPageCache<{ items: ActivityItem[]; nextCursor: string | null }>(cacheKey);
+    if (cached) {
+      setItems(cached.items);
+      setNextCursor(cached.nextCursor);
+      setLoading(false);
+    }
     fetchPage(null)
       .then((page) => {
         if (cancelled) return;
         setItems(page.items);
         setNextCursor(page.nextCursor);
+        writePageCache(cacheKey, page);
       })
       .catch((e: unknown) => {
         if (cancelled) return;

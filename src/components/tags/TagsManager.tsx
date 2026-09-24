@@ -21,6 +21,7 @@ import Modal from "@/components/modals/Modal";
 import DataTable from "@/components/ui/DataTable";
 import OverflowMenu from "@/components/ui/OverflowMenu";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { readPageCache, writePageCache } from "@/lib/client/pageCache";
 import { TAG_COLOR_KEYS, TAG_COLORS, type TagColorKey } from "@/lib/tags/palette";
 
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
@@ -109,6 +110,20 @@ export default function TagsManager() {
   const load = useCallback(async () => {
     const mine = ++seq.current;
     const q = query.trim();
+    // Paint first from what the tab knows: the last unfiltered first page, or, when the sidebar
+    // already learned the workspace has no tags, the empty state outright. The request still
+    // runs and wins (`src/lib/client/pageCache.ts`).
+    if (!q && page === 1) {
+      const cached = readPageCache<{ tags: Tag[]; total: number }>("tags:1");
+      if (cached) {
+        setTags(cached.tags);
+        setTotal(cached.total);
+        setWorkspaceTotal(cached.total);
+      } else if (readPageCache<number>("tags:total") === 0) {
+        setTags([]);
+        setTotal(0);
+      }
+    }
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
       if (q) params.set("q", q);
@@ -128,9 +143,14 @@ export default function TagsManager() {
        * current than its results.
        */
       if (mine !== seq.current) return;
-      setTags(Array.isArray(json.tags) ? json.tags : []);
+      const rows = Array.isArray(json.tags) ? json.tags : [];
+      setTags(rows);
       const totalNow = typeof json.total === "number" ? json.total : 0;
       setTotal(totalNow);
+      if (!q && page === 1) {
+        writePageCache("tags:1", { tags: rows, total: totalNow });
+        writePageCache("tags:total", totalNow);
+      }
       /**
        * Merge is gated on `workspaceTotal` and nothing ever set it, so it stayed 0 and every row's
        * Merge button rendered disabled under "Nothing to merge into yet", in every workspace and

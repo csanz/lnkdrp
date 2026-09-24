@@ -19,6 +19,7 @@ import TagDot from "@/components/tags/TagDot";
 import IconButton from "@/components/ui/IconButton";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { writePageCache } from "@/lib/client/pageCache";
 import type { TagColorKey } from "@/lib/tags/palette";
 
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
@@ -93,7 +94,10 @@ export default function SidebarTagsSection() {
       const json = (await res.json()) as { tags?: Tag[]; total?: number };
       const rows = Array.isArray(json.tags) ? json.tags : [];
       setTags(rows);
-      setTotal(typeof json.total === "number" ? json.total : rows.length);
+      const totalNow = typeof json.total === "number" ? json.total : rows.length;
+      setTotal(totalNow);
+      // The tags page reads this so a workspace with no tags opens straight to its empty state.
+      writePageCache("tags:total", totalNow);
     } catch {
       setTags([]);
       setTotal(0);
