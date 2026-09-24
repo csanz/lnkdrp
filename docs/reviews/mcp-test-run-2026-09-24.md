@@ -54,6 +54,20 @@ Then three **real** visitors: headless Chrome (`tmp/visit-browser.mjs`, Playwrig
 
 Everything withheld in the first pass is now exercised except second project links and recipient version history, which the e2e harness skips on purpose rather than exercising.
 
+## Third pass: revisions through the MCP
+
+`tmp/replace-deck.ts` edits the seed spec the way a founder edits slides, renders it, and calls `lnkdrp_replace_pdf { filePath, waitForReady }` on the live deck, then replays the same `idempotencyKey`, then turns recipient version history on with `lnkdrp_update_share_link { allowRevisionHistory: true }`.
+
+| Revision | Edit | Replace | Compare (standard tier, 5 credits) |
+|---|---|---|---|
+| v2 | customers 335 to 412, market $21.7B to $24.1B, growth 16% to 19%, a use-of-funds bullet added | 27 s to `ready`; replay returned the same upload | 3 changes on pages 4, 5 and 11, each with the exact before and after wording and page images; nothing invented |
+| v3 | the "why now" slide cut (12 to 11 pages), chart values changed, the ask $22M to $28M | 33 s; replay idempotent | 7 pages flagged: the ask on page 10, the removed slide reported as sections shifting and a chart removed, image changes on the shifted pages |
+
+- `GET /s/<shareId>/changes` answers 200 with both records once history is on and the workspace is Pro; a real browser visitor sees the **History** control on the share page and reads the new file (the PDF route serves the v3 bytes).
+- Activity: `doc.replaced v2`, `share_link.updated`, `doc.replaced v3`. Ledger: one summary credit per version plus five per compare.
+- `doc_updates` emails: none queued, correctly, because the workspace has one member and the actor is never emailed about their own replacement. Emails to teammates were not exercised (no second member).
+- `timeoutSeconds` on `lnkdrp_replace_pdf` is capped at 120 by the schema; asking for more is a validation error, which the tool reports clearly.
+
 ## Fixes made during the run
 
 - `/connect`: a renamed personal workspace is now named after its real name (`mcpServerName`), the copy says the workspace's name instead of "Personal", and the Copy button sits in its own column instead of floating over the scrolling code.
