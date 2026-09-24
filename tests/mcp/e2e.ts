@@ -104,6 +104,10 @@ const EXPECTED_TOOLS = [
   "lnkdrp_list_tags",
   "lnkdrp_tag",
   "lnkdrp_untag",
+  // Revisions: what changed, when, by whom, and the diff (2026-09-24).
+  "lnkdrp_list_revisions",
+  "lnkdrp_get_revision",
+  "lnkdrp_revision_contributors",
 ] as const;
 
 /**
@@ -770,6 +774,65 @@ async function main(): Promise<void> {
     // labels surface in the activity feed, which is what the product screenshots photograph.
     // It is also deliberately not one of the seed corpus's firms, so the workspace-wide
     // `find_share_link` query below has exactly one thing it can match.
+    // 10f. Revisions: the replacement above must now be readable as history, as a diff, and as a tally.
+    await step("lnkdrp_list_revisions { docId } lists the replacement, newest first", async () => {
+      const page = await callTool<{ items: Array<{ docId: string; toVersion: number | null; fromVersion: number | null; by: { userId: string } | null; summary: unknown }>; nextCursor: string | null; since: string | null }>(
+        live,
+        "lnkdrp_list_revisions",
+        { docId: shared.docId, since: "24h" },
+      );
+      assert(Array.isArray(page.items) && page.items.length >= 1, "list_revisions returned no rows for a document that was just replaced");
+      const top = page.items[0]!;
+      assert(top.docId === shared.docId, `list_revisions row is about ${top.docId}, not ${shared.docId}`);
+      // The fileBase64 step (10e) replaced once more after `replaced`, so the newest row is a later
+      // version; what must hold is the order and that the replacement above is in the list.
+      assert((top.toVersion ?? 0) >= replaced.version, `newest revision is v${top.toVersion}, older than the v${replaced.version} replacement`);
+      const versions = page.items.map((it) => it.toVersion ?? 0);
+      assert(versions.every((v, i) => i === 0 || v < versions[i - 1]!), `rows are not newest first: ${versions.join(",")}`);
+      assert(versions.includes(replaced.version), `the v${replaced.version} replacement is missing from ${versions.join(",")}`);
+      assert(top.by?.userId === USER_ID, `revision is attributed to ${top.by?.userId ?? "nobody"}, expected the key owner`);
+      assert(typeof page.since === "string", "since was not echoed back");
+      // Workspace-wide, the same row must appear without a docId.
+      const all = await callTool<{ items: Array<{ docId: string; toVersion: number | null }> }>(live, "lnkdrp_list_revisions", { since: "24h", limit: 50 });
+      assert(all.items.some((it) => it.docId === shared.docId && it.toVersion === replaced.version), "the workspace-wide list does not include this replacement");
+      info("revisions", `${page.items.length} for the doc, ${all.items.length} in the workspace since 24h`);
+    });
+
+    await step("lnkdrp_get_revision { docId, version } explains the diff, and v1 has no record", async () => {
+      const rev = await callTool<{ toVersion: number; fromVersion: number | null; summary: unknown; changes: unknown[]; pagesThatChanged: unknown[]; compare: { state: string | null; unchangedFromPrevious: boolean }; file: { toPages: number | null } }>(
+        live,
+        "lnkdrp_get_revision",
+        { docId: shared.docId, version: replaced.version },
+      );
+      assert(rev.toVersion === replaced.version, `get_revision returned v${rev.toVersion}`);
+      assert(Array.isArray(rev.changes) && Array.isArray(rev.pagesThatChanged), "get_revision is missing changes/pagesThatChanged arrays");
+      assert(rev.compare && typeof rev.compare.unchangedFromPrevious === "boolean", "get_revision.compare is missing");
+      // The same file was uploaded twice, so the compare either found nothing or was skipped as unchanged; both are honest.
+      info("revision", `v${rev.fromVersion}->v${rev.toVersion} compare=${rev.compare.state ?? "-"} unchanged=${rev.compare.unchangedFromPrevious} changes=${rev.changes.length}`);
+      let thrown: unknown = null;
+      try {
+        await callTool(live, "lnkdrp_get_revision", { docId: shared.docId, version: 2, includeText: false });
+        // v2 exists here; ask for a version that cannot: one past the current.
+        await callTool(live, "lnkdrp_get_revision", { docId: shared.docId, version: replaced.version + 50 });
+      } catch (err) {
+        thrown = err;
+      }
+      assert(thrown instanceof ToolCallError && thrown.code === "not_found", "a version that does not exist should be not_found");
+    });
+
+    await step("lnkdrp_revision_contributors names the key owner as the one who replaced it", async () => {
+      const who = await callTool<{ totalReplacements: number; contributors: Array<{ userId: string | null; replacements: number }>; agents: Array<{ client: string; replacements: number }> }>(
+        live,
+        "lnkdrp_revision_contributors",
+        { docId: shared.docId, since: "24h" },
+      );
+      assert(who.totalReplacements >= 1, "no replacements counted for a document that was just replaced");
+      const me = who.contributors.find((c) => c.userId === USER_ID);
+      assert(me && me.replacements >= 1, "the key owner is not among the contributors");
+      assert(Array.isArray(who.agents), "agents tally missing");
+      info("contributors", `${who.contributors.length} member(s), agents: ${who.agents.map((a) => `${a.client}:${a.replacements}`).join(", ") || "none"}`);
+    });
+
     const extra = await step('lnkdrp_create_share_link { label: "Vantridge", allowDownload: true }', async () => {
       const res = await callTool<CreateShareLinkResult>(live, "lnkdrp_create_share_link", {
         docId: shared.docId,

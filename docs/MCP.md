@@ -15,7 +15,7 @@ but a workspace API key. It is the third deployable next to the Next app and the
 Where the server stands today, so a reader does not have to infer it from the tool list. Update
 this section when the count, the deployment or the verification changes.
 
-- **Built and on `main`.** 33 tools in `mcp/src/tools/*.ts`: identity and discovery (`whoami`,
+- **Built and on `main`.** 36 tools in `mcp/src/tools/*.ts` (33 plus the three revision tools added 2026-09-24, see "Revisions" below): identity and discovery (`whoami`,
   `list_docs`, `get_activity`), the document lifecycle (`share_pdf`, `replace_pdf`, `get_share`,
   `set_share_access`, `get_share_stats`, `archive_doc`, `delete_doc`), share links (create, list,
   find, password read and verify, update, delete), projects and project links (create, list, get,
@@ -576,6 +576,39 @@ blocked by the Free shared-document cap (mt_zKD3mlHp_K).
   `too_large`, `out_of_credits`, `rate_limited`, `upstream` as `share_pdf`. Never `plan_limit`.
 - Idempotent by `idempotencyKey` (per workspace, 24h, same in-memory store as `share_pdf`, separate
   namespace): a retry returns the same result rather than replacing again.
+
+### Revisions (`lnkdrp_list_revisions`, `lnkdrp_get_revision`, `lnkdrp_revision_contributors`)
+
+What changed, ordered by most recent, in a window, by whom, and the diff. Every `lnkdrp_replace_pdf`
+makes a new version and the processing job writes a `DocChange` record: the AI compare between the
+two versions. These three read it. All read-only, on every plan (the owner's history is never
+plan-gated; only the recipient-facing version list is Pro).
+
+- `lnkdrp_list_revisions` — In `{ docId? | shareId?, since?, limit? = 20 (≤50), cursor? }` →
+  `GET /api/changes` → `{ since, nextCursor, items: [{ changeId, docId, doc: { title, shareId }, fromVersion,
+  toVersion, at, by: { userId, name, email }, summary, changedPageCount, changeCount, pagesChanged }] }`, newest
+  first across the workspace, or one document's with `docId`/`shareId`. `since` takes an ISO date or `24h`, `7d`,
+  `30d`, `this_week` (Monday 00:00 UTC), `this_month`; it is echoed back resolved. Keyset-paginated on
+  `(createdDate, _id)`. The first version of a document has no row. Rows are selected through the workspace's
+  live documents rather than `DocChange.orgId`, so older records with a missing or stale `orgId` still appear and a
+  deleted document's history does not; past 5,000 documents the newest win and `note` says so.
+- `lnkdrp_get_revision` — In `{ docId? | shareId?, version? (≥2; default: the current version), includeText? = false }`
+  → `GET /api/docs/:id/changes?version=N` → `{ docId, shareId, title, changeId, fromVersion, toVersion, at, by,
+  compare: { state, code, reason, unchangedFromPrevious }, file: { fromSizeBytes, toSizeBytes, fromPages, toPages },
+  summary, changedPageCount, changes: [{ type, title, detail }], pagesThatChanged: [{ pageNumber, changeKind
+  (added | removed | replaced), summary, previousWording, newWording, imageChanged, regionNotes }], text?: { previous,
+  new } }`. `compare.state` is the processing job's own account (`done`, or why not: no credits, compares off,
+  identical file), so an empty `changes` array can be told apart from a compare that never ran. `includeText`
+  adds the extracted text of both versions, up to 20k characters each. `version: 1`, or a version with no
+  record, is `not_found` with the document's current version in `details`.
+- `lnkdrp_revision_contributors` — In `{ docId? | shareId?, since? }` → `GET /api/changes?contributors=1` →
+  `{ since, totalReplacements, contributors: [{ userId, name, email, replacements, documents, firstAt, lastAt }],
+  agents: [{ client, userId, name, replacements, lastAt }] }`, most active first. `contributors` counts
+  `DocChange` rows by the member who replaced; `agents` counts the `doc.replaced` activity rows that carry an agent
+  client, so a replacement an MCP client made for a member appears under both.
+
+Everything the compare wrote (summaries, wording, notes, change titles) and every member name is wrapped as
+untrusted text. Ids, versions, dates, kinds and counts stay raw.
 
 ### `lnkdrp_get_share` (read)
 

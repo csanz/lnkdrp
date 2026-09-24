@@ -45,6 +45,7 @@ import {
 import { registerSharePdfTool } from "./tools/sharePdf";
 import { registerListTagsTool, registerTagTool, registerUntagTool } from "./tools/tags";
 import { registerListStarredTool, registerStarDocsTool } from "./tools/starred";
+import { registerGetRevisionTool, registerListRevisionsTool, registerRevisionContributorsTool } from "./tools/revisions";
 import { buildWhoamiPayload, registerWhoamiTool } from "./tools/whoami";
 
 /**
@@ -217,6 +218,9 @@ export function createMcpServer(ctx: ToolContext): McpServer {
   registerUntagTool(server, ctx);
   registerStarDocsTool(server, ctx);
   registerListStarredTool(server, ctx);
+  registerListRevisionsTool(server, ctx);
+  registerGetRevisionTool(server, ctx);
+  registerRevisionContributorsTool(server, ctx);
 
   server.registerResource(
     "workspace",

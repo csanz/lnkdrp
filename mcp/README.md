@@ -350,6 +350,24 @@ An archived document is not reachable by `shareId` (`GET /api/docs?q=` does not 
 document and its `docId`, rather than reporting that nothing matched — "you got the id wrong" and "this exists and
 is archived" were byte-identical, and only the second is recoverable in one call.
 
+### Revisions (`lnkdrp_list_revisions`, `lnkdrp_get_revision`, `lnkdrp_revision_contributors`)
+What changed, newest first, in a window, by whom, and the diff. Read-only, every plan.
+
+- list_revisions — In `{ docId? | shareId?, since? ("2026-09-01" | "24h" | "7d" | "30d" | "this_week" | "this_month"),
+  limit? = 20 (≤50), cursor? }` → `GET /api/changes` → `{ since, nextCursor, items: [{ changeId, docId, doc: { title,
+  shareId }, fromVersion, toVersion, at, by: { userId, name, email }, summary, changedPageCount, changeCount,
+  pagesChanged }] }`. One document's history with an id, the workspace's without. Version 1 has no row.
+- get_revision — In `{ docId? | shareId?, version? (≥2, default current), includeText? = false }` →
+  `GET /api/docs/:id/changes?version=N` → the full compare: `summary`, `changes: [{ type, title, detail }]`,
+  `pagesThatChanged: [{ pageNumber, changeKind, summary, previousWording, newWording, imageChanged, regionNotes }]`,
+  `compare: { state, code, reason, unchangedFromPrevious }`, `file: { fromSizeBytes, toSizeBytes, fromPages, toPages }`,
+  and with `includeText` the extracted text of both versions (≤20k chars each). A missing version is `not_found`.
+- revision_contributors — In `{ docId? | shareId?, since? }` → `GET /api/changes?contributors=1` →
+  `{ since, totalReplacements, contributors: [{ userId, name, email, replacements, documents, firstAt, lastAt }],
+  agents: [{ client, userId, name, replacements, lastAt }] }`, most active first.
+
+Summaries, wording, notes and names are wrapped as untrusted text.
+
 ### `lnkdrp_set_share_access`
 In `{ idempotencyKey, docId, shareEnabled?, allowDownload?, password?: string|null, allowRevisionHistory? }` (≥1 setting).
 `shareEnabled` is the document-wide switch; the other three are the default link's, and any other link is

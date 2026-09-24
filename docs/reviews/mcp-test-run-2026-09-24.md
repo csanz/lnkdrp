@@ -68,6 +68,20 @@ Everything withheld in the first pass is now exercised except second project lin
 - `doc_updates` emails: none queued, correctly, because the workspace has one member and the actor is never emailed about their own replacement. Emails to teammates were not exercised (no second member).
 - `timeoutSeconds` on `lnkdrp_replace_pdf` is capped at 120 by the schema; asking for more is a validation error, which the tool reports clearly.
 
+## Fourth pass: revision tools added to the MCP
+
+The MCP could make versions but not read what changed. Three read-only tools now wrap the change records the processing job writes on every replacement, plus a new workspace-wide route behind them:
+
+| Tool | Answers | Route |
+|---|---|---|
+| `lnkdrp_list_revisions` | what changed, newest first, workspace-wide or one document, in a window (`24h`, `7d`, `30d`, `this_week`, `this_month`, or an ISO date), cursor-paginated | new `GET /api/changes` |
+| `lnkdrp_get_revision` | the diff for one version: summary, itemised changes, per-page change kind with previous and new wording and image-changed flags, file sizes and page counts, the compare's own state (done, skipped and why, unchanged), optionally both versions' text | `GET /api/docs/:id/changes?version=N` (new `version` filter) |
+| `lnkdrp_revision_contributors` | who made the most changes: per member (replacements, documents, first and last), and per agent client from the activity log | `GET /api/changes?contributors=1` |
+
+Driven against the live deck on a second MCP server (`:8790`, since the one on `:8787` predates the code and needs a restart to pick the tools up): the workspace list showed v2 to v3 then v1 to v2 with who and when; `get_revision` v3 returned the 12-to-11 page change, the ask on page 10 with its wording before and after, and the image flags; v2 with text returned 2,736 and 2,816 characters and the new text contains the new figure; the default version resolves to the current one; a missing version is `not_found` with the current version in the details; contributors named the owner (2 replacements, 1 document) and the two agent clients. The e2e harness gained three steps that assert all of this on the throwaway document (the list includes the replacement and is ordered newest first, the diff has its arrays and compare state, the owner is a contributor).
+
+The `agents` tally reads the activity log and so counts replacements on documents deleted since; `contributors` reads the change records through the workspace's live documents and does not. Both tool descriptions say so.
+
 ## Fixes made during the run
 
 - `/connect`: a renamed personal workspace is now named after its real name (`mcpServerName`), the copy says the workspace's name instead of "Personal", and the Copy button sits in its own column instead of floating over the scrolling code.

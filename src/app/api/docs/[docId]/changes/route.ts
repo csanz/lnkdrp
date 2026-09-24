@@ -212,7 +212,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       ...(includeText ? { previousText: 1, newText: 1 } : {}),
     } as const;
 
-    if (Number.isFinite(cursorVersion) && cursorVersion >= 1) {
+    // `version=N` asks for the one record that produced version N (its `toVersion`), for a caller
+    // that already knows which revision it wants (the MCP's `lnkdrp_get_revision`). It wins over
+    // the cursor: a single version is not a page.
+    const versionRaw = (url.searchParams.get("version") ?? "").trim();
+    const versionOnly = versionRaw ? Number(versionRaw) : NaN;
+    if (versionRaw && (!Number.isFinite(versionOnly) || versionOnly < 1)) {
+      return NextResponse.json({ error: "version must be a positive integer" }, { status: 400 });
+    }
+    if (Number.isFinite(versionOnly) && versionOnly >= 1) {
+      (changeFilter as any).toVersion = Math.floor(versionOnly);
+    } else if (Number.isFinite(cursorVersion) && cursorVersion >= 1) {
       // Cursor is always the `toVersion` boundary (fast + stable).
       (changeFilter as any).toVersion =
         sort === "version_asc" ? { $gt: Math.floor(cursorVersion) } : { $lt: Math.floor(cursorVersion) };

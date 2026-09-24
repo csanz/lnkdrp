@@ -78,6 +78,77 @@ export type PlanWarning = { limit: string; used: number; requested: number; max:
 
 export type DocStatus = "draft" | "preparing" | "ready" | "failed";
 
+/** One row of `GET /api/changes`: a replacement's change record, with the document and the replacer. */
+export type ApiRevisionItem = {
+  id: string;
+  docId: string;
+  doc: { title: string | null; shareId: string | null } | null;
+  fromVersion: number | null;
+  toVersion: number | null;
+  at: string | null;
+  by: { userId: string; name: string | null; email: string | null } | null;
+  summary: string;
+  changedPageCount: number | null;
+  changeCount: number;
+  pagesChanged: number;
+};
+
+export type ApiRevisionContributor = {
+  userId: string | null;
+  name: string | null;
+  email: string | null;
+  replacements: number;
+  documents: number;
+  firstAt: string | null;
+  lastAt: string | null;
+};
+
+export type ApiRevisionAgent = { client: string; userId: string | null; name: string | null; replacements: number; lastAt: string | null };
+
+export type ApiRevisionPage = {
+  items: ApiRevisionItem[];
+  nextCursor: string | null;
+  since: string | null;
+  note: string | null;
+  contributors: ApiRevisionContributor[] | null;
+  agents: ApiRevisionAgent[] | null;
+};
+
+/** One page's entry in a compare (`DocChange.diff.pagesThatChanged`). */
+export type ApiChangedPage = {
+  pageNumber: number;
+  summary: string;
+  changeKind: "added" | "removed" | "replaced" | null;
+  previousWording: string | null;
+  newWording: string | null;
+  imageChanged: boolean | null;
+  regionNotes: string[];
+};
+
+/** One change record as `GET /api/docs/:id/changes` returns it (the AI compare between two versions). */
+export type ApiDocChange = {
+  id: string;
+  docId: string;
+  fromVersion: number | null;
+  toVersion: number | null;
+  createdDate: string | null;
+  createdBy: { id: string; name: string | null; email: string | null } | null;
+  summary: string;
+  changedPageCount: number | null;
+  fromSizeBytes: number | null;
+  toSizeBytes: number | null;
+  fromPages: number | null;
+  toPages: number | null;
+  changes: Array<{ type: string; title: string; detail: string | null }>;
+  pagesThatChanged: ApiChangedPage[];
+  compare: string | null;
+  compareCode: string | null;
+  compareReason: string | null;
+  unchangedFromPrevious: boolean;
+  previousText: string;
+  newText: string;
+};
+
 export type ApiDoc = {
   id: string;
   shareId: string | null;
@@ -770,6 +841,126 @@ export class ApiClient {
     }
     if (!res.ok) throw mapApiError({ status: res.status, body, method, path, siteUrl: this.baseUrl });
     return body as T;
+  }
+
+  /**
+   * `GET /api/changes` — the workspace's replacements, newest first, optionally one document's,
+   * optionally with the contributor tally for the same window. `since` is passed through as the
+   * route accepts it (ISO date or `24h`/`7d`/`30d`/`this_week`/`this_month`).
+   */
+  async listRevisions(input: {
+    since?: string | undefined;
+    docId?: string | undefined;
+    limit?: number | undefined;
+    cursor?: string | undefined;
+    contributors?: boolean | undefined;
+  }): Promise<ApiRevisionPage> {
+    const body = rec(
+      await this.request("GET", "/api/changes", {
+        query: { since: input.since, docId: input.docId, limit: input.limit, cursor: input.cursor, contributors: input.contributors ? 1 : undefined },
+      }),
+    );
+    const person = (raw: unknown) => {
+      const p = raw ? rec(raw) : null;
+      const userId = p ? strOrNull(p.userId) : null;
+      return userId ? { userId, name: strOrNull(p!.name), email: strOrNull(p!.email) } : null;
+    };
+    const items = (Array.isArray(body.items) ? body.items : []).map((raw) => {
+      const r = rec(raw);
+      const doc = r.doc ? rec(r.doc) : null;
+      return {
+        id: strOrNull(r.id) ?? "",
+        docId: strOrNull(r.docId) ?? "",
+        doc: doc ? { title: strOrNull(doc.title), shareId: strOrNull(doc.shareId) } : null,
+        fromVersion: typeof r.fromVersion === "number" ? r.fromVersion : null,
+        toVersion: typeof r.toVersion === "number" ? r.toVersion : null,
+        at: strOrNull(r.at),
+        by: person(r.by),
+        summary: strOrNull(r.summary) ?? "",
+        changedPageCount: typeof r.changedPageCount === "number" ? r.changedPageCount : null,
+        changeCount: num(r.changeCount),
+        pagesChanged: num(r.pagesChanged),
+      };
+    });
+    const contributors = Array.isArray(body.contributors)
+      ? body.contributors.map((raw) => {
+          const c = rec(raw);
+          return {
+            userId: strOrNull(c.userId),
+            name: strOrNull(c.name),
+            email: strOrNull(c.email),
+            replacements: num(c.replacements),
+            documents: num(c.documents),
+            firstAt: strOrNull(c.firstAt),
+            lastAt: strOrNull(c.lastAt),
+          };
+        })
+      : null;
+    const agents = Array.isArray(body.agents)
+      ? body.agents.map((raw) => {
+          const a = rec(raw);
+          return { client: strOrNull(a.client) ?? "", userId: strOrNull(a.userId), name: strOrNull(a.name), replacements: num(a.replacements), lastAt: strOrNull(a.lastAt) };
+        })
+      : null;
+    return { items, nextCursor: strOrNull(body.nextCursor), since: strOrNull(body.since), note: strOrNull(body.note), contributors, agents };
+  }
+
+  /**
+   * `GET /api/docs/:id/changes` — the compare records of one document, newest version first, or
+   * exactly one of them by `version` (its `toVersion`). Text blobs only when `includeText`.
+   */
+  async getDocChanges(docId: string, input: { version?: number | undefined; limit?: number | undefined; includeText?: boolean | undefined } = {}): Promise<ApiDocChange[]> {
+    const body = rec(
+      await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/changes`, {
+        query: { version: input.version, limit: input.limit, noText: input.includeText ? undefined : 1 },
+      }),
+    );
+    const rows = Array.isArray(body.changes) ? body.changes : [];
+    return rows.map((raw) => {
+      const c = rec(raw);
+      const by = c.createdBy ? rec(c.createdBy) : null;
+      const byId = by ? strOrNull(by.id) : null;
+      return {
+        id: strOrNull(c.id) ?? "",
+        docId: strOrNull(c.docId) ?? docId,
+        fromVersion: typeof c.fromVersion === "number" ? c.fromVersion : null,
+        toVersion: typeof c.toVersion === "number" ? c.toVersion : null,
+        createdDate: strOrNull(c.createdDate),
+        createdBy: byId ? { id: byId, name: strOrNull(by!.name), email: strOrNull(by!.email) } : null,
+        summary: strOrNull(c.summary) ?? "",
+        changedPageCount: typeof c.changedPageCount === "number" ? c.changedPageCount : null,
+        fromSizeBytes: typeof c.fromSizeBytes === "number" ? c.fromSizeBytes : null,
+        toSizeBytes: typeof c.toSizeBytes === "number" ? c.toSizeBytes : null,
+        fromPages: typeof c.fromPages === "number" ? c.fromPages : null,
+        toPages: typeof c.toPages === "number" ? c.toPages : null,
+        changes: (Array.isArray(c.changes) ? c.changes : []).map((raw2) => {
+          const ch = rec(raw2);
+          return { type: strOrNull(ch.type) ?? "", title: strOrNull(ch.title) ?? "", detail: strOrNull(ch.detail) };
+        }),
+        pagesThatChanged: (Array.isArray(c.pagesThatChanged) ? c.pagesThatChanged : [])
+          .map((raw2) => {
+            const p = rec(raw2);
+            const kind: ApiChangedPage["changeKind"] =
+              p.changeKind === "added" ? "added" : p.changeKind === "removed" ? "removed" : p.changeKind === "replaced" ? "replaced" : null;
+            return {
+              pageNumber: num(p.pageNumber),
+              summary: strOrNull(p.summary) ?? "",
+              changeKind: kind,
+              previousWording: strOrNull(p.previousWording),
+              newWording: strOrNull(p.newWording),
+              imageChanged: typeof p.imageChanged === "boolean" ? p.imageChanged : null,
+              regionNotes: Array.isArray(p.regionNotes) ? p.regionNotes.filter((n): n is string => typeof n === "string" && n.trim().length > 0) : [],
+            };
+          })
+          .filter((p) => p.pageNumber >= 1),
+        compare: strOrNull(c.compare),
+        compareCode: strOrNull(c.compareCode),
+        compareReason: strOrNull(c.compareReason),
+        unchangedFromPrevious: c.unchangedFromPrevious === true,
+        previousText: typeof c.previousText === "string" ? c.previousText : "",
+        newText: typeof c.newText === "string" ? c.newText : "",
+      };
+    });
   }
 
   /** `GET /api/agent/whoami` — also what registers the connection on the key. */
