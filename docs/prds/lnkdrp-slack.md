@@ -1,6 +1,6 @@
 # PRD — Slack (workspace updates in a channel you choose)
 
-**Status:** Draft 2026-09-24, for decision. Nothing built.
+**Status:** Draft 2026-09-24, for decision. Nothing built. Channels per project added the same day (decision 2, M3).
 **Owner:** chrissanz
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-view-notifications](./lnkdrp-view-notifications.md) · [lnkdrp-notification-queue](./lnkdrp-notification-queue.md) · [lnkdrp-visit-briefs](./lnkdrp-visit-briefs.md) · [REALTIME](../REALTIME.md) · [CRON](../CRON.md)
@@ -55,10 +55,17 @@ email preferences on the Notifications tab.
    Changing channel is "Reconnect" (the same flow again). A bot token (`chat:write`) is what
    buttons and DMs would need; it is the upgrade path, not v1.
 
-2. **One connection per workspace, owner or admin only.** `SlackConnection` is unique on
-   `orgId`. Connecting and disconnecting take `requireOrgRole(admin)`, like starting a
-   subscription; a member or viewer cannot point the workspace's traffic at a channel. The
-   connection records who installed it.
+2. **A workspace holds channels; one is the default; projects route to channels.**
+   `SlackConnection` is unique on `{orgId, channelId}`, and exactly one per workspace carries
+   `isDefault`. "Add channel" runs the install again and returns one more webhook bound to one
+   more channel; there is no channel listing and no bot. Each project can be mapped to one
+   channel from the card (`projectIds` on the connection); the mapping is ours and needs no Slack
+   call. Routing for an event: the document's projects that are mapped post to their channels
+   (a document in two mapped rooms posts to both); anything unmapped posts to the default. A
+   workspace with only a default behaves exactly as if the feature had one channel. Connecting,
+   mapping and disconnecting take `requireOrgRole(admin)`, like starting a subscription; a
+   member or viewer cannot point the workspace's traffic at a channel. Each connection records
+   who installed it.
 
 3. **The webhook URL is a secret and is stored as one.** AES-256-GCM at rest with a key derived
    by HKDF from `LNKDRP_SLACK_SECRET`, falling back to `NEXTAUTH_SECRET`, the same per-purpose
@@ -129,9 +136,11 @@ email preferences on the Notifications tab.
 
 ```ts
 {
-  orgId: ObjectId (unique),
+  orgId: ObjectId,                                 // unique with channelId
   teamId: string, teamName: string,
   channelId: string, channelName: string,          // "#deals"
+  isDefault: boolean,                              // exactly one true per workspace
+  projectIds: ObjectId[],                          // projects routed here (decision 2)
   webhookUrlEnc: string,                           // AES-256-GCM, decision 3
   configurationUrl: string | null,
   installedByUserId: ObjectId,
@@ -170,8 +179,9 @@ send-time preference lookup is per member; this is per workspace.
 
 `src/lib/slack/post.ts`: `postToSlack(connection, blocks, text)` with a 3 s `AbortController`,
 returns a typed outcome (`sent | retry(after) | revoked(reason)`), and never throws.
-`src/lib/slack/outbox.ts`: `enqueueSlackPost` (writes the row, then `after(() => drainOne(row))`),
-`drainSlackOutbox({ workspaceId?, now })` for the cron. `src/lib/slack/messages.ts`: the four
+`src/lib/slack/outbox.ts`: `enqueueSlackPost` (resolves the target connections with
+`routeConnections(orgId, docId)` from decision 2, writes one row per connection, then
+`after(() => drainOne(row))`), `drainSlackOutbox({ workspaceId?, now })` for the cron. `src/lib/slack/messages.ts`: the four
 renderers, taking the same inputs as the email round builders in `sendNotificationEmails.ts`
 (`NewViewerEvent` + `ViewLinkInfo`, `VisitBriefEntry`, the doc-update item, the repo-link item).
 
@@ -183,9 +193,12 @@ mirroring what it does for brief emails. No new cron entry.
 
 ### Surfaces
 
-- Notifications tab: a "Slack" card above the email preferences. Disconnected: a paragraph and
-  an "Add to Slack" button. Connected: team and channel, the four switches, "Send a test
-  message", "Reconnect" (change channel), "Disconnect", and the last error if any.
+- Notifications tab: a "Slack" card above the email preferences. Nothing connected: a
+  paragraph and an "Add to Slack" button. Connected: one row per channel (team, channel, the
+  four switches, "Send a test message", "Disconnect", the last error if any), a "Default"
+  marker with "Make default", an "Add channel" button, and under it a projects table with a
+  channel dropdown per project defaulting to "workspace default". The dropdown is the whole
+  mapping UI.
 - Activity feed: `integration.slack_connected` / `integration.slack_disconnected` rows with the
   channel name, so the team can see who wired it up.
 - `/a/data/workspaces/:id`: team, channel, status, last post, failures. Not the URL.
@@ -223,6 +236,10 @@ this deployment" and nothing else changes.
     and a view afterwards writes nothing.
 12. Account and workspace deletion remove both collections' rows (extend
     `tests/lib/purgeCompleteness.test.ts`).
+13. Add a second channel and map one project to it: an open on a document in that project posts
+    only there; an open on an unmapped document posts only to the default; a document in that
+    project and a second mapped project posts to both; disconnecting the mapped channel sends its
+    projects back to the default (unit-tested routing, no Slack needed).
 
 ## Milestones
 
@@ -235,8 +252,12 @@ verification 1, 2, 7, 10, 11.
 enqueue sites behind the event switches, `after()` posting, cron drain, the burst cap, the
 purge. Proves 4–10 and verification 3–9, 12.
 
-**M3 — Read-back.** `lnkdrp_whoami.integrations.slack`, FEATURES.md, CHANGELOG, DEPLOY.md
-env table and the Slack app checklist in section 4, PRODUCTION.md ledger row.
+**M3 — Channels per project.** "Add channel", the default marker, `projectIds` and the
+projects table, `routeConnections` with its unit tests, fan-out to several rows per event.
+Proves the second half of decision 2 and verification 13.
+
+**M4 — Read-back.** `lnkdrp_whoami.integrations.slack` (channels and the mapping), FEATURES.md,
+CHANGELOG, DEPLOY.md env table and the Slack app checklist in section 4, PRODUCTION.md ledger row.
 
 ## Open questions
 
