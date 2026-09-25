@@ -29,6 +29,10 @@ Every view email ends with **Turn off these emails** and **Change how often**. T
 - **Doc update emails**: someone replaced a document and the comparison found real changes.
 - **New documents from teammates**: someone else in the workspace uploaded a document. A personal workspace never sends these.
 
+## Slack
+
+The same moments can post to a Slack channel: a first open, a visit brief, a replaced document and a received file, each with a link back. Connect a channel from Integrations in the sidebar; see [Slack](/help/slack).
+
 ## The activity feed
 
 **Activity** in the sidebar lists everything that happens in the workspace, grouped by day and filterable by type: uploads, link changes, opens, downloads, members and agent actions. On Free, viewer names are withheld, as on the metrics page.
