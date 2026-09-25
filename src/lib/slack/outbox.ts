@@ -34,6 +34,8 @@ export type SlackOutboxEvent = {
   viewerName?: string | null;
   viewerEmail?: string | null;
   version?: number | null;
+  /** The reader put a name to their visit; posted under the Opens switch. */
+  introduced?: boolean;
 };
 
 export type EnqueueSlackInput = {
@@ -105,6 +107,7 @@ export async function enqueueSlackPosts(input: EnqueueSlackInput): Promise<numbe
         viewerName: input.event.viewerName ?? null,
         viewerEmail: input.event.viewerEmail ?? null,
         version: typeof input.event.version === "number" ? input.event.version : null,
+        introduced: input.event.introduced === true,
       },
       occurredAt,
       status: "pending",

@@ -27,6 +27,8 @@ const slackOutboxSchema = new Schema(
       viewerName: { type: String, default: null },
       viewerEmail: { type: String, default: null },
       version: { type: Number, default: null },
+      /** A `views` row that is the reader introducing themselves, not an open. */
+      introduced: { type: Boolean, default: false },
     },
     occurredAt: { type: Date, required: true },
     status: { type: String, enum: ["pending", "sending", "sent", "skipped", "dead"], default: "pending" },

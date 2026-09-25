@@ -19,7 +19,7 @@ import type { SlackConnectionDto, SlackEventKey } from "@/lib/slack/connections"
 import { SlackMark, useSlackConnections, type SlackState } from "./slackShared";
 
 const EVENT_COPY: Record<SlackEventKey, { title: string; body: string }> = {
-  views: { title: "Opens", body: "The first time a recipient opens a share link." },
+  views: { title: "Opens", body: "The first time a recipient opens a share link, and when they introduce themselves." },
   briefs: { title: "Visit briefs", body: "The write-up after a recipient finishes reading (Pro)." },
   docUpdates: { title: "Replaced documents", body: "A new version of a document, with what changed." },
   requests: { title: "Received files", body: "A file dropped into a request inbox." },

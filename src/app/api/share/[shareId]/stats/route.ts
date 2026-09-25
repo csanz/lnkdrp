@@ -676,6 +676,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               },
               request,
             });
+            await enqueueSlackPosts({
+              orgId: String(shareOrgId),
+              kind: "views",
+              sourceId: `intro:${shareId}:${botIdHash}`,
+              event: { docId: String(docId), projectId: projectTarget ? String(projectTarget.project._id) : null, shareId, viewerKey: botIdHash, viewerName: viewerNameIntro ?? null, viewerEmail: viewerEmail ?? null, introduced: true },
+            });
           }
 
           /**

@@ -800,8 +800,21 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
           // The arrival row is keyed on the person already (no document suffix), but normalise
           // anyway so one shape of key cannot slip through — see `splitProjectViewerKey`.
           const anonKey = r.botIdHash ? splitProjectViewerKey(String(r.botIdHash)).botIdHash : "";
-          // Anyone who read something is already in the list above, with real figures.
-          if (authedKey ? seenAuthed.has(authedKey) : seenAnon.has(anonKey)) continue;
+          // Anyone who read something is already in the list above, with real figures. The
+          // arrival row still has something they lack: the name typed on the landing page, which
+          // the document rows never receive (the viewer's timing posts carry no name). Without
+          // this, a reader who introduced themselves and then opened two documents was listed by
+          // the feed as "Nadia Okafor" and by this page as "Anonymous visitor".
+          if (authedKey ? seenAuthed.has(authedKey) : seenAnon.has(anonKey)) {
+            if (!authedKey && anonKey && (r.viewerName || r.viewerEmailSnapshot)) {
+              const listed = anonymousAgg.find((v) => v.key === anonKey);
+              if (listed) {
+                if (!listed.viewerName && r.viewerName) listed.viewerName = r.viewerName;
+                if (!listed.viewerEmailSnapshot && r.viewerEmailSnapshot) listed.viewerEmailSnapshot = r.viewerEmailSnapshot;
+              }
+            }
+            continue;
+          }
           if (!authedKey && !anonKey) continue;
           const raw: RawViewer = {
             key: authedKey || anonKey,

@@ -118,6 +118,7 @@ vi.mock("@/lib/share/projectPublic", async (importOriginal) => ({
 vi.mock("@/lib/share/ownerSide", () => ({ isOwnerSideViewer }));
 vi.mock("@/lib/gating/actor", () => ({ tryResolveAuthUserId }));
 vi.mock("@/lib/activity/log", () => ({ recordActivity }));
+vi.mock("@/lib/slack/outbox", () => ({ enqueueSlackPosts: vi.fn(async () => 0), drainSlackOutbox: vi.fn(async () => null) }));
 vi.mock("@/lib/http/rateLimit", () => ({
   clientIpFromRequest: () => "203.0.113.7",
   rateLimit,

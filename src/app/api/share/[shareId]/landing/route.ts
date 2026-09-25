@@ -15,6 +15,7 @@
  */
 import { NextResponse } from "next/server";
 import { after } from "next/server";
+import { enqueueSlackPosts } from "@/lib/slack/outbox";
 import { cookies } from "next/headers";
 import { Types } from "mongoose";
 import crypto from "node:crypto";
@@ -364,6 +365,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                 projectName: typeof project.name === "string" ? project.name : null,
               },
               request,
+            });
+            // Slack, under the Opens switch: one post per reader per link, however many times the
+            // name is edited.
+            await enqueueSlackPosts({
+              orgId: String(project.orgId),
+              kind: "views",
+              sourceId: `intro:${shareId}:${botIdHash}`,
+              event: { projectId: String(project._id), shareId, viewerKey: botIdHash, viewerName: introName || null, viewerEmail: introEmail || null, introduced: true },
             });
           }
 

@@ -40,6 +40,7 @@ import { enqueueNotifications, notificationDedupeKey } from "@/lib/notifications
 import { drainSlackOutbox, enqueueSlackPosts } from "@/lib/slack/outbox";
 import { sendNotificationEmails, type SendNotificationEmailsResult } from "@/lib/notifications/sendNotificationEmails";
 import { viewerKeyMatchClause } from "@/lib/share/projectPublic";
+import { loadShareViewIdentities, pickReaderIdentity } from "@/lib/share/readerIdentity";
 import { dueAtFor, VISIT_QUIET_MS as VISIT_QUIET_MS_LOCAL } from "@/lib/visits/scheduleVisitBrief";
 import { generateVisitBrief, type VisitBriefDocument, type VisitBriefRecord } from "@/lib/ai/visitBrief";
 import { getPageOutline } from "@/lib/visits/pageOutline";
@@ -509,6 +510,8 @@ async function finish(row: ClaimedRow, set: Record<string, unknown>): Promise<vo
   await VisitBriefModel.updateOne({ _id: row._id, claimToken: row.claimToken }, { $set: { ...set, claimedAt: null, claimToken: null } });
 }
 
+export { pickReaderIdentity };
+
 /** The name on the reader's account, when they were signed in; the brief prefers it to "Someone". */
 async function loadAccountName(viewerUserId: unknown): Promise<string | null> {
   if (!viewerUserId || !Types.ObjectId.isValid(String(viewerUserId))) return null;
@@ -566,7 +569,14 @@ export async function settleVisitBrief(row: ClaimedRow, params: { now: Date; dry
   const downloadsByDoc = await loadDownloadsByDoc(row.shareId, row.botIdHash);
   const stats = buildSittingStats({ visits, titles, pageCounts, downloadsByDoc, previousSittings });
   const ownerPreview = Boolean(row.isOwnerPreview) || visits.some((v) => v.isOwnerPreview);
-  const base = { lastEventAt: latest, startedAt: earliest, stats, closedAt: now };
+  // A data-room reader introduces themselves once on the landing page, and that lands on the
+  // link's ShareView rows, never on this row (the viewer's timing posts carry no name). Without
+  // this the brief, its email and its Slack post said "Someone" for every document the reader
+  // opened after introducing themselves, while the open email named them. Filled here, once, so
+  // the row itself carries the reader and every surface reads the same name.
+  const identity = pickReaderIdentity(row, await loadShareViewIdentities(row.shareId, row.botIdHash));
+  Object.assign(row, identity);
+  const base = { lastEventAt: latest, startedAt: earliest, stats, closedAt: now, ...identity };
 
   if (ownerPreview) {
     if (!dryRun) await finish(row, { ...base, status: "skipped", recapReason: "owner_preview" });

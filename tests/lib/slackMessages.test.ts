@@ -7,6 +7,8 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   pro: false,
+  shareViews: [] as Array<Record<string, unknown>>,
+  arrivals: [] as Array<Record<string, unknown>>,
   doc: { title: "Q3 Deck <draft>", receivedViaRequestProjectId: null as unknown } as Record<string, unknown> | null,
   brief: null as Record<string, unknown> | null,
   change: null as Record<string, unknown> | null,
@@ -15,6 +17,12 @@ const state = vi.hoisted(() => ({
 const lean = (v: unknown) => ({ select: () => ({ lean: async () => v }), lean: async () => v });
 vi.mock("@/lib/models/Doc", () => ({ DocModel: { findOne: () => lean(state.doc) } }));
 vi.mock("@/lib/models/Subscription", () => ({ SubscriptionModel: { findOne: () => lean(state.pro ? { status: "active", kind: "pro" } : null) } }));
+vi.mock("@/lib/models/ShareView", () => ({
+  ShareViewModel: { find: () => ({ select: () => ({ sort: () => ({ limit: () => ({ lean: async () => state.shareViews }) }) }) }) },
+}));
+vi.mock("@/lib/models/ProjectLinkView", () => ({
+  ProjectLinkViewModel: { find: () => ({ select: () => ({ limit: () => ({ lean: async () => state.arrivals }) }) }) },
+}));
 vi.mock("@/lib/models/ShareLink", () => ({ ShareLinkModel: { findOne: () => lean({ label: "Investors", audience: null, isDefault: false }) } }));
 vi.mock("@/lib/models/VisitBrief", () => ({ VisitBriefModel: { findOne: () => lean(state.brief) } }));
 vi.mock("@/lib/models/DocChange", () => ({ DocChangeModel: { findOne: () => lean(state.change) } }));
@@ -34,6 +42,8 @@ const flat = (m: { blocks?: unknown[] } | null) => JSON.stringify(m?.blocks ?? [
 
 beforeEach(() => {
   state.pro = false;
+  state.shareViews = [];
+  state.arrivals = [];
   state.doc = { title: "Q3 Deck <draft>", receivedViaRequestProjectId: null };
   state.brief = null;
   state.change = null;
@@ -53,6 +63,25 @@ describe("views", () => {
     expect(m?.text).toContain("Dana Reyes opened");
     expect(flat(m)).toContain("Q3 Deck &lt;draft&gt;");
     expect(flat(m)).toContain(`https://www.lnkdrp.com/doc/${String(docId)}`);
+    expect(flat(m)).not.toContain("<@");
+  });
+
+  test("a data-room reader who introduced themselves on the landing page is named, even though the open event carries no name", async () => {
+    state.pro = true;
+    // The landing-page introduction lives on the arrival row, not on any share view.
+    state.arrivals = [{ viewerName: "Elena Ruiz", viewerEmailSnapshot: "elena@a16z.example" }];
+    const m = await renderSlackEvent(row("views", { shareId: "p1", viewerKey: "abc.6ab6c0a87102af9d9d260502", viewerName: null, viewerEmail: null }));
+    expect(m?.text).toBe("Elena Ruiz opened Q3 Deck <draft> via Investors.");
+    state.arrivals = [];
+    state.shareViews = [{ viewerName: "Elena Ruiz" }];
+    expect((await renderSlackEvent(row("views", { shareId: "p1", viewerKey: "abc" })))?.text).toMatch(/^Elena Ruiz opened/);
+    state.pro = false;
+    expect((await renderSlackEvent(row("views", { shareId: "p1", viewerKey: "abc" })))?.text).toMatch(/^Someone opened/);
+  });
+
+  test("an introduction posts as its own line, on Free too", async () => {
+    const m = await renderSlackEvent(row("views", { shareId: "p1", viewerKey: "abc", viewerName: "Elena Ruiz", viewerEmail: "elena@a16z.example", introduced: true, docId: null }));
+    expect(m?.text).toBe("Elena Ruiz introduced themselves on a document via Investors. elena@a16z.example");
     expect(flat(m)).not.toContain("<@");
   });
 

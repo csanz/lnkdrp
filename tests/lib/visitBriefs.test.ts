@@ -30,6 +30,7 @@ const {
   downloadsDuringSitting,
   DOWNLOAD_ATTRIBUTION_SLACK_MS,
   visitBriefCard,
+  pickReaderIdentity,
 } = await import("@/lib/visits/visitBriefs");
 const { buildVisitBriefUserPrompt, normalizeVisitBriefOutput, sanitizeRecord, trimHeadline } = await import("@/lib/ai/visitBrief");
 const { outlineEntryFromText } = await import("@/lib/visits/pageOutline");
@@ -463,5 +464,26 @@ describe("the card", () => {
     const card = visitBriefCard({ ...base, status: "failed", recapReason: "model_failed", brief: null } as unknown as Parameters<typeof visitBriefCard>[0]);
     expect(card.status).toBe("failed");
     expect(card.canWrite).toBe(true);
+  });
+});
+
+describe("pickReaderIdentity (a data-room introduction reaches the brief)", () => {
+  const uid = new Types.ObjectId();
+  test("fills what the row lacks from the newest share view that has it; the row's own values win", () => {
+    const row = { viewerUserId: null, viewerName: null, viewerEmail: null } as never;
+    const views = [
+      { viewerName: null, viewerEmail: null, viewerEmailSnapshot: null, lastViewedAt: new Date("2026-09-25T10:05:00Z") },
+      { viewerName: "Priya Nair", viewerEmail: null, viewerEmailSnapshot: "priya@sequoiacap.example", lastViewedAt: new Date("2026-09-25T10:00:00Z") },
+    ];
+    expect(pickReaderIdentity(row, views)).toEqual({ viewerName: "Priya Nair", viewerEmail: "priya@sequoiacap.example" });
+    const typed = { viewerUserId: null, viewerName: "P. Nair", viewerEmail: "p@x.example" } as never;
+    expect(pickReaderIdentity(typed, views)).toEqual({});
+  });
+
+  test("a signed-in reader's account id comes along; nothing is invented when no view knows anything", () => {
+    const row = { viewerUserId: null, viewerName: null, viewerEmail: null } as never;
+    expect(pickReaderIdentity(row, [{ viewerUserId: uid }]).viewerUserId?.toString()).toBe(uid.toString());
+    expect(pickReaderIdentity(row, [{ viewerName: "  ", viewerEmail: "" }])).toEqual({});
+    expect(pickReaderIdentity(row, [])).toEqual({});
   });
 });

@@ -24,6 +24,7 @@ import { formatDuration, linkDisplayName, realLinkLabel } from "@/lib/notificati
 import { splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
 import { viewerPageHref } from "@/lib/metrics/viewerRouteKey";
 import { DEFAULT_LINK_LABEL } from "@/lib/share/links";
+import { resolveReaderIdentity } from "@/lib/share/readerIdentity";
 import type { SlackOutbox } from "@/lib/models/SlackOutbox";
 import type { SlackMessage } from "./post";
 
@@ -115,15 +116,55 @@ async function linkName(shareId: string | null): Promise<string> {
   return linkDisplayName({ shareId, label: link.label ?? null, audience: link.audience ?? null, isDefault: Boolean(link.isDefault), createdDate: null });
 }
 
+/**
+ * "Elena Ruiz introduced themselves on Data room via Sequoia Capital". The one recipient event
+ * that stays visible on Free: the name was volunteered to this workspace (the feed says the same).
+ */
+async function renderIntroduction(f: Facts, orgId: Types.ObjectId, ev: NonNullable<SlackOutbox["event"]>): Promise<SlackMessage | null> {
+  const name = (ev.viewerName ?? "").trim();
+  const email = (ev.viewerEmail ?? "").trim();
+  const who = clip(name || email || "Someone", 80);
+  const projectId = (ev.projectId as Types.ObjectId | null) ?? null;
+  const docId = (ev.docId as Types.ObjectId | null) ?? null;
+  let place = "a document";
+  let url = `${f.appUrl}/activity`;
+  if (projectId) {
+    const project = (await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1 }).lean()) as { name?: string } | null;
+    if (!project) return null;
+    place = (project.name ?? "").trim() || "a data room";
+    url = `${f.appUrl}/project/${String(projectId)}`;
+  } else if (docId) {
+    const doc = await docTitle(orgId, docId);
+    if (!doc) return null;
+    place = doc.title;
+    url = `${f.appUrl}/doc/${String(docId)}`;
+  }
+  const via = await linkName(ev.shareId ?? null);
+  const readerUrl = viewerPageHref({ appUrl: f.appUrl, projectId: projectId ? String(projectId) : null, docId: docId ? String(docId) : null, kind: "anon", key: ev.viewerKey ? splitProjectViewerKey(ev.viewerKey).botIdHash : "" });
+  const text = `${who} introduced themselves on ${place} via ${via}.${name && email ? ` ${email}` : ""}`;
+  return {
+    text,
+    blocks: twoBlocks(
+      `${readerMark(who, readerUrl)} introduced themselves on <${url}|${mrkdwn(place)}>${name && email ? `
+${mrkdwn(email)}` : ""}`,
+      `via ${mrkdwn(via)}${readerUrl ? ` · <${readerUrl}|this reader>` : ""}`,
+    ),
+  };
+}
+
 export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage | null> {
   const orgId = row.orgId as Types.ObjectId;
-  const ev = row.event ?? {};
+  const ev: NonNullable<SlackOutbox["event"]> = row.event ?? ({} as NonNullable<SlackOutbox["event"]>);
   const f = await facts(orgId);
   switch (row.kind) {
     case "views": {
+      if (ev.introduced) return renderIntroduction(f, orgId, ev);
       const doc = await docTitle(orgId, (ev.docId as Types.ObjectId | null) ?? null);
       if (!doc) return null;
-      const who = readerName(f.pro, ev.viewerName, ev.viewerEmail);
+      // The event carries what the timing post said; a data-room reader who introduced themselves on
+      // the landing page said it there, on the share views. Pro only: Free never shows a name.
+      const known = f.pro ? await resolveReaderIdentity(ev.shareId, ev.viewerKey, { viewerName: ev.viewerName, viewerEmail: ev.viewerEmail }) : {};
+      const who = readerName(f.pro, known.viewerName ?? ev.viewerName, known.viewerEmail ?? ev.viewerEmail);
       const via = await linkName(ev.shareId ?? null);
       const docUrl = `${f.appUrl}/doc/${String(ev.docId)}`;
       const readerUrl = readerPage(f, { docId: (ev.docId as Types.ObjectId | null) ?? null, projectId: (ev.projectId as Types.ObjectId | null) ?? null, viewerKey: ev.viewerKey });
@@ -142,7 +183,8 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
       if (!brief) return null;
       const doc = await docTitle(orgId, brief.docId ? new Types.ObjectId(String(brief.docId)) : ((ev.docId as Types.ObjectId | null) ?? null));
       const title = doc?.title ?? "a document";
-      const who = readerName(f.pro, brief.viewerName ?? ev.viewerName, brief.viewerEmail ?? ev.viewerEmail);
+      const knownReader = f.pro && !(brief.viewerName ?? ev.viewerName) ? await resolveReaderIdentity(ev.shareId, brief.botIdHash ?? ev.viewerKey, { viewerName: null, viewerEmail: brief.viewerEmail ?? ev.viewerEmail }) : {};
+      const who = readerName(f.pro, brief.viewerName ?? ev.viewerName ?? knownReader.viewerName, brief.viewerEmail ?? ev.viewerEmail ?? knownReader.viewerEmail);
       const dur = formatDuration(Number(brief.stats?.timeSpentMs ?? 0));
       const pages = Number(brief.stats?.pagesSeen ?? 0);
       const howFar = [pages > 0 ? `${pages} page${pages === 1 ? "" : "s"}` : null, dur].filter(Boolean).join(" · ");
