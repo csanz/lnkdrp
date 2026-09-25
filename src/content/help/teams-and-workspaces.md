@@ -6,7 +6,7 @@ order: 80
 
 ## Workspaces
 
-A workspace holds documents, projects, share links, members, agent keys and its own plan and credits. Every account has a personal workspace, and you can create team workspaces for the people you work with.
+A workspace holds documents, projects, share links, members, connected agents and its own plan and credits. Every account has a personal workspace, and you can create team workspaces for the people you work with.
 
 - Create a team workspace from **Dashboard**, then **Workspace**, then **Create workspace**.
 - On Free you can own one team workspace in addition to your personal one. Pro lifts that limit.
@@ -21,7 +21,7 @@ The current workspace is shown at the top left of the app. Click it to switch, o
 ## Roles
 
 - **Owner**: created the workspace. Cannot leave it.
-- **Admin**: can invite and remove members and viewers, and manage agent keys.
+- **Admin**: can invite and remove members and viewers, and connect or revoke agents.
 - **Member**: can upload, share, replace and manage links and projects.
 - **Viewer**: read-only. Sees every document and all the analytics, but cannot change anything.
 

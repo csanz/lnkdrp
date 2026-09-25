@@ -29,7 +29,7 @@ We reply within a business day.
 
 The more of this you include, the faster we can help:
 
-- **The workspace name**, as shown at the top left of the app. Most things are per workspace, including plans, credits and agent keys.
+- **The workspace name**, as shown at the top left of the app. Most things are per workspace, including plans, credits and connected agents.
 - **The link URL** or document title, if the question is about a share link, a viewer or analytics.
 - **The time** it happened, with your time zone.
 - **What you expected** and what you saw instead. A screenshot helps.

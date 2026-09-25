@@ -1,6 +1,6 @@
 ---
 title: Slack
-description: Post opens, visit briefs, replaced documents and received files to a Slack channel, and route each project to its own channel.
+description: Post opens, visit briefs, replaced documents, received files and new documents to a Slack channel, and route each project to its own channel.
 order: 75
 ---
 

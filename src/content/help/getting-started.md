@@ -47,7 +47,7 @@ Paste the link into an email or a message. Recipients do not need an account. Th
 
 ## Personal and team workspaces
 
-Every account has a personal workspace. You can also create a team workspace and invite other people to it. Each workspace has its own documents, projects, plan, credits and agent keys, and is billed separately.
+Every account has a personal workspace. You can also create a team workspace and invite other people to it. Each workspace has its own documents, projects, plan, credits and connected agents, and is billed separately.
 
 - Create one from **Dashboard**, then **Workspace**, then **Create workspace**.
 - On Free, you can own one team workspace in addition to your personal one.
