@@ -5,7 +5,7 @@
  * fallback so a client can prove its key works from outside a browser. Clients self-identify with
  * `x-lnkdrp-agent: <client>/<version>`.
  *
- * 200 `{ ok: true, userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client }`
+ * 200 `{ ok: true, userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client, credentialId, credentialKind, integrations.slack }`
  * 401 `{ error: "unauthorized" | "key_revoked" }`
  *
  * The first ever use of a key records an `agent.connected` activity row attributed to the agent.
@@ -20,6 +20,7 @@ import { UserModel } from "@/lib/models/User";
 import { OrgModel } from "@/lib/models/Org";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { recordActivity } from "@/lib/activity/log";
+import { listSlackConnections, serializeSlackConnection } from "@/lib/slack/connections";
 import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
@@ -58,6 +59,23 @@ export async function GET(request: Request) {
       });
     }
 
+    // What the workspace posts to Slack (docs/prds/lnkdrp-slack.md, M4): channel names, the
+    // default, the projects routed to each, the four switches. Never the webhook. Best-effort:
+    // whoami must not fail because this read did.
+    const slackChannels = await listSlackConnections(new Types.ObjectId(actor.orgId))
+      .then((rows) =>
+        rows.map(serializeSlackConnection).map((c) => ({
+          channelName: c.channelName,
+          teamName: c.teamName,
+          isDefault: c.isDefault,
+          status: c.status,
+          projectIds: c.projectIds,
+          events: c.events,
+          lastPostAt: c.lastPostAt,
+        })),
+      )
+      .catch(() => []);
+
     return NextResponse.json(
       {
         ok: true,
@@ -74,6 +92,7 @@ export async function GET(request: Request) {
         // session to this rather than to the bearer, which for a grant changes every hour.
         credentialId: key.id,
         credentialKind: key.kind,
+        integrations: { slack: { connected: slackChannels.some((c) => c.status === "active"), channels: slackChannels } },
       },
       { headers: NO_STORE },
     );

@@ -82,6 +82,11 @@ export async function PATCH(request: Request) {
       await SlackConnectionModel.updateMany({ orgId: ctx.orgId, _id: { $ne: connectionId } }, { $set: { isDefault: false } });
       set.isDefault = true;
     }
+    // One project posts to one channel (non-goal 2): mapping a project here takes it off any
+    // other channel in the workspace, so the picker never has to explain a conflict.
+    if (Array.isArray(set.projectIds) && (set.projectIds as unknown[]).length) {
+      await SlackConnectionModel.updateMany({ orgId: ctx.orgId, _id: { $ne: connectionId } }, { $pull: { projectIds: { $in: set.projectIds } } });
+    }
     if (Object.keys(set).length) await SlackConnectionModel.updateOne({ _id: connectionId }, { $set: set });
 
     const rows = await listSlackConnections(ctx.orgId);

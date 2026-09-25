@@ -27,6 +27,7 @@ const usavx: Whoami = {
   client: "test",
   credentialId: "k1",
   credentialKind: "key",
+  integrations: { slack: { connected: false, channels: [] } },
 };
 
 describe("workspaceInstructions", () => {

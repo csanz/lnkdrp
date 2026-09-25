@@ -6,7 +6,7 @@
  * 20s timeout. Non-2xx responses become `ToolError`s via `mapApiError`. The key is never logged.
  *
  * Envelopes verified against the route handlers on 2026-09-13:
- * - `GET  /api/agent/whoami`                   -> `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client }`
+ * - `GET  /api/agent/whoami`                   -> `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client, integrations }`
  * - `POST /api/docs` `{ title }`               -> 201 `{ doc: { id, shareId, title, status, shareEnabled, … }, planWarning? }`; 402 `{ code: "plan_limit", … }` at the Free shared-document cap
  * - `GET  /api/docs?q=&ids=&page=&limit=`     -> `{ total, page, limit, docs: [{ id, shareId, title, status, version, one_liner, … }] }` (`q` matches a title or any link slug; `ids` is a direct lookup)
  * - `GET  /api/activity?limit=&cursor=&type=&docId=&who=` -> `{ items: [{ id, type, createdDate, actor, agent, doc, project, meta }], nextCursor }` (`who=agents` = anything an MCP/API client did)
@@ -71,7 +71,43 @@ export type Whoami = {
   /** Key id or OAuth grant id: the credential's identity, unchanged when an OAuth token refreshes. */
   credentialId: string;
   credentialKind: "key" | "oauth";
+  /**
+   * What the workspace posts to Slack (docs/prds/lnkdrp-slack.md, M4): read-only, never the
+   * webhook. `connected` is "at least one active channel". A project id in `projectIds` routes that
+   * project's documents to the channel instead of the default.
+   */
+  integrations: { slack: { connected: boolean; channels: SlackChannelInfo[] } };
 };
+
+export type SlackChannelInfo = {
+  channelName: string;
+  teamName: string;
+  isDefault: boolean;
+  status: "active" | "revoked";
+  projectIds: string[];
+  events: { views: boolean; briefs: boolean; docUpdates: boolean; requests: boolean };
+  lastPostAt: string | null;
+};
+
+function slackChannelsFrom(raw: unknown): SlackChannelInfo[] {
+  const list = Array.isArray(raw) ? raw : [];
+  return list.flatMap((c): SlackChannelInfo[] => {
+    if (!c || typeof c !== "object") return [];
+    const r = c as Record<string, unknown>;
+    const ev = (r.events && typeof r.events === "object" ? r.events : {}) as Record<string, unknown>;
+    return [
+      {
+        channelName: strOrNull(r.channelName) ?? "",
+        teamName: strOrNull(r.teamName) ?? "",
+        isDefault: Boolean(r.isDefault),
+        status: r.status === "revoked" ? "revoked" : "active",
+        projectIds: Array.isArray(r.projectIds) ? r.projectIds.filter((p): p is string => typeof p === "string") : [],
+        events: { views: ev.views !== false, briefs: ev.briefs !== false, docUpdates: ev.docUpdates !== false, requests: ev.requests !== false },
+        lastPostAt: strOrNull(r.lastPostAt),
+      },
+    ];
+  });
+}
 
 /** `used` is what the workspace holds now; `requested` is what the call asked to add. */
 export type PlanWarning = { limit: string; used: number; requested: number; max: number; grace: unknown };
@@ -982,6 +1018,12 @@ export class ApiClient {
       client: strOrNull(w.client) ?? "",
       credentialId: strOrNull(w.credentialId) ?? "",
       credentialKind: w.credentialKind === "oauth" ? "oauth" : "key",
+      integrations: (() => {
+        const integ = w.integrations && typeof w.integrations === "object" ? (w.integrations as Record<string, unknown>) : {};
+        const slack = integ.slack && typeof integ.slack === "object" ? (integ.slack as Record<string, unknown>) : {};
+        const channels = slackChannelsFrom(slack.channels);
+        return { slack: { connected: channels.some((c) => c.status === "active"), channels } };
+      })(),
     };
   }
 

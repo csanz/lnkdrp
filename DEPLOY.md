@@ -247,6 +247,7 @@ openssl rand -hex 32      # CRON_SECRET
 openssl rand -hex 32      # REALTIME_SECRET   (shared by web app, realtime, mcp)
 openssl rand -hex 32      # LNKDRP_SHARE_PASSWORD_SECRET
 openssl rand -hex 32      # LNKDRP_ORG_INVITE_TOKEN_SECRET
+openssl rand -hex 32      # LNKDRP_SLACK_SECRET (optional, 4.7)
 openssl rand -hex 32      # CRON_MONITOR_SECRET (read-only; for the uptime monitor, 11 Crons)
 ```
 
@@ -642,6 +643,31 @@ Two more things that decide whether mail lands, neither of them DNS:
    approve button in `/a/waitlist`). Both quote workspace and product names, so read them with the
    live `NOTIFICATION_EMAIL_FROM` in place rather than assuming the copy is fine.
 
+### 4.7 Slack (optional)
+
+The Integrations page lets a workspace post opens, visit briefs, replaced documents and received
+files into a Slack channel (`docs/FEATURES.md`, Integrations; `docs/prds/lnkdrp-slack.md`). It
+needs one Slack app, owned by us, that every workspace installs into its own Slack. Without the
+two credentials the feature is simply off: the page says so and nothing else changes.
+
+1. Create the app at `https://api.slack.com/apps` ("From scratch", name `LinkDrop`, any dev
+   workspace). Under **OAuth & Permissions** add the bot scope `incoming-webhook` and nothing
+   else; add the redirect URL `https://lnkdrp.com/api/slack/oauth/callback` (and the `www` host
+   if both serve the app; for local testing, the ngrok host's `/api/slack/oauth/callback`).
+   Under **Basic Information** set the icon and description; **Distribution** does not need to be
+   public: any workspace can install a non-distributed app through its own OAuth flow.
+2. Copy **Client ID** and **Client Secret** from Basic Information into Vercel as
+   `SLACK_CLIENT_ID` and `SLACK_CLIENT_SECRET`. Generate `LNKDRP_SLACK_SECRET` (3): it derives the
+   key the webhook URLs are encrypted under, so a leak of the database alone does not leak the
+   webhooks. Unset, the code falls back to `NEXTAUTH_SECRET`; set it, so rotating one does not
+   force the other.
+3. Redeploy, sign in as an owner, open `/integrations/slack`, "Add to Slack", pick a channel, then
+   "Send a test message". The install state is signed and expires in ten minutes; an error lands
+   back on the page with the reason.
+4. Nothing to set on Fly: the realtime and MCP hosts never post to Slack (the web app does, from
+   the request and the two crons), and the MCP only reads the mapping back through
+   `/api/agent/whoami`.
+
 ## 5. Web app on Vercel
 
 1. Import the repository; framework preset Next.js; root directory `/`; Node 22 (see 2 on
@@ -688,6 +714,8 @@ Two more things that decide whether mail lands, neither of them DNS:
 | `RESEND_API_KEY`, `NOTIFICATION_EMAIL_FROM`, `INVITE_EMAIL_FROM` | from 4.6; leave `EMAIL_TRANSPORT` unset |
 | `LNKDRP_SHARE_PASSWORD_SECRET`, `LNKDRP_ORG_INVITE_TOKEN_SECRET` | generated (3); rotate only after a leak |
 | `LNKDRP_NOTIFICATION_TOKEN_SECRET` | optional; generated (3). Signs the one-click off link in view emails; unset, it falls back to `NEXTAUTH_SECRET` |
+| `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET` | optional; from 4.7. Unset, the Slack integration is off: `/integrations/slack` says so and `/api/slack/install` answers 503 |
+| `LNKDRP_SLACK_SECRET` | optional; generated (3). Encrypts stored Slack webhook URLs and signs the install state; unset, it falls back to `NEXTAUTH_SECRET` |
 | `ERROR_LOGGING_ENABLED` | `true`. The default is off outside development, so production records nothing in `errorevents` without it (Vercel Logs still get the one-line error summaries, 11 Logs) |
 | `STRIPE_CREDITS_METER_EVENT_NAME` | optional; defaults to `ai_credits` |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | optional; no current page reads it (Checkout is created on the server) |

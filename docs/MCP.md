@@ -296,7 +296,11 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
 - In: `{}`
 - Out: `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan: "free"|"pro", keyPrefix, scopes,
   client, creditsRemaining: number|null, creditsResetAt: string|null, onDemand: boolean, capabilities,
-  costTiers: ["basic","standard","advanced"], costs: { summary: [1,2,5], compare: [2,5,12] }, mcpVersion }`. `client` is the label
+  costTiers: ["basic","standard","advanced"], costs: { summary: [1,2,5], compare: [2,5,12] }, mcpVersion,
+  integrations: { slack: { connected, channels: [{ channelName, teamName, isDefault, status, projectIds, events, lastPostAt }] } } }`.
+  `integrations.slack` is read-only (docs/prds/lnkdrp-slack.md): which channels the workspace posts to, which one is the
+  default, which projects route to each, and the four switches (`views`, `briefs`, `docUpdates`, `requests`); never the
+  webhook, and there is no tool to change it (the Integrations page does). `client` is the label
   derived from the `initialize` client name (`"claude-code"` → `"Claude Code"`; unknown names are
   title-cased). `costs` are credits per tier (basic, standard, advanced) for the AI actions, computed from
   `creditsForRun` in `src/lib/credits/schedule.ts` (the MCP server imports it, so the table cannot drift);
@@ -1005,10 +1009,10 @@ session that did not set it (mt_GOKLLvF4-v).
   nothing. Prefer `lnkdrp_verify_share_password` when you only need to confirm a password you
   already hold.
 
-- **An API key cannot do this.** Since the security pass, revealing a share password is refused for
-  key-authenticated callers (`forbidApiKey`), and every MCP connection is a key — so this answers
-  `forbidden` with "Sign in and do it from the app". Reading a secret back out is deliberately not
-  something a bearer credential may do. `lnkdrp_verify_share_password` is unaffected and is what
+- **A connected agent cannot do this.** Since the security pass, revealing a share password is refused
+  for every agent credential (`forbidApiKey`, which covers API keys and agents that signed in over
+  OAuth alike) — so this answers `forbidden` with "that needs the person, signed in to the app".
+  Reading a secret back out is deliberately not something a bearer credential may do. `lnkdrp_verify_share_password` is unaffected and is what
   answers the question people actually ask: does this password open the link?
 
 ### `lnkdrp_update_share_link` (write)

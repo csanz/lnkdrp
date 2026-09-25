@@ -5,12 +5,13 @@
  *
  * Nothing connected: what it does and "Add to Slack", which is a plain link to the install route
  * (a redirect chain, not a fetch). Connected: one row per channel with the four event switches,
- * "Send a test message" and "Disconnect", a Default marker, and "Add channel". Project routing
- * (M3) is not here yet. Owners and admins act; everyone else reads.
+ * "Send a test message" and "Disconnect", a Default marker, "Add channel", and the projects each
+ * channel is routed for (M3): a room or a request inbox picked on one card leaves any other card,
+ * since one project posts to one channel. Owners and admins act; everyone else reads.
  */
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import { usePlan } from "@/lib/client/usePlan";
@@ -31,6 +32,28 @@ const REASON_COPY: Record<string, string> = {
   exchange: "Slack did not accept the install. Try again in a minute.",
   not_configured: "Slack is not set up on this deployment.",
 };
+
+type RoutableProject = { id: string; name: string; isRequest: boolean };
+
+/**
+ * Every room and request inbox in the workspace, for the picker. Two pages of fifty is far past
+ * the plan caps; a workspace that somehow has more still sees the first hundred of each.
+ */
+async function loadRoutableProjects(): Promise<RoutableProject[]> {
+  const out: RoutableProject[] = [];
+  const pull = async (path: string, key: "projects" | "items", isRequest: boolean) => {
+    for (let page = 1; page <= 2; page += 1) {
+      const res = await fetch(`${path}?limit=50&page=${page}${isRequest ? "" : "&lite=1"}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+      const rows = Array.isArray(json?.[key]) ? (json![key] as Array<{ id?: unknown; name?: unknown }>) : [];
+      for (const r of rows) if (typeof r?.id === "string") out.push({ id: r.id, name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : "Untitled", isRequest });
+      if (rows.length < 50) return;
+    }
+  };
+  await Promise.all([pull("/api/projects", "projects", false), pull("/api/requests", "items", true)]);
+  return out.sort((a, b) => Number(a.isRequest) - Number(b.isRequest) || a.name.localeCompare(b.name));
+}
 
 const BTN_PRIMARY =
   "inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] hover:opacity-90 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
@@ -75,6 +98,23 @@ export default function SlackPageClient() {
 
   const connections = data?.connections ?? [];
   const enabled = data?.enabled ?? true;
+
+  // The picker's options. Loaded once there is a channel to route to; not on the empty state.
+  const [projects, setProjects] = useState<RoutableProject[] | null>(null);
+  useEffect(() => {
+    if (!connections.length || projects !== null) return;
+    let alive = true;
+    loadRoutableProjects()
+      .then((rows) => {
+        if (alive) setProjects(rows);
+      })
+      .catch(() => {
+        if (alive) setProjects([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [connections.length, projects]);
 
   return (
     <div className="flex h-full flex-col">
@@ -123,14 +163,14 @@ export default function SlackPageClient() {
         ) : (
           <div className="grid gap-4">
             {connections.map((c) => (
-              <ChannelRow key={c.id} c={c} canManage={canManage} busy={busy} call={call} setNotice={setNotice} />
+              <ChannelRow key={c.id} c={c} all={connections} projects={projects} canManage={canManage} busy={busy} call={call} setNotice={setNotice} />
             ))}
             {canManage ? (
               <div>
                 <a href="/api/slack/install" className={`${BTN_SECONDARY} gap-2`}>
                   <SlackMark className="h-4 w-4" /> Add channel
                 </a>
-                <p className="mt-2 text-[12px] text-[var(--muted-2)]">Each channel is its own install on Slack&apos;s side. Routing projects to channels is coming next.</p>
+                <p className="mt-2 text-[12px] text-[var(--muted-2)]">Each channel is its own install on Slack&apos;s side. Route a project to a channel from its card; everything else posts to the default.</p>
               </div>
             ) : null}
           </div>
@@ -147,12 +187,16 @@ export default function SlackPageClient() {
 
 function ChannelRow({
   c,
+  all,
+  projects,
   canManage,
   busy,
   call,
   setNotice,
 }: {
   c: SlackConnectionDto;
+  all: SlackConnectionDto[];
+  projects: RoutableProject[] | null;
   canManage: boolean;
   busy: string | null;
   call: (key: string, method: "PATCH" | "DELETE" | "POST", path: string, body: Record<string, unknown>) => Promise<unknown>;
@@ -243,6 +287,7 @@ function ChannelRow({
           );
         })}
       </ul>
+      {!revoked ? <ProjectRouting c={c} all={all} projects={projects} canManage={canManage} busy={busy} call={call} /> : null}
       {c.configurationUrl ? (
         <p className="mt-3 text-[12px] text-[var(--muted-2)]">
           Remove the app on Slack&apos;s side from its{" "}
@@ -251,6 +296,108 @@ function ChannelRow({
           </a>
           .
         </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The projects this channel is routed for. Chips for what is mapped, a picker for the rest. A
+ * project already on another card is offered with that channel's name and moves when picked
+ * (the server pulls it from the other row). The default card says what falls through to it.
+ */
+function ProjectRouting({
+  c,
+  all,
+  projects,
+  canManage,
+  busy,
+  call,
+}: {
+  c: SlackConnectionDto;
+  all: SlackConnectionDto[];
+  projects: RoutableProject[] | null;
+  canManage: boolean;
+  busy: string | null;
+  call: (key: string, method: "PATCH" | "DELETE" | "POST", path: string, body: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const byId = new Map((projects ?? []).map((p) => [p.id, p]));
+  const elsewhere = new Map<string, string>();
+  for (const other of all) {
+    if (other.id === c.id || other.status === "revoked") continue;
+    for (const pid of other.projectIds) elsewhere.set(pid, other.channelName);
+  }
+  const mapped = c.projectIds;
+  const options = (projects ?? []).filter((p) => !mapped.includes(p.id));
+  const save = (projectIds: string[]) => void call(`route:${c.id}`, "PATCH", "/api/orgs/active/slack", { connectionId: c.id, projectIds });
+  const saving = busy === `route:${c.id}`;
+
+  return (
+    <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[13px] font-medium text-[var(--fg)]">Projects</div>
+          <div className="text-[12px] text-[var(--muted-2)]">
+            {c.isDefault
+              ? mapped.length
+                ? "Routed here, plus everything not routed to another channel."
+                : "Everything not routed to another channel posts here."
+              : mapped.length
+                ? "Documents in these projects post here instead of the default."
+                : "Nothing routed here yet. Pick a project and its documents post here instead of the default."}
+          </div>
+        </div>
+        {canManage && projects !== null && options.length ? (
+          <select
+            aria-label={`Route a project to ${c.channelName}`}
+            className="max-w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1.5 text-[13px] text-[var(--fg)] disabled:opacity-60"
+            value=""
+            disabled={busy !== null}
+            onChange={(e) => {
+              const id = e.target.value;
+              if (id) save([...mapped, id]);
+            }}
+          >
+            <option value="">{saving ? "Saving…" : "Route a project…"}</option>
+            {options.map((p) => {
+              const other = elsewhere.get(p.id);
+              return (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                  {p.isRequest ? " (request inbox)" : ""}
+                  {other ? ` · now on ${other}` : ""}
+                </option>
+              );
+            })}
+          </select>
+        ) : canManage && projects === null ? (
+          <span className="text-[12px] text-[var(--muted-2)]">Loading projects…</span>
+        ) : null}
+      </div>
+      {mapped.length ? (
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {mapped.map((pid) => {
+            const p = byId.get(pid);
+            const name = p ? p.name : projects === null ? "…" : "A removed project";
+            return (
+              <li key={pid} className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[12px] text-[var(--fg)]">
+                <span className="max-w-[18rem] truncate">{name}</span>
+                {p?.isRequest ? <span className="text-[var(--muted-2)]">inbox</span> : null}
+                {canManage ? (
+                  <button
+                    type="button"
+                    aria-label={`Stop routing ${name} to ${c.channelName}`}
+                    disabled={busy !== null}
+                    onClick={() => save(mapped.filter((x) => x !== pid))}
+                    className="ml-0.5 rounded-full px-1 leading-none text-[var(--muted-2)] hover:text-[var(--fg)] disabled:opacity-60"
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
       ) : null}
     </div>
   );

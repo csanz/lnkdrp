@@ -61,3 +61,19 @@ describe("the burst cap", () => {
     expect(m.blocks).toHaveLength(1);
   });
 });
+
+describe("one project, one channel (source contract)", () => {
+  test("mapping a project on one card pulls it from every other card in the workspace", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("src/app/api/orgs/active/slack/route.ts", "utf8");
+    expect(src).toMatch(/\$pull: \{ projectIds: \{ \$in: set\.projectIds \} \}/);
+    expect(src).toMatch(/_id: \{ \$ne: connectionId \} \}, \{ \$pull/);
+  });
+
+  test("the picker offers a project already routed elsewhere with that channel's name", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("src/app/(app)/integrations/slack/pageClient.tsx", "utf8");
+    expect(src).toContain("now on ${other}");
+    expect(src).toContain("/api/requests");
+  });
+});

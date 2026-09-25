@@ -53,15 +53,18 @@ const oid = (v: string | Types.ObjectId | null | undefined): Types.ObjectId | nu
   return Types.ObjectId.isValid(s) ? new Types.ObjectId(s) : null;
 };
 
-/** The document's projects plus the event's own, as strings, for routing. */
+/** The document's rooms, the request inbox it arrived through, and the event's own project, for routing. */
 async function projectIdsFor(orgId: Types.ObjectId, event: SlackOutboxEvent): Promise<string[]> {
   const out = new Set<string>();
   const direct = oid(event.projectId);
   if (direct) out.add(String(direct));
   const docId = oid(event.docId);
   if (docId) {
-    const doc = (await DocModel.findOne({ _id: docId, orgId }).select({ projectIds: 1 }).lean()) as { projectIds?: unknown[] } | null;
+    const doc = (await DocModel.findOne({ _id: docId, orgId }).select({ projectIds: 1, receivedViaRequestProjectId: 1 }).lean()) as
+      | { projectIds?: unknown[]; receivedViaRequestProjectId?: unknown }
+      | null;
     for (const p of doc?.projectIds ?? []) if (p) out.add(String(p));
+    if (doc?.receivedViaRequestProjectId) out.add(String(doc.receivedViaRequestProjectId));
   }
   return Array.from(out);
 }
