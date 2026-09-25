@@ -17,6 +17,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
 import { sendNotificationEmails } from "@/lib/notifications/sendNotificationEmails";
+import { drainSlackOutbox } from "@/lib/slack/outbox";
 import { requireCronAuth } from "@/lib/cron/auth";
 import { acquireCronLease, releaseCronLease } from "@/lib/cron/lease";
 
@@ -84,6 +85,8 @@ async function handle(request: Request) {
       ...(limitMembers ? { limitMembers } : {}),
       ...(limitEventsPerMember ? { limitEventsPerMember } : {}),
     });
+    // Slack posts that failed at the moment (or were held by the burst cap) go out here.
+    const slack = dryRun ? null : await drainSlackOutbox({ workspaceId });
 
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
@@ -119,7 +122,7 @@ async function handle(request: Request) {
             lastFinishedAt: finishedAt,
             lastRunAt: finishedAt,
             lastDurationMs: durationMs,
-            lastResult: result,
+            lastResult: { ...result, slack },
             ...(problems.length
               ? { lastErrorAt: finishedAt, lastError: problems.join("; ") }
               : {}),
@@ -133,7 +136,7 @@ async function handle(request: Request) {
       // ignore
     }
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, slack });
   } catch (err) {
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());

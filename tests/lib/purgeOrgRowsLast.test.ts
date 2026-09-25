@@ -91,6 +91,7 @@ vi.mock("@/lib/models/ActivityEvent", () => ({ ActivityEventModel: stub("Activit
 // The real module too: OAuthGrant and OAuthCode import API_KEY_SCOPES from it (a schema enum, no DB).
 vi.mock("@/lib/models/ApiKey", async (importOriginal) => ({ ...(await importOriginal<object>()), ApiKeyModel: stub("ApiKey") }));
 vi.mock("@/lib/models/SlackConnection", () => ({ SlackConnectionModel: stub("SlackConnection") }));
+vi.mock("@/lib/models/SlackOutbox", () => ({ SlackOutboxModel: stub("SlackOutbox") }));
 // Added to the purge with the OAuth sign-in work; unmocked they buffered against no database and timed out.
 vi.mock("@/lib/models/OAuthGrant", () => ({ OAuthGrantModel: stub("OAuthGrant") }));
 vi.mock("@/lib/models/OAuthCode", () => ({ OAuthCodeModel: stub("OAuthCode") }));

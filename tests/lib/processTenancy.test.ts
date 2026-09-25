@@ -78,6 +78,7 @@ vi.mock("@/lib/models/Review", () => ({ ReviewModel: { create: vi.fn(async () =>
 vi.mock("@/lib/models/DocChange", () => ({ DocChangeModel: { create: vi.fn(async () => ({})), findOne: vi.fn(async () => null) } }));
 vi.mock("@/lib/models/OrgMembership", () => ({ OrgMembershipModel: { find: vi.fn(async () => []) } }));
 vi.mock("@/lib/notifications/queue", () => ({ enqueueNotification: vi.fn(), notificationDedupeKey: () => "k" }));
+vi.mock("@/lib/slack/outbox", () => ({ enqueueSlackPosts: vi.fn(async () => 0), drainSlackOutbox: vi.fn(async () => null) }));
 vi.mock("@/lib/blob/clientUpload", () => ({
   buildDocExtractedTextPathname: () => "a.txt",
   buildDocPreviewPngPathname: () => "b.png",

@@ -37,6 +37,7 @@ import { failAndRefundLedger, markLedgerCharged, reserveCreditsOrThrow } from "@
 import { creditsForRun } from "@/lib/credits/schedule";
 import { isDailyCapError, isOutOfCreditsError } from "@/lib/credits/errors";
 import { enqueueNotifications, notificationDedupeKey } from "@/lib/notifications/queue";
+import { drainSlackOutbox, enqueueSlackPosts } from "@/lib/slack/outbox";
 import { sendNotificationEmails, type SendNotificationEmailsResult } from "@/lib/notifications/sendNotificationEmails";
 import { viewerKeyMatchClause } from "@/lib/share/projectPublic";
 import { dueAtFor, VISIT_QUIET_MS as VISIT_QUIET_MS_LOCAL } from "@/lib/visits/scheduleVisitBrief";
@@ -1073,6 +1074,8 @@ async function announceAndEnqueue(params: {
         occurredAt: params.now,
       })),
   );
+  // The brief is the Slack post too. Written now, posted by the tick right after the emails.
+  await enqueueSlackPosts({ orgId: String(row.orgId), kind: "briefs", sourceId: String(row._id), event, occurredAt: params.now, postNow: false });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1186,6 +1189,7 @@ export async function runVisitBriefs(params: RunVisitBriefsParams = {}): Promise
   if (params.sendEmails !== false && !dryRun && totals.briefed + totals.recap + totals.failed > 0) {
     try {
       totals.emails = await sendNotificationEmails({ kinds: ["visit_briefs"], workspaceId, now: new Date() });
+      await drainSlackOutbox({ workspaceId, now: new Date() });
     } catch (err) {
       // The rows are in the queue; the notification-emails tick sends them within five minutes.
       debugError(1, "[visit-briefs] sending failed; the notification-emails cron will retry", { message: err instanceof Error ? err.message : String(err) });

@@ -21,6 +21,7 @@ import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerI
 import { sendViewerIntroductionEmails, viewerIntroductionAppUrl } from "@/lib/share/viewerIntroductionEmails";
 import { isViewerEmailVerified } from "@/lib/share/viewerEmailVerification";
 import { enqueueNotifications, notificationDedupeKey } from "@/lib/notifications/queue";
+import { enqueueSlackPosts } from "@/lib/slack/outbox";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { ShareViewModel } from "@/lib/models/ShareView";
@@ -956,6 +957,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                         occurredAt: viewedAt,
                       })),
                   );
+                  // Slack is a channel, not a member: one row per connected channel, posted now.
+                  await enqueueSlackPosts({
+                    orgId: docOrgId,
+                    kind: "views",
+                    sourceId: String(createdShareViewId),
+                    event: { ...event, shareViewId: createdShareViewId },
+                    occurredAt: viewedAt,
+                  });
                 }
               } catch {
                 // best-effort

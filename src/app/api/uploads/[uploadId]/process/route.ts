@@ -17,6 +17,7 @@ import { ReviewModel } from "@/lib/models/Review";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { enqueueNotification, notificationDedupeKey } from "@/lib/notifications/queue";
+import { enqueueSlackPosts } from "@/lib/slack/outbox";
 import {
   buildDocExtractedTextPathname,
   buildDocPreviewPngPathname,
@@ -3137,6 +3138,12 @@ export async function POST(
                   });
                 }),
               );
+              await enqueueSlackPosts({
+                orgId: existingDocOrgId,
+                kind: "docUpdates",
+                sourceId: String(uploadId),
+                event: { docId, uploadId, version: uploadVersion },
+              });
             } catch (e) {
               debugError(1, "[process] doc_updates enqueue failed", {
                 uploadId,
@@ -3241,6 +3248,12 @@ export async function POST(
                   });
                 }),
               );
+              await enqueueSlackPosts({
+                orgId: existingDocOrgId,
+                kind: "requests",
+                sourceId: String(uploadId),
+                event: { docId, uploadId },
+              });
             } catch (e) {
               debugError(1, "[process] repo_link_requests enqueue failed", {
                 uploadId,

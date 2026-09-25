@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 915 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 931 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -19,6 +19,8 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/(app)/doc/[docId]/metrics/viewer/[viewerKey]/page.tsx` — `/doc/:docId/metrics/viewer/:viewerKey` · default, dynamic, metadata, runtime
 - `src/app/(app)/doc/[docId]/page.tsx` — `/doc/:docId` · default
 - `src/app/(app)/doc/[docId]/review/page.tsx` — `/doc/:docId/review` · default
+- `src/app/(app)/integrations/page.tsx` — `/integrations` · default, metadata
+- `src/app/(app)/integrations/slack/page.tsx` — `/integrations/slack` · default, metadata
 - `src/app/(app)/layout.tsx` · default
 - `src/app/(app)/metrics/page.tsx` — `/metrics` · default, metadata
 - `src/app/(app)/project/[projectSlug]/links/page.tsx` — `/project/:projectSlug/links` · default
@@ -227,6 +229,8 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/orgs/[orgId]/route.ts` — `/api/orgs/:orgId` · DELETE, GET, PATCH, runtime
 - `src/app/api/orgs/active/notification-preferences/route.ts` — `/api/orgs/active/notification-preferences` · dynamic, GET, PATCH, POST, runtime
 - `src/app/api/orgs/active/route.ts` — `/api/orgs/active` · dynamic, GET, POST, runtime
+- `src/app/api/orgs/active/slack/route.ts` — `/api/orgs/active/slack` · DELETE, dynamic, GET, PATCH, runtime
+- `src/app/api/orgs/active/slack/test/route.ts` — `/api/orgs/active/slack/test` · POST, runtime
 - `src/app/api/orgs/claim-join/route.ts` — `/api/orgs/claim-join` · POST, runtime
 - `src/app/api/orgs/route.ts` — `/api/orgs` · dynamic, GET, POST, runtime
 - `src/app/api/plan/route.ts` — `/api/plan` · dynamic, GET, runtime
@@ -256,6 +260,8 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/share/[shareId]/stats/route.ts` — `/api/share/:shareId/stats` · dynamic, GET, POST, runtime
 - `src/app/api/share/[shareId]/unlock/route.ts` — `/api/share/:shareId/unlock` · POST, runtime
 - `src/app/api/sidebar/route.ts` — `/api/sidebar` · dynamic, GET, runtime
+- `src/app/api/slack/install/route.ts` — `/api/slack/install` · dynamic, GET, runtime
+- `src/app/api/slack/oauth/callback/route.ts` — `/api/slack/oauth/callback` · dynamic, GET, runtime
 - `src/app/api/starred/bootstrap/route.ts` — `/api/starred/bootstrap` · dynamic, POST, runtime
 - `src/app/api/starred/route.ts` — `/api/starred` · dynamic, GET, PATCH, POST, runtime
 - `src/app/api/stripe/checkout/route.ts` — `/api/stripe/checkout` · POST, runtime
@@ -304,6 +310,9 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/(app)/doc/[docId]/metrics/viewer/[viewerKey]/pageClient.tsx` · default
 - `src/app/(app)/doc/[docId]/pageClient.tsx` · default, REMOTE_DOC_CHANGE_ACTIVITY
 - `src/app/(app)/doc/[docId]/review/pageClient.tsx` · default
+- `src/app/(app)/integrations/pageClient.tsx` · default
+- `src/app/(app)/integrations/slack/pageClient.tsx` · default
+- `src/app/(app)/integrations/slack/slackShared.tsx` · SlackMark, SlackState, slackStatusLine, useSlackConnections
 - `src/app/(app)/metrics/pageClient.tsx` · default
 - `src/app/(app)/project/[projectSlug]/links/pageClient.tsx` · default
 - `src/app/(app)/project/[projectSlug]/metrics/pageClient.tsx` · default, MetricsHeaderPlaceholder
@@ -754,6 +763,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/models/ShareView.ts` · DOWNLOAD_INSTANTS_KEPT, ShareView, ShareViewModel
 - `src/lib/models/ShareViewerEmail.ts` · ShareViewerEmail, ShareViewerEmailModel
 - `src/lib/models/ShareVisit.ts` · ShareVisit, ShareVisitModel
+- `src/lib/models/SlackConnection.ts` · SlackConnection, SlackConnectionModel
 - `src/lib/models/StarredDoc.ts` · StarredDoc, StarredDocModel
 - `src/lib/models/StripeEvent.ts` · StripeEvent, StripeEventModel
 - `src/lib/models/Subscription.ts` · Subscription, SubscriptionModel
@@ -811,6 +821,12 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/share/viewerProfile.ts` · clearShareViewerProfile, LEGACY_SHARE_VIEWER_PROFILE_KEY, normalizeShareViewerEmail, normalizeShareViewerName, readShareViewerProfile, readShareViewerProfilePrefill, SHARE_VIEWER_PROFILE_PREFILL_KEY, shareBrandOwnerKey, …
 - `src/lib/sharePassword.ts` · decryptSharePassword, encryptSharePassword, hashSharePassword, shareAuthCookieName, shareAuthCookieValue, verifySharePassword
 - `src/lib/sidebarCache.ts` · ACTIVE_ORG_CHANGED_EVENT, ACTIVE_ORG_STORAGE_KEY, clearSidebarCache, DOC_LEAVING_EVENT, DocLeavingDetail, DOCS_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocLeaving, …
+- `src/lib/slack/config.ts` · SLACK_AUTH_REVOKE_URL, SLACK_CALLBACK_PATH, SLACK_OAUTH_ACCESS_URL, SLACK_OAUTH_AUTHORIZE_URL, SLACK_SCOPE, slackAppConfig, SlackAppConfig, slackEnabled, …
+- `src/lib/slack/connections.ts` · listSlackConnections, postThroughConnection, serializeSlackConnection, SLACK_EVENT_KEYS, SlackConnectionDto, SlackEventKey
+- `src/lib/slack/crypto.ts` · decryptSlackSecret, encryptSlackSecret, signSlackPayload, verifySlackSignature
+- `src/lib/slack/messages.ts` · mrkdwn, realLinkLabel, renderSlackEvent, slackBurstMessage, slackTestMessage
+- `src/lib/slack/post.ts` · postToSlackWebhook, SLACK_POST_TIMEOUT_MS, SlackMessage, SlackPostOutcome
+- `src/lib/slack/state.ts` · createSlackInstallState, SLACK_STATE_TTL_MS, SlackInstallState, verifySlackInstallState
 - `src/lib/starredDocs.ts` · getStarredDocs, isDocStarred, moveStarredDoc, refreshStarredDocsFromServer, STARRED_DOCS_CHANGED_EVENT, StarredDoc, toggleStarredDoc, upsertStarredDocMeta, …
 - `src/lib/support/plain/cards.ts` · buildAccountCard, buildCards, buildErrorsCard, CARD_KEYS, CardKey, CustomerContext, ErrorContext, loadCustomerContext, …
 - `src/lib/support/plain/chat.ts` · plainChatAppId, plainChatCustomer, PlainChatCustomer, plainChatEmailHash
