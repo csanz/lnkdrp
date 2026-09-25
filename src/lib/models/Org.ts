@@ -8,6 +8,7 @@
  * - Additional orgs are "team" orgs (multi-member) and are addressed by a unique `slug`.
  */
 import mongoose, { Schema, type InferSchemaType, type Model, Types } from "mongoose";
+import { DEFAULT_WORKSPACE_NAME } from "@/lib/orgs/defaultName";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 
 const orgSchema = new Schema(
@@ -92,6 +93,7 @@ orgSchema.index(
 // guarantees only string slugs participate, since `sparse` still indexes an explicit `null`.
 orgSchema.index({ slug: 1 }, { unique: true, partialFilterExpression: { slug: { $type: "string" } } });
 
+
 export type Org = InferSchemaType<typeof orgSchema>;
 
 export const OrgModel: Model<Org> =
@@ -123,7 +125,7 @@ export async function ensurePersonalOrgForUserId(opts: {
   name?: string;
 }): Promise<{ orgId: Types.ObjectId }> {
   const { userId } = opts;
-  const name = (opts.name ?? "Personal").trim() || "Personal";
+  const name = (opts.name ?? DEFAULT_WORKSPACE_NAME).trim() || DEFAULT_WORKSPACE_NAME;
 
   // 1) Find existing personal org.
   const existing = await OrgModel.findOne({

@@ -45,12 +45,12 @@ Paste the link into an email or a message. Recipients do not need an account. Th
 - **Activity** in the sidebar is a feed of everything that happens in the workspace: uploads, link changes, opens and downloads.
 - By default you get a daily digest email when recipients open your links. See [Notifications and visit briefs](/help/notifications-and-visit-briefs).
 
-## Personal and team workspaces
+## Workspaces
 
-Every account has a personal workspace. You can also create a team workspace and invite other people to it. Each workspace has its own documents, projects, plan, credits and connected agents, and is billed separately.
+Your account starts with one workspace, which you name when you sign up. Create more for other companies, funds or clients, and invite people to any of them. Each workspace has its own documents, projects, plan, credits and connected agents, and is billed separately.
 
 - Create one from **Dashboard**, then **Workspace**, then **Create workspace**.
-- On Free, you can own one team workspace in addition to your personal one.
+- On Free, you can own two workspaces. Pro lifts that limit.
 - Switch between workspaces from the workspace name at the top left of the app or from the dashboard.
 
 See [Teams and workspaces](/help/teams-and-workspaces) for roles and invitations, and [Pricing](/pricing) for what each plan includes.

@@ -16,7 +16,7 @@ import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { errorJson } from "@/lib/http/errorResponse";
 import {
-  FREE_TEAM_WORKSPACES,
+  FREE_WORKSPACES,
   UPGRADE_URL,
   getWorkspacePlan,
   planLimitResponse,
@@ -196,7 +196,8 @@ export async function GET(request: Request) {
  * Personal workspaces are excluded by the `type` filter: everyone has exactly one, nobody chose it,
  * and counting it would refuse the very first team workspace a Free user creates.
  */
-async function ownedTeamWorkspaceIds(userId: Types.ObjectId): Promise<Types.ObjectId[]> {
+/** Every workspace this person owns, the one their account started with included. */
+async function ownedWorkspaceIds(userId: Types.ObjectId): Promise<Types.ObjectId[]> {
   const memberships = await OrgMembershipModel.find({ userId, role: "owner", isDeleted: { $ne: true } })
     .select({ orgId: 1 })
     .lean();
@@ -205,7 +206,7 @@ async function ownedTeamWorkspaceIds(userId: Types.ObjectId): Promise<Types.Obje
     .filter((id): id is Types.ObjectId => id instanceof Types.ObjectId || Types.ObjectId.isValid(String(id)))
     .map((id) => new Types.ObjectId(String(id)));
   if (!orgIds.length) return [];
-  const orgs = await OrgModel.find({ _id: { $in: orgIds }, type: "team", isDeleted: { $ne: true } })
+  const orgs = await OrgModel.find({ _id: { $in: orgIds }, type: { $in: ["personal", "team"] }, isDeleted: { $ne: true } })
     .select({ _id: 1 })
     .lean();
   return orgs.map((o) => new Types.ObjectId(String((o as { _id: unknown })._id)));
@@ -256,31 +257,28 @@ export async function POST(request: Request) {
      *
      * Pro is unlimited, and "Pro" here means the person, not the workspace they are creating (which
      * does not exist yet): if any workspace they already own is on Pro, they are a paying customer
-     * and this is not the place to stop them. Owned workspaces are few — the Free ceiling is one —
+     * and this is not the place to stop them. Owned workspaces are few — the Free ceiling is two —
      * so the plan reads are bounded.
      *
      * Grandfathering is deliberate: someone already over the line keeps every workspace they have
      * and is only refused the next one. Taking a workspace away from an existing user to enforce a
      * cap introduced after they made it would be the wrong trade.
      */
-    const ownedTeamOrgIds = await ownedTeamWorkspaceIds(userId);
-    if (ownedTeamOrgIds.length >= FREE_TEAM_WORKSPACES) {
-      const plans = await Promise.all(ownedTeamOrgIds.map((id) => getWorkspacePlan(id)));
+    const ownedOrgIds = await ownedWorkspaceIds(userId);
+    if (ownedOrgIds.length >= FREE_WORKSPACES) {
+      const plans = await Promise.all(ownedOrgIds.map((id) => getWorkspacePlan(id)));
       if (!plans.some((plan) => plan === "pro")) {
         return planLimitResponse(
           {
           ok: false,
           code: "plan_limit",
           limit: "team_workspaces",
-          used: ownedTeamOrgIds.length,
+          used: ownedOrgIds.length,
           requested: 1,
-          max: FREE_TEAM_WORKSPACES,
+          max: FREE_WORKSPACES,
           grace: null,
           upgradeUrl: UPGRADE_URL,
-          message:
-            FREE_TEAM_WORKSPACES === 1
-              ? "Free accounts can have one team workspace. Upgrade to Pro to create another."
-              : `Free accounts can have ${FREE_TEAM_WORKSPACES} team workspaces. Upgrade to Pro to create another.`,
+          message: `Free accounts can have ${FREE_WORKSPACES === 2 ? "two" : FREE_WORKSPACES} workspaces. Upgrade to Pro to create another.`,
           },
           // A per-person limit; the row goes to the workspace the person is acting from.
           { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, request },

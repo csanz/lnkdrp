@@ -101,7 +101,7 @@ export type ClientSetup = {
   };
 };
 
-/** The connection name for a personal workspace, and the prefix for every other one. */
+/** The default connection name, and the prefix every workspace's own name is appended to. */
 export const DEFAULT_SERVER_NAME = "lnkdrp";
 
 /**
@@ -109,8 +109,8 @@ export const DEFAULT_SERVER_NAME = "lnkdrp";
  *
  * A key belongs to one workspace, and MCP clients keep one server per name, so two workspaces added
  * under the same name replace or reject each other. Every workspace gets `lnkdrp-<workspace>`
- * (letters, digits and hyphens, which every supported client accepts): `lnkdrp-personal` for the
- * personal workspace, `lnkdrp-usavx` for USAVX. Personal used to keep plain `lnkdrp`, which did not say
+ * (letters, digits and hyphens, which every supported client accepts): `lnkdrp-usavx` for USAVX,
+ * `lnkdrp-lnkdrp` collapsed to `lnkdrp`. The first workspace used to keep plain `lnkdrp`, which did not say
  * which workspace it was once a second one sat next to it. Plain `lnkdrp` remains only where no
  * workspace is known (the public guides, before the page knows who is signed in); an existing
  * `lnkdrp` connection keeps working.
@@ -121,9 +121,9 @@ export function mcpServerName(workspace: { name?: string | null; isPersonal: boo
   // its owner has renamed it, the name they chose is the one they will look for in their client's
   // server list; answering "personal" for a workspace called LNKDRP read as the rename not taking.
   const name = (workspace.name ?? "").trim();
-  if (workspace.isPersonal && (!name || name.toLowerCase() === PERSONAL_WORKSPACE_DEFAULT_NAME.toLowerCase())) {
-    return `${DEFAULT_SERVER_NAME}-personal`;
-  }
+  // A workspace is its name, whichever one the account started with. One still carrying the
+  // placeholder name it arrived with slugs to `lnkdrp-personal`, as any name would.
+  if (!name) return `${DEFAULT_SERVER_NAME}-workspace`;
   const slug = name
     .toLowerCase()
     .normalize("NFKD")
@@ -138,14 +138,12 @@ export function mcpServerName(workspace: { name?: string | null; isPersonal: boo
   return `${DEFAULT_SERVER_NAME}-${slug || "workspace"}`;
 }
 
-/** The name a personal workspace is created with (`ensurePersonalOrgForUserId` in `src/lib/models/Org.ts`). */
-export const PERSONAL_WORKSPACE_DEFAULT_NAME = "Personal";
 
 /** One-paragraph explanation of connecting more than one workspace, shared by `/connect` and the guides. */
 export const MULTIPLE_WORKSPACES = {
   title: "More than one workspace",
   body:
-    "A connection belongs to one workspace, and your client keeps one server per name. To connect another workspace, add lnkdrp again under its own name, such as lnkdrp-acme (Connect names it for you after the workspace; a personal workspace still called Personal is lnkdrp-personal), and pick that workspace when you sign in, or use a key created there. Existing connections keep working, and your agent sees them all; lnkdrp_whoami on each says which workspace it acts on.",
+    "A connection belongs to one workspace, and your client keeps one server per name. To connect another workspace, add lnkdrp again under its own name, such as lnkdrp-acme (Connect names it for you after the workspace), and pick that workspace when you sign in, or use a key created there. Existing connections keep working, and your agent sees them all; lnkdrp_whoami on each says which workspace it acts on.",
 };
 
 /** The server entry inside an `mcpServers` object, at the given base indent. */
@@ -961,7 +959,7 @@ export const TROUBLESHOOTING: Array<{ q: string; a: string }> = [
   },
   {
     q: "My client says lnkdrp already exists.",
-    a: "Each client keeps one server per name, so adding again with a new key is refused. If you are changing the key, remove the old entry first (the command or setting is under \"Change the key or remove lnkdrp\" for your client), then add it again. If this key is for a different workspace, don't remove anything: add it under that workspace's own name, such as lnkdrp-acme or lnkdrp-personal.",
+    a: "Each client keeps one server per name, so adding again with a new key is refused. If you are changing the key, remove the old entry first (the command or setting is under \"Change the key or remove lnkdrp\" for your client), then add it again. If this key is for a different workspace, don't remove anything: add it under that workspace's own name, such as lnkdrp-acme.",
   },
   {
     q: "I get 401 unauthorized.",

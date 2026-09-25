@@ -576,7 +576,6 @@ export default function TeamsManager() {
             {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "–"}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Shared"}</Pill> : null}
             {currentOrg?.role ? <Pill><span className="capitalize">{currentOrg.role}</span></Pill> : null}
           </div>
         </div>

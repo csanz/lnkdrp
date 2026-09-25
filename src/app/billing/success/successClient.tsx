@@ -322,13 +322,7 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
                 { href: "/upload", title: "Share a document", body: "There is no document cap on Pro, so share the ones you were holding back." },
                 { href: "/activity", title: "See who’s reading", body: "Every open is recorded, by name when the reader signs in." },
                 { href: "/connect", title: "Connect your agent", body: "Share and track documents from Claude Code, Cursor, or any MCP client." },
-                isPersonal
-                  ? {
-                      href: "/dashboard?tab=workspace",
-                      title: "Working with others? Create a team workspace",
-                      body: "Personal is only ever you, so it can’t have collaborators. Create a team workspace and invite people there; it has its own plan.",
-                    }
-                  : { href: "/dashboard?tab=teams", title: "Invite a collaborator", body: "Work on this workspace’s documents together." },
+                { href: "/dashboard?tab=teams", title: "Invite a collaborator", body: "Work on this workspace’s documents together." },
               ].map((row) => (
                 <li key={row.href}>
                   <Link

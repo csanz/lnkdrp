@@ -1,17 +1,17 @@
 ---
 title: Teams and workspaces
-description: Personal and team workspaces, roles, invitations, and who counts as a seat on Pro.
+description: Workspaces, roles, invitations, and who counts as a seat on Pro.
 order: 80
 ---
 
 ## Workspaces
 
-A workspace holds documents, projects, share links, members, connected agents and its own plan and credits. Every account has a personal workspace, and you can create team workspaces for the people you work with.
+A workspace holds documents, projects, share links, members, connected agents and its own plan and credits. Your account starts with one, named when you sign up, and you can create more for the people you work with.
 
-- Create a team workspace from **Dashboard**, then **Workspace**, then **Create workspace**.
-- On Free you can own one team workspace in addition to your personal one. Pro lifts that limit.
+- Create a workspace from **Dashboard**, then **Workspace**, then **Create workspace**.
+- On Free you can own two workspaces. Pro lifts that limit.
 - Each workspace is billed as its own customer. A Pro upgrade applies to that workspace only.
-- Every Free workspace, personal or team, starts with its own 100 credits.
+- Every Free workspace starts with its own 100 credits.
 - A workspace can have an icon: square, at least 120 by 120 pixels, up to 2 MB.
 
 ## Switching
@@ -44,8 +44,8 @@ The person joining signs in with Google, claims the invitation and lands in the 
 ## Removing members and leaving
 
 - Owners and admins can remove members from the Members page. Admins can remove members and viewers; owners can remove anyone.
-- Members and admins can leave a team workspace themselves. Owners cannot.
-- Someone who is removed, or who leaves, keeps their account and their own personal workspace. Only access to that workspace ends. If they were working in it, the app switches them back to their personal workspace.
+- Members and admins can leave a workspace themselves. Owners cannot.
+- Someone who is removed, or who leaves, keeps their account and their other workspaces. Only access to that workspace ends. If they were working in it, the app switches them to another of theirs.
 
 ## Notifications in a team
 

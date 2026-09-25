@@ -60,7 +60,7 @@ const PLAN_LIMIT_LABELS: Record<string, string> = {
   documents: "Shared documents",
   projects: "Projects",
   collaborators: "Collaborators",
-  team_workspaces: "Team workspaces",
+  team_workspaces: "Workspaces",
   version_history: "Version history (Pro feature)",
   analytics_history: "Deep analytics (Pro feature)",
   project_links: "Extra project links (Pro feature)",

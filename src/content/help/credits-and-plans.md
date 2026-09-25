@@ -14,7 +14,7 @@ Plans are per workspace. Upgrade a workspace once and everything in it is on Pro
 - 2 projects.
 - Basic analytics: totals and views by day for the last 7 days, without viewer identities.
 - Password protection and download control.
-- Single user. One team workspace in addition to your personal one.
+- Single user. Two workspaces per account.
 - 100 credits to start, one time, and at most 15 credits a day.
 
 **Pro**, per workspace, price shown at checkout:

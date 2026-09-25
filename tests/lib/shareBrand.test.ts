@@ -47,7 +47,13 @@ describe("workspaceBrandForOrg", () => {
     expect(await workspaceBrandForOrg(ORG_ID)).toEqual({ name: "USAVX", avatarUrl: "https://cdn/logo.png" });
   });
 
-  test("a personal workspace signs with the person, never the word “Personal”", async () => {
+  test("a first workspace that was named signs with that name, like any other", async () => {
+    org({ name: "LNKDRP", avatarUrl: null, type: "personal", personalForUserId: OWNER_ID });
+    user({ name: "Christian Sanz", email: "c@usavx.com" });
+    expect(await workspaceBrandForOrg(ORG_ID)).toEqual({ name: "LNKDRP", avatarUrl: null });
+  });
+
+  test("a workspace still called “Personal” signs with the person, never that word", async () => {
     org({ name: "Personal", avatarUrl: null, type: "personal", personalForUserId: OWNER_ID });
     user({ name: "Christian Sanz", email: "c@usavx.com" });
     expect(await workspaceBrandForOrg(ORG_ID)).toEqual({ name: "Christian Sanz", avatarUrl: null });

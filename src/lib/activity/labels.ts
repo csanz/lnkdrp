@@ -455,7 +455,7 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
             : limit === "collaborators"
               ? "the collaborator limit"
               : limit === "team_workspaces"
-                ? "the team workspace limit"
+                ? "the workspace limit"
                 : limit === "version_history"
                   ? "a Pro feature: version history"
                   : limit === "analytics_history"

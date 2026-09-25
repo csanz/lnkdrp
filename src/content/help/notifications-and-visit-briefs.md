@@ -27,7 +27,7 @@ Every view email ends with **Turn off these emails** and **Change how often**. T
 ## Other email kinds
 
 - **Doc update emails**: someone replaced a document and the comparison found real changes.
-- **New documents from teammates**: someone else in the workspace uploaded a document. A personal workspace never sends these.
+- **New documents from teammates**: someone else in the workspace uploaded a document. A workspace with a single member never sends these.
 
 ## Slack
 

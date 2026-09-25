@@ -52,7 +52,7 @@ Replace the file from the document page whenever the content changes. Every link
 
 - The viewer opens with the summary and key points, then the document.
 - Viewers can scroll all pages, use a grid of page thumbnails, or step through single pages.
-- Every page a recipient lands on shows who shared it: the workspace name for a team, or the owner's name for a personal workspace.
+- Every page a recipient lands on shows who shared it: the workspace name, or the owner's name if the workspace was never given one.
 - If the link has a password, the password screen shows the sender's name and a small preview thumbnail so the recipient knows they are unlocking the right document.
 - Viewers can optionally **Introduce yourself** with a name and email, which labels their activity on your side.
 

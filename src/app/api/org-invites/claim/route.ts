@@ -97,12 +97,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid invite" }, { status: 404 });
     }
 
-    // Personal workspaces are single-user; joining via invite is never allowed.
+    // The workspace must still exist. Any workspace can have members (2026-09-25).
     const org = await OrgModel.findOne({ _id: new Types.ObjectId(orgId), isDeleted: { $ne: true } })
-      .select({ type: 1 })
+      .select({ _id: 1 })
       .lean();
-    const orgType = org ? String((org as { type?: unknown }).type ?? "") : "";
-    if (orgType !== "team") {
+    if (!org) {
       return NextResponse.json({ error: "Invalid or expired invite" }, { status: 404 });
     }
 
@@ -218,8 +217,21 @@ export async function POST(request: Request) {
     // Note for whoever edits this: don't set the same path in two update operators (Mongo error
     // code 40), which is what the single upsert here was working around.
     const membership = (await OrgMembershipModel.findOne({ orgId: orgObjectId, userId })
-      .select({ _id: 1, isDeleted: 1 })
-      .lean()) as { _id: Types.ObjectId; isDeleted?: boolean } | null;
+      .select({ _id: 1, isDeleted: 1, role: 1 })
+      .lean()) as { _id: Types.ObjectId; isDeleted?: boolean; role?: string } | null;
+
+    // Hand the token back. Scoped to `redeemedByUserId: userId` so this can only ever release the
+    // claim *this* request made, never one a sibling won in the meantime.
+    const releaseClaim = async () => {
+      try {
+        await OrgInviteModel.updateOne(
+          { _id: inviteId, redeemedByUserId: userId },
+          { $set: { redeemedAt: null, redeemedByUserId: null, updatedDate: new Date() } },
+        );
+      } catch {
+        // Best effort. The failure that led here is the one worth reporting.
+      }
+    };
 
     try {
       if (!membership) {
@@ -251,17 +263,54 @@ export async function POST(request: Request) {
       // Claiming first means the token is spent before the membership exists. If the membership
       // write is the thing that failed, nobody was seated, and leaving the invite stamped would
       // hand the person a dead link and make an admin cut a new one for a failure that was ours.
-      // Put it back. Scoped to `redeemedByUserId: userId` so this can only ever release the claim
-      // *this* request made, never one a sibling won in the meantime.
-      try {
-        await OrgInviteModel.updateOne(
-          { _id: inviteId, redeemedByUserId: userId },
-          { $set: { redeemedAt: null, redeemedByUserId: null, updatedDate: new Date() } },
-        );
-      } catch {
-        // Best effort — the membership failure is the one worth reporting.
-      }
+      // Put it back.
+      await releaseClaim();
       throw err;
+    }
+
+    /**
+     * Count again, now that this membership exists.
+     *
+     * The `checkLimit` above ran before any write, so two invites redeemed at the same moment both
+     * saw a seat free and both took it: the per-token lock stops one token seating two people, not
+     * two tokens seating two people into one seat. Re-counting after the insert is the only
+     * ordering that sees the sibling's row. `adding: 0` asks "is the workspace within its cap as it
+     * stands", so exactly filling the cap passes and one over it does not; the grace window is
+     * honoured the same way the pre-check honours it.
+     *
+     * Over the cap, this membership is undone (a fresh row is deleted; a revived row goes back to
+     * deleted with the role it had) and the invite is released, so the person can try again once
+     * a seat is free or the workspace has upgraded. The answer is the same 402 the pre-check gives.
+     */
+    if (!alreadyMember && role !== "viewer") {
+      const settled = await checkLimit(orgId, "collaborators", { role, adding: 0 });
+      if (!settled.ok) {
+        if (!membership) {
+          // No row existed before this request and (orgId, userId) is unique, so this is ours.
+          await OrgMembershipModel.deleteOne({ orgId: orgObjectId, userId });
+        } else {
+          await OrgMembershipModel.updateOne(
+            { _id: membership._id },
+            { $set: { isDeleted: true, updatedDate: new Date(), ...(membership.role ? { role: membership.role } : {}) } },
+          );
+        }
+        await releaseClaim();
+        // The row was live for a moment; do not let a cached "member" answer outlive it.
+        membershipChanged({ orgId, userId: actor.userId });
+        debugLog(1, "[api/org-invites/claim] seat taken concurrently; membership rolled back", {
+          orgId,
+          used: settled.used,
+          max: settled.max,
+        });
+        // Report the workspace as it is after the rollback: this seat is no longer counted.
+        const asItStands = { ...settled, used: Math.max(0, settled.used - 1) };
+        return planLimitResponse(asItStands, {
+          orgId,
+          userId: actor.userId,
+          request,
+          meta: { via: "invite_claim", raced: true },
+        });
+      }
     }
 
     // Someone an existing workspace invited is not a stranger at the door: claiming a valid invite

@@ -8,11 +8,13 @@ import { CLIENT_SETUPS, mcpServerName } from "@/lib/mcp/clientSetups";
  * replaced (or collided with) the first.
  */
 describe("mcpServerName", () => {
-  test("personal workspace is lnkdrp-personal; unknown workspace (public guides) stays lnkdrp", () => {
+  test("a workspace is named after its name, whichever one the account started with; unknown (public guides) stays lnkdrp", () => {
     expect(mcpServerName(null)).toBe("lnkdrp");
+    // Still carrying the placeholder it arrived with: slugs like any other name.
     expect(mcpServerName({ name: "Personal", isPersonal: true })).toBe("lnkdrp-personal");
-    expect(mcpServerName({ name: "", isPersonal: true })).toBe("lnkdrp-personal");
     expect(mcpServerName({ name: " personal ", isPersonal: true })).toBe("lnkdrp-personal");
+    // No name at all cannot happen in the product; the helper still answers something addable.
+    expect(mcpServerName({ name: "", isPersonal: true })).toBe("lnkdrp-workspace");
   });
 
   test("a renamed personal workspace is named after the name its owner chose", () => {

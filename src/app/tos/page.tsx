@@ -120,7 +120,7 @@ export default function TermsOfServicePage() {
               Removal takes effect immediately. A removed member loses access to that workspace's documents, projects, share links and analytics, and we email them to say so.
             </p>
             <p className="mb-4 leading-6">
-              <strong>Content stays with the workspace.</strong> Documents uploaded to a workspace, the share links created in it, and the analytics collected by those links belong to the workspace rather than to the individual member who made them. They remain in the workspace after that member leaves or is removed, and existing share links keep working for the recipients who hold them. A member's own account, and their personal workspace, are unaffected by being removed from someone else's.
+              <strong>Content stays with the workspace.</strong> Documents uploaded to a workspace, the share links created in it, and the analytics collected by those links belong to the workspace rather than to the individual member who made them. They remain in the workspace after that member leaves or is removed, and existing share links keep working for the recipients who hold them. A member's own account, and their other workspaces, are unaffected by being removed from someone else's.
             </p>
             <p className="leading-6">
               The workspace owner is responsible for the workspace's plan and for anything done in it, including by collaborators and by agents or software connected to it. See Plans and Billing below.

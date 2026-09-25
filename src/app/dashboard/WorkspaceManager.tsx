@@ -791,7 +791,7 @@ export default function WorkspaceManager() {
               <button
                 type="button"
                 className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                disabled={orgActionBusy || !manageOrgRow || manageOrgRow.type === "personal" || manageOrgRow.role === "owner"}
+                disabled={orgActionBusy || !manageOrgRow || manageOrgRow.role === "owner"}
                 onClick={() => void leaveOrg()}
                 title={manageOrgRow?.role === "owner" ? "Owners can’t leave; delete the workspace instead." : "Leave workspace"}
               >

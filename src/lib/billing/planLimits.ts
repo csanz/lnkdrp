@@ -69,14 +69,15 @@ export const FREE_ANALYTICS_DAYS = 7;
  */
 export const PRO_INCLUDED_COLLABORATORS = 3;
 /**
- * Free plan: team workspaces one person may own (their personal workspace is always theirs and is
- * never counted).
+ * Free plan: workspaces one person may own, counting the one their account started with.
  *
  * Every other cap here is per workspace, and creating a workspace was free and unlimited — so three
  * shared documents was only ever three *per workspace*, and a second workspace reset the counter.
- * This is the limit that makes the others mean what they say.
+ * This is the limit that makes the others mean what they say. A workspace is not a kind: the first
+ * one is named at sign-up like any other and counts like any other (2026-09-25; it used to be a
+ * "personal" workspace that never counted, plus one "team" workspace).
  */
-export const FREE_TEAM_WORKSPACES = 1;
+export const FREE_WORKSPACES = 2;
 /** Days a grandfathered workspace may stay over a Free limit before it is blocked. */
 export const LIMIT_GRACE_DAYS = 14;
 
@@ -282,9 +283,10 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
     case "projects":
       return `Free workspaces can have ${max} project${max === 1 ? "" : "s"}. Delete one or upgrade to Pro.`;
     case "team_workspaces":
+      // The key keeps its historical name (activity rows and clients read it); the words do not.
       return max === 1
-        ? "Free accounts can have one team workspace. Upgrade to Pro to create another."
-        : `Free accounts can have ${max} team workspaces. Upgrade to Pro to create another.`;
+        ? "Free accounts can have one workspace. Upgrade to Pro to create another."
+        : `Free accounts can have ${max === 2 ? "two" : max} workspaces. Upgrade to Pro to create another.`;
     case "collaborators":
       return max === 0
         ? `Free workspaces are single-user. Pro includes ${PRO_INCLUDED_COLLABORATORS} people beyond the owner, plus unlimited free viewers.`
@@ -380,8 +382,8 @@ export async function checkLimit(
     case "team_workspaces":
       /**
        * Counted per person, not per workspace, so this function — which is handed one workspace —
-       * is the wrong place to answer it. `POST /api/orgs` counts the team workspaces the caller
-       * owns and builds the same 402 from `FREE_TEAM_WORKSPACES` and `limitMessage` directly.
+       * is the wrong place to answer it. `POST /api/orgs` counts the workspaces the caller
+       * owns and builds the same 402 from `FREE_WORKSPACES` and `limitMessage` directly.
        * Returning "ok" here would be a lie, so the key is refused instead.
        */
       throw new Error("checkLimit: team_workspaces is a per-user limit; see POST /api/orgs");

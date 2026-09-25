@@ -123,13 +123,13 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     secondaryLabel: "Compare plans",
   },
   team_workspaces: {
-    // No number here: `FREE_TEAM_WORKSPACES` has no client-safe mirror yet, and the modal already
+    // No number here: `FREE_WORKSPACES` has no client-safe mirror yet, and the modal already
     // appends the server's "{used} of {max} used." from the 402 body.
-    title: "More team workspaces on Pro",
+    title: "More workspaces on Pro",
     reason:
-      "Your personal workspace is always yours. Free includes a limited number of team workspaces beyond it; on Pro you can create as many as you need, each with its own members, documents and analytics.",
+      "Free includes two workspaces per account; on Pro you can create as many as you need, each with its own members, documents and analytics.",
     bullets: [
-      "Unlimited team workspaces, one per client, fund or deal",
+      "Unlimited workspaces, one per client, fund or deal",
       `${PRO_SEATS_COPY} teammates who can upload and share in each, plus unlimited free viewers`,
       "Unlimited documents and projects across every workspace",
     ],

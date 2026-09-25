@@ -102,12 +102,12 @@ export async function GET(request: Request) {
 
     await connectMongo();
 
-    // Personal orgs are single-user; invites are not supported.
+    // Any workspace can have members; the plan decides how many, below. The type on the row is
+    // history, not a rule (2026-09-25).
     const org = await OrgModel.findOne({ _id: new Types.ObjectId(orgIdRaw), isDeleted: { $ne: true } })
-      .select({ type: 1 })
+      .select({ _id: 1 })
       .lean();
-    const orgType = org ? String((org as { type?: unknown }).type ?? "") : "";
-    if (orgType !== "team") return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!org) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const membership = await OrgMembershipModel.findOne({
       orgId: new Types.ObjectId(orgIdRaw),
@@ -261,12 +261,11 @@ export async function POST(request: Request) {
 
   await connectMongo();
 
-  // Personal orgs are single-user; invites are not supported.
+  // Any workspace can have members; the plan decides how many, below.
   const org = await OrgModel.findOne({ _id: new Types.ObjectId(orgIdRaw), isDeleted: { $ne: true } })
-    .select({ type: 1 })
+    .select({ _id: 1 })
     .lean();
-  const orgType = org ? String((org as { type?: unknown }).type ?? "") : "";
-  if (orgType !== "team") return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!org) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const membership = await OrgMembershipModel.findOne({
     orgId: new Types.ObjectId(orgIdRaw),
@@ -280,7 +279,6 @@ export async function POST(request: Request) {
   if (!canInvite) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   // Plan limits: Free workspaces cannot add collaborators (the invite would add a member).
-  // Personal orgs never reach here (they 404 above); only team orgs are gated.
   // `role` matters: a viewer takes no seat, so inviting one is never a plan decision.
   const limitCheck = await checkLimit(orgIdRaw, "collaborators", { role });
   if (!limitCheck.ok) return planLimitResponse(limitCheck, { orgId: orgIdRaw, userId: session.userId, request });

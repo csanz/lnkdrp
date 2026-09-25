@@ -20,6 +20,7 @@ import { Types } from "mongoose";
 
 import { OrgModel } from "@/lib/models/Org";
 import { UserModel } from "@/lib/models/User";
+import { isPlaceholderWorkspaceName } from "@/lib/orgs/defaultName";
 
 // The shape and the initials live in `./brand`, which imports nothing: this module talks to Mongo,
 // and the header that renders a brand is in the client bundle. See that file for what broke.
@@ -48,8 +49,11 @@ export async function workspaceBrandForOrg(orgId: Types.ObjectId | string | null
 
     const avatarUrl = typeof org.avatarUrl === "string" && org.avatarUrl.trim() ? org.avatarUrl.trim() : null;
 
-    if (org.type === "personal") {
-      // "Personal" is the owner's word for their own workspace, not a name a recipient can use.
+    const ownName = (org.name ?? "").trim();
+    // A workspace signs with its name. The one exception is the name nobody chose: a workspace
+    // still called "Personal" (the default it arrived with, never renamed) says nothing a
+    // recipient can use, so it signs with its owner instead.
+    if (isPlaceholderWorkspaceName(ownName)) {
       if (!org.personalForUserId) return null;
       const owner = (await UserModel.findById(org.personalForUserId).select({ name: 1, email: 1 }).lean()) as
         | { name?: string | null; email?: string | null }

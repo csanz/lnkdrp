@@ -45,7 +45,8 @@ type BilledWorkspace = {
  */
 function BilledWorkspaceHeader({
   workspace,
-  isPersonal,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  isPersonal: _isPersonal,
   canManageBilling,
   manageBusy,
   onManage,
@@ -65,7 +66,7 @@ function BilledWorkspaceHeader({
   resumeBusy: boolean;
   onResume: () => void;
 }) {
-  const name = workspace?.name ?? (isPersonal ? "Personal" : "This workspace");
+  const name = workspace?.name ?? "This workspace";
   const initial = name.trim().charAt(0).toUpperCase() || "W";
   const isPro = workspace?.plan === "pro";
   // A cancelled Pro subscription stays Pro until the paid period ends. This used to read "Ends Oct 16."
@@ -111,9 +112,7 @@ function BilledWorkspaceHeader({
           </div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
             {renewal}
-            {isPersonal
-              ? "Your personal workspace is billed on its own. Each team workspace has a separate plan, credits and invoices."
-              : `${name} is billed on its own, with its own plan, credits and invoices. Your personal workspace and other workspaces are not affected.`}
+            {`${name} is billed on its own, with its own plan, credits and invoices. Your other workspaces are not affected.`}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
