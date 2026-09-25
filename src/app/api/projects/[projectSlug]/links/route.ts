@@ -110,7 +110,18 @@ export async function POST(request: Request, ctx: { params: Promise<{ projectSlu
 
     // Free: nothing was written, so this is a hard 402 rather than the 200 + `planWarning` the
     // document routes answer with. There is no half-created project link to warn about.
-    if (!link) return applyTempUserHeaders(planLimitResponse(limit as Parameters<typeof planLimitResponse>[0]), actor);
+    if (!link) {
+      return applyTempUserHeaders(
+        planLimitResponse(limit as Parameters<typeof planLimitResponse>[0], {
+          orgId: actor.orgId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          projectId,
+          request,
+        }),
+        actor,
+      );
+    }
 
     const dto = toProjectLinkDTO(link, (await projectLinkStatsByShareId([link.shareId])).get(link.shareId) ?? null);
     void recordActivity({

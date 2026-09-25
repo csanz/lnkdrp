@@ -451,15 +451,7 @@ export async function POST(request: Request) {
     // here). The client opens the upgrade modal; freeing a link or upgrading lifts the gate.
     const limitCheck = await checkLimit(actor.orgId, "documents");
     if (!limitCheck.ok) {
-      void recordActivity({
-        orgId: actor.orgId,
-        userId: actor.userId,
-        actorKind: actor.kind,
-        type: "plan.limit_reached",
-        meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
-        request,
-      });
-      return applyTempUserHeaders(planLimitResponse(limitCheck), actor);
+      return applyTempUserHeaders(planLimitResponse(limitCheck, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, request }), actor);
     }
     const shareEnabled = true;
     const planWarning = limitCheck.warning;

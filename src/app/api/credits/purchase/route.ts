@@ -14,6 +14,7 @@ import Stripe from "stripe";
 
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor } from "@/lib/gating/actor";
+import { recordActivity } from "@/lib/activity/log";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { UserModel } from "@/lib/models/User";
 import { SubscriptionModel } from "@/lib/models/Subscription";
@@ -137,6 +138,15 @@ export async function POST(request: Request) {
         cancel_url: `${appUrl}/credits?purchase=canceled`,
       });
       if (!session.url) throw new Error("Failed to create Checkout Session");
+      // The funnel's pack branch; the webhook grants the credits when this one completes.
+      void recordActivity({
+        orgId,
+        userId,
+        actorKind: actor.kind,
+        type: "checkout.started",
+        meta: { kind: "credit_pack", pack: pack.id, credits: pack.credits, priceCents: pack.priceCents },
+        request,
+      });
       return NextResponse.json({ url: session.url });
     } catch (err) {
       return NextResponse.json({ error: err instanceof Error ? err.message : "Unknown error" }, { status: 400 });

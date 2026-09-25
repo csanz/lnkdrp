@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 937 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 942 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -209,6 +209,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/download/[token]/pdf/route.ts` — `/api/download/:token/pdf` · GET, runtime
 - `src/app/api/download/[token]/route.ts` — `/api/download/:token` · GET, runtime
 - `src/app/api/download/[token]/save/route.ts` — `/api/download/:token/save` · POST, runtime
+- `src/app/api/funnel/route.ts` — `/api/funnel` · dynamic, FUNNEL_CTAS, FUNNEL_EVENTS, FunnelBody, parseFunnelBody, POST, runtime
 - `src/app/api/health/route.ts` — `/api/health` · dynamic, GET, runtime
 - `src/app/api/metrics/events/route.ts` — `/api/metrics/events` · POST, runtime
 - `src/app/api/metrics/workspace/route.ts` — `/api/metrics/workspace` · dynamic, GET, runtime
@@ -398,7 +399,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/Markdown.tsx` · default
 - `src/components/McpInstallExample.tsx` · default
 - `src/components/OutOfCreditsListener.tsx` · default
-- `src/components/OutOfCreditsModal.tsx` · default
+- `src/components/OutOfCreditsModal.tsx` · default, OutOfCreditsCta
 - `src/components/PasswordGate.tsx` · default
 - `src/components/PdfJsViewer.tsx` · AiOutput, HISTORY_ERROR_FALLBACK, historyErrorForStatus, HistoryMessageError, PdfJsViewer, RECIPIENT_HISTORY_VERSIONS
 - `src/components/PlanLimitNotice.tsx` · default
@@ -418,7 +419,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/StripePricingTable.tsx` · StripePricingTable, StripePricingTableProps
 - `src/components/SubPageHeader.tsx` · default, Crumb, SubPageAction
 - `src/components/SwitchingOverlay.tsx` · DEFAULT_SWITCHING_OVERLAY_MIN_MS, DOC_NAV_OVERLAY_ID, fetchOrgSwitchRedirectTo, hideSwitchingOverlay, PENDING_ACTIVE_ORG_ID_KEY, PROJECT_NAV_OVERLAY_ID, showSwitchingOverlay, SWITCHING_OVERLAY_ID, …
-- `src/components/UpgradeModal.tsx` · default, splitPriceLabel
+- `src/components/UpgradeModal.tsx` · default, splitPriceLabel, UpgradeModalCta
 - `src/components/UpgradeModalProvider.tsx` · OpenUpgradeOptions, UpgradeModalApi, UpgradeModalProvider, useUpgradeModal
 - `src/components/UploadButton.tsx` · default, UploadIcon
 - `src/components/UploadCompletionPanel.tsx` · default
@@ -541,6 +542,7 @@ Clients, helpers and components that live beside the page that uses them.
 
 - `src/lib/accounts/deletion.ts` · confirmPhraseMatches, daysUntilPurge, DELETION_CONFIRM_PHRASE, DELETION_GRACE_DAYS, DELETION_REASONS, DeletionReasonCode, DeletionRequestInput, ParsedDeletionRequest, …
 - `src/lib/accounts/purge.ts` · blobUrlsOf, findAccountsDueForPurge, planPurge, purgeAccount, PurgePlan, PurgeResult, UPLOAD_BLOB_SELECT
+- `src/lib/activity/feedVisibility.ts` · FEED_HIDDEN_LIMIT_KEYS, FEED_HIDDEN_TYPES, feedHiddenClauses, isHiddenFromFeed
 - `src/lib/activity/labels.ts` · ACTIVITY_FILTERS, ActivityFilterId, ActivityItem, ActivitySentence, actorDisplayName, describeActivity
 - `src/lib/activity/log.ts` · ACTIVITY_AGENT_HEADER, ActivityActorKind, ActivityAgent, ActivityType, agentFromRequest, agentLabel, recordActivity, RecordActivityInput
 - `src/lib/activity/summary.ts` · ACTIVITY_SUMMARY_BUCKETS, ACTIVITY_WORK_TYPES, ActivityDayPoint, ActivityDayRow, ActivityGroupRow, ActivitySummary, ActivitySummaryBucket, ActivitySummaryCountKey, …
@@ -598,6 +600,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/analytics/reconcileLinkCounters.ts` · CounterDrift, LAST_VIEWED_TOLERANCE_MS, ReconcileResult, reconcileShareLinkCounters
 - `src/lib/analytics/shareTiming.ts` · countsAsPageRevisit, FLUSH_REASONS, FlushReasonWire, isPageExit, pageTimeIncrement, parseFlushReason, parsePageBound, parseTimingVersion, …
 - `src/lib/analytics/shareViewAggregates.ts` · ACTIVITY_DAY_KEY_EXPR, activityInWindowExpr, activityWindowMatch, intersectShareIds, LAST_ACTIVITY_EXPR, LINK_VIEWER_KEY_EXPR, mergePageTimeMaps, OWNER_PREVIEW_MATCH, …
+- `src/lib/analytics/teaser.ts` · AnalyticsTeaser, buildAnalyticsTeaser, hiddenDaysBefore, IDENTIFIED_VIEWER_EXPR, teaserFromRow, teaserPipeline
 - `src/lib/analytics/workspace/contributors.ts` · loadContributors
 - `src/lib/analytics/workspace/index.ts`
 - `src/lib/analytics/workspace/match.ts` · activityBetweenMatch, LAST_SEEN_MAX_EXPR, linkReaderKeyExpr, liveShareLinkExpr, presenceBetweenMatch, VISIT_DAY_KEY_EXPR, VISIT_TIME_SUM_EXPR, visitBetweenMatch, …
@@ -611,6 +614,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/billing/planGrace.ts` · OrgPlanGrace, PlanLimitsGraceSweepOptions, PlanLimitsGraceSweepResult, runPlanLimitsGraceSweep
 - `src/lib/billing/planLimits.ts` · AnalyticsTier, analyticsTierForPlan, checkLimit, clampAnalyticsDays, CountedLimitKey, FeatureGateKey, FREE_ANALYTICS_DAYS, FREE_DOCUMENTS, …
 - `src/lib/billing/pricing.ts` · USD_CENTS_PER_CREDIT
+- `src/lib/billing/proPriceFromStripe.ts` · formatPriceLabel, ProPriceLabelSet, readProPriceLabelsFromStripe
 - `src/lib/billing/proPriceLabel.ts` · getBillingProPriceLabel, ProPriceLabels, revalidateBillingProPriceLabel
 - `src/lib/billing/stripePeriods.ts` · getInvoiceSubscriptionId, getSubscriptionPeriod, parseStripeUnixSeconds
 - `src/lib/billing/stripeSubscriptionCancel.ts` · cancelStripeSubscriptionNow, scheduleStripeCancelAtPeriodEnd, StripeCancelOutcome
@@ -627,6 +631,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/client/docUploadPipeline.ts` · apiCreateDoc, apiCreateUpload, CreateDocResponse, CreateUploadInput, CreateUploadResponse, isPdfFile, isPdfMeta, PDF_ONLY_MESSAGE, …
 - `src/lib/client/entityIdentity.ts` · EntityIdentity, EntityIdentityState, EntityProjectPill, loadEntityIdentity, noteEntityName, useEntityIdentity
 - `src/lib/client/entityTitles.ts` · clearEntityTitles, EntityKind, forgetEntityTitle, recallEntityTitle, rememberEntityTitle, rememberEntityTitles, resolveEntityTitle, useEntityTitle
+- `src/lib/client/funnel.ts` · FunnelCta, FunnelEvent, FunnelFields, funnelSurface, trackFunnel
 - `src/lib/client/knownEmpty.ts` · KnownEmpty, peekKnownEmpty, useKnownEmpty
 - `src/lib/client/navPathOf.ts` · navPathOf
 - `src/lib/client/outOfCredits.ts` · dispatchOutOfCredits, OUT_OF_CREDITS_EVENT, OutOfCreditsReason, outOfCreditsReasonFromCode

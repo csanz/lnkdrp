@@ -95,7 +95,17 @@ export type ActivityType =
   // A Slack channel wired up or removed (docs/prds/lnkdrp-slack.md). `meta.channelName` and
   // `meta.teamName`; never the webhook URL.
   | "integration.slack_connected"
-  | "integration.slack_disconnected";
+  | "integration.slack_disconnected"
+  // Funnel instrumentation (docs/reviews/pricing-upsell-fix-plan-2026-09-23.md, Phase 4). An
+  // upgrade or out-of-credits modal opened (`meta.reason`, `meta.from`) and what was pressed on it
+  // (`meta.cta`: upgrade | pack | compare | manage | dismiss). Written by `POST /api/funnel` from
+  // the browser; hidden from the workspace feed (`src/lib/activity/feedVisibility.ts`).
+  | "funnel.modal_shown"
+  | "funnel.cta_clicked"
+  // A Stripe Checkout session was created: `meta.kind` is "pro" (with `meta.interval`) or
+  // "credit_pack" (with `meta.pack`, `meta.credits`). `plan.upgraded` is the webhook's answer to
+  // the one that completed. Hidden from the feed like the two above.
+  | "checkout.started";
 
 export type ActivityAgent = { client: string; version: string | null } | null;
 

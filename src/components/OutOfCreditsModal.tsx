@@ -24,6 +24,9 @@ import type { OutOfCreditsReason } from "@/lib/client/outOfCredits";
 import { usePlan } from "@/lib/client/usePlan";
 import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
 
+/** What a person can press on the modal; reported to the funnel by the listener. */
+export type OutOfCreditsCta = "upgrade" | "pack" | "manage" | "dismiss";
+
 /** Which Pro the workspace is on; `null` when the status read failed. */
 type BillingInterval = "month" | "year" | null;
 
@@ -56,6 +59,7 @@ export default function OutOfCreditsModal({
   onClose,
   onManageCredits,
   onBuyCredits,
+  onCta,
   reason = "exhausted",
 }: {
   open: boolean;
@@ -64,6 +68,8 @@ export default function OutOfCreditsModal({
   onManageCredits: () => void;
   /** Free and yearly Pro: go to the credit packs. */
   onBuyCredits: () => void;
+  /** Called with what was pressed, just before the modal acts on it. Instrumentation only. */
+  onCta?: (cta: OutOfCreditsCta) => void;
   /** `daily_cap`: the Free daily brake, credits remain; `exhausted`: the balance is empty. */
   reason?: OutOfCreditsReason;
 }) {
@@ -101,26 +107,39 @@ export default function OutOfCreditsModal({
     "rounded-md px-2 py-2 text-[13px] font-medium text-[var(--muted-2)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
 
   const upgrade = () => {
+    onCta?.("upgrade");
     onClose();
-    openUpgrade("credits");
+    openUpgrade("credits", { from: "out_of_credits" });
+  };
+  const dismiss = () => {
+    onCta?.("dismiss");
+    onClose();
+  };
+  const buy = () => {
+    onCta?.("pack");
+    onBuyCredits();
+  };
+  const manage = () => {
+    onCta?.("manage");
+    onManageCredits();
   };
 
   if (reason === "daily_cap") {
     return (
-      <Modal open={open} onClose={onClose} ariaLabel="Daily credit cap reached">
+      <Modal open={open} onClose={dismiss} ariaLabel="Daily credit cap reached">
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Daily credit cap reached</div>
         <div className="mt-2 text-[13px] text-[var(--muted-2)]">
           Free workspaces can spend {CREDITS_COPY.freeDailyCap} credits a day. Your remaining credits are safe. Try again
           tomorrow, or buy a credit pack: a pack lifts the daily cap. Pro has no daily cap.
         </div>
         <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
-          <button type="button" className={tertiaryClass} onClick={onClose}>
+          <button type="button" className={tertiaryClass} onClick={dismiss}>
             Not now
           </button>
           <button type="button" className={secondaryClass} onClick={upgrade}>
             Upgrade to Pro
           </button>
-          <button type="button" className={primaryClass} onClick={onBuyCredits}>
+          <button type="button" className={primaryClass} onClick={buy}>
             {BUY_PACK_LABEL}
           </button>
         </div>
@@ -130,20 +149,20 @@ export default function OutOfCreditsModal({
 
   if (isFree) {
     return (
-      <Modal open={open} onClose={onClose} ariaLabel="Starter credits used">
+      <Modal open={open} onClose={dismiss} ariaLabel="Starter credits used">
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">You’ve used your starter credits</div>
         <div className="mt-2 text-[13px] text-[var(--muted-2)]">
           Free workspaces start with {CREDITS_COPY.freeStarter} credits. Top up with a credit pack, or go Pro for{" "}
           {CREDITS_COPY.proPerMonth} credits a month and AI compare on every replacement.
         </div>
         <div className="mt-6 flex flex-wrap items-center justify-end gap-2">
-          <button type="button" className={tertiaryClass} onClick={onClose}>
+          <button type="button" className={tertiaryClass} onClick={dismiss}>
             Not now
           </button>
           <button type="button" className={secondaryClass} onClick={upgrade}>
             Upgrade to Pro
           </button>
-          <button type="button" className={primaryClass} onClick={onBuyCredits}>
+          <button type="button" className={primaryClass} onClick={buy}>
             {BUY_PACK_LABEL}
           </button>
         </div>
@@ -153,17 +172,17 @@ export default function OutOfCreditsModal({
 
   if (isPro && interval === "year") {
     return (
-      <Modal open={open} onClose={onClose} ariaLabel="Out of credits">
+      <Modal open={open} onClose={dismiss} ariaLabel="Out of credits">
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Out of credits</div>
         <div className="mt-2 text-[13px] text-[var(--muted-2)]">
           You’ve used all credits for this billing cycle. AI tools are currently unavailable. Yearly plans top up with a
           credit pack.
         </div>
         <div className="mt-6 flex items-center justify-end gap-2">
-          <button type="button" className={secondaryClass} onClick={onClose}>
+          <button type="button" className={secondaryClass} onClick={dismiss}>
             Cancel
           </button>
-          <button type="button" className={primaryClass} onClick={onBuyCredits}>
+          <button type="button" className={primaryClass} onClick={buy}>
             {BUY_PACK_LABEL}
           </button>
         </div>
@@ -172,19 +191,19 @@ export default function OutOfCreditsModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} ariaLabel="Out of credits">
+    <Modal open={open} onClose={dismiss} ariaLabel="Out of credits">
       <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Out of credits</div>
       <div className="mt-2 text-[13px] text-[var(--muted-2)]">
         You’ve used all credits for this billing cycle. AI tools are currently unavailable.
       </div>
       <div className="mt-6 flex items-center justify-end gap-2">
-        <button type="button" className={secondaryClass} onClick={onClose}>
+        <button type="button" className={secondaryClass} onClick={dismiss}>
           Cancel
         </button>
         <button
           type="button"
           className={`${primaryClass} disabled:opacity-50`}
-          onClick={onManageCredits}
+          onClick={manage}
           disabled={intervalPending}
         >
           Manage credits

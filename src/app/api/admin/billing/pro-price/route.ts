@@ -5,35 +5,16 @@
  * customer-facing endpoints can read it without hitting Stripe.
  */
 import { NextResponse } from "next/server";
-import Stripe from "stripe";
 
 import { connectMongo } from "@/lib/mongodb";
 import { BillingConfigModel } from "@/lib/models/BillingConfig";
+import { readProPriceLabelsFromStripe } from "@/lib/billing/proPriceFromStripe";
 import { revalidateBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
 
 export const runtime = "nodejs";
 
-
-
-/**
- *
- */
-function formatPriceLabel(params: { unitAmount: number; currency: string; interval: string }): string {
-  const { unitAmount, currency, interval } = params;
-  const amount = unitAmount / 100;
-  const cur = (currency || "usd").toUpperCase();
-  const suffix = interval === "month" ? "/mo" : interval === "year" ? "/yr" : `/${interval}`;
-  try {
-    return `${new Intl.NumberFormat(undefined, { style: "currency", currency: cur, maximumFractionDigits: 0 }).format(amount)}${suffix}`;
-  } catch {
-    return `$${amount.toFixed(0)}${suffix}`;
-  }
-}
-
-/**
- *
- */
+/** The stored Pro price label and when it was last written. */
 export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -47,45 +28,21 @@ export async function GET(request: Request) {
   return NextResponse.json({ ok: true, proPriceLabel: proPriceLabel || null, updatedDate });
 }
 
-/**
- *
- */
+/** Re-read the Pro prices from Stripe and store their labels. */
 export async function POST(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const stripeKey = (process.env.STRIPE_SECRET_KEY ?? "").trim();
-  const priceId = (process.env.STRIPE_PRICE_ID ?? "").trim();
-  if (!stripeKey || !priceId) {
+  let labels: Awaited<ReturnType<typeof readProPriceLabelsFromStripe>>;
+  try {
+    labels = await readProPriceLabelsFromStripe();
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 400 });
+  }
+  if (!labels) {
     return NextResponse.json({ error: "Missing STRIPE_SECRET_KEY or STRIPE_PRICE_ID" }, { status: 400 });
   }
-
-  const stripe = new Stripe(stripeKey);
-  const price = await stripe.prices.retrieve(priceId);
-  const unitAmount = typeof (price as any)?.unit_amount === "number" ? (price as any).unit_amount : null;
-  const currency = typeof (price as any)?.currency === "string" ? String((price as any).currency) : "usd";
-  const interval = typeof (price as any)?.recurring?.interval === "string" ? String((price as any).recurring.interval) : "month";
-  if (typeof unitAmount !== "number" || !Number.isFinite(unitAmount)) {
-    return NextResponse.json({ error: "Stripe price missing unit_amount" }, { status: 400 });
-  }
-  const proPriceLabel = formatPriceLabel({ unitAmount, currency, interval });
-
-  // The yearly price, when the deployment has one. Its per-month figure is what /pricing prints
-  // under the toggle ("$24/mo, billed yearly"); rounded down so the page never overstates the saving.
-  const annualPriceId = (process.env.STRIPE_PRICE_ID_ANNUAL ?? "").trim();
-  let proAnnualPriceLabel: string | null = null;
-  let proAnnualPerMonthLabel: string | null = null;
-  if (annualPriceId) {
-    const annual = await stripe.prices.retrieve(annualPriceId);
-    const annualAmount = typeof (annual as any)?.unit_amount === "number" ? (annual as any).unit_amount : null;
-    const annualCurrency = typeof (annual as any)?.currency === "string" ? String((annual as any).currency) : currency;
-    const annualInterval = typeof (annual as any)?.recurring?.interval === "string" ? String((annual as any).recurring.interval) : "";
-    if (typeof annualAmount !== "number" || !Number.isFinite(annualAmount) || annualInterval !== "year") {
-      return NextResponse.json({ error: "STRIPE_PRICE_ID_ANNUAL must be a licensed price with interval=year" }, { status: 400 });
-    }
-    proAnnualPriceLabel = formatPriceLabel({ unitAmount: annualAmount, currency: annualCurrency, interval: "year" });
-    proAnnualPerMonthLabel = formatPriceLabel({ unitAmount: Math.floor(annualAmount / 12), currency: annualCurrency, interval: "month" });
-  }
+  const { proPriceLabel, proAnnualPriceLabel, proAnnualPerMonthLabel } = labels;
 
   await connectMongo();
   await BillingConfigModel.updateOne(

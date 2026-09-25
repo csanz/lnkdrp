@@ -76,7 +76,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     }
 
     const gate = await checkLimit(actor.orgId, "analytics_history");
-    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
+    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, docId: docObjectId, request }), actor);
 
     // Per-link scope. An unknown slug is a 404, like the metrics route — never a silent whole-doc read.
     const shareIdFilter = (url.searchParams.get("shareId") ?? "").trim();

@@ -74,7 +74,7 @@ export async function GET(
 
     // Per-viewer page time is deep analytics (Pro). Checked after ownership so foreign docs stay 404.
     const gate = await checkLimit(actor.orgId, "analytics_history");
-    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
+    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, docId: docObjectId, request }), actor);
 
     /**
      * `:userId` is a lookup key for this document's timing rows, never a key into `users`.

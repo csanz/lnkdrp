@@ -444,12 +444,46 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject: client, verb: "connected to", object: "this workspace", suffix: keyName ? `using “${keyName}”` : null };
     }
     case "plan.limit_reached": {
-      // meta.limit is the LimitKey ("documents", "projects", …); name the wall that was hit.
+      // meta.limit is the LimitKey ("documents", "projects", …); name the wall that was hit. The
+      // feature gates are Pro features rather than caps, and read as such.
       const limit = metaString(item.meta, "limit") ?? "";
       const wall =
-        limit === "documents" ? "the document limit" : limit === "projects" ? "the project limit" : limit === "collaborators" ? "the collaborator limit" : "a plan limit";
+        limit === "documents"
+          ? "the document limit"
+          : limit === "projects"
+            ? "the project limit"
+            : limit === "collaborators"
+              ? "the collaborator limit"
+              : limit === "team_workspaces"
+                ? "the team workspace limit"
+                : limit === "version_history"
+                  ? "a Pro feature: version history"
+                  : limit === "analytics_history"
+                    ? "a Pro feature: deep analytics"
+                    : limit === "project_links"
+                      ? "a Pro feature: project links"
+                      : "a plan limit";
       const target = item.doc?.title?.trim() ? `sharing ${docTitle}` : item.project?.name?.trim() ? `on ${item.project.name.trim()}` : "";
       return { subject, verb: `hit ${wall}`, object: target, suffix: null };
+    }
+    case "funnel.modal_shown": {
+      const reason = metaString(item.meta, "reason");
+      const from = metaString(item.meta, "from");
+      return { subject, verb: "saw the upgrade prompt", object: reason ? `for ${reason.replace(/_/g, " ")}` : "", suffix: from ? `from ${from.replace(/_/g, " ")}` : null };
+    }
+    case "funnel.cta_clicked": {
+      const cta = metaString(item.meta, "cta") ?? "";
+      const reason = metaString(item.meta, "reason");
+      const verb =
+        cta === "upgrade" ? "chose Upgrade" : cta === "pack" ? "chose a credit pack" : cta === "compare" ? "opened Compare plans" : cta === "manage" ? "opened credit settings" : "dismissed the upgrade prompt";
+      return { subject, verb, object: reason ? `for ${reason.replace(/_/g, " ")}` : "", suffix: null };
+    }
+    case "checkout.started": {
+      const kind = metaString(item.meta, "kind");
+      const interval = metaString(item.meta, "interval");
+      const credits = metaString(item.meta, "credits");
+      if (kind === "credit_pack") return { subject, verb: "started checkout for", object: credits ? `${credits} credits` : "a credit pack", suffix: null };
+      return { subject, verb: "started checkout for", object: interval === "year" ? "Pro, yearly" : "Pro", suffix: null };
     }
     case "plan.grace_started":
       return { subject: "This workspace", verb: "entered its grace period", object: "", suffix: "over the Free limits at launch" };

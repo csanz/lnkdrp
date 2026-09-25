@@ -32,6 +32,7 @@ import Stripe from "stripe";
 
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor } from "@/lib/gating/actor";
+import { recordActivity } from "@/lib/activity/log";
 import { UserModel } from "@/lib/models/User";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
@@ -229,6 +230,16 @@ export async function POST(request: Request) {
 
       const url = typeof session?.url === "string" ? session.url : "";
       if (!url) throw new Error("Failed to create Checkout Session");
+
+      // The funnel's last step before Stripe; the webhook's `plan.upgraded` is the one after.
+      void recordActivity({
+        orgId,
+        userId,
+        actorKind: actor.kind,
+        type: "checkout.started",
+        meta: { kind: "pro", interval },
+        request,
+      });
 
       return NextResponse.json({ url });
     } catch (err) {

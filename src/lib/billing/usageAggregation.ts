@@ -7,7 +7,7 @@
 import { USD_CENTS_PER_CREDIT } from "./pricing";
 
 export type BillingLedgerRow = {
-  actionType: "summary" | "review" | "history" | "unknown";
+  actionType: "summary" | "review" | "history" | "brief" | "unknown";
   qualityTier: "basic" | "standard" | "advanced";
   modelRoute: string | null;
   status: "charged" | "refunded";
@@ -44,6 +44,7 @@ function actionLabel(a: BillingLedgerRow["actionType"]): string {
   if (a === "summary") return "Summary";
   if (a === "review") return "AI review";
   if (a === "history") return "AI compare";
+  if (a === "brief") return "Visit brief";
   return "Unknown";
 }
 

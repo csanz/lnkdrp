@@ -992,16 +992,10 @@ export async function PATCH(
     if (turningSharingOn || unarchivingSharedDoc) {
       limitCheck = await checkLimit(actor.orgId, "documents");
       if (!limitCheck.ok) {
-        void recordActivity({
-          orgId: actor.orgId,
-          userId: actor.userId,
-          actorKind: actor.kind,
-          type: "plan.limit_reached",
-          docId: docObjectId,
-          meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
-          request,
-        });
-        return applyTempUserHeaders(planLimitResponse(limitCheck), actor);
+        return applyTempUserHeaders(
+          planLimitResponse(limitCheck, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, docId: docObjectId, request }),
+          actor,
+        );
       }
     }
 
@@ -1014,16 +1008,10 @@ export async function PATCH(
     ) {
       const gate = await checkLimit(actor.orgId, "version_history");
       if (!gate.ok) {
-        void recordActivity({
-          orgId: actor.orgId,
-          userId: actor.userId,
-          actorKind: actor.kind,
-          type: "plan.limit_reached",
-          docId: docObjectId,
-          meta: { limit: gate.limit, used: gate.used, max: gate.max },
-          request,
-        });
-        return applyTempUserHeaders(planLimitResponse(gate), actor);
+        return applyTempUserHeaders(
+          planLimitResponse(gate, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, docId: docObjectId, request }),
+          actor,
+        );
       }
     }
 
@@ -1152,16 +1140,10 @@ export async function PATCH(
         body,
       });
       if (blocked) {
-        void recordActivity({
-          orgId: actor.orgId,
-          userId: actor.userId,
-          actorKind: actor.kind,
-          type: "plan.limit_reached",
-          docId: docObjectId,
-          meta: { limit: blocked.limit, used: blocked.used, max: blocked.max },
-          request,
-        });
-        return applyTempUserHeaders(planLimitResponse(blocked), actor);
+        return applyTempUserHeaders(
+          planLimitResponse(blocked, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, docId: docObjectId, request }),
+          actor,
+        );
       }
     }
 

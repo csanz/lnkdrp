@@ -6,9 +6,10 @@
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-mcp](./lnkdrp-mcp.md) · [lnkdrp-credit-features](./lnkdrp-credit-features.md) · [SUBSCRIPTION](../SUBSCRIPTION.md) · [FEATURES](../FEATURES.md)
 
-> **Decision (2026-09-12).** The pricing page and Terms §8 now describe Free (3 active links, 1 project,
-> 7 days of analytics, no collaborators) and Pro (unlimited, 1 collaborator included, more on
+> **Decision (2026-09-12, numbers updated 2026-09-25).** The pricing page and Terms §8 now describe Free (10 shared documents with
+> unlimited links each, 2 projects, 7 days of analytics, no collaborators) and Pro (unlimited, 3 collaborators included, more on
 > request; paid seats deferred). Free limits and the 14-day grace are enforced (M1 shipped). Seat pricing must not be announced until it is enforced and billable.
+> The constants are `FREE_DOCUMENTS`, `FREE_PROJECTS`, `FREE_ANALYTICS_DAYS` and `PRO_INCLUDED_COLLABORATORS` in `src/lib/billing/planLimits.ts`; the original decision read 3 links, 1 project and 1 collaborator.
 
 ---
 
@@ -32,7 +33,7 @@ bill collaborator seats through Stripe, and hide the credit UI until a metered f
    so the name cannot be misread that way again.)*
 2. **Limits are per workspace** and read from one constants module shared by the pricing page.
 3. **Starter credits are granted once per user** (personal workspace), not per new workspace.
-4. **Seats count people, not agents.** Owner + 1 collaborator free; each further member is a Stripe seat line item with quantity, prorated.
+4. **Seats count people, not agents.** Owner + the included collaborators (3 today) free; each further member is a Stripe seat line item with quantity, prorated.
 5. **Grandfather** any existing workspace over the limits at rollout; enforce only on new links/invites.
 
 ## Approach
@@ -73,7 +74,7 @@ Pro clears it and logs `plan.upgraded`. Reminders are deduped by day bucket so r
 
 ### M2 — Collaborator seats (post-launch)
 
-Decision 2026-09-12: Pro includes 1 collaborator at launch; paid seats ship later.
+Decision 2026-09-12: Pro includes 1 collaborator at launch; paid seats ship later. (Raised to 3 since; `PRO_INCLUDED_COLLABORATORS`.)
 
 - Stripe: add a recurring seat price (`STRIPE_SEAT_PRICE_ID`) with quantity; support a subscription that carries seats without the Pro plan.
 - Webhooks: persist `licensedSeats` on the workspace subscription; recompute on `customer.subscription.updated`.

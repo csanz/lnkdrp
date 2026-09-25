@@ -308,15 +308,7 @@ export async function POST(request: Request) {
     // Free plan: project cap (non-request projects only).
     const limitCheck = await checkLimit(actor.orgId, "projects");
     if (!limitCheck.ok) {
-      void recordActivity({
-        orgId: actor.orgId,
-        userId: actor.userId,
-        actorKind: actor.kind,
-        type: "plan.limit_reached",
-        meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
-        request,
-      });
-      return applyTempUserHeaders(planLimitResponse(limitCheck), actor);
+      return applyTempUserHeaders(planLimitResponse(limitCheck, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, request }), actor);
     }
 
     if (await projectNameTaken(orgId, name)) {

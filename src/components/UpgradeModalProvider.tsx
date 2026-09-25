@@ -10,13 +10,18 @@
 "use client";
 
 import { createContext, useCallback, useContext, useMemo, useState } from "react";
-import UpgradeModal from "@/components/UpgradeModal";
+import UpgradeModal, { type UpgradeModalCta } from "@/components/UpgradeModal";
+import { funnelSurface, trackFunnel } from "@/lib/client/funnel";
 import { markPlanLimitHit, type PlanLimitKey } from "@/lib/client/planLimit";
 import { peekPlan } from "@/lib/client/usePlan";
 import type { UpsellKey } from "@/lib/client/upsellCopy";
 
-/** Optional context for the modal's reason line. */
-export type OpenUpgradeOptions = { used?: number; max?: number; graceHint?: string | null };
+/**
+ * Optional context for the modal's reason line, plus `from`: the surface opening it, for the
+ * funnel row. Left out, it is derived from the page path (`funnelSurface`), which is right for
+ * nearly every caller; pass it when one page hosts several upsell surfaces worth telling apart.
+ */
+export type OpenUpgradeOptions = { used?: number; max?: number; graceHint?: string | null; from?: string | null };
 
 /** What `useUpgradeModal()` returns. */
 export type UpgradeModalApi = {
@@ -45,7 +50,7 @@ export function UpgradeModalProvider({
   /** True when auth is enabled: the modal may start Stripe Checkout for signed-in workspaces. */
   checkoutEnabled?: boolean;
 }) {
-  const [state, setState] = useState<{ key: UpsellKey; opts: OpenUpgradeOptions } | null>(null);
+  const [state, setState] = useState<{ key: UpsellKey; opts: OpenUpgradeOptions; from: string | null } | null>(null);
 
   const close = useCallback(() => setState(null), []);
 
@@ -53,8 +58,21 @@ export function UpgradeModalProvider({
     // Pro workspaces never see the modal.
     if (peekPlan()?.plan === "pro") return;
     if (LIMIT_KEYS.has(key)) markPlanLimitHit(key as PlanLimitKey);
-    setState({ key, opts });
+    const from = opts.from ?? funnelSurface(typeof window !== "undefined" ? window.location.pathname : null);
+    // The funnel's middle step: the wall was shown. `plan.limit_reached` (server) is the step before,
+    // `cta_clicked` and `checkout.started` the ones after.
+    trackFunnel("modal_shown", { reason: key, from });
+    setState({ key, opts, from });
   }, []);
+
+  // What was pressed on the open modal, before it closes or navigates away.
+  const onCta = useCallback(
+    (cta: UpgradeModalCta) => {
+      if (!state) return;
+      trackFunnel("cta_clicked", { reason: state.key, from: state.from, cta });
+    },
+    [state],
+  );
 
   const value = useMemo<UpgradeModalApi>(() => ({ openUpgrade, close }), [openUpgrade, close]);
 
@@ -69,6 +87,7 @@ export function UpgradeModalProvider({
           max={state.opts.max}
           graceHint={state.opts.graceHint}
           onClose={close}
+          onCta={onCta}
           checkoutEnabled={checkoutEnabled}
         />
       ) : null}

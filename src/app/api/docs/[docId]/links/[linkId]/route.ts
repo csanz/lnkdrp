@@ -161,7 +161,10 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
     // standard plan_limit body like the document-level PATCH, rather than a 200 that looks applied.
     // The active-links cap stays a 200 + planWarning, because there the link is still created.
     if (blocked && limit && !limit.ok && limit.limit === "version_history") {
-      return applyTempUserHeaders(planLimitResponse(limit), actor);
+      return applyTempUserHeaders(
+        planLimitResponse(limit, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, docId: docObjectId, request }),
+        actor,
+      );
     }
 
     const planWarning = planWarningOf(limit);

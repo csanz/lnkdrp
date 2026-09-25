@@ -169,15 +169,7 @@ export async function POST(request: Request) {
       // The seat is decided by the role on the invite: a viewer claims into no seat at all.
       const limitCheck = await checkLimit(orgId, "collaborators", { role });
       if (!limitCheck.ok) {
-        void recordActivity({
-          orgId,
-          userId: actor.userId,
-          actorKind: "user",
-          type: "plan.limit_reached",
-          meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max, via: "invite_claim" },
-          request,
-        });
-        return planLimitResponse(limitCheck);
+        return planLimitResponse(limitCheck, { orgId, userId: actor.userId, request, meta: { via: "invite_claim" } });
       }
     }
 

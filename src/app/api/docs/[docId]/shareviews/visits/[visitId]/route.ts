@@ -56,7 +56,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
 
     // Visit timelines are deep analytics (Pro). Checked after ownership so foreign docs stay 404.
     const gate = await checkLimit(actor.orgId, "analytics_history");
-    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
+    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, docId: docObjectId, request }), actor);
 
     // `?shareId=` makes the lookup refuse a visit that belongs to another link of this document,
     // so a link-filtered page cannot open a session it is not showing.

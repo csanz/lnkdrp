@@ -21,6 +21,7 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { splitProjectViewerKey, viewerKeyMatchClause } from "@/lib/share/projectPublic";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
+import { feedHiddenClauses } from "@/lib/activity/feedVisibility";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -155,6 +156,9 @@ export async function GET(request: Request) {
 
     const filter: Record<string, unknown> = { orgId };
     if (types.length) filter.type = { $in: types };
+    // Instrumentation rows (funnel steps, Checkout starts, feature-gate refusals) are not the
+    // workspace's history and stay out unless a type filter names them; see feedVisibility.ts.
+    else filter.$nor = feedHiddenClauses();
     if (docId) filter.docId = docId;
     if (who === "agents") filter["agent.client"] = { $exists: true, $ne: null };
     else if (who === "me") {

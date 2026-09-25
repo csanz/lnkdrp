@@ -67,7 +67,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
 
     // Recipient identities are deep analytics (Pro). Checked after ownership so foreign docs stay 404.
     const gate = await checkLimit(actor.orgId, "analytics_history");
-    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
+    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate, { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, docId: docObjectId, request }), actor);
 
     // Members (all org members for now).
     const memberships = await OrgMembershipModel.find({ orgId, isDeleted: { $ne: true } })

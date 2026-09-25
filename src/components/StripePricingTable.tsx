@@ -3,9 +3,10 @@
  *
  * Note on billing/access control:
  * - Stripe "pricing tables" are a hosted/Stripe-managed checkout surface.
- * - Our app's Pro access is **webhook-driven** and currently relies on Checkout metadata that includes `userId`.
- * - If you embed a pricing table for payments, those Checkout Sessions will NOT automatically include our `userId`,
- *   so the webhook will not be able to map the subscription back to a user (and Pro won't activate).
+ * - Our app's Pro access is **webhook-driven** and relies on Checkout metadata that carries `orgId` (the
+ *   workspace the subscription belongs to; `userId` rides along for attribution).
+ * - If you embed a pricing table for payments, those Checkout Sessions will NOT automatically include our `orgId`,
+ *   so the webhook will not be able to map the subscription back to a workspace (and Pro won't activate).
  *
  * Use this component for display/marketing, or extend the webhook mapping strategy before using it for upgrades.
  */

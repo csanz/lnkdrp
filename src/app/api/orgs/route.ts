@@ -267,7 +267,8 @@ export async function POST(request: Request) {
     if (ownedTeamOrgIds.length >= FREE_TEAM_WORKSPACES) {
       const plans = await Promise.all(ownedTeamOrgIds.map((id) => getWorkspacePlan(id)));
       if (!plans.some((plan) => plan === "pro")) {
-        return planLimitResponse({
+        return planLimitResponse(
+          {
           ok: false,
           code: "plan_limit",
           limit: "team_workspaces",
@@ -280,7 +281,10 @@ export async function POST(request: Request) {
             FREE_TEAM_WORKSPACES === 1
               ? "Free accounts can have one team workspace. Upgrade to Pro to create another."
               : `Free accounts can have ${FREE_TEAM_WORKSPACES} team workspaces. Upgrade to Pro to create another.`,
-        });
+          },
+          // A per-person limit; the row goes to the workspace the person is acting from.
+          { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, request },
+        );
       }
     }
 

@@ -283,17 +283,7 @@ export async function POST(request: Request) {
   // Personal orgs never reach here (they 404 above); only team orgs are gated.
   // `role` matters: a viewer takes no seat, so inviting one is never a plan decision.
   const limitCheck = await checkLimit(orgIdRaw, "collaborators", { role });
-  if (!limitCheck.ok) {
-    void recordActivity({
-      orgId: orgIdRaw,
-      userId: session.userId,
-      actorKind: "user",
-      type: "plan.limit_reached",
-      meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
-      request,
-    });
-    return planLimitResponse(limitCheck);
-  }
+  if (!limitCheck.ok) return planLimitResponse(limitCheck, { orgId: orgIdRaw, userId: session.userId, request });
 
   const token = crypto.randomBytes(24).toString("base64url");
   const tokenHash = sha256Hex(token);

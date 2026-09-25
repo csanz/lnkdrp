@@ -110,6 +110,8 @@ All of these are client-side or copy. Ship as one PR or several; none depends on
 
 The single highest-leverage conversion change. Identities are already recorded on Free; the teaser just has to stop lying.
 
+**Status 2026-09-25: 2.1 and 2.2 done, Option A of 2.3 taken.** `src/lib/analytics/teaser.ts` computes `{ uniqueViewers, identifiedViewers, firstViewAt, hiddenDays }` over the route's own scope with no window and projects nothing but numbers and a date; the document and project shareviews routes send it on the basic tier only. `MetricsView` replaces the three blurred rows with the sentence and one skeleton row. Live on the dev workspace flipped to Free: 20 unique / 9 identified, equal to a manual Mongo count. `tests/lib/analyticsTeaser.test.ts`. Options B and C stay open for Phase 5.
+
 ### 2.1 Server: return the real unique count and first-view date on Free — M
 - `src/app/api/docs/[docId]/shareviews/route.ts:298-302, 1074-1078`
 - On the basic tier, alongside the empty `viewers: []`, return `teaser: { uniqueViewers, identifiedViewers, firstViewAt, hiddenDays }` computed over full history (not the 7-day clamp), where `identifiedViewers` is the count of rows with an email or verified identity. Never return names, emails, companies or per-page data.
@@ -202,6 +204,8 @@ Not scheduled. Each is a one-page decision with the data from Phase 4.
 ## Phase 6 — Documentation and comment drift
 
 One PR, mechanical. Everything here contradicts the code.
+
+**Status 2026-09-25: done**, except `credits/purchase/route.ts:50` ($39 in a comment; the file was in another agent's hands, left for them) and `BillingConfig.ts` / the creditPacks narrative, which had already been fixed. The `/pricing` credit table is generated from `COST_CATALOG`; "Verified access for sensitive links" is off the Enterprise card; `brief` rows label as "Visit brief" on the billing tab; the Pro price label falls back to Stripe (`src/lib/billing/proPriceFromStripe.ts`, cached an hour) when the admin has never stored one, so "price shown at checkout" only appears when Stripe itself is unreachable.
 
 - `docs/SUBSCRIPTION.md:60`: team workspaces on Free do get 100 starter credits.
 - `docs/prds/lnkdrp-credit-features.md:9,45`: 100 starter / 500 Pro / no monthly top-up.

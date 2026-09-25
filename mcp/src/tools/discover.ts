@@ -85,6 +85,11 @@ const ACTIVITY_TYPES = [
   // A Slack channel connected or removed; `meta.channelName` names it.
   "integration.slack_connected",
   "integration.slack_disconnected",
+  // Funnel instrumentation: an upgrade prompt shown, what was pressed, a Checkout started. Not in
+  // the feed by default (the app hides them); listed here so an agent can ask for them by name.
+  "funnel.modal_shown",
+  "funnel.cta_clicked",
+  "checkout.started",
 ] as const;
 
 // Compile-time guard: an event type the app logs but this list lacks cannot be filtered on, which

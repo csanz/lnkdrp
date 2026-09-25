@@ -30,7 +30,6 @@ import {
   DocumentTextIcon,
   FolderIcon,
   LinkIcon,
-  LockClosedIcon,
   Square2StackIcon,
   UserIcon,
 } from "@heroicons/react/24/outline";
@@ -80,6 +79,14 @@ import { useEntityIdentity } from "@/lib/client/entityIdentity";
 
 /** Free = basic (totals, chart, unique viewer count); Pro = deep (identities, per-page time, visits). */
 type AnalyticsTier = "basic" | "deep";
+
+/** Mirror of `AnalyticsTeaser` in `src/lib/analytics/teaser.ts`: lifetime counts, first view, hidden days. */
+type AnalyticsTeaser = {
+  uniqueViewers: number;
+  identifiedViewers: number;
+  firstViewAt: string | null;
+  hiddenDays: number;
+};
 
 /**
  * Which resource's metrics these are. Built by the two page shells (`docMetricsScope` /
@@ -144,6 +151,11 @@ type MetricsResponse = {
   analyticsDaysLimit?: number;
   /** Which tier the server rendered; on `"basic"` the viewer arrays are empty and per-page maps are omitted. */
   analyticsTier?: AnalyticsTier;
+  /**
+   * Basic only: the real shape of what the plan withholds, as counts and one date. Older servers
+   * omit it; the viewer block then falls back to the window count alone.
+   */
+  teaser?: AnalyticsTeaser;
   /** Unique viewers (signed-in + anonymous) inside the window; the only per-viewer fact Free receives. */
   viewerCount?: number;
   totals: {
@@ -877,48 +889,74 @@ function Check() {
     </svg>
   );
 }
-/** Placeholder row widths (name / email / views / last-seen) so the blurred list reads as real data. */
-const LOCKED_ROW_WIDTHS: ReadonlyArray<[string, string, string, string]> = [
-  ["w-40", "w-56", "w-24", "w-32"],
-  ["w-32", "w-48", "w-20", "w-32"],
-  ["w-44", "w-52", "w-24", "w-28"],
-];
-
 /**
- * Free-tier stand-in for the viewer lists: the unique viewer count, three blurred placeholder rows
- * and a quiet Pro prompt whose button opens the `analytics_history` upsell. `pending` reserves the
- * same footprint (plain skeleton, no prompt) while the plan snapshot is still loading, so the page
- * does not jump once it resolves.
+ * Free-tier stand-in for the viewer lists.
+ *
+ * It used to be three blurred placeholder rows under a lock, which read as data and were not.
+ * Identities are recorded on Free exactly as on Pro, so the server now sends the real shape of
+ * what is withheld (`teaser`: lifetime unique and identified viewer counts, the first view date)
+ * and this block says it in one sentence: "3 named people and 5 anonymous readers opened this
+ * since 12 Aug." One skeleton row keeps the footprint of a list, so the page does not jump when
+ * the rows appear on upgrade. `pending` reserves the same footprint (no prompt) while the plan
+ * snapshot is still loading.
+ *
+ * Without `teaser` (an older server) the sentence falls back to the window count; with nobody at
+ * all, the empty state stands alone and there is nothing to upsell.
  */
-
 function LockedViewersBlock({
   pending,
   loading,
   count,
   days,
+  teaser,
   linkLabel,
   nounLower,
   onUpgrade,
 }: {
   pending: boolean;
   loading: boolean;
+  /** Unique viewers in the window (both tiers have it); the fallback when `teaser` is missing. */
   count: number;
   days: number;
-  /** The selected link, when the page is filtered — the count is that link's, not the resource's. */
+  /** Lifetime counts from the server, when it sends them. */
+  teaser: AnalyticsTeaser | null;
+  /** The selected link, when the page is filtered: the count is that link's, not the resource's. */
   linkLabel: string | null;
-  /** "document" / "project" — the sentence below names what was (not) opened. */
+  /** "document" / "project": the sentence below names what was (not) opened. */
   nounLower: string;
   onUpgrade: () => void;
 }) {
   // This is the only viewer information a Free workspace gets, so it must name what it counted:
   // under a link filter, "no one has viewed this document" is a false statement about the document.
   const subject = linkLabel ?? `this ${nounLower}`;
-  const countLine =
-    count <= 0
-      ? `No one has opened ${subject} in the last ${days} days.`
-      : count === 1
-        ? `1 person opened ${subject} in the last ${days} days.`
-        : `${count.toLocaleString()} people opened ${subject} in the last ${days} days.`;
+  const people = (n: number, noun: string, plural: string) => `${n.toLocaleString()} ${n === 1 ? noun : plural}`;
+  const sinceDate = teaser?.firstViewAt ? formatDateShort(teaser.firstViewAt) : "";
+
+  const lifetime = teaser ? teaser.uniqueViewers : null;
+  const identified = teaser ? teaser.identifiedViewers : 0;
+  const anonymous = teaser ? Math.max(0, teaser.uniqueViewers - teaser.identifiedViewers) : 0;
+  const nobody = teaser ? teaser.uniqueViewers <= 0 : count <= 0;
+
+  const proLine = "Pro shows who they were, how long they spent on each page, and everything since day one.";
+
+  let countLine: React.ReactNode;
+  if (nobody) {
+    countLine = teaser
+      ? `No one has opened ${subject} yet.`
+      : `No one has opened ${subject} in the last ${days} days.`;
+  } else if (lifetime !== null && identified > 0) {
+    countLine = (
+      <>
+        <strong className="font-semibold text-[var(--fg)]">{people(identified, "named person", "named people")}</strong>
+        {anonymous > 0 ? ` and ${people(anonymous, "anonymous reader", "anonymous readers")}` : ""}
+        {` opened ${subject}${sinceDate ? ` since ${sinceDate}` : ""}. ${proLine}`}
+      </>
+    );
+  } else if (lifetime !== null) {
+    countLine = `${people(lifetime, "person", "people")} opened ${subject}${sinceDate ? ` since ${sinceDate}` : ""}. ${proLine}`;
+  } else {
+    countLine = `${people(count, "person", "people")} opened ${subject} in the last ${days} days. ${proLine}`;
+  }
 
   return (
     <section
@@ -933,64 +971,38 @@ function LockedViewersBlock({
           aria-hidden="true"
         />
       ) : (
-        <div className="mt-1 text-sm text-[var(--muted)]">{countLine}</div>
+        <p className="mt-1 max-w-2xl text-sm text-[var(--muted)]">{countLine}</p>
       )}
 
-      <div className="relative mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-        <ul
-          aria-hidden="true"
-          className={[
-            "divide-y divide-[var(--border)]",
-            pending ? "motion-safe:animate-pulse" : "select-none blur-[3px]",
-          ].join(" ")}
-        >
-          {LOCKED_ROW_WIDTHS.map(([name, email, views, seen], idx) => (
-            <li
-              key={`locked:${idx}`}
-              className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
-            >
-              <div className="min-w-0">
-                <div
-                  className={`h-4 max-w-full rounded bg-[var(--panel-hover)] ${name}`}
-                />
-                <div
-                  className={`mt-1.5 h-3 max-w-full rounded bg-[var(--panel-hover)] ${email}`}
-                />
-              </div>
-              <div className="shrink-0">
-                <div
-                  className={`h-3 rounded bg-[var(--panel-hover)] sm:ml-auto ${views}`}
-                />
-                <div
-                  className={`mt-1.5 h-3 rounded bg-[var(--panel-hover)] sm:ml-auto ${seen}`}
-                />
-              </div>
-            </li>
-          ))}
-        </ul>
+      {pending || loading || nobody ? null : (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <Button variant="solid" size="sm" onClick={onUpgrade}>
+            Upgrade to Pro
+          </Button>
+          <Link
+            href="/pricing?from=analytics_teaser"
+            className="text-xs font-medium text-[var(--muted-2)] underline-offset-2 hover:text-[var(--fg)] hover:underline"
+          >
+            See what is included
+          </Link>
+        </div>
+      )}
 
-        {pending ? null : (
-          <div className="absolute inset-0 flex items-center justify-center p-4">
-            <div className="max-w-md rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-center shadow-lg">
-              <LockClosedIcon
-                className="mx-auto h-5 w-5 text-[var(--muted-2)]"
-                aria-hidden="true"
-              />
-              <p className="mt-2 text-sm text-[var(--muted)]">
-                See who they are, how long they spent on each page, and the full
-                history on Pro
-              </p>
-              <Button
-                variant="solid"
-                size="sm"
-                className="mt-3"
-                onClick={onUpgrade}
-              >
-                Upgrade
-              </Button>
+      {/* One row of list chrome, so the block keeps the footprint the viewer rows take on Pro and
+          the page does not jump on upgrade. Not data, and not styled to look like it. */}
+      <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+        <ul aria-hidden="true" className={pending ? "motion-safe:animate-pulse" : ""}>
+          <li className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4">
+            <div className="min-w-0">
+              <div className="h-4 w-40 max-w-full rounded bg-[var(--panel-hover)]" />
+              <div className="mt-1.5 h-3 w-56 max-w-full rounded bg-[var(--panel-hover)]" />
             </div>
-          </div>
-        )}
+            <div className="shrink-0">
+              <div className="h-3 w-24 rounded bg-[var(--panel-hover)] sm:ml-auto" />
+              <div className="mt-1.5 h-3 w-32 rounded bg-[var(--panel-hover)] sm:ml-auto" />
+            </div>
+          </li>
+        </ul>
       </div>
     </section>
   );
@@ -3409,6 +3421,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                 loading={loading || !hasData}
                 count={viewerCount}
                 days={days}
+                teaser={data?.teaser ?? null}
                 linkLabel={selectedLinkLabel}
                 nounLower={nounLower}
                 onUpgrade={() => openUpgrade("analytics_history")}

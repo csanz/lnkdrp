@@ -31,7 +31,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     try {
       if (plan !== "pro") {
         const gate = await checkLimit(doc.orgId ?? actor.orgId, "analytics_history");
-        if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
+        if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate, { orgId: doc.orgId ?? actor.orgId, userId: actor.userId, actorKind: actor.kind, docId, request }), actor);
       }
 
       const url = new URL(request.url);

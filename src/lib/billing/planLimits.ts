@@ -34,6 +34,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { isProSubscription } from "@/lib/billing/subscriptionState";
+import { recordActivity, type ActivityActorKind } from "@/lib/activity/log";
 import { liveProjectFilter } from "@/lib/projects/scope";
 // The cap counts shared documents directly through `DocModel` below. It used to import the
 // share-links service to count links instead — the drift that made two documents read "11 of 3"
@@ -408,12 +409,80 @@ export async function checkLimit(
 }
 
 /**
+ * Who hit the wall, for the `plan.limit_reached` row `planLimitResponse` writes.
+ *
+ * Every 402 is a funnel step (docs/reviews/pricing-upsell-fix-plan-2026-09-23.md, Phase 4.1), and
+ * before this eight routes wrote the row by hand while the feature gates (version history, deep
+ * analytics, project links) wrote nothing, so the funnel started at the counted caps only.
+ */
+export type PlanLimitHitContext = {
+  orgId: string | Types.ObjectId;
+  userId?: string | Types.ObjectId | null;
+  /** Defaults to `"user"`. */
+  actorKind?: ActivityActorKind;
+  request?: Request | null;
+  docId?: string | Types.ObjectId | null;
+  projectId?: string | Types.ObjectId | null;
+  /** Extra `meta` fields (`via`, ...); the limit's own fields win. */
+  meta?: Record<string, unknown>;
+};
+
+/**
+ * How long one workspace's repeat hits on the same limit are folded into one row.
+ *
+ * The feature gates sit on read routes (a Free metrics page asks for visit timelines on every load),
+ * so without this the feed would fill with the same refusal. Per process and best-effort: two
+ * instances may each write one row inside the window, and a restart forgets the window. Good
+ * enough for a funnel that counts workspaces, not rows.
+ */
+export const LIMIT_HIT_DEDUPE_MS = 10 * 60 * 1000;
+
+const recentLimitHits = new Map<string, number>();
+
+/** Forget the dedupe window (tests). */
+export function resetLimitHitDedupeForTests(): void {
+  recentLimitHits.clear();
+}
+
+/** True once per `orgId` + `limit` per `LIMIT_HIT_DEDUPE_MS`. */
+function shouldRecordLimitHit(orgId: string, limit: LimitKey, now: number): boolean {
+  const key = `${orgId}:${limit}`;
+  const last = recentLimitHits.get(key);
+  if (typeof last === "number" && now - last < LIMIT_HIT_DEDUPE_MS) return false;
+  recentLimitHits.set(key, now);
+  // Keep the map from growing with every workspace that ever hit a wall.
+  if (recentLimitHits.size > 5000) {
+    for (const [k, at] of recentLimitHits) if (now - at >= LIMIT_HIT_DEDUPE_MS) recentLimitHits.delete(k);
+  }
+  return true;
+}
+
+/**
  * Turn a blocked `checkLimit()` result into a `402` JSON response.
  *
  * Body: `{ error, code: "plan_limit", limit, used, max, grace, upgradeUrl, message }` — `error`
  * mirrors `message` so generic error handling still shows something sensible.
+ *
+ * With `hit`, also records a `plan.limit_reached` activity row (`meta: { limit, used, max,
+ * grace }`, `grace` being whether a launch grace window was open) once per workspace and limit per
+ * `LIMIT_HIT_DEDUPE_MS`. Fire-and-forget: a failed write never changes the response.
  */
-export function planLimitResponse(check: PlanLimitBlocked): NextResponse {
+export function planLimitResponse(check: PlanLimitBlocked, hit?: PlanLimitHitContext): NextResponse {
+  if (hit) {
+    const orgId = String(hit.orgId);
+    if (shouldRecordLimitHit(orgId, check.limit, Date.now())) {
+      void recordActivity({
+        orgId: hit.orgId,
+        userId: hit.userId ?? null,
+        actorKind: hit.actorKind ?? "user",
+        type: "plan.limit_reached",
+        docId: hit.docId ?? null,
+        projectId: hit.projectId ?? null,
+        meta: { ...(hit.meta ?? {}), limit: check.limit, used: check.used, max: check.max, grace: check.grace !== null },
+        request: hit.request ?? null,
+      });
+    }
+  }
   return NextResponse.json(
     { error: check.message, ...check },
     { status: 402, headers: { "cache-control": "no-store" } },

@@ -26,6 +26,7 @@ import {
   PRO_INCLUDED_COLLABORATORS,
 } from "@/lib/billing/planLimits";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
+import { COST_CATALOG, QUALITY_TIERS } from "@/lib/credits/costCatalog";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 import { comparesFor, plural } from "@/lib/client/planNumbers";
 import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
@@ -232,7 +233,8 @@ export default async function PricingPage() {
             </div>
           </div>
 
-          {/* How credits work: tier table. Costs mirror creditsForRun in src/lib/credits/schedule.ts. */}
+          {/* How credits work: tier table, generated from COST_CATALOG so this page, the credits modal
+              and the charging schedule cannot drift apart (they had: the literals here were retyped). */}
           <div className="mt-16 rounded-2xl border border-white/10 bg-white/[0.03] p-7 sm:p-8">
             <div className="grid gap-6 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] md:gap-14">
               <div>
@@ -270,13 +272,12 @@ export default async function PricingPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/10 text-white/80">
-                    {[
-                      { label: "Summary and key points", sub: "Automatic on every link, at the basic level", costs: ["1", "2", "5"], soon: false },
-                      { label: "AI compare", sub: "What changed between two versions", costs: ["2", "5", "12"], soon: false },
-                      { label: "AI review", sub: "Scores a document someone sent you against the criteria you set, and explains the score. Priced per document.", costs: ["2", "5", "12"], soon: true },
-                      { label: "Visit brief", sub: "A few minutes after a recipient stops reading: what held them, what they skipped, whether they came back. Automatic on Pro; one credit per visit, no quality level to choose.", costs: ["1", "1", "1"], soon: false },
-                      { label: "Recipient Q&A", sub: "Readers ask the document questions on the share page. You set a cap per reader and per link, so nobody can run up your credits. Priced per answered question.", costs: ["1", "2", "5"], soon: true },
-                    ].map((row) => (
+                    {COST_CATALOG.map((entry) => ({
+                      label: entry.label,
+                      sub: [entry.detail, ...(entry.notes ?? []).slice(0, 1)].join(" "),
+                      costs: QUALITY_TIERS.map((tier) => String(entry.costs[tier])),
+                      soon: !entry.released,
+                    })).map((row) => (
                       <tr key={row.label} className={row.soon ? "text-white/45" : undefined}>
                         <td className="py-3 pr-6 align-top">
                           <div className={row.soon ? "font-medium text-white/60" : "font-medium text-white/90"}>{row.label}</div>
@@ -344,7 +345,6 @@ export default async function PricingPage() {
                 "Unlimited seats, one invoice",
                 "Private workspaces, one admin view",
                 "Priority support and a DPA",
-                "Verified access for sensitive links",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2.5">
                   <Check />

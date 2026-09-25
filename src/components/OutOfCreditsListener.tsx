@@ -8,7 +8,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import OutOfCreditsModal from "@/components/OutOfCreditsModal";
+import OutOfCreditsModal, { type OutOfCreditsCta } from "@/components/OutOfCreditsModal";
+import { funnelSurface, trackFunnel } from "@/lib/client/funnel";
 import { OUT_OF_CREDITS_EVENT, type OutOfCreditsReason } from "@/lib/client/outOfCredits";
 
 const COOLDOWN_MS = 8_000;
@@ -27,18 +28,25 @@ export default function OutOfCreditsListener() {
       if (now - lastShownAtRef.current < COOLDOWN_MS) return;
       lastShownAtRef.current = now;
       const detail = (e as CustomEvent<{ reason?: OutOfCreditsReason }>).detail;
-      setReason(detail?.reason === "daily_cap" ? "daily_cap" : "exhausted");
+      const next: OutOfCreditsReason = detail?.reason === "daily_cap" ? "daily_cap" : "exhausted";
+      setReason(next);
       setOpen(true);
+      // The credits wall was shown; the server's `credits.exhausted` row is the step before.
+      trackFunnel("modal_shown", { reason: next, from: funnelSurface(window.location.pathname) });
     }
 
     window.addEventListener(OUT_OF_CREDITS_EVENT, onOutOfCredits);
     return () => window.removeEventListener(OUT_OF_CREDITS_EVENT, onOutOfCredits);
   }, [open]);
 
+  const onCta = (cta: OutOfCreditsCta) =>
+    trackFunnel("cta_clicked", { reason, cta, from: funnelSurface(window.location.pathname) });
+
   return (
     <OutOfCreditsModal
       open={open}
       reason={reason}
+      onCta={onCta}
       onClose={() => setOpen(false)}
       onManageCredits={() => {
         setOpen(false);

@@ -388,7 +388,7 @@ The workspace feed, newest first. Wraps `GET /api/activity`.
   `types` is an enum of every event the app records (`doc.*`, `upload.completed`, `share.*`,
   `share_link.*`, `project.*`, `tag.applied`, `tag.removed`, `member.*`, `viewer.introduced`,
   `request_repo.created`, `request.upload_received`, `download_request.*`, `plan.*`,
-  `credits.exhausted`, `summary.generated`, `agent.*`, `account.*`); an unknown type is a
+  `credits.exhausted`, `summary.generated`, `agent.*`, `account.*`, `funnel.*`, `checkout.started`); an unknown type is a
   `validation` error. The enum is checked against the app's own `ActivityType` at compile time, so a
   new event the app logs cannot quietly become unfilterable here.
   `who: "agents"` is the route's filter for rows with agent attribution — anything done by any MCP or

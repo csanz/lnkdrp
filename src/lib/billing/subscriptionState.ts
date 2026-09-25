@@ -7,7 +7,7 @@
  * the meter has something to bill — and that subscription is `active` without being Pro. Every
  * place that used to ask "is the status active?" now has to ask one of two different questions:
  *
- * - **Is this workspace Pro?** (limits, 300 included credits a cycle, deep analytics) →
+ * - **Is this workspace Pro?** (limits, 500 included credits a cycle, deep analytics) →
  *   {@link isProSubscription}: billable status AND the subscription carries the Pro price.
  * - **May this workspace be billed for usage?** (on-demand credits, the spend limit, meter
  *   reporting) → {@link isBillableSubscription}: billable status, either kind.

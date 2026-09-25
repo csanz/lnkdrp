@@ -23,6 +23,9 @@ import { planLimitUsageSuffix } from "@/lib/client/planLimit";
 import { PRO_PRICE_FALLBACK, UPSELL_COPY, type UpsellKey } from "@/lib/client/upsellCopy";
 import { usePlan } from "@/lib/client/usePlan";
 
+/** What a person can press on the modal; reported to the funnel by the provider. */
+export type UpgradeModalCta = "upgrade" | "compare" | "dismiss";
+
 type Props = {
   open: boolean;
   upsellKey: UpsellKey;
@@ -32,6 +35,8 @@ type Props = {
   /** Launch grace-period hint (see `planLimitGraceHint`). */
   graceHint?: string | null;
   onClose: () => void;
+  /** Called with what was pressed, just before the modal acts on it. Instrumentation only. */
+  onCta?: (cta: UpgradeModalCta) => void;
   /** False when auth is disabled for this deployment: skip the billing lookup, always link to `/pricing`. */
   checkoutEnabled?: boolean;
 };
@@ -98,6 +103,7 @@ export default function UpgradeModal({
   max,
   graceHint,
   onClose,
+  onCta,
   checkoutEnabled = false,
 }: Props) {
   const copy = UPSELL_COPY[upsellKey];
@@ -126,8 +132,15 @@ export default function UpgradeModal({
     };
   }, [open, checkoutEnabled, billing]);
 
+  // Closing without choosing: the backdrop, Escape, and "Not now" all land here.
+  const dismiss = useCallback(() => {
+    onCta?.("dismiss");
+    onClose();
+  }, [onCta, onClose]);
+
   const handleCheckout = useCallback(async () => {
     if (checkoutBusy) return;
+    onCta?.("upgrade");
     setCheckoutBusy(true);
     setCheckoutError(null);
     try {
@@ -136,7 +149,7 @@ export default function UpgradeModal({
       setCheckoutError(e instanceof Error ? e.message : "Failed to start checkout");
       setCheckoutBusy(false);
     }
-  }, [checkoutBusy, yearly, annualAvailable]);
+  }, [checkoutBusy, yearly, annualAvailable, onCta]);
 
   if (!open || isPro) return null;
 
@@ -154,7 +167,7 @@ export default function UpgradeModal({
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={dismiss}
       ariaLabel={copy.title}
       width={620}
       panelClassName="motion-safe:animate-[lnkdrpUpgradeIn_180ms_ease-out]"
@@ -228,18 +241,32 @@ export default function UpgradeModal({
             {checkoutBusy ? "Opening checkout…" : primaryLabel}
           </button>
         ) : (
-          <Link href="/pricing" className={primaryClass} onClick={onClose}>
+          <Link
+            href="/pricing"
+            className={primaryClass}
+            onClick={() => {
+              onCta?.("upgrade");
+              onClose();
+            }}
+          >
             {primaryLabel}
           </Link>
         )}
         <div className="mt-3 flex items-center justify-between gap-4">
-          <Link href="/pricing" className="text-[13px] font-medium text-[var(--muted-2)] underline-offset-4 hover:text-[var(--fg)] hover:underline" onClick={onClose}>
+          <Link
+            href="/pricing"
+            className="text-[13px] font-medium text-[var(--muted-2)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
+            onClick={() => {
+              onCta?.("compare");
+              onClose();
+            }}
+          >
             Compare plans
           </Link>
           <button
             type="button"
             className="rounded-md px-1 text-[13px] font-medium text-[var(--muted-2)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-            onClick={onClose}
+            onClick={dismiss}
           >
             Not now
           </button>

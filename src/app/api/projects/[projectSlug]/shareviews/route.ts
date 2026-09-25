@@ -60,6 +60,8 @@ import {
   activityWindowMatch,
   windowStartUtc,
 } from "@/lib/analytics/shareViewAggregates";
+import { buildAnalyticsTeaser } from "@/lib/analytics/teaser";
+import { debugError } from "@/lib/debug";
 import { PROJECT_ANON_KEY_EXPR, PROJECT_LINK_VIEWER_KEY_EXPR } from "@/lib/analytics/project/viewerKey";
 import {
   byDocPipeline,
@@ -733,6 +735,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
     }
     const viewerCount = windowAuthedViewers + windowAnonymousViewers;
 
+    // Basic only: the lifetime counts the plan is withholding, same scope as `viewerCount`, no
+    // window, no identity (`src/lib/analytics/teaser.ts`). Pro gets the rows; not run for it.
+    const teaser =
+      analyticsTier === "basic"
+        ? await buildAnalyticsTeaser({ scopeMatch, windowStart: start }).catch((err) => {
+            debugError(1, "[api/projects/:id/shareviews] teaser failed", { projectId: String(projectId), error: String(err) });
+            return null;
+          })
+        : null;
+
     /**
      * People who arrived and opened nothing — the visitors this collection exists to record, and
      * the ones the viewer list could not show.
@@ -834,6 +846,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
         days,
         analyticsDaysLimit,
         analyticsTier,
+        /** Basic only: lifetime counts and first view date, never a name. Absent on deep. */
+        ...(teaser ? { teaser } : {}),
         viewerCount,
         totals: {
           views: windowTotals.views,

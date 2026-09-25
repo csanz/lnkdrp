@@ -149,7 +149,7 @@ export async function POST(request: Request) {
   // Plan limits: an emailed invite would add a member; Free workspaces have no collaborator seats.
   // A viewer is exempt: it takes no seat, and `getWorkspaceUsage` does not count one.
   const limitCheck = await checkLimit(orgIdRaw, "collaborators", { role });
-  if (!limitCheck.ok) return planLimitResponse(limitCheck);
+  if (!limitCheck.ok) return planLimitResponse(limitCheck, { orgId: orgIdRaw, userId: actor.userId, request });
 
   const token = crypto.randomBytes(24).toString("base64url");
   const tokenHash = sha256Hex(token);

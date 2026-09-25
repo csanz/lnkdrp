@@ -120,7 +120,18 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
 
     // A plan limit refused the create (today: recipient version history on Free). Answer 402 with
     // the standard plan_limit body, exactly as the document-level PATCH does.
-    if (!link) return applyTempUserHeaders(planLimitResponse(limit as Parameters<typeof planLimitResponse>[0]), actor);
+    if (!link) {
+      return applyTempUserHeaders(
+        planLimitResponse(limit as Parameters<typeof planLimitResponse>[0], {
+          orgId: actor.orgId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          docId: docObjectId,
+          request,
+        }),
+        actor,
+      );
+    }
 
     // Recomputed traffic, like the list route: a response that returns the stored counters made
     // `update_share_link` and `list_share_links` disagree about the same link in the same session.

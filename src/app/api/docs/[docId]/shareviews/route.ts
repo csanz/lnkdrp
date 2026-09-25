@@ -68,6 +68,8 @@ import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPl
 import { PROJECT_LINK_FILTER, ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { toShareLinkDTO } from "@/lib/share/links";
 import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
+import { buildAnalyticsTeaser } from "@/lib/analytics/teaser";
+import { debugError } from "@/lib/debug";
 import { ProjectModel } from "@/lib/models/Project";
 import { projectLinkMetricsHref } from "@/lib/analytics/workspace/shape";
 import { splitProjectViewerKey, viewerKeyMatchClause } from "@/lib/share/projectPublic";
@@ -943,6 +945,20 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           : 0;
       const viewerCount = windowAuthedViewers + windowAnonymousViewers;
 
+      /**
+       * Basic only: what the plan is withholding, as real numbers (`src/lib/analytics/teaser.ts`).
+       * Same scope as `viewerCount`, no window, no identity. Pro gets the rows instead, so the
+       * aggregate is not run for it. Best-effort: a failure here leaves the response otherwise
+       * intact and the UI falls back to the window count.
+       */
+      const teaser =
+        analyticsTier === "basic"
+          ? await buildAnalyticsTeaser({ scopeMatch, windowStart: start }).catch((err) => {
+              debugError(1, "[api/docs/:docId/shareviews] teaser failed", { docId, error: String(err) });
+              return null;
+            })
+          : null;
+
       // Both tiers report the *window* counts, on every tier and whether or not viewer rows were
       // asked for. They used to come from `viewersAgg.length` / `anonymousAgg.length` on Pro —
       // lifetime aggregates with no date bound and a `$limit: 100` — so a `totals` object
@@ -1203,6 +1219,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         analyticsDaysLimit,
         /** `"basic"` (Free: no viewer identities / per-page data) or `"deep"` (Pro: everything). */
         analyticsTier,
+        /**
+         * Basic only: lifetime unique and identified viewer counts, the first view date and the
+         * days of history the window hides. Counts and a date, never a name. Absent on deep.
+         */
+        ...(teaser ? { teaser } : {}),
         /**
          * Link-recipients (signed-in + anonymous) within the window; available on both tiers.
          * One per (link, viewer), so the document's figure is the sum of the `byLink` rows and

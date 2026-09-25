@@ -89,15 +89,7 @@ export async function POST(request: Request) {
     if (!alreadyMember) {
       const limitCheck = await checkLimit(orgObjectId, "collaborators");
       if (!limitCheck.ok) {
-        void recordActivity({
-          orgId: orgObjectId,
-          userId: actor.userId,
-          actorKind: actor.kind,
-          type: "plan.limit_reached",
-          meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
-          request,
-        });
-        const res = planLimitResponse(limitCheck);
+        const res = planLimitResponse(limitCheck, { orgId: orgObjectId, userId: actor.userId, actorKind: actor.kind, request });
         res.cookies.set(JOIN_COOKIE, "", { path: "/", maxAge: 0 });
         return res;
       }

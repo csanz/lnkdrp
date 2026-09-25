@@ -30,7 +30,7 @@ function toOrgObjectId(orgId: string | Types.ObjectId): Types.ObjectId {
  *
  * `isPro` uses `isProSubscription`, not merely "is there a billable subscription": a personal Free
  * workspace that added a card for pay-as-you-go is billable but still Free, and if its balance row
- * had not been seeded yet it must still receive the 50-credit starter grant and the daily brake —
+ * had not been seeded yet it must still receive the 100-credit starter grant and the daily brake —
  * pay-as-you-go is what a Free workspace does *after* the starter grant, not a Pro substitute.
  */
 async function workspacePlanFacts(orgId: Types.ObjectId): Promise<WorkspacePlanFacts> {
@@ -79,7 +79,7 @@ export async function starterCreditsForWorkspace(orgId: string | Types.ObjectId)
  *
  * Exists so the credit service can operate even before a workspace has ever run an AI action.
  * Every bucket starts at 0; the only exception is the Free starter grant (`FREE_STARTER_CREDITS`,
- * 50, granted once to every non-Pro workspace, see `starterCreditsForWorkspace`). Free workspaces
+ * 100, granted once to every non-Pro workspace, see `starterCreditsForWorkspace`). Free workspaces
  * (personal or team) also get the daily brake (`FREE_DAILY_CREDIT_CAP`); Pro has none. Pro included
  * credits arrive via `grantCycleIncludedCredits` when Stripe opens a billing cycle. The seed is
  * idempotent because callers only write it when no balance row exists yet (`create` inside the
