@@ -58,10 +58,11 @@ note.
 ## Proposed decisions (to lock)
 
 1. **Identity is the address, per workspace.** `Contact` is keyed `(orgId, email)`, lowercased,
-   exactly like `ShareViewerEmail`, which this table subsumes (its `verifiedAt` and the claim key
-   move here; the model stays for a release as a read alias, then goes). A signed-in reader's
-   account email is their address. A reader who gives only a name is not a contact until they
-   give an address; the name is kept on the view as now.
+   the same key `ShareViewerEmail` uses. That table is not replaced: it is the confirmation
+   flow's own record and it works; a contact reads `verifiedAt` from it by the shared key, and
+   nothing in the confirmation path learns that contacts exist. A signed-in reader's account
+   email is their address. A reader who gives only a name is not a contact until they give an
+   address; the name is kept on the view as now.
 
 2. **Contacts are gathered at the four moments the product already records a person.** No new
    capture UI. Each site upserts the contact and appends to its history:
@@ -74,18 +75,19 @@ note.
    on the view. The upsert is idempotent and off the hot path (`after()`), like the Slack outbox.
 
 3. **What a contact carries.** `name` (the latest they gave, with the first kept), `email`,
-   `company` (derived: the address's domain, mapped to a display name where the domain is not a
-   webmail provider; editable later, Future), `firstSeenAt`, `lastSeenAt`, `verifiedAt`,
+   `domain` (the address's domain, or null for the webmail providers, so `gmail.com` never
+   becomes a company; a display name for it is Future), `firstSeenAt`, `lastSeenAt`, `verifiedAt`,
    `sources` (the links and inboxes they arrived through, with counts), `docIds` / `projectIds`
    touched (denormalised, capped), `visits` and `documentsRead` counters, `note` (one free-text
    field, team-written, 2,000 chars), and tags through `TagAssignment` with a third target kind,
    `contact`. Nothing here is not already stored somewhere; the table is a view that stays warm.
 
-4. **Identity follows the plan, exactly as everywhere else.** On Free, analytics say "Someone";
-   the Contacts page on Free shows the count and the companies (domains) and blurs the rest,
-   which is the same upsell the reader page makes and the honest amount of what Free records.
-   Pro sees everything. Introductions are the one exception already in the product: a reader who
-   introduced themselves is named on Free too, and is a full contact on Free.
+4. **Identity follows the plan, exactly as everywhere else.** Free sees, in full, the contacts
+   who introduced themselves, because introductions are already shown on Free; every other
+   contact (signed-in views, download requests) is a row with a domain and a date and no name or
+   address, plus the total, which is the same amount Free's analytics record and the same upsell
+   the reader page makes. Pro sees everything. No blurring: a row either shows a field or omits
+   it.
 
 5. **A Contacts entry in the sidebar, under Activity.** `/contacts`: a table, not cards. Columns
    name, company, tags, last seen, documents read, visits; sort by any; filter by tag, by
@@ -95,28 +97,32 @@ note.
    note, tags, and the history: every document and project they touched, each row linking to
    the existing reader page, which is not rebuilt.
 
-6. **Tags are the tags.** `TAG_TARGET_KINDS` gains `"contact"`. The tag page (`/tag/:slug`) grows
+6. **Every member reads; members and above write.** Viewers see the list and the pages and can
+   change nothing. Members, admins and owners tag contacts and write the note. The note keeps who
+   last edited it and when, because "warm, per Chris, Tuesday" is what the next reader needs.
+
+7. **Tags are the tags.** `TAG_TARGET_KINDS` gains `"contact"`. The tag page (`/tag/:slug`) grows
    a third section. Assigning is the same picker as on a document. A tag on a contact is how
    "investor", "passed", "warm", "counsel" get said; the product does not invent a status field.
 
-7. **Contacts appear where the person already does.** The reader page, the visit brief email,
+8. **Contacts appear where the person already does.** The reader page, the visit brief email,
    the Slack post and the activity row link to the contact when there is one, by name. That is
    the whole discovery: the first time a founder sees "Priya Nair" underlined in a brief and
    lands on her page with the four documents she has read, they understand the feature.
 
-8. **Privacy and deletion.** A contact is someone else's personal data held by the workspace.
-   Account purge deletes the workspace's contacts with everything else (`purgeCompleteness`
-   enforces it). A recipient's own request to be forgotten is served the way it is today, by
+9. **Privacy and deletion.** A contact is someone else's personal data held by the workspace.
+   Account purge and workspace deletion remove the workspace's contacts with everything else
+   (`purgeCompleteness` enforces the purge side). A recipient's own request to be forgotten is served the way it is today, by
    support, and now has one row to remove per workspace instead of a scatter. The privacy help
    article and the policy name contacts explicitly. Contacts never leave the workspace: no
    export in v1, no agent tool that writes them.
 
-9. **Agents read contacts, and only read.** `lnkdrp_list_contacts` (search, tag, document,
+10. **Agents read contacts, and only read.** `lnkdrp_list_contacts` (search, tag, document,
    since) and `lnkdrp_get_contact`, Pro-gated like the rest of identity; results wrap names and
    notes as untrusted text like every other reader-supplied string. No write tool: a note is a
    person's judgement.
 
-10. **Backfill once.** A migration walks `ShareView`, `ProjectLinkView`, `ShareDownloadRequest`
+11. **Backfill once.** A migration walks `ShareView`, `ProjectLinkView`, `ShareDownloadRequest`
     and `ShareViewerEmail` per workspace and builds the table, so the page is full on day one
     rather than starting from the next visitor.
 
@@ -133,6 +139,23 @@ note.
 4. **Sidebar weight.** Contacts as a top-level entry beside Activity and Agents, or inside
    Metrics? Top-level is proposed because the ask is "sort them, tag them", which is a list of
    its own.
+
+## Verification
+
+1. Introduce yourself on a link from a fresh browser: a contact appears in the list within a
+   second (realtime, like the sidebar counts), named, with the link as its source and the
+   document in its history.
+2. Open a second document on another link with the same address: one contact, two documents,
+   `lastSeenAt` moved, no duplicate.
+3. Request a download with a new address: a contact with no name, the request as its source.
+4. On Free, the list shows the introduced contact in full and the download-request contact as a
+   domain and a date; on Pro, both in full.
+5. Tag a contact "investor" from its page; the tag page lists it under a Contacts section; the
+   list filters by it.
+6. Delete the workspace: its contacts are gone; a second workspace that heard from the same
+   address keeps its own.
+7. `lnkdrp_list_contacts` from Claude Code returns the two rows on Pro and refuses identity on
+   Free; the note comes back wrapped as untrusted text.
 
 ## Milestones
 
