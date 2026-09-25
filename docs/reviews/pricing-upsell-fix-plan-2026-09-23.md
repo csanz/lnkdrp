@@ -179,6 +179,8 @@ The single highest-leverage conversion change. Identities are already recorded o
 
 Do this before Phase 5 decisions. Small change, since `recordActivity` and the 402 contract already exist.
 
+**Status 2026-09-25: 4.1 done, 4.2 not started.** The wall row reuses the existing `plan.limit_reached` type (it already carried `{ limit, used, max }`; `grace` added) and is written centrally by `planLimitResponse`, once per workspace and limit per 10 minutes, so the feature gates on read routes count too. `POST /api/funnel` takes `funnel.modal_shown` / `funnel.cta_clicked` (`cta: upgrade | pack | compare | manage | dismiss`, `reason`, `from`) from the upgrade and out-of-credits modals; `checkout.started` is written by the Stripe checkout and credit-pack purchase routes. All of these are hidden from the workspace feed. Tests: `funnelRoute`, `planLimitHit`, `feedVisibility`. The admin overview counts `plan.limit_reached` rows and will count slightly fewer on hot paths because of the dedupe.
+
 ### 4.1 Emit funnel events — S
 - Server: in `planLimitResponse` (`src/lib/billing/planLimits.ts:397-421`), `void recordActivity({ type: "plan.limit_hit", meta: { limit, used, max, grace } })`.
 - Client: in `UpgradeModalProvider` and `OutOfCreditsListener`, `POST /api/activity` (or a new lightweight `POST /api/funnel`) with `modal_shown`, `cta_clicked: upgrade|pack|compare|dismiss`, `reason`, and `from` (the surface). In checkout and pack-purchase routes, record `checkout_started` with `interval`/`pack`; the webhook already records `plan.upgraded`.
