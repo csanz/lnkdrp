@@ -127,7 +127,7 @@ One thing to know: the MCP process on :8787 was started before the revisions com
 
 ## Open items
 
-- `docs/reviews/mcp-test-coverage-2026-09-21.md` §2 is stale: all 33 tools are in the e2e harness now (`f6bd055`, `5f00a05`). Update or retire the matrix.
+- ~~`docs/reviews/mcp-test-coverage-2026-09-21.md` §2 is stale~~ Annotated 2026-09-25: every row marked covered with its step count, original verdicts kept struck through.
 - e2e default workspace ids point at a database that no longer exists locally.
 - Basic-tier summary leaves `keyPoints` empty and `oneLiner` unset; confirm that is the intended tier shape.
 - The Pro paths above remain untested end to end on this database.

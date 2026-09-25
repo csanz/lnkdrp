@@ -10,6 +10,10 @@ thirty-three exist. This document is the thing that was missing, not a plan to t
 
 Read section 2 if you skip the rest. It is the list of tools nothing will catch a regression in.
 
+> **2026-09-25.** Section 2 is now historical: the harness drives all thirty-six tools (the three
+> revision tools arrived on 2026-09-24) and cleans up after itself. The rows are annotated in place.
+> See `docs/reviews/mcp-test-run-2026-09-24.md` for the seven passes that got it there.
+
 Counts and line references were correct on 2026-09-21. Search by symbol.
 
 ---
@@ -18,7 +22,7 @@ Counts and line references were correct on 2026-09-21. Search by symbol.
 
 | What | Where | Scope |
 |---|---|---|
-| Wire-level e2e harness | `tests/mcp/e2e.ts`, 1,171 lines, 44 steps, 185 assertions | Mints a real API key in Mongo, connects an MCP client over Streamable HTTP, drives **22 of 33 tools** in the order an agent uses them, revokes the key. No test framework on purpose. |
+| Wire-level e2e harness | `tests/mcp/e2e.ts`, 1,645 lines, 58 steps, about 240 assertions (updated 2026-09-25) | Mints a real API key in Mongo, connects an MCP client over Streamable HTTP, drives **all 36 tools** in the order an agent uses them, deletes what it made (document, project, tag), revokes the key. No test framework on purpose. |
 | Analytics harness | `tests/mcp/analytics.ts` | `get_share_stats` and `list_share_links` against generated traffic. |
 | Unit tests | 9 files, `tests/lib/mcp*.test.ts` | Cross-cutting machinery plus the round-six regressions. Detail in section 3. |
 | Contracts | `mcp/README.md` (653 lines), `docs/MCP.md` | What each tool takes and returns, and why. Not coverage. |
@@ -45,7 +49,12 @@ came from this. And `vitest` without `--config tests/lib/vitest.config.ts` inven
 
 `e2e` means the harness invokes it with assertions, not that every field is asserted. `list-only`
 means the tool appears in `EXPECTED_TOOLS` — the array asserting `tools/list` returns all
-thirty-three — and nowhere else in the file.
+thirty-six — and nowhere else in the file.
+
+**Updated 2026-09-25.** The eleven gaps below were closed in `f6bd055` and `5f00a05`, and the three
+revision tools added in `5990790` came with their own steps. Every tool now has at least one
+asserted step; the counts are invocations in `e2e.ts`. The original rows are kept as they were
+written, struck through, so the history of what was untested stays visible.
 
 | Tool | e2e | unit | hand-probed | verdict |
 |---|---|---|---|---|
@@ -71,20 +80,26 @@ thirty-three — and nowhere else in the file.
 | `update_project_link` | ✅ ×2 | — | ✅ | covered |
 | `delete_project_link` | ✅ ×4 | `confirm` | ✅ | covered |
 | `delete_project` | ✅ | `confirm` | ✅ | covered |
-| `archive_doc` | list-only | `instructionsBudget` | ✅ | **gap** |
-| `delete_doc` | list-only | — | ✅ | **gap** |
-| `star_docs` | list-only | `roundSix` (mixed case) | ✅ | **gap** |
-| `list_starred` | list-only | — | ✅ | **gap** |
-| `list_projects` | list-only | — | ✅ | **gap** |
-| `get_project` | list-only | — | ✅ | **gap** |
-| `update_project` | list-only | — | — | **untested** |
-| `remove_doc_from_project` | list-only | — | — | **untested** |
-| `tag` | absent | — | ✅ | **gap** |
-| `untag` | absent | `roundSix` (spelling, folding) | ✅ | **gap** |
-| `list_tags` | absent | — | ✅ | **gap** |
+| `archive_doc` | ✅ ×2 | `instructionsBudget` | ✅ | covered (~~was list-only, gap~~) |
+| `delete_doc` | ✅ | — | ✅ | covered (~~was list-only, gap~~) |
+| `star_docs` | ✅ ×3 | `roundSix` (mixed case) | ✅ | covered (~~was list-only, gap~~) |
+| `list_starred` | ✅ | — | ✅ | covered (~~was list-only, gap~~) |
+| `list_projects` | ✅ | — | ✅ | covered (~~was list-only, gap~~) |
+| `get_project` | ✅ ×2 | — | ✅ | covered (~~was list-only, gap~~) |
+| `update_project` | ✅ ×4 | — | ✅ | covered (~~was untested~~) |
+| `remove_doc_from_project` | ✅ ×2 | — | ✅ | covered (~~was untested~~) |
+| `tag` | ✅ | — | ✅ | covered (~~was absent~~) |
+| `untag` | ✅ | `roundSix` (spelling, folding) | ✅ | covered (~~was absent~~) |
+| `list_tags` | ✅ | — | ✅ | covered (~~was absent~~) |
+| `list_revisions` | ✅ ×2 | — | ✅ | covered (added 2026-09-24) |
+| `get_revision` | ✅ ×3 | — | ✅ | covered (added 2026-09-24) |
+| `revision_contributors` | ✅ | — | ✅ | covered (added 2026-09-24) |
 
-**Eleven of thirty-three tools are in no automated harness.** Nine of them have been driven by hand
-in a sweep, which is worth nothing tomorrow. Two have never been called by anything but their own
+**As of 2026-09-25 no tool is outside the harness.** What follows is the state on 2026-09-21, kept
+because it explains why the two writes below got the most steps when they were added.
+
+*Eleven of thirty-three tools were in no automated harness.* Nine of them had been driven by hand
+in a sweep, which is worth nothing tomorrow. Two had never been called by anything but their own
 registration:
 
 - **`update_project`** — renames a project and toggles its public page. The public-page switch
