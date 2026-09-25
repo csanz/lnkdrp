@@ -227,6 +227,7 @@ export async function GET(
         primaryProjectId: 1,
         projectId: 1,
         projectIds: 1,
+        visibility: 1,
         isArchived: 1,
         currentUploadId: 1,
         uploadId: 1, // legacy
@@ -378,7 +379,7 @@ export async function GET(
           (typeof (docLean as any).firstPagePngUrl === "string" && (docLean as any).firstPagePngUrl)
         ));
     const uploadLite = shouldFetchUploadLite
-      ? await UploadModel.findById(currentUploadId)
+      ? await UploadModel.findOne({ _id: currentUploadId, docId: docObjectId })
           .select({
             _id: 1,
             version: 1,
@@ -394,7 +395,7 @@ export async function GET(
           })
           .lean()
       : lite && currentUploadId
-        ? await UploadModel.findById(currentUploadId)
+        ? await UploadModel.findOne({ _id: currentUploadId, docId: docObjectId })
             .select({
               _id: 1,
               version: 1,
@@ -651,6 +652,7 @@ export async function GET(
         pageSlugs: docLean.pageSlugs ?? [],
         status: docLean.status ?? "draft",
         primaryProjectId: primaryProject ? String(primaryProject._id) : null,
+        visibility: (docLean as { visibility?: unknown }).visibility === "project" ? "project" : "workspace",
         projectId: primaryProject ? String(primaryProject._id) : null,
         project: primaryProject
           ? {
@@ -873,6 +875,8 @@ export async function PATCH(
       primaryProjectId: string | null;
       projectId: string | null;
       isArchived: boolean;
+      /** "project": listed only inside its home project (docs/prds/lnkdrp-project-home.md, decision 3). */
+      visibility: "workspace" | "project";
     }>;
 
     await connectMongo();
@@ -956,12 +960,14 @@ export async function PATCH(
 
     // Un-archiving can bring a live link back, so the prior archived state is needed for the cap check.
     const wantsArchiveChange = typeof body.isArchived === "boolean";
+    const wantsVisibilityChange = body.visibility === "workspace" || body.visibility === "project";
     const before =
-      wantsProjectChange || wantsShareChange || wantsArchiveChange
+      wantsProjectChange || wantsShareChange || wantsArchiveChange || wantsVisibilityChange
         ? await DocModel.findOne({ ...docMatch })
             .select({
               _id: 1,
               isArchived: 1,
+              visibility: 1,
               primaryProjectId: 1,
               projectId: 1,
               projectIds: 1,
@@ -972,8 +978,55 @@ export async function PATCH(
             .lean()
         : null;
 
-    if (wantsProjectChange && !before) {
+    if ((wantsProjectChange || wantsVisibilityChange) && !before) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    /**
+     * Containment (docs/prds/lnkdrp-project-home.md, decision 3). A contained document needs a
+     * home to be contained in: the primary project, or the one project it is in. Owners, admins
+     * and the person who uploaded it may change it; the role gate above already admits members,
+     * so the uploader check is the narrowing.
+     */
+    const beforeVisibility = before && (before as { visibility?: unknown }).visibility === "project" ? "project" : "workspace";
+    const beforeProjectIds = before && Array.isArray((before as { projectIds?: unknown[] }).projectIds) ? ((before as { projectIds: unknown[] }).projectIds ?? []).map(String) : [];
+    if (wantsVisibilityChange && before) {
+      if (body.visibility === "project") {
+        const home =
+          (before as { primaryProjectId?: unknown }).primaryProjectId
+            ? String((before as { primaryProjectId: unknown }).primaryProjectId)
+            : beforeProjectIds.length === 1
+              ? beforeProjectIds[0]
+              : typeof body.addProjectId === "string" && Types.ObjectId.isValid(body.addProjectId)
+                ? body.addProjectId
+                : null;
+        if (!home) {
+          return applyTempUserHeaders(
+            NextResponse.json({ error: "A document can only be contained inside a project. Add it to one first.", code: "VISIBILITY_NEEDS_PROJECT" }, { status: 400 }),
+            actor,
+          );
+        }
+        setFields.visibility = "project";
+        if (!(before as { primaryProjectId?: unknown }).primaryProjectId) {
+          setFields.primaryProjectId = new Types.ObjectId(home);
+          setFields.projectId = new Types.ObjectId(home);
+        }
+      } else {
+        setFields.visibility = "workspace";
+      }
+    }
+    // A contained document lives in one room: joining a second is refused until it is listed again.
+    if (
+      beforeVisibility === "project" &&
+      setFields.visibility !== "workspace" &&
+      typeof body.addProjectId === "string" &&
+      Types.ObjectId.isValid(body.addProjectId) &&
+      !beforeProjectIds.includes(body.addProjectId)
+    ) {
+      return applyTempUserHeaders(
+        NextResponse.json({ error: "This document is kept inside its data room only. List it in the workspace again before adding it to another project.", code: "CONTAINED" }, { status: 409 }),
+        actor,
+      );
     }
 
     // Free plan: turning sharing back on, or un-archiving a shared document, adds a shared document.
@@ -1161,6 +1214,21 @@ export async function PATCH(
       });
     }
 
+    if (wantsVisibilityChange && before && setFields.visibility && setFields.visibility !== beforeVisibility) {
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: setFields.visibility === "project" ? "doc.contained" : "doc.uncontained",
+        docId: doc._id,
+        title: doc.title ?? null,
+        ...(setFields.primaryProjectId || (before as { primaryProjectId?: unknown }).primaryProjectId
+          ? { projectId: String(setFields.primaryProjectId ?? (before as { primaryProjectId?: unknown }).primaryProjectId) }
+          : {}),
+        request,
+      });
+    }
+
     if (wantsShareChange) {
       const prev = shareSettingsOf(before as Record<string, unknown> | null);
       const next = shareSettingsOf(doc as unknown as Record<string, unknown>);
@@ -1296,6 +1364,7 @@ export async function PATCH(
             name: p.name ?? "",
             slug: (p as unknown as { slug?: unknown }).slug ?? "",
           })),
+          visibility: (doc as { visibility?: unknown }).visibility === "project" ? "project" : "workspace",
           isArchived: Boolean(doc.isArchived),
           currentUploadId: doc.currentUploadId ? String(doc.currentUploadId) : null,
           blobUrl: doc.blobUrl ?? null,

@@ -29,7 +29,7 @@ export const ACTIVITY_FILTERS = [
       "download_request.denied",
     ],
   },
-  { id: "documents", label: "Documents", types: ["doc.created", "doc.deleted", "doc.archived", "doc.unarchived", "request_repo.created"] },
+  { id: "documents", label: "Documents", types: ["doc.created", "doc.deleted", "doc.archived", "doc.unarchived", "doc.contained", "doc.uncontained", "request_repo.created"] },
   {
     id: "projects",
     label: "Projects",
@@ -278,6 +278,10 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "archived", object: docTitle, suffix: "(its links stop working)" };
     case "doc.unarchived":
       return { subject, verb: "unarchived", object: docTitle, suffix: null };
+    case "doc.contained":
+      return { subject, verb: "kept", object: docTitle, suffix: "inside its data room only" };
+    case "doc.uncontained":
+      return { subject, verb: "listed", object: docTitle, suffix: "in the workspace again" };
     case "share.updated": {
       // Project share toggle (no doc on the row): meta.scope === "project" with shareEnabled.
       if (!item.doc && item.project?.name) {

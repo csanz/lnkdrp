@@ -5,6 +5,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Cog6ToothIcon,
@@ -1006,36 +1007,48 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
           ) : (
             <div className="grid gap-5 lg:h-full lg:min-h-0 lg:grid-cols-[1.35fr_0.65fr]">
               <section className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 lg:min-h-0 lg:overflow-auto">
-                <div
-                  className="flex flex-wrap items-center gap-2"
-                  role="tablist"
-                  aria-label="Project documents"
-                >
-                  {PROJECT_DOCS_VIEWS.map((v) => {
-                    const active = v.id === view;
-                    return (
-                      <button
-                        key={v.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        onClick={() => {
-                          if (active) return;
-                          setViewState({ projectSlug, view: v.id });
-                          setDocs((s) => ({ ...s, items: [], total: 0, page: 1 }));
-                          setDocsLoading(true);
-                        }}
-                        className={[
-                          "h-8 rounded-full px-3 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-                          active
-                            ? "bg-[var(--fg)] text-[var(--bg)]"
-                            : "border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-                        ].join(" ")}
-                      >
-                        {v.label}
-                      </button>
-                    );
-                  })}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div
+                    className="flex flex-wrap items-center gap-2"
+                    role="tablist"
+                    aria-label="Project documents"
+                  >
+                    {PROJECT_DOCS_VIEWS.map((v) => {
+                      const active = v.id === view;
+                      return (
+                        <button
+                          key={v.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          onClick={() => {
+                            if (active) return;
+                            setViewState({ projectSlug, view: v.id });
+                            setDocs((s) => ({ ...s, items: [], total: 0, page: 1 }));
+                            setDocsLoading(true);
+                          }}
+                          className={[
+                            "h-8 rounded-full px-3 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                            active
+                              ? "bg-[var(--fg)] text-[var(--bg)]"
+                              : "border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                          ].join(" ")}
+                        >
+                          {v.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {/* New documents start inside this project (PRD decision 2): `/upload` preselects it
+                      from the query. A request inbox is filled through its upload link, never from here. */}
+                  {project && !isRequestRepo ? (
+                    <Link
+                      href={`/upload?project=${encodeURIComponent(project.id)}`}
+                      className="inline-flex h-8 items-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[12px] font-medium text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)]"
+                    >
+                      Upload here
+                    </Link>
+                  ) : null}
                 </div>
 
                 <div className="mt-4 flex items-center justify-between gap-3">

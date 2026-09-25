@@ -28,6 +28,7 @@
 import { Types, type PipelineStage } from "mongoose";
 
 import { projectLinkSlugsForOrg } from "@/lib/analytics/docScope";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { loadContributors } from "./contributors";
 import { PROJECT_ANON_KEY_EXPR, splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
 import {
@@ -277,7 +278,7 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   // through a data room is the project's view, never the document's. They are fetched here, in
   // parallel with the documents, because the facet below has to be built with them in hand.
   const [docs, projectShareIds] = (await Promise.all([
-    DocModel.find({ orgId, isDeleted: { $ne: true } })
+    DocModel.find({ orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter() })
       .select({ _id: 1, title: 1, isArchived: 1, shareEnabled: 1, createdDate: 1, currentUploadId: 1 })
       .lean(),
     projectLinkSlugsForOrg(orgId),

@@ -19,7 +19,11 @@ import type { ToolContext } from "../context";
 import { handleTool, ToolError } from "../errors";
 import { UNTRUSTED_LIMITS, untrustedOrNull } from "../untrusted";
 import { docIdSchema, SAFETY_TAIL } from "./shared";
+import { Semaphore } from "../semaphore";
 import type { ActivityType } from "../../../src/lib/activity/log";
+
+/** How many fifty-id pages of a tag's documents are fetched at once. */
+const TAG_CHUNK_CONCURRENCY = 4;
 
 /** Every activity type the route records. Kept as a list so the schema rejects typos loudly. */
 const ACTIVITY_TYPES = [
@@ -32,6 +36,8 @@ const ACTIVITY_TYPES = [
   "doc.replaced",
   "doc.deleted",
   "doc.archived",
+  "doc.contained",
+  "doc.uncontained",
   "doc.unarchived",
   "share.updated",
   "share_link.created",
@@ -114,6 +120,7 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
         "Pass tag to list only the documents carrying that tag - the name as a human writes it, matched loosely, so " +
         "'Fundraising' and 'fundraising' reach the same tag (lnkdrp_list_tags shows what the workspace uses). Every row " +
         "carries its own tags, so you can see how something is filed without a second call. " +
+        "Documents kept inside a data room (visibility \"project\") are not listed here; list the project with lnkdrp_get_project. " +
         SAFETY_TAIL,
       inputSchema: {
         query: z.string().trim().max(200).optional().describe("Match against document titles and share-link slugs, case-insensitively. Omit to list everything."),
@@ -220,8 +227,12 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
           const CHUNK = 50;
           const chunks: string[][] = [];
           for (let i = 0; i < docIds.length; i += CHUNK) chunks.push(docIds.slice(i, i + CHUNK));
+          // A few chunks at a time, not all of them at once: a tag on a thousand documents is
+          // twenty pages, and firing them together was twenty concurrent hits on the app for one
+          // tool call (review, Low: MCP/AI).
+          const lane = new Semaphore(TAG_CHUNK_CONCURRENCY);
           const [archivedPages, byQuery] = await Promise.all([
-            Promise.all(chunks.map((ids) => ctx.api.listDocsPage({ ids, archived: args.archived }))),
+            Promise.all(chunks.map((ids) => lane.run(() => ctx.api.listDocsPage({ ids, archived: args.archived })))),
             args.query
               ? ctx.api.listDocsPage({ q: args.query, limit: 50, archived: args.archived })
               : Promise.resolve(null),
@@ -295,6 +306,11 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
           previewImageUrl: d.previewImageUrl,
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
+          // The document's home project and whether it is listed only there. Rows here are always
+          // "workspace" (contained documents are left out of this listing by the route); the field
+          // is carried so a row read here and one read from lnkdrp_get_project have the same shape.
+          primaryProjectId: d.primaryProjectId,
+          visibility: d.visibility,
           // How this document is filed. Workspace-authored, never shown to recipients.
           tags: (tagsByDoc.get(d.id) ?? []).map((t) => ({ name: t.name, slug: t.slug, color: t.color })),
         })),

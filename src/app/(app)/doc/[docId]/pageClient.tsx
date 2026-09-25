@@ -57,6 +57,8 @@ type DocDTO = {
   projectIds?: string[];
   projects?: Array<{ id: string; name: string; slug?: string; isRequest?: boolean; requestReviewEnabled?: boolean }>;
   isArchived?: boolean;
+  /** "project" = contained: listed only inside its data room (PRD decision 7). */
+  visibility?: "workspace" | "project";
   currentUploadId: string | null;
   currentUploadVersion?: number | null;
   /** Pages in the current version; null for uploads processed before it was recorded. */
@@ -226,8 +228,8 @@ function buildCachedPdfIframeUrl(params: {
 export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const router = useRouter();
   const authEnabled = useAuthEnabled();
-  const [doc, setDoc] = useState<DocDTO>(initialDoc);
-  const docRef = useRef<DocDTO>(initialDoc);
+  const [doc, setDoc] = useState<DocDTO>(() => ({ ...initialDoc, visibility: initialDoc.visibility ?? "workspace" }));
+  const docRef = useRef<DocDTO>({ ...initialDoc, visibility: initialDoc.visibility ?? "workspace" });
   const [currentUpload, setCurrentUpload] = useState<UploadDTO | null>(null);
   /**
    * What the AI steps did on the current version (`GET /api/uploads/:id` → `upload.ai`): whether the
@@ -2393,6 +2395,19 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               );
                             })}
 
+                            {doc.visibility === "project" ? (
+                              <span
+                                title="Listed only inside its data room"
+                                className={[
+                                  "inline-flex items-center gap-1.5 rounded-md px-2 py-1 align-middle",
+                                  "text-[12px] font-medium leading-none text-[var(--muted-2)]",
+                                  "border border-[var(--border)] bg-transparent",
+                                ].join(" ")}
+                              >
+                                Contained
+                              </span>
+                            ) : null}
+
                             {projectsMoreCount > 0 ? (
                               <button
                                 type="button"
@@ -2587,6 +2602,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       currentProjectIds={Array.isArray(doc.projectIds) ? doc.projectIds : null}
                       disabled={!hasHydratedFromServer || doc.status === "preparing" || doc.status === "draft"}
                       onDocPatched={(patch) => setDoc((d) => ({ ...d, ...patch }))}
+                      visibility={doc.visibility ?? "workspace"}
+                      projectCount={doc.projects?.length ?? 0}
+                      onVisibilityChanged={(next) => setDoc((d) => ({ ...d, visibility: next }))}
                       onDeleted={() => router.push("/")}
                       onOpenQualityReview={() => setQualityReviewOpen(true)}
                     />

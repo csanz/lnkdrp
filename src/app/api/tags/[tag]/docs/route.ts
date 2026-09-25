@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { TAG_DOCS_SORT } from "@/lib/tags/service";
 import { debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -56,6 +58,7 @@ export async function GET(
     const rx = new RegExp(`^${escapeRegex(decodedTag)}$`, "i");
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
+      ...workspaceListableDocFilter(),
       "aiOutput.tags": rx,
       ...(allowLegacyByUserId
         ? {
@@ -69,7 +72,7 @@ export async function GET(
 
     const total = await DocModel.countDocuments(filter);
     const docs = await DocModel.find(filter)
-      .sort({ updatedDate: -1 })
+      .sort(TAG_DOCS_SORT)
       .skip((page - 1) * limit)
       .limit(limit)
       .select({ _id: 1, title: 1, shareId: 1, updatedDate: 1, status: 1 })

@@ -8,6 +8,8 @@ import {
   ChevronRightIcon,
   DocumentMagnifyingGlassIcon,
   EllipsisHorizontalIcon,
+  EyeIcon,
+  EyeSlashIcon,
   FolderIcon,
   PlusIcon,
   TrashIcon,
@@ -62,6 +64,9 @@ export default function DocActionsMenu({
   showRemoveFromProject = true,
   showArchive = false,
   isArchived = false,
+  visibility,
+  projectCount = 0,
+  onVisibilityChanged,
   showDelete = true,
   onRequestDelete,
 }: {
@@ -88,6 +93,13 @@ export default function DocActionsMenu({
   /** Show Archive (or Unarchive when `isArchived`). */
   showArchive?: boolean;
   isArchived?: boolean;
+  /**
+   * Contained documents (PRD decision 7). The "Keep inside its data room" / "List in the workspace"
+   * toggle shows only when `projectCount > 0`, since a doc in no project has no room to be kept in.
+   */
+  visibility?: "workspace" | "project";
+  projectCount?: number;
+  onVisibilityChanged?: (visibility: "workspace" | "project") => void;
   showDelete?: boolean;
   /** When set, Delete hands off to the caller's own confirm dialog instead of the built-in one. */
   onRequestDelete?: () => void;
@@ -120,6 +132,8 @@ export default function DocActionsMenu({
   const [fetchedProjectIds, setFetchedProjectIds] = useState<string[] | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
+  const [visibilityError, setVisibilityError] = useState<string | null>(null);
 
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -456,6 +470,14 @@ export default function DocActionsMenu({
       notifyDocLeaving({ docId, reason: "archived" });
       onDocPatched?.({ isArchived: true });
     }
+    // Both halves of the optimistic step, undone: the sidebar refetches its lists (the folded-out
+    // row comes back) and the caller's row state goes back to "not archived". This used to run for
+    // a refused response only, so a request that never got an answer left the row gone for good.
+    const revertOptimistic = () => {
+      if (!optimistic) return;
+      notifyDocsChanged();
+      onDocPatched?.({ isArchived: false });
+    };
     setArchiveBusy(true);
     setArchiveError(null);
     try {
@@ -465,7 +487,7 @@ export default function DocActionsMenu({
         body: JSON.stringify({ isArchived: next }),
       });
       if (!res.ok) {
-        if (optimistic) notifyDocsChanged();
+        revertOptimistic();
         const json = (await res.json().catch(() => null)) as { error?: unknown } | null;
         const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
         if (limitErr) {
@@ -491,9 +513,39 @@ export default function DocActionsMenu({
       refreshPlan();
       closeMenu({ focusTrigger: false });
     } catch (e) {
+      revertOptimistic();
       setArchiveError(e instanceof Error ? e.message : next ? "Failed to archive" : "Failed to unarchive");
     } finally {
       setArchiveBusy(false);
+    }
+  }
+
+  /**
+   * Contain the doc in its data room or list it in the workspace again. The API refuses with 400
+   * (VISIBILITY_NEEDS_PROJECT) when the doc is in no project; the message shows inline like archive errors.
+   */
+  async function setVisibility(next: "workspace" | "project") {
+    if (visibilityBusy) return;
+    setVisibilityBusy(true);
+    setVisibilityError(null);
+    try {
+      const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ visibility: next }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        throw new Error(typeof json?.error === "string" && json.error ? json.error : `Request failed (${res.status})`);
+      }
+      onVisibilityChanged?.(next);
+      // A contained doc leaves the sidebar Docs list; a listed one comes back.
+      notifyDocsChanged();
+      closeMenu({ focusTrigger: false });
+    } catch (e) {
+      setVisibilityError(e instanceof Error ? e.message : "Failed to update visibility");
+    } finally {
+      setVisibilityBusy(false);
     }
   }
 /**
@@ -638,6 +690,9 @@ export default function DocActionsMenu({
   );
 
   const archiveLabel = isArchived ? "Unarchive" : "Archive";
+  const showVisibility = projectCount > 0;
+  const isContained = visibility === "project";
+  const visibilityLabel = isContained ? "List in the workspace" : "Keep inside its data room";
 
   const renderedMenu =
     open && !disabled ? (
@@ -702,8 +757,35 @@ export default function DocActionsMenu({
             </li>
           ) : null}
 
-          {showArchive || SHOW_QUALITY_REVIEW || showDelete ? (
+          {showVisibility || showArchive || SHOW_QUALITY_REVIEW || showDelete ? (
             <li className="my-1 h-px bg-[var(--border)]" role="separator" />
+          ) : null}
+
+          {showVisibility ? (
+            <li>
+              <button
+                type="button"
+                role="menuitem"
+                className={menuItemBase}
+                disabled={visibilityBusy}
+                aria-disabled={visibilityBusy}
+                title={isContained ? "Show it in the workspace Docs list again" : "Listed only inside its data room; its link still works"}
+                onClick={() => void setVisibility(isContained ? "workspace" : "project")}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-[var(--muted-2)]">
+                    {isContained ? <EyeIcon className="h-4 w-4" /> : <EyeSlashIcon className="h-4 w-4" />}
+                  </span>
+                  <span>{visibilityLabel}</span>
+                </span>
+                {visibilityBusy ? <Spinner className="h-4 w-4 text-[var(--muted-2)]" /> : null}
+              </button>
+              {visibilityError ? (
+                <div className="px-3 pb-2 text-[12px] font-medium text-red-600" role="alert">
+                  {visibilityError}
+                </div>
+              ) : null}
+            </li>
           ) : null}
 
           {SHOW_QUALITY_REVIEW ? (
@@ -845,6 +927,7 @@ export default function DocActionsMenu({
             if (next) {
               setProjectsOpen(false);
               setArchiveError(null);
+              setVisibilityError(null);
               // Ensure menu is positioned even when inside scroll containers (avoids clipping).
               window.requestAnimationFrame(() => repositionMenu());
             } else {

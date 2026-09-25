@@ -89,6 +89,8 @@ const EXPECTED_TOOLS = [
   "lnkdrp_delete_share_link",
   "lnkdrp_archive_doc",
   "lnkdrp_delete_doc",
+  // Containment: keep a document inside its data room, or list it in the workspace again.
+  "lnkdrp_set_doc_visibility",
   "lnkdrp_create_project",
   "lnkdrp_list_projects",
   "lnkdrp_get_project",

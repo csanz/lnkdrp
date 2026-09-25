@@ -275,8 +275,17 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
         // A new document finished processing: the title, the page count when the pages are in.
         const docUrl = `${f.appUrl}/doc/${String(docId)}`;
         const pages = doc.pages ? `${doc.pages} page${doc.pages === 1 ? "" : "s"}` : null;
-        const text = `${doc.title} was added.`;
-        return { text, blocks: twoBlocks(`*<${docUrl}|${mrkdwn(doc.title)}>* was added${pages ? ` · ${pages}` : ""}`, `<${docUrl}|open it> · <${docUrl}/metrics|metrics>`) };
+        // Born in a room: say so, and link the room. Nothing else changes.
+        const home = projectId ? await projectName(orgId, projectId) : null;
+        const roomUrl = projectId ? `${f.appUrl}/project/${String(projectId)}` : null;
+        const text = home ? `${doc.title} was added to ${home}.` : `${doc.title} was added.`;
+        return {
+          text,
+          blocks: twoBlocks(
+            `*<${docUrl}|${mrkdwn(doc.title)}>* was added${home && roomUrl ? ` to *<${roomUrl}|${mrkdwn(home)}>*` : ""}${pages ? ` · ${pages}` : ""}`,
+            `<${docUrl}|open it> · <${docUrl}/metrics|metrics>`,
+          ),
+        };
       }
       // A document filed into a project: the room's channel (or the default) hears it landed.
       const project = projectId ? ((await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1, slug: 1 }).lean()) as { name?: string; slug?: string } | null) : null;

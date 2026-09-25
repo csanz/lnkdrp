@@ -8,6 +8,7 @@ import { Types } from "mongoose";
 import { put } from "@vercel/blob";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import { debugError, debugLog } from "@/lib/debug";
@@ -453,7 +454,12 @@ async function importUrl(
     });
 
     // Activity (best-effort, after the primary write).
-    const activityDoc = await DocModel.findById(docId).select({ orgId: 1, title: 1 }).lean().catch(() => null);
+    const activityDoc = (await DocModel.findById(docId).select({ orgId: 1, title: 1, primaryProjectId: 1 }).lean().catch(() => null)) as
+      | { orgId?: unknown; title?: unknown; primaryProjectId?: unknown }
+      | null;
+    // Born in a room (docs/prds/lnkdrp-project-home.md, decision 2): the row says "in Data room".
+    const homeProjectId = activityDoc?.primaryProjectId && Types.ObjectId.isValid(String(activityDoc.primaryProjectId)) ? String(activityDoc.primaryProjectId) : null;
+    const homeProjectName = homeProjectId ? (((await ProjectModel.findById(homeProjectId).select({ name: 1 }).lean().catch(() => null)) as { name?: string } | null)?.name ?? null) : null;
     const activityDocOrgId =
       activityDoc && (activityDoc as { orgId?: unknown }).orgId ? String((activityDoc as { orgId?: unknown }).orgId) : null;
     void recordActivity({
@@ -462,12 +468,14 @@ async function importUrl(
       actorKind: actor.kind,
       type: "doc.imported_url",
       docId,
+      ...(homeProjectId ? { projectId: homeProjectId } : {}),
       uploadId,
       title:
         activityDoc && typeof (activityDoc as { title?: unknown }).title === "string"
           ? (activityDoc as { title: string }).title
           : null,
       meta: {
+        ...(homeProjectName ? { projectName: homeProjectName } : {}),
         sourceHost: parsed.hostname,
         fileName,
         sizeBytes,

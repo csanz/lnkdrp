@@ -23,6 +23,8 @@ export type ActivityType =
   | "doc.replaced"
   | "doc.deleted"
   | "doc.archived"
+  | "doc.contained"
+  | "doc.uncontained"
   | "doc.unarchived"
   | "share.updated"
   | "share_link.created"

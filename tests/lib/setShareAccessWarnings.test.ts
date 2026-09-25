@@ -41,6 +41,8 @@ function doc(over: Partial<ApiDoc> = {}): ApiDoc {
     version: 1,
     pageCount: 12,
     keyPoints: [],
+    primaryProjectId: null,
+    visibility: "workspace",
     ...over,
   };
 }

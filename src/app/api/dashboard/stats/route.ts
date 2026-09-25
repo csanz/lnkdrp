@@ -7,6 +7,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActorForStats } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { ShareViewModel } from "@/lib/models/ShareView";
@@ -116,7 +117,7 @@ export async function GET(request: Request) {
       const since7d = new Date(since30d);
       since7d.setUTCDate(since30d.getUTCDate() + Math.max(0, rangeDays - 7));
 
-      const docActiveMatch = { orgId, isDeleted: { $ne: true }, isArchived: { $ne: true } };
+      const docActiveMatch = { orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter(), isArchived: { $ne: true } };
 
     const [
       docAggArr,
@@ -204,6 +205,7 @@ export async function GET(request: Request) {
                       { $eq: ["$_id", "$$docId"] },
                       { $eq: ["$orgId", orgId] },
                       { $ne: ["$isDeleted", true] },
+                      { $ne: ["$visibility", "project"] },
                     ],
                   },
                 },

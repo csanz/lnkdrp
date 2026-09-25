@@ -5,7 +5,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AgentHintNotice from "@/components/AgentHintNotice";
 import UploadButton, { UploadIcon } from "@/components/UploadButton";
@@ -22,7 +22,7 @@ import { PlanLimitClientError,
 import { usePendingUpload } from "@/lib/pendingUpload";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
-import { UploadHome } from "@/app/HomeAuthedClient";
+import { UploadHome, UploadProjectPicker, useUploadProjectPicker } from "@/app/HomeAuthedClient";
 
 const PdfJsViewer = dynamic(async () => (await import("@/components/PdfJsViewer")).PdfJsViewer, {
   ssr: false,
@@ -38,9 +38,23 @@ function titleFromFileName(name: string) {
   return base || "Untitled document";
 }
 
+/**
+ * The page reads `?project=` through `useSearchParams`, which Next only prerenders inside a Suspense
+ * boundary; `page.tsx` is a plain client wrapper, so the boundary lives here.
+ */
 export default function UploadPageClient() {
+  return (
+    <Suspense fallback={null}>
+      <UploadPageInner />
+    </Suspense>
+  );
+}
+
+function UploadPageInner() {
   const router = useRouter();
   const { pendingFile, setPendingFile } = usePendingUpload();
+  // "Add to a data room": owned here so the choice made on the empty screen survives into the preview.
+  const projectPicker = useUploadProjectPicker();
   // Free workspaces at the document cap cannot upload: `POST /api/docs` answers 402 and the upgrade modal
   // opens. Say so up front and disable the pickers (only once the plan is known).
   const { plan } = usePlan();
@@ -136,7 +150,11 @@ export default function UploadPageClient() {
     setError(null);
     try {
       await ensureOrgReadyForUpload();
-      const docId = await apiCreateDoc({ title: titleFromFileName(selectedFile.name) });
+      const docId = await apiCreateDoc({
+        title: titleFromFileName(selectedFile.name),
+        projectId: projectPicker.effectiveProjectId,
+        visibility: projectPicker.effectiveVisibility,
+      });
       const upload = await apiCreateUpload({
         docId,
         originalFileName: selectedFile.name,
@@ -173,7 +191,7 @@ export default function UploadPageClient() {
 
   // Nothing staged yet: show the same upload screen as the signed-in home, so `/` and `/upload`
   // are one experience. Once a file is picked (here or anywhere else) this page shows its preview.
-  if (!selectedFile && !previewLoading && !pendingFile) return <UploadHome onUploadRoute />;
+  if (!selectedFile && !previewLoading && !pendingFile) return <UploadHome onUploadRoute projectPicker={projectPicker} />;
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-[var(--bg)] text-[var(--fg)]">
@@ -381,6 +399,9 @@ export default function UploadPageClient() {
             ) : (
               <div className="mt-2 text-[13px] text-[var(--muted)]">No file selected.</div>
             )}
+
+            {/* Where the document lands; the same choice the empty screen offers under its drop zone. */}
+            <UploadProjectPicker picker={projectPicker} disabled={busy} className="mt-4" />
 
             <div className="mt-4 flex flex-col gap-2">
               <button

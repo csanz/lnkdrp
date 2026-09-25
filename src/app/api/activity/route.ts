@@ -10,6 +10,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { DocModel } from "@/lib/models/Doc";
+import { containedDocIds } from "@/lib/docs/visibility";
 import { ProjectModel } from "@/lib/models/Project";
 import { UserModel } from "@/lib/models/User";
 import { debugLog } from "@/lib/debug";
@@ -129,6 +130,8 @@ export async function GET(request: Request) {
       .filter((s) => /^[a-z_]+\.[a-z_]+$/.test(s))
       .slice(0, MAX_TYPE_FILTERS);
     const docIdRaw = (url.searchParams.get("docId") ?? "").trim();
+    const projectIdRaw = (url.searchParams.get("projectId") ?? "").trim();
+    const projectId = projectIdRaw && Types.ObjectId.isValid(projectIdRaw) ? new Types.ObjectId(projectIdRaw) : null;
     const docId = docIdRaw && Types.ObjectId.isValid(docIdRaw) ? new Types.ObjectId(docIdRaw) : null;
     // Who did it: "me" (my own actions in a browser), "team" (other members' browser actions),
     // "agents" (anything an MCP/API client did, whoever owns the key). Anything else = everyone.
@@ -160,6 +163,13 @@ export async function GET(request: Request) {
     // workspace's history and stay out unless a type filter names them; see feedVisibility.ts.
     else filter.$nor = feedHiddenClauses();
     if (docId) filter.docId = docId;
+    // A project's own feed; otherwise the workspace feed, which leaves out the rows of documents
+    // kept inside their room (docs/prds/lnkdrp-project-home.md, decision 5).
+    if (projectId) filter.projectId = projectId;
+    else if (!docId) {
+      const contained = await containedDocIds(orgId);
+      if (contained.length) filter.docId = { $nin: contained };
+    }
     if (who === "agents") filter["agent.client"] = { $exists: true, $ne: null };
     else if (who === "me") {
       filter.userId = new Types.ObjectId(actor.userId);

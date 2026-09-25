@@ -16,13 +16,25 @@ export type RoutableConnection = {
   events: Record<SlackEventKey, boolean>;
 };
 
-/** Ordered, de-duplicated list of the connections that should receive this event. */
-export function routeSlackConnections<T extends RoutableConnection>(connections: readonly T[], kind: SlackEventKey, projectIds: readonly string[]): T[] {
+/**
+ * Ordered, de-duplicated list of the connections that should receive this event.
+ *
+ * `allowDefault: false` is the contained-document rule (docs/prds/lnkdrp-project-home.md,
+ * decision 6): the room's channel when mapped, otherwise nowhere. The catch-all exists so nothing
+ * is lost; for a document that lives only inside its room, "lost" is the point.
+ */
+export function routeSlackConnections<T extends RoutableConnection>(
+  connections: readonly T[],
+  kind: SlackEventKey,
+  projectIds: readonly string[],
+  opts: { allowDefault?: boolean } = {},
+): T[] {
   const live = connections.filter((c) => c.status === "active" && c.events[kind]);
   if (!live.length) return [];
   const wanted = new Set(projectIds.filter(Boolean));
   const mapped = wanted.size ? live.filter((c) => c.projectIds.some((p) => wanted.has(p))) : [];
   if (mapped.length) return mapped;
+  if (opts.allowDefault === false) return [];
   const def = live.find((c) => c.isDefault);
   return def ? [def] : [];
 }

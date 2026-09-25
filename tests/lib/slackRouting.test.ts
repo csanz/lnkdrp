@@ -40,6 +40,12 @@ describe("routing", () => {
     expect(routeSlackConnections([], "views", ["p-acme"])).toEqual([]);
   });
 
+  test("a contained document goes to its room's channel or nowhere, never the catch-all", () => {
+    expect(routeSlackConnections([deals, acme, north], "views", ["p-acme"], { allowDefault: false }).map((c) => c.id)).toEqual(["acme"]);
+    expect(routeSlackConnections([deals, acme, north], "views", ["p-other"], { allowDefault: false })).toEqual([]);
+    expect(routeSlackConnections([deals], "views", [], { allowDefault: false })).toEqual([]);
+  });
+
   test("disconnecting a mapped channel sends its projects back to the default", () => {
     expect(routeSlackConnections([deals, north], "views", ["p-acme"]).map((c) => c.id)).toEqual(["deals"]);
   });

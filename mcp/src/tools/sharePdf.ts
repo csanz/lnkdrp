@@ -37,7 +37,9 @@ import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { looksLikePdf, optimizePdf, type OptimizeReport } from "../optimize";
 import { waitForDocStatus } from "../realtime";
 import { readAiOutcome } from "./aiWarnings";
+import { loadProject, projectIdSchema, projectSlugSchema } from "./projects";
 import { existsUnlessNotFound, SAFETY_TAIL } from "./shared";
+import { isLocalApiUrl } from "../localApi";
 
 const PROCESS_NOT_READY_RETRIES = 5;
 const PROCESS_NOT_READY_DELAY_MS = 1000;
@@ -57,25 +59,10 @@ export const LOCAL_FILE_REFUSED_MESSAGE =
   "rather than read. Use sourceUrl with an https link to the PDF, or fileBase64 for a small file. " +
   "If the server really is local, set LNKDRP_ALLOW_LOCAL_FILES=1 in its environment.";
 
-/** True for an API URL that points at this same machine, which is how a local MCP server is spotted. */
-export function isLocalApiUrl(apiUrl: string): boolean {
-  let host: string;
-  try {
-    host = new URL(apiUrl).hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  } catch {
-    return false;
-  }
-  if (host === "localhost" || host.endsWith(".localhost")) return true;
-  if (host === "::1" || host === "0.0.0.0") return true;
-  // A literal address in 127.0.0.0/8, and nothing that merely starts with those characters. The
-  // previous `/^127\./` matched the hostname `127.0.0.1.evil.com`, which is an ordinary DNS name
-  // someone else controls — it resolves wherever they point it, and we would have called it
-  // loopback. Four octets, each 0-255, anchored at both ends.
-  const octets = host.split(".");
-  if (octets.length !== 4) return false;
-  if (!octets.every((o) => /^\d{1,3}$/.test(o) && Number(o) <= 255)) return false;
-  return octets[0] === "127";
-}
+// `isLocalApiUrl` lives in ../localApi so confirm.ts and inlineLimits.ts can use it without
+// importing this module (which imports ./projects, which imports ../confirm: a cycle that left
+// `projectIdSchema` undefined while this file was evaluating).
+export { isLocalApiUrl } from "../localApi";
 
 /**
  * Whether `filePath` may be used at all.
@@ -351,6 +338,14 @@ export const sharePdfInputShape = {
     .max(7)
     .optional()
     .describe("2-7 key points from the document, each at most 160 characters, plain text. Pass together with summary."),
+  projectId: projectIdSchema.describe(
+    "Create the document inside this project (data room) from the start: 24 hex chars, from lnkdrp_list_projects or " +
+      "lnkdrp_create_project. Optional; pass at most one of projectId / projectSlug. A request inbox is refused.",
+  ),
+  projectSlug: projectSlugSchema.describe(
+    'Create the document inside the project with this slug (e.g. "series-a-data-room", as lnkdrp_list_projects returns it). ' +
+      "Optional; pass at most one of projectId / projectSlug. Resolved before anything is created, so a bad slug creates nothing.",
+  ),
 };
 
 export type SharePdfResult = {
@@ -362,6 +357,8 @@ export type SharePdfResult = {
   version: number;
   uploadId: string;
   title: string;
+  /** The project the document was created into, when `projectId` / `projectSlug` was given. */
+  project?: { projectId: string; slug: string; name: string };
   planWarning?: PlanWarning;
   /** Present when `waitForReady` gave up before a terminal status; poll `lnkdrp_get_share`. */
   timedOut?: true;
@@ -482,6 +479,7 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         "what happened. Creates the document, imports the file, starts " +
         "processing (preview, text, summary) and returns { docId, shareId, shareUrl, status, uploadId, warnings, creditsRemaining }. " +
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. Optional: allowDownload, password. " +
+        "Pass projectId or projectSlug to create the document inside a data room from the start; it is then listed there and its notifications go to that room's channel. " +
         "Each upload's AI summary costs 1 credit, or nothing when you pass summary and keyPoints (write them from the document). " +
         "status 'failed' means the file itself could not be processed: failureReason says why, the link is live but has no " +
         "usable file, and the fix is lnkdrp_replace_pdf with a working PDF (or deleting the document). " +
@@ -500,6 +498,10 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
       if ((args.summary === undefined) !== (args.keyPoints === undefined)) {
         throw new ToolError("validation", "Pass summary and keyPoints together (both or neither).");
       }
+      const hasProjectRef = Boolean(args.projectId) || Boolean(args.projectSlug);
+      if (args.projectId && args.projectSlug) {
+        throw new ToolError("validation", "Pass either projectId or projectSlug, not both.");
+      }
       const orgId = ctx.whoami().orgId;
       const progressToken = extra._meta?.progressToken;
 
@@ -512,7 +514,15 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
           ? { optimized: inline.optimized, ...(inline.optimizeNote ? { optimizeNote: inline.optimizeNote } : {}) }
           : {};
 
-        const created = await api.createDoc({ title });
+        // Resolve the project before the document exists: a bad slug or a request inbox fails
+        // here with nothing created, rather than leaving a stray document outside the room.
+        // `loadProject` is the same resolution the project tools use (slug search, inbox refusal).
+        const project = hasProjectRef
+          ? await loadProject(api, { projectId: args.projectId, projectSlug: args.projectSlug }).then((res) => res.project)
+          : null;
+        const projectFields = project ? { project: { projectId: project.id, slug: project.slug, name: project.name } } : {};
+
+        const created = await api.createDoc({ title, ...(project ? { projectId: project.id } : {}) });
         const docId = created.doc.id;
         const shareId = created.doc.shareId;
         const shareUrl = shareId ? api.shareUrl(shareId) : null;
@@ -593,6 +603,7 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
             version,
             uploadId,
             title,
+            ...projectFields,
             ...(created.planWarning ? { planWarning: created.planWarning } : {}),
             ...(timedOut ? { timedOut: true as const } : {}),
             ...optimizeFields,
@@ -607,7 +618,7 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         }
       };
 
-      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "share_pdf", args.idempotencyKey), run, {
+      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "share_pdf", args.idempotencyKey, ctx.whoami().credentialId), run, {
         fingerprint: fingerprintArgs(args),
         // A document the human deleted between the two calls is not a document to hand back.
         stillExists: (cached) => existsUnlessNotFound(() => api.getDoc(cached.docId)),

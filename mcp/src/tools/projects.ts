@@ -278,7 +278,7 @@ export function registerCreateProjectTool(server: McpServer, ctx: ToolContext): 
           throw err;
         }
       };
-      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "create_project", args.idempotencyKey), run, {
+      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "create_project", args.idempotencyKey, ctx.whoami().credentialId), run, {
         fingerprint: fingerprintArgs(args),
         // A project deleted between the two calls is not a project to hand back — replaying it
         // returned publicPageEnabled: true and a /p/ URL that resolves to nothing.
@@ -409,7 +409,8 @@ export function registerAddDocsToProjectTool(server: McpServer, ctx: ToolContext
         "Put 1-50 documents into a project. A document can be in many projects, so this never takes it out of another one. " +
         "Reports added, alreadyInProject (nothing to do) and notFound (unknown, deleted or archived - the same documents " +
         "lnkdrp_list_docs would not return; unarchive with lnkdrp_archive_doc first), plus failed with an error per document " +
-        "if any write failed. " +
+        "if any write failed. A document kept inside another data room (visibility \"project\") is reported in contained " +
+        "rather than added: set it back to visibility \"workspace\" with lnkdrp_set_doc_visibility first. " +
         "Safe to retry. While the project's public page is on (lnkdrp_get_project publicPageEnabled), every added document " +
         "whose share link is on is listed there for anyone with publicUrl - mention it to the human when the page is on. " +
         SAFETY_TAIL,
@@ -425,7 +426,7 @@ export function registerAddDocsToProjectTool(server: McpServer, ctx: ToolContext
       const docIds = [...new Set(args.docIds.map((id) => id.toLowerCase()))];
 
       type Outcome =
-        | { docId: string; kind: "added" | "alreadyInProject" | "notFound" }
+        | { docId: string; kind: "added" | "alreadyInProject" | "notFound" | "contained" }
         | { docId: string; kind: "failed"; code: string; message: string };
 
       // One lookup for existence: `GET /api/docs?ids=` leaves out deleted and archived documents,
@@ -445,6 +446,10 @@ export function registerAddDocsToProjectTool(server: McpServer, ctx: ToolContext
           return { docId, kind: "added" };
         } catch (err) {
           if (isToolError(err) && err.code === "not_found") return { docId, kind: "notFound" };
+          // 409 CONTAINED (api.ts containmentError): the document is kept inside another data room.
+          // Its own list rather than a failure, like notFound and alreadyInProject beside it, so one
+          // contained document does not read as the whole batch going wrong.
+          if (isToolError(err) && err.details?.code === "CONTAINED") return { docId, kind: "contained" };
           if (isCallerWideError(err)) throw err;
           return {
             docId,
@@ -458,6 +463,7 @@ export function registerAddDocsToProjectTool(server: McpServer, ctx: ToolContext
       const ids = (kind: Outcome["kind"]) => outcomes.filter((o) => o.kind === kind).map((o) => o.docId);
       const failed = outcomes.flatMap((o) => (o.kind === "failed" ? [{ docId: o.docId, code: o.code, message: o.message }] : []));
       const added = ids("added");
+      const contained = ids("contained");
       // Same question projectView asks, and only asked when we are about to answer it: the page can
       // be on through other links while `/p/<shareId>` is disabled, and a URL the human is told to
       // send has to be one that opens. A listing we cannot read says what it always said.
@@ -469,6 +475,16 @@ export function registerAddDocsToProjectTool(server: McpServer, ctx: ToolContext
         added,
         alreadyInProject: ids("alreadyInProject"),
         notFound: ids("notFound"),
+        // Always present, like the three lists above it: a key that appears only when there is
+        // something in it cannot be told apart from an older server that never reports it.
+        contained,
+        ...(contained.length
+          ? {
+              containedNote:
+                "These documents are kept inside another data room (visibility \"project\") and were not added. " +
+                "Set each back to visibility \"workspace\" with lnkdrp_set_doc_visibility, then add it again.",
+            }
+          : {}),
         ...(failed.length ? { failed } : {}),
         ...(willPublish && !addressDead
           ? { publicUrl: ctx.api.projectPublicUrl(project.shareId as string), publicPageNote: "The project's public page is on: added documents with their link on are listed there." }

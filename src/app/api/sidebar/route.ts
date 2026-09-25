@@ -11,6 +11,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { DocModel } from "@/lib/models/Doc";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugLog } from "@/lib/debug";
@@ -94,6 +95,7 @@ export async function GET(request: Request) {
     const docsFilter: Record<string, unknown> = {
       ...scopedOr,
       isDeleted: { $ne: true },
+      ...workspaceListableDocFilter(),
       isArchived: { $ne: true },
     };
 

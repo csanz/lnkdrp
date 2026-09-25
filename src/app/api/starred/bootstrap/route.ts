@@ -10,6 +10,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { debugError, debugLog } from "@/lib/debug";
 import { resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { StarredDocModel } from "@/lib/models/StarredDoc";
 
 export const runtime = "nodejs";
@@ -25,6 +26,7 @@ function docsVisibilityFilter(actor: { orgId: string; personalOrgId?: string | n
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
   return {
     isDeleted: { $ne: true },
+    ...workspaceListableDocFilter(),
     isArchived: { $ne: true },
     ...(allowLegacyByUserId
       ? {

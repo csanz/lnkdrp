@@ -23,6 +23,7 @@ import {
   registerUpdateShareLinkTool,
 } from "./tools/shareLinks";
 import { registerArchiveDocTool, registerDeleteDocTool } from "./tools/docLifecycle";
+import { registerSetDocVisibilityTool } from "./tools/docVisibility";
 import { registerGetActivityTool, registerListDocsTool } from "./tools/discover";
 import { registerReplacePdfTool } from "./tools/replacePdf";
 import { registerFindShareLinkTool } from "./tools/findShareLink";
@@ -201,6 +202,7 @@ export function createMcpServer(ctx: ToolContext): McpServer {
   registerDeleteShareLinkTool(server, ctx);
   registerArchiveDocTool(server, ctx);
   registerDeleteDocTool(server, ctx);
+  registerSetDocVisibilityTool(server, ctx);
   registerCreateProjectTool(server, ctx);
   registerListProjectsTool(server, ctx);
   registerGetProjectTool(server, ctx);

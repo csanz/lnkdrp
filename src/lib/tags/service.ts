@@ -9,10 +9,11 @@
  * Pure helpers (folding, palette) are in `./slug` and `./palette`, which import nothing, so the
  * client-side input and this module agree on what makes two tags the same tag.
  */
-import { Types } from "mongoose";
+import { Types, type PipelineStage } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { ProjectModel } from "@/lib/models/Project";
 import { TagModel, type Tag } from "@/lib/models/Tag";
 import { TagAssignmentModel, type TagTargetKind } from "@/lib/models/TagAssignment";
@@ -101,6 +102,13 @@ async function pickColorForWorkspace(orgId: Types.ObjectId): Promise<TagColorKey
   return nextTagColor(used);
 }
 
+/**
+ * How `GET /api/tags/:tag/docs` orders its pages. `updatedDate` alone is not unique (a bulk
+ * import stamps many documents with one date), so page 2 could repeat or skip a row from page 1;
+ * `_id` breaks the tie the same way on every page.
+ */
+export const TAG_DOCS_SORT = { updatedDate: -1, _id: -1 } as const;
+
 /** Every tag in the workspace, alphabetical, with how many things carry each. */
 export async function listTags(params: {
   orgId: string | Types.ObjectId;
@@ -188,43 +196,62 @@ async function countLiveAssignments(params: {
   tagIds: Types.ObjectId[];
 }): Promise<Map<string, number>> {
   const orgId = params.orgId;
-  const rows = (await TagAssignmentModel.find({ orgId, tagId: { $in: params.tagIds } })
-    .select({ tagId: 1, targetKind: 1, targetId: 1 })
-    .lean()) as Array<{ tagId?: Types.ObjectId; targetKind?: string; targetId?: Types.ObjectId }>;
-  if (!rows.length) return new Map();
-
-  const docIds = rows.filter((r) => r.targetKind === "doc" && r.targetId).map((r) => r.targetId as Types.ObjectId);
-  const projectIds = rows
-    .filter((r) => r.targetKind === "project" && r.targetId)
-    .map((r) => r.targetId as Types.ObjectId);
-
-  // Archived documents still count: they are still in the workspace, still on the tag's page, and
-  // unarchiving is one click. Deleted ones do not exist as far as anything else is concerned.
-  const [docs, projects] = await Promise.all([
-    docIds.length
-      ? (DocModel.find({ _id: { $in: docIds }, orgId, isDeleted: { $ne: true } })
-          .select({ _id: 1 })
-          .lean() as unknown as Promise<Array<{ _id: Types.ObjectId }>>)
-      : Promise.resolve([]),
-    projectIds.length
-      ? (ProjectModel.find({ _id: { $in: projectIds }, orgId, isDeleted: { $ne: true } })
-          .select({ _id: 1 })
-          .lean() as unknown as Promise<Array<{ _id: Types.ObjectId }>>)
-      : Promise.resolve([]),
-  ]);
-
-  const liveDocs = new Set(docs.map((d) => String(d._id)));
-  const liveProjects = new Set(projects.map((p) => String(p._id)));
-
+  if (!params.tagIds.length) return new Map();
+  const rows = (await TagAssignmentModel.aggregate(liveAssignmentCountPipeline({ orgId, tagIds: params.tagIds }))) as Array<{
+    _id?: unknown;
+    n?: unknown;
+  }>;
   const counts = new Map<string, number>();
   for (const row of rows) {
-    if (!row.tagId || !row.targetId) continue;
-    const live = row.targetKind === "doc" ? liveDocs.has(String(row.targetId)) : liveProjects.has(String(row.targetId));
-    if (!live) continue;
-    const key = String(row.tagId);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (!row._id) continue;
+    counts.set(String(row._id), typeof row.n === "number" ? row.n : 0);
   }
   return counts;
+}
+
+/**
+ * The count above, as one aggregation: assignments of the tags, each joined to its target and kept
+ * only when the target is live, then grouped by tag.
+ *
+ * This used to load every assignment row of the workspace into the process and then every id they
+ * pointed at, on every `GET /api/tags`. The joins run in the database now, on the target's `_id`,
+ * and only the per-tag totals come back. Archived documents still count: they are still in the
+ * workspace, still on the tag's page, and unarchiving is one click. Deleted ones do not exist as
+ * far as anything else is concerned.
+ */
+export function liveAssignmentCountPipeline(params: { orgId: Types.ObjectId; tagIds: Types.ObjectId[] }): PipelineStage[] {
+  const { orgId, tagIds } = params;
+  const liveTarget = (kind: "doc" | "project", from: string, as: string): PipelineStage => ({
+    $lookup: {
+      from,
+      let: { target: "$targetId", kind: "$targetKind" },
+      pipeline: [
+        {
+          $match: {
+            $expr: {
+              $and: [
+                { $eq: ["$$kind", kind] },
+                { $eq: ["$_id", "$$target"] },
+                { $eq: ["$orgId", orgId] },
+                { $ne: ["$isDeleted", true] },
+              ],
+            },
+            ...(kind === "doc" ? workspaceListableDocFilter() : {}),
+          },
+        },
+        { $project: { _id: 1 } },
+        { $limit: 1 },
+      ],
+      as,
+    },
+  });
+  return [
+    { $match: { orgId, tagId: { $in: tagIds } } },
+    liveTarget("doc", DocModel.collection.name, "liveDoc"),
+    liveTarget("project", ProjectModel.collection.name, "liveProject"),
+    { $match: { $or: [{ "liveDoc.0": { $exists: true } }, { "liveProject.0": { $exists: true } }] } },
+    { $group: { _id: "$tagId", n: { $sum: 1 } } },
+  ];
 }
 
 /**

@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
@@ -129,6 +130,7 @@ export async function GET(request: Request) {
     // List most recently updated docs.
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
+      ...workspaceListableDocFilter(),
       isArchived: archivedOnly ? true : { $ne: true },
       ...(allowLegacyByUserId
         ? {
@@ -202,6 +204,8 @@ export async function GET(request: Request) {
         firstPagePngUrl: 1,
         receiverRelevanceChecklist: 1,
         receivedViaRequestProjectId: 1,
+        primaryProjectId: 1,
+        visibility: 1,
         guideForRequestProjectId: 1,
         updatedDate: 1,
         createdDate: 1,
@@ -367,11 +371,14 @@ export async function GET(request: Request) {
             const receivedViaRequestProjectIdRaw = (d as unknown as { receivedViaRequestProjectId?: unknown }).receivedViaRequestProjectId;
             const guideForRequestProjectIdRaw = (d as unknown as { guideForRequestProjectId?: unknown }).guideForRequestProjectId;
             const docId = String(d._id);
+            const primaryProjectIdRaw = (d as unknown as { primaryProjectId?: unknown }).primaryProjectId;
             return {
               id: String(d._id),
               shareId: d.shareId ?? null,
               title: d.title ?? "Untitled document",
               status: d.status ?? "draft",
+              primaryProjectId: primaryProjectIdRaw ? String(primaryProjectIdRaw) : null,
+              visibility: (d as unknown as { visibility?: unknown }).visibility === "project" ? "project" : "workspace",
               currentUploadId: currentUploadId ? String(currentUploadId) : null,
               version: currentUploadId ? uploadsById.get(String(currentUploadId)) ?? null : null,
               previewImageUrl: d.previewImageUrl ?? (d as unknown as { firstPagePngUrl?: unknown }).firstPagePngUrl ?? null,
@@ -424,6 +431,10 @@ export async function POST(request: Request) {
 
     const body = (await request.json().catch(() => ({}))) as Partial<{
       title: string;
+      /** Create the document inside this project from the first write (docs/prds/lnkdrp-project-home.md, decision 1). */
+      projectId: string;
+      /** "project" lists it only inside that project (decision 3); needs `projectId`. */
+      visibility: "workspace" | "project";
     }>;
 
     // Temp-user limit: 1 doc total.
@@ -457,6 +468,37 @@ export async function POST(request: Request) {
     const planWarning = limitCheck.warning;
 
     // Create with a shareId (retry on rare collisions).
+    /**
+     * A home project, checked before anything is written: the same workspace, alive, and a room
+     * rather than a request inbox (files are received into an inbox, never uploaded into one).
+     * Resolved here so the created row carries `projectIds` and `primaryProjectId` from its
+     * first write, and every consumer that runs during processing already sees it in the room.
+     */
+    let homeProject: { _id: Types.ObjectId; name: string } | null = null;
+    if (typeof body.projectId === "string" && body.projectId.trim()) {
+      const pid = body.projectId.trim();
+      if (!Types.ObjectId.isValid(pid)) {
+        return applyTempUserHeaders(NextResponse.json({ error: "Project not found.", code: "PROJECT_NOT_FOUND" }, { status: 400 }), actor);
+      }
+      const project = (await ProjectModel.findOne({ _id: new Types.ObjectId(pid), orgId: new Types.ObjectId(actor.orgId), isDeleted: { $ne: true } })
+        .select({ _id: 1, name: 1, isRequest: 1 })
+        .lean()) as { _id: Types.ObjectId; name?: string; isRequest?: boolean } | null;
+      if (!project) {
+        return applyTempUserHeaders(NextResponse.json({ error: "Project not found.", code: "PROJECT_NOT_FOUND" }, { status: 400 }), actor);
+      }
+      if (project.isRequest) {
+        return applyTempUserHeaders(
+          NextResponse.json({ error: "That project is a request inbox. Files are received there through its request link, not uploaded into it.", code: "PROJECT_IS_INBOX" }, { status: 400 }),
+          actor,
+        );
+      }
+      homeProject = { _id: project._id, name: typeof project.name === "string" ? project.name : "" };
+    }
+    const visibility = body.visibility === "project" ? "project" : "workspace";
+    if (visibility === "project" && !homeProject) {
+      return applyTempUserHeaders(NextResponse.json({ error: "A document can only be contained inside a project. Pass projectId as well.", code: "VISIBILITY_NEEDS_PROJECT" }, { status: 400 }), actor);
+    }
+
     let doc: CreatedDoc | null = null;
     let lastErr: unknown = null;
     let title = body.title ?? "Untitled document";
@@ -469,6 +511,7 @@ export async function POST(request: Request) {
           status: "draft",
           shareId: newShareId(),
           shareEnabled,
+          ...(homeProject ? { projectIds: [homeProject._id], primaryProjectId: homeProject._id, projectId: homeProject._id, visibility } : {}),
         });
         doc = (Array.isArray(created) ? created[0] : created) as CreatedDoc;
         break;
@@ -524,6 +567,8 @@ export async function POST(request: Request) {
       type: "doc.created",
       docId: doc._id,
       title: doc.title ?? null,
+      // Born in a room: the row says "in Data room" and filters to the project from the start.
+      ...(homeProject ? { projectId: String(homeProject._id), meta: { projectName: homeProject.name || null } } : {}),
       request,
     });
 
@@ -545,6 +590,9 @@ export async function POST(request: Request) {
             aiOutput: doc.aiOutput ?? null,
             receiverRelevanceChecklist: Boolean(doc.receiverRelevanceChecklist),
             shareEnabled: doc.shareEnabled !== false,
+            primaryProjectId: homeProject ? String(homeProject._id) : null,
+            projectIds: homeProject ? [String(homeProject._id)] : [],
+            visibility,
           },
           ...(planWarning ? { planWarning } : {}),
         },

@@ -1,9 +1,9 @@
 "use client";
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowUpTrayIcon, CpuChipIcon, DocumentPlusIcon, LinkIcon, LockClosedIcon } from "@heroicons/react/24/outline";
 import UploadButton from "@/components/UploadButton";
 import FirstRunWelcome from "@/components/onboarding/FirstRunWelcome";
@@ -54,8 +54,133 @@ export default function HomeAuthedClient() {
  * only cleared on a route change (providers.tsx), so it would stay up forever. The page picks the
  * staged file up from `usePendingUpload` and switches to its preview instead.
  */
-export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean }) {
+export type UploadProjectOption = { id: string; name: string };
+
+/** What the "Add to a data room" picker needs: the list, the choice, and the id that is safe to send. */
+export type UploadProjectPickerState = {
+  /** `null` until the list has loaded, and again if it failed (the picker hides itself). */
+  options: UploadProjectOption[] | null;
+  projectId: string | null;
+  setProjectId: (id: string | null) => void;
+  /** The chosen id only when it is in the loaded list, so an unknown `?project=` never 400s an upload. */
+  effectiveProjectId: string | null;
+  /** "Only inside this data room" (PRD decision 7): the doc is listed in the room, not the workspace. */
+  contained: boolean;
+  setContained: (v: boolean) => void;
+  /** `"project"` only when a project is actually chosen and `contained` is on; what to send as `visibility`. */
+  effectiveVisibility: "workspace" | "project";
+};
+
+/**
+ * Projects a new document can be created inside (request inboxes are not in the lite list), preselected
+ * from `?project=<id>` in the URL. Best-effort: a failed load leaves `options` null and the upload
+ * proceeds into the workspace. `enabled: false` skips the fetch when a parent owns the state instead.
+ */
+export function useUploadProjectPicker({ enabled = true }: { enabled?: boolean } = {}): UploadProjectPickerState {
+  const searchParams = useSearchParams();
+  const projectFromUrl = (searchParams?.get("project") ?? "").trim();
+  const [options, setOptions] = useState<UploadProjectOption[] | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(projectFromUrl || null);
+  const [contained, setContained] = useState(false);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetchJson<{ projects?: Array<{ id?: unknown; name?: unknown }> }>(
+          "/api/projects?limit=50&page=1&lite=1",
+          { method: "GET" },
+        );
+        const list: UploadProjectOption[] = [];
+        for (const p of Array.isArray(res?.projects) ? res.projects : []) {
+          if (typeof p?.id === "string" && p.id && typeof p?.name === "string") list.push({ id: p.id, name: p.name });
+        }
+        if (!cancelled) setOptions(list);
+      } catch {
+        if (!cancelled) setOptions(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+
+  const effectiveProjectId = projectId && options?.some((o) => o.id === projectId) ? projectId : null;
+  const effectiveVisibility: "workspace" | "project" = effectiveProjectId && contained ? "project" : "workspace";
+  return { options, projectId, setProjectId, effectiveProjectId, contained, setContained, effectiveVisibility };
+}
+
+/**
+ * The small "Add to a data room" select. Renders nothing while the list is loading, when it failed, or
+ * when the workspace has no projects: the upload never waits on it.
+ */
+export function UploadProjectPicker({
+  picker,
+  disabled = false,
+  className = "",
+}: {
+  picker: UploadProjectPickerState;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const selectId = useId();
+  const containedId = useId();
+  const { options, projectId, setProjectId, contained, setContained } = picker;
+  if (!options || !options.length) return null;
+  const value = projectId && options.some((o) => o.id === projectId) ? projectId : "";
+  return (
+    <div className={["flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[var(--muted)]", className].join(" ")}>
+      <label htmlFor={selectId} className="shrink-0">
+        Add to a data room
+      </label>
+      <select
+        id={selectId}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => setProjectId(e.target.value || null)}
+        className="h-8 min-w-0 max-w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 text-[12px] text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:opacity-60"
+      >
+        <option value="">No data room (workspace)</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </select>
+      {/* Contained document (PRD decision 7): only meaningful once a room is chosen. Takes its own
+          line under the select (`basis-full`) so the caller's row alignment still applies above. */}
+      {value ? (
+        <div className="flex basis-full items-start gap-x-2 pt-0.5">
+          <input
+            id={containedId}
+            type="checkbox"
+            checked={contained}
+            disabled={disabled}
+            onChange={(e) => setContained(e.target.checked)}
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-[var(--fg)] disabled:opacity-60"
+          />
+          <label htmlFor={containedId} className="flex flex-col gap-y-0.5">
+            <span className="text-[var(--fg)]">Only inside this data room</span>
+            <span className="text-[11px] text-[var(--muted-2)]">Listed in the room, not in the workspace. Its link still works.</span>
+          </label>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function UploadHome({
+  onUploadRoute = false,
+  projectPicker,
+}: {
+  onUploadRoute?: boolean;
+  /** `/upload` owns the picker so the choice survives into the preview; on `/` this component owns it. */
+  projectPicker?: UploadProjectPickerState;
+}) {
   const router = useRouter();
+  const ownProjectPicker = useUploadProjectPicker({ enabled: !projectPicker });
+  const picker = projectPicker ?? ownProjectPicker;
   const { openUpgrade } = useUpgradeModal();
   const { pendingFile, setPendingFile, setHasEnteredShell } = usePendingUpload();
   const [error, setError] = useState<string | null>(null);
@@ -82,12 +207,14 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
 
   function pushUploadRouteSoon() {
     if (onUploadRoute) return;
+    // The data room chosen here rides along in the URL, where `/upload` preselects it.
+    const target = picker.effectiveProjectId ? `/upload?project=${encodeURIComponent(picker.effectiveProjectId)}` : "/upload";
     // Let the overlay paint before the route transition begins.
     if (typeof window === "undefined") {
-      router.push("/upload");
+      router.push(target);
       return;
     }
-    window.requestAnimationFrame(() => router.push("/upload"));
+    window.requestAnimationFrame(() => router.push(target));
   }
 
   async function waitForNextPaint() {
@@ -176,7 +303,11 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
       const inferredName = fileNameFromUrl(raw);
       // For URL uploads, don't name the doc from the URL path (e.g. ".../view" → "view").
       // Start with a neutral placeholder; the processing pipeline will rename using AI `docName`.
-      const docId = await apiCreateDoc({ title: "Untitled document" });
+      const docId = await apiCreateDoc({
+        title: "Untitled document",
+        projectId: picker.effectiveProjectId,
+        visibility: picker.effectiveVisibility,
+      });
       createdDocId = docId;
       const upload = await apiCreateUpload({
         docId,
@@ -445,6 +576,10 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
               ))}
             </ul>
           </div>
+
+          {/* Where the document lands (PRD decision 2). Quiet, under the drop zone; hidden when there
+              is nothing to choose. Applies to the file and the link paths alike. */}
+          <UploadProjectPicker picker={picker} disabled={urlBusy} className="mt-3 justify-end" />
 
           {error ? (
             <div role="alert" className="mt-4 text-[13px] font-medium text-red-600 dark:text-red-400">

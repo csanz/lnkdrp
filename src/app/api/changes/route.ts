@@ -32,6 +32,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { UserModel } from "@/lib/models/User";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
@@ -117,8 +118,8 @@ export async function GET(request: Request) {
 
     // The workspace's live documents, which is what "the workspace's history" means here.
     const docFilter: Record<string, unknown> = allowLegacyByUserId
-      ? { isDeleted: { $ne: true }, $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] }
-      : { orgId, isDeleted: { $ne: true } };
+      ? { isDeleted: { $ne: true }, ...workspaceListableDocFilter(), $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] }
+      : { orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter() };
     if (docIdRaw) docFilter._id = new Types.ObjectId(docIdRaw);
     const docs = (await DocModel.find(docFilter)
       .select({ _id: 1, title: 1, shareId: 1, updatedDate: 1 })

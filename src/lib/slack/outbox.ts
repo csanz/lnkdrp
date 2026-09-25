@@ -61,20 +61,28 @@ const oid = (v: string | Types.ObjectId | null | undefined): Types.ObjectId | nu
   return Types.ObjectId.isValid(s) ? new Types.ObjectId(s) : null;
 };
 
-/** The document's rooms, the request inbox it arrived through, and the event's own project, for routing. */
-async function projectIdsFor(orgId: Types.ObjectId, event: SlackOutboxEvent): Promise<string[]> {
+/**
+ * Where an event may go: the document's rooms, the request inbox it arrived through, and the
+ * event's own project. A contained document (`visibility: "project"`) routes on its home room
+ * alone and never falls back to the catch-all (docs/prds/lnkdrp-project-home.md, decision 6).
+ */
+async function routingFor(orgId: Types.ObjectId, event: SlackOutboxEvent): Promise<{ projectIds: string[]; allowDefault: boolean }> {
   const out = new Set<string>();
   const direct = oid(event.projectId);
   if (direct) out.add(String(direct));
   const docId = oid(event.docId);
   if (docId) {
-    const doc = (await DocModel.findOne({ _id: docId, orgId }).select({ projectIds: 1, receivedViaRequestProjectId: 1 }).lean()) as
-      | { projectIds?: unknown[]; receivedViaRequestProjectId?: unknown }
+    const doc = (await DocModel.findOne({ _id: docId, orgId }).select({ projectIds: 1, primaryProjectId: 1, receivedViaRequestProjectId: 1, visibility: 1 }).lean()) as
+      | { projectIds?: unknown[]; primaryProjectId?: unknown; receivedViaRequestProjectId?: unknown; visibility?: string }
       | null;
+    if (doc?.visibility === "project") {
+      const home = doc.primaryProjectId ? String(doc.primaryProjectId) : (doc.projectIds ?? []).map(String)[0];
+      return { projectIds: home ? [home] : [], allowDefault: false };
+    }
     for (const p of doc?.projectIds ?? []) if (p) out.add(String(p));
     if (doc?.receivedViaRequestProjectId) out.add(String(doc.receivedViaRequestProjectId));
   }
-  return Array.from(out);
+  return { projectIds: Array.from(out), allowDefault: true };
 }
 
 /**
@@ -88,11 +96,12 @@ export async function enqueueSlackPosts(input: EnqueueSlackInput): Promise<numbe
     await connectMongo();
     const connections = await SlackConnectionModel.find({ orgId, status: "active" }).lean<SlackConnection[]>();
     if (!connections.length) return 0;
-    const projectIds = await projectIdsFor(orgId, input.event);
+    const routing = await routingFor(orgId, input.event);
     const targets = routeSlackConnections(
       connections.map((c) => ({ ...serializeSlackConnection(c), row: c })),
       input.kind,
-      projectIds,
+      routing.projectIds,
+      { allowDefault: routing.allowDefault },
     );
     if (!targets.length) return 0;
 

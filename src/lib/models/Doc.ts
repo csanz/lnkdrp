@@ -7,6 +7,7 @@
  */
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 import { ProjectModel } from "@/lib/models/Project";
+import { projectDocCountFilter } from "@/lib/projects/docCountFilter";
 import { debugError } from "@/lib/debug";
 
 const docSchema = new Schema(
@@ -29,6 +30,12 @@ const docSchema = new Schema(
       index: true,
       default: [],
     },
+    /**
+     * "project": the document is listed only inside its primary project, never in the workspace
+     * lists, search, dashboard or the MCP's list (docs/prds/lnkdrp-project-home.md, decision 3).
+     * Requires `primaryProjectId`. Default "workspace" keeps every existing document where it is.
+     */
+    visibility: { type: String, enum: ["workspace", "project"], default: "workspace", index: true },
     // Backward-compat: some older code refers to `uploadId`
     uploadId: { type: Schema.Types.ObjectId, ref: "Upload", index: true },
     // New canonical field name
@@ -357,7 +364,13 @@ function updateTouchesProjectCounts(update: unknown): boolean {
 }
 
 /**
- * Apply a docCount diff to affected projects based on a before/after snapshot.
+ * Bring `Project.docCount` back in line for every project a before/after snapshot touched.
+ *
+ * The snapshot decides *which* projects moved; the count itself is recomputed from
+ * `projectDocCountFilter`, not adjusted by one. It used to be a paired `$inc`/`$inc: -1` from the
+ * diff, and two writes racing on one document each read the same "before", so both applied their
+ * own diff against a shared "after" and the counter drifted by one for good (code review
+ * 2026-09-23). A recompute is idempotent: whichever write lands last leaves the true number.
  * Best-effort: errors are handled by callers/hooks.
  */
 async function applyProjectCountDiff(before: DocCountSnap | null, after: DocCountSnap | null): Promise<void> {
@@ -384,17 +397,15 @@ async function applyProjectCountDiff(before: DocCountSnap | null, after: DocCoun
   if (!orgIdStr || !isValidObjectIdString(orgIdStr)) return;
   const orgId = new mongoose.Types.ObjectId(orgIdStr);
 
-  if (toInc.length) {
-    await ProjectModel.updateMany(
-      { _id: { $in: toInc.filter(isValidObjectIdString).map((id) => new mongoose.Types.ObjectId(id)) }, orgId },
-      { $inc: { docCount: 1 } },
-    );
-  }
-  if (toDec.length) {
-    await ProjectModel.updateMany(
-      { _id: { $in: toDec.filter(isValidObjectIdString).map((id) => new mongoose.Types.ObjectId(id)) }, orgId },
-      { $inc: { docCount: -1 } },
-    );
+  const affected = new Set([...toInc, ...toDec].filter(isValidObjectIdString));
+  if (!affected.size) return;
+  // The Doc model is compiled below this function; look it up at call time.
+  const DocM = mongoose.models.Doc as Model<unknown> | undefined;
+  if (!DocM) return;
+  for (const id of affected) {
+    const projectId = new mongoose.Types.ObjectId(id);
+    const docCount = await DocM.countDocuments(projectDocCountFilter(orgId, projectId));
+    await ProjectModel.updateOne({ _id: projectId, orgId }, { $set: { docCount } });
   }
 }
 

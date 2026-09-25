@@ -1151,6 +1151,7 @@ export async function POST(
           title: 1,
           projectId: 1,
           projectIds: 1,
+          primaryProjectId: 1,
           isArchived: 1,
           isDeleted: 1,
           currentUploadId: 1,
@@ -1166,6 +1167,16 @@ export async function POST(
         })
         .lean();
       const existingDocObj = isRecord(existingDoc) ? existingDoc : null;
+      /**
+       * The document's home project (docs/prds/lnkdrp-project-home.md, decision 2). A document
+       * created into a room carries it from its first write; the feed rows written here say
+       * "in Data room" and filter to the project, and the Slack post routes on it.
+       */
+      const homeProjectIdRaw = existingDocObj ? (existingDocObj as { primaryProjectId?: unknown }).primaryProjectId : null;
+      const homeProjectId = homeProjectIdRaw && Types.ObjectId.isValid(String(homeProjectIdRaw)) ? String(homeProjectIdRaw) : null;
+      const homeProjectName = homeProjectId
+        ? (((await ProjectModel.findById(homeProjectId).select({ name: 1 }).lean().catch(() => null)) as { name?: string } | null)?.name ?? null)
+        : null;
       const priorExtractedTextRaw =
         existingDocObj && typeof (existingDocObj as { extractedText?: unknown }).extractedText === "string"
           ? String((existingDocObj as { extractedText: string }).extractedText ?? "")
@@ -3099,7 +3110,9 @@ export async function POST(
           docId,
           uploadId,
           title: typeof docUpdate.title === "string" ? docUpdate.title : existingTitle,
+          ...(homeProjectId ? { projectId: homeProjectId } : {}),
           meta: {
+            ...(homeProjectName ? { projectName: homeProjectName } : {}),
             version: uploadVersion,
             summaryBy: aiState.summaryBy?.label ?? aiState.summaryBy?.client ?? null,
             summary: aiState.summary === "pending" ? "skipped" : aiState.summary,
@@ -3255,7 +3268,7 @@ export async function POST(
                 orgId: existingDocOrgId,
                 kind: "docs",
                 sourceId: `created:${String(docId)}`,
-                event: { docId, uploadId, version: uploadVersion, change: "created" },
+                event: { docId, uploadId, version: uploadVersion, change: "created", projectId: homeProjectId },
               });
             } catch (e) {
               debugError(1, "[process] doc_uploads enqueue failed", {

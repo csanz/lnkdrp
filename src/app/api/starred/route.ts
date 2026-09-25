@@ -7,10 +7,12 @@
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
-import { debugError, debugLog } from "@/lib/debug";
+import { debugLog } from "@/lib/debug";
 import { resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { StarredDocModel } from "@/lib/models/StarredDoc";
+import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,6 +29,7 @@ function docsVisibilityFilter(actor: { orgId: string; personalOrgId?: string | n
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
   return {
     isDeleted: { $ne: true },
+    ...workspaceListableDocFilter(),
     isArchived: { $ne: true },
     ...(allowLegacyByUserId
       ? {
@@ -95,9 +98,7 @@ export async function GET(request: Request) {
     const docs = await listStarred({ orgId: actor.orgId, personalOrgId: actor.personalOrgId, userId: actor.userId });
     return NextResponse.json({ docs }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/starred] GET failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Could not load starred documents", context: "[api/starred] GET failed" });
   }
 }
 
@@ -154,9 +155,7 @@ export async function POST(request: Request) {
     const docs = await listStarred({ orgId: actor.orgId, personalOrgId: actor.personalOrgId, userId: actor.userId });
     return NextResponse.json({ docs }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/starred] POST failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Could not update starred documents", context: "[api/starred] POST failed" });
   }
 }
 
@@ -208,9 +207,7 @@ export async function PATCH(request: Request) {
     const docs = await listStarred({ orgId: actor.orgId, personalOrgId: actor.personalOrgId, userId: actor.userId });
     return NextResponse.json({ docs }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/starred] PATCH failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Could not reorder starred documents", context: "[api/starred] PATCH failed" });
   }
 }
 

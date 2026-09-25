@@ -14,6 +14,8 @@
  *                                                  shareAllowRevisionHistory, sharePasswordEnabled, previewImageUrl,
  *                                                  currentUploadId, aiOutput, isArchived, … } }`
  * - `PATCH /api/docs/:id`                      -> `{ doc: {…same…}, planWarning? }`; 402 `{ code: "plan_limit", … }`
+ * - `PATCH /api/docs/:id` `{ visibility }`     -> `{ doc: { …, visibility, primaryProjectId } }`; 400 `VISIBILITY_NEEDS_PROJECT`
+ *                                                  when in no project; `{ addProjectId }` on a contained doc -> 409 `CONTAINED`
  * - `DELETE /api/docs/:id`                     -> `{ ok: true }`
  * - `POST /api/docs/:id/share-password` `{ password }` (string sets, `null` removes) -> `{ sharePasswordEnabled }`
  * - `GET  /api/docs/:id/links/:linkId/password` -> `{ passwordEnabled, password }` (owner read-back; writes an activity row)
@@ -55,7 +57,7 @@
  *   `allowRevisionHistory`, and its `shareId` resolves at `/p/:shareId`, not `/s/:shareId`.
  */
 import { API_TIMEOUT_MS } from "./config";
-import { mapApiError, ToolError } from "./errors";
+import { isToolError, mapApiError, ToolError } from "./errors";
 
 export type Whoami = {
   ok: true;
@@ -207,7 +209,46 @@ export type ApiDoc = {
   pageCount: number | null;
   /** The key points stored with the current summary (the caller's own, or the AI's). */
   keyPoints: string[];
+  /** The document's home project (its primary data room), or null when it is in no project. */
+  primaryProjectId: string | null;
+  /** "project" means the document is kept inside its primary project only and left out of workspace listings. */
+  visibility: DocVisibility;
 };
+
+/**
+ * Where a document is listed. "workspace" (the default) lists it everywhere; "project" keeps it
+ * inside its primary project only (docs/prds/lnkdrp-project-home.md, decisions 3, 7, 8). Its direct
+ * link and tools keep working either way.
+ */
+export type DocVisibility = "workspace" | "project";
+
+/** The route's `visibility` field, defaulting to "workspace" when absent or unknown. */
+function asVisibility(value: unknown): DocVisibility {
+  return value === "project" ? "project" : "workspace";
+}
+
+/**
+ * The 409 `CONTAINED` refusal of `PATCH /api/docs/:id`, as a `ToolError` an agent can branch on.
+ *
+ * `mapApiError` sends every 409 it has no case for to `upstream`, which means "retry the same call":
+ * false here, since a contained document stays contained until someone lists it in the workspace
+ * again. It is the caller's state to change, so it is `validation` with status 409 and
+ * `details.code: "CONTAINED"`, the same way a duplicate project name is reported. The generic
+ * mapper keeps only the body's sentence (not its `code`) on a 409, so the sentence is matched too.
+ * Null for anything else, so callers can fall back to the error they had.
+ */
+function containmentError(err: unknown, docId: string): ToolError | null {
+  if (!isToolError(err) || err.status !== 409) return null;
+  const code = err.details?.code;
+  const text = typeof err.details?.error === "string" ? err.details.error : "";
+  if (code !== "CONTAINED" && !/kept inside its data room/i.test(text)) return null;
+  return new ToolError(
+    "validation",
+    "This document is kept inside its data room only (visibility \"project\"), so it cannot be added to another project. " +
+      "List it in the workspace again with lnkdrp_set_doc_visibility visibility \"workspace\" first.",
+    { status: 409, details: { code: "CONTAINED", docId } },
+  );
+}
 
 export type ApiDocListItem = { id: string; shareId: string | null; title: string | null; status: string };
 
@@ -218,6 +259,8 @@ export type ApiDocsPageItem = ApiDocListItem & {
   previewImageUrl: string | null;
   createdDate: string | null;
   updatedDate: string | null;
+  primaryProjectId: string | null;
+  visibility: DocVisibility;
 };
 
 export type ApiDocsPage = { total: number; page: number; limit: number; docs: ApiDocsPageItem[] };
@@ -566,6 +609,8 @@ function asDoc(raw: unknown): ApiDoc {
     keyPoints: Array.isArray(ai.primary_capabilities_or_scope)
       ? ai.primary_capabilities_or_scope.filter((x): x is string => typeof x === "string")
       : [],
+    primaryProjectId: strOrNull(d.primaryProjectId),
+    visibility: asVisibility(d.visibility),
   };
 }
 
@@ -1027,8 +1072,37 @@ export class ApiClient {
     };
   }
 
-  async createDoc(input: { title: string }): Promise<{ doc: ApiDoc; planWarning?: PlanWarning }> {
-    const body = rec(await this.request("POST", "/api/docs", { body: input }));
+  /**
+   * `POST /api/docs`. With `projectId` the document is created already inside that project
+   * (`primaryProjectId` + `projectIds`), so the feed and Slack see it in the room from its first
+   * event and no separate add step is needed. The route answers 400 with a `code` for a project
+   * that is not in the caller's workspace or is a request inbox; both are the caller's arguments,
+   * so they surface as `validation` with a sentence that names the fix, the way `invalid_summary`
+   * does in `mapApiError`.
+   */
+  async createDoc(input: { title: string; projectId?: string | undefined }): Promise<{ doc: ApiDoc; planWarning?: PlanWarning }> {
+    const payload = { title: input.title, ...(input.projectId ? { projectId: input.projectId } : {}) };
+    let body: Record<string, unknown>;
+    try {
+      body = rec(await this.request("POST", "/api/docs", { body: payload }));
+    } catch (err) {
+      if (isToolError(err) && err.status === 400) {
+        const code = err.details?.code;
+        if (code === "PROJECT_NOT_FOUND") {
+          throw new ToolError("validation", "Project not found in this workspace. lnkdrp_list_projects lists the projects you can use.", {
+            status: 400,
+            details: { code, projectId: input.projectId },
+          });
+        }
+        if (code === "PROJECT_IS_INBOX") {
+          throw new ToolError("validation", "That project is a request inbox; documents are received there, not uploaded. Pick a data room instead.", {
+            status: 400,
+            details: { code, projectId: input.projectId },
+          });
+        }
+      }
+      throw err;
+    }
     return { doc: asDoc(body.doc), planWarning: asPlanWarning(body.planWarning) };
   }
 
@@ -1087,6 +1161,8 @@ export class ApiClient {
           previewImageUrl: strOrNull(d.previewImageUrl),
           createdDate: strOrNull(d.createdDate),
           updatedDate: strOrNull(d.updatedDate),
+          primaryProjectId: strOrNull(d.primaryProjectId),
+          visibility: asVisibility(d.visibility),
         };
       }),
     };
@@ -1142,8 +1218,39 @@ export class ApiClient {
   }
 
   async patchDoc(docId: string, patch: DocPatch): Promise<{ doc: ApiDoc; planWarning?: PlanWarning }> {
-    const body = rec(await this.request("PATCH", `/api/docs/${encodeURIComponent(docId)}`, { body: patch }));
+    let body: Record<string, unknown>;
+    try {
+      body = rec(await this.request("PATCH", `/api/docs/${encodeURIComponent(docId)}`, { body: patch }));
+    } catch (err) {
+      throw containmentError(err, docId) ?? err;
+    }
     return { doc: asDoc(body.doc), planWarning: asPlanWarning(body.planWarning) };
+  }
+
+  /**
+   * `PATCH /api/docs/:id { visibility }`: keep a document inside its primary project only
+   * ("project") or list it in the workspace again ("workspace").
+   *
+   * The route refuses "project" for a document in no project with 400 `VISIBILITY_NEEDS_PROJECT`;
+   * that is the caller's arguments, so it surfaces as `validation` with the fix named, the way
+   * `createDoc` treats `PROJECT_NOT_FOUND`. The 409 `CONTAINED` answer (adding a contained document
+   * to a second project) is mapped by `containmentError` for every doc patch.
+   */
+  async setDocVisibility(docId: string, visibility: DocVisibility): Promise<ApiDoc> {
+    let body: Record<string, unknown>;
+    try {
+      body = rec(await this.request("PATCH", `/api/docs/${encodeURIComponent(docId)}`, { body: { visibility } }));
+    } catch (err) {
+      if (isToolError(err) && err.status === 400 && err.details?.code === "VISIBILITY_NEEDS_PROJECT") {
+        throw new ToolError(
+          "validation",
+          "A document can only be kept inside a project when it is in one. Add it to a data room with lnkdrp_add_docs_to_project first, then set visibility \"project\".",
+          { status: 400, details: { code: "VISIBILITY_NEEDS_PROJECT", docId } },
+        );
+      }
+      throw containmentError(err, docId) ?? err;
+    }
+    return asDoc(body.doc);
   }
 
   async deleteDoc(docId: string): Promise<void> {

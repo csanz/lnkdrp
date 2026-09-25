@@ -712,6 +712,18 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     },
   },
   {
+    name: "lnkdrp_set_doc_visibility",
+    purpose: "Keep a document inside its data room only, or list it in the workspace again.",
+    access: "write",
+    confirms: false,
+    detail: {
+      inputs: ["docId", "visibility: \"project\" to keep it inside its data room, \"workspace\" to list it everywhere again"],
+      output: "docId, visibility, primaryProjectId.",
+      errors: ["validation: the document is in no project (VISIBILITY_NEEDS_PROJECT)", "not_found"],
+      note: "A contained document leaves every workspace-wide list, search, the dashboard and lnkdrp_list_docs; the project's own listing, its direct link, metrics and history keep working. Adding a contained document to a second project is refused until it is listed again.",
+    },
+  },
+  {
     name: "lnkdrp_archive_doc",
     purpose: "Archive a document to free a slot, or bring it back. Reversible; keeps analytics. Confirms with you first.",
     access: "write",

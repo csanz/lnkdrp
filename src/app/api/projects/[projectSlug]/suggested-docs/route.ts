@@ -3,9 +3,11 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
-import { debugError, debugLog } from "@/lib/debug";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { liveProjectByIdMatch } from "@/lib/projects/scope";
+import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 /**
@@ -166,6 +168,7 @@ export async function GET(
           }
         : { orgId }),
       isDeleted: { $ne: true },
+      ...workspaceListableDocFilter(),
       isArchived: { $ne: true },
       "aiOutput.tags": { $in: tags },
     };
@@ -242,9 +245,7 @@ export async function GET(
 
     return applyTempUserHeaders(NextResponse.json({ tags, docs: scored }), actor);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/projects/:id/suggested-docs] GET failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Could not load suggested documents", context: "[api/projects/:id/suggested-docs] GET failed" });
   }
 }
 

@@ -70,14 +70,29 @@ export class PlanLimitClientError extends Error {
 /**
  * Creates a new doc via `/api/docs` and returns the doc id.
  *
+ * `projectId` (optional) creates the document inside that project from the start; the API answers
+ * 400 for a request inbox or an unknown id, so callers only pass ids from the project list.
+ * `visibility: "project"` (optional) makes it a contained document, listed only inside that project;
+ * it is only sent alongside a `projectId` since the API refuses it otherwise (VISIBILITY_NEEDS_PROJECT).
+ *
  * Side effects: broadcasts `docs changed` so the sidebar refreshes immediately.
  * Errors: throws on non-2xx responses from the API.
  */
-export async function apiCreateDoc(params: { title: string }): Promise<string> {
+export async function apiCreateDoc(params: {
+  title: string;
+  projectId?: string | null;
+  visibility?: "workspace" | "project";
+}): Promise<string> {
+  const projectId = typeof params.projectId === "string" ? params.projectId.trim() : "";
+  const body: { title: string; projectId?: string; visibility?: "workspace" | "project" } = { title: params.title };
+  if (projectId) {
+    body.projectId = projectId;
+    if (params.visibility === "project") body.visibility = "project";
+  }
   const res = await fetchWithTempUser("/api/docs", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ title: params.title }),
+    body: JSON.stringify(body),
   });
   if (res.status === 402) {
     // Free document cap: hand the parsed limit to the caller so it can open the upgrade modal.

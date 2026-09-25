@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 964 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 959 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -86,7 +86,6 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/p/[shareId]/layout.tsx` · default, dynamic
 - `src/app/page.tsx` · default
 - `src/app/preferences/[tab]/page.tsx` — `/preferences/:tab` · default
-- `src/app/preferences/layout.tsx` · default
 - `src/app/preferences/page.tsx` — `/preferences` · default
 - `src/app/pricing/page.tsx` — `/pricing` · default, dynamic, metadata, runtime
 - `src/app/privacy/page.tsx` — `/privacy` · default
@@ -329,7 +328,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/(app)/tag/[slug]/pageClient.tsx` · default
 - `src/app/(app)/tags/pageClient.tsx` · default
 - `src/app/(app)/upload/pageClient.tsx` · default
-- `src/app/HomeAuthedClient.tsx` · default, UploadHome
+- `src/app/HomeAuthedClient.tsx` · default, UploadHome, UploadProjectOption, UploadProjectPicker, UploadProjectPickerState, useUploadProjectPicker
 - `src/app/HomeUnauthedClient.tsx` · default
 - `src/app/accept/AcceptClient.tsx` · default
 - `src/app/api/docs/[docId]/links/shared.ts` · accessDocForLinks, DocAccess, DocAccessResult, linkErrorResponse, PlanWarning, planWarningOf
@@ -362,12 +361,8 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/p/[shareId]/[docId]/loading.tsx` · default
 - `src/app/p/[shareId]/shareTheme.ts` · PROJECT_SHARE_THEME
 - `src/app/p/not-found.tsx` · default
-- `src/app/preferences/NotificationPreferences.tsx`
-- `src/app/preferences/WorkspaceManager.tsx` · default
-- `src/app/preferences/preferencesShell.tsx` · default
 - `src/app/pricing/BillingInterval.tsx` · BillingInterval, BillingIntervalProvider, BillingIntervalToggle, BillingStatus, BillingStatusPlan, loadBillingStatus, ProPriceBlock, useBillingInterval
 - `src/app/pricing/PricingCta.tsx` · default
-- `src/app/project/[projectSlug]/pageClient.tsx` · default
 - `src/app/providers.tsx` · default, useAuthEnabled, useNavigationLocked, useNavigationLockWhile
 - `src/app/r/[token]/pageClient.tsx` · default
 - `src/app/replace/[token]/pageClient.tsx` · default
@@ -543,7 +538,7 @@ Clients, helpers and components that live beside the page that uses them.
 `src/lib` — models, services and pure helpers.
 
 - `src/lib/accounts/deletion.ts` · confirmPhraseMatches, daysUntilPurge, DELETION_CONFIRM_PHRASE, DELETION_GRACE_DAYS, DELETION_REASONS, DeletionReasonCode, DeletionRequestInput, ParsedDeletionRequest, …
-- `src/lib/accounts/purge.ts` · blobUrlsOf, findAccountsDueForPurge, planPurge, purgeAccount, PurgePlan, PurgeResult, UPLOAD_BLOB_SELECT
+- `src/lib/accounts/purge.ts` · blobUrlsOf, countOtherMembersByOrg, findAccountsDueForPurge, OtherMembers, planPurge, purgeAccount, PurgePlan, PurgeResult, …
 - `src/lib/activity/feedVisibility.ts` · FEED_HIDDEN_LIMIT_KEYS, FEED_HIDDEN_TYPES, feedHiddenClauses, isHiddenFromFeed
 - `src/lib/activity/labels.ts` · ACTIVITY_FILTERS, ActivityFilterId, ActivityItem, ActivitySentence, actorDisplayName, describeActivity
 - `src/lib/activity/log.ts` · ACTIVITY_AGENT_HEADER, ActivityActorKind, ActivityAgent, ActivityType, agentFromRequest, agentLabel, recordActivity, RecordActivityInput
@@ -570,7 +565,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/agents/oauthHttp.ts` · clientCredentialsFrom, OAUTH_CORS_HEADERS, OAUTH_JSON_HEADERS, oauthError, OAuthErrorCode, oauthOptions, readOAuthBody
 - `src/lib/agents/owners.ts` · KeyOwner, resolveOwners
 - `src/lib/ai/agentSummary.ts` · AGENT_KEY_POINT_MAX_CHARS, AGENT_KEY_POINTS_MAX, AGENT_KEY_POINTS_MIN, AGENT_SUMMARY_MAX_CHARS, AGENT_SUMMARY_MIN_CHARS, AgentSummary, agentSummaryToAnalysis, cleanAgentText, …
-- `src/lib/ai/aiRunRecorder.ts` · AiRunKind, AiRunMeta, completeAiRun, failAiRun, startAiRun
+- `src/lib/ai/aiRunRecorder.ts` · AI_RUN_PROMPT_MAX_CHARS, AiRunKind, AiRunMeta, completeAiRun, failAiRun, startAiRun
 - `src/lib/ai/analyzePdfText.ts` · AiDocAnalysis, AiDocAnalysisSchema, analysisTelemetry, AnalysisTelemetry, analyzePdfText, isFallbackAnalysis, normalizeAiDocAnalysis
 - `src/lib/ai/askFromText.ts` · extractAskDetailFromText, extractDollarAmounts, findRaiseAmount, resolveAsk
 - `src/lib/ai/constants.ts` · CATEGORY_LABELS, CATEGORY_VALUES, CategoryValue, CONFIDENCE_VALUES, ConfidenceValue, INTENDED_AUDIENCE_LABELS, INTENDED_AUDIENCE_VALUES, IntendedAudienceValue, …
@@ -748,7 +743,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/metrics/rollupDocMetrics.ts` · rollupDocMetrics
 - `src/lib/metrics/viewerRouteKey.ts` · parseViewerRouteKey, viewerPageHref, viewerRouteKey, ViewerRouteKind
 - `src/lib/models/ActivityEvent.ts` · ActivityEvent, ActivityEventModel
-- `src/lib/models/AiRun.ts` · AiRun, AiRunModel
+- `src/lib/models/AiRun.ts` · AI_RUN_RETENTION_DAYS, AiRun, AiRunModel
 - `src/lib/models/ApiKey.ts` · API_KEY_SCOPES, ApiKey, ApiKeyModel, ApiKeyScope
 - `src/lib/models/BillingConfig.ts` · BillingConfig, BillingConfigModel
 - `src/lib/models/CreditLedger.ts` · CreditLedger, CreditLedgerModel
@@ -849,12 +844,12 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/slack/post.ts` · postToSlackWebhook, SLACK_POST_TIMEOUT_MS, SlackMessage, SlackPostOutcome
 - `src/lib/slack/routing.ts` · burstAllowance, RoutableConnection, routeSlackConnections, SLACK_BURST_PER_MINUTE, SLACK_BURST_WINDOW_MS
 - `src/lib/slack/state.ts` · createSlackInstallState, SLACK_STATE_TTL_MS, SlackInstallState, verifySlackInstallState
-- `src/lib/starredDocs.ts` · getStarredDocs, isDocStarred, moveStarredDoc, refreshStarredDocsFromServer, STARRED_DOCS_CHANGED_EVENT, StarredDoc, toggleStarredDoc, upsertStarredDocMeta, …
+- `src/lib/starredDocs.ts` · getStarredDocs, isDocStarred, moveStarredDoc, refreshStarredDocsFromServer, revertStarredOptimistic, STARRED_DOCS_CHANGED_EVENT, StarredDoc, toggleStarredDoc, …
 - `src/lib/support/plain/cards.ts` · buildAccountCard, buildCards, buildErrorsCard, CARD_KEYS, CardKey, CustomerContext, ErrorContext, loadCustomerContext, …
 - `src/lib/support/plain/chat.ts` · plainChatAppId, plainChatCustomer, PlainChatCustomer, plainChatEmailHash
 - `src/lib/support/plain/signature.ts` · configuredPlainSigningSecret, PLAIN_SIGNATURE_HEADER, signPlainBody, verifyPlainSignature
 - `src/lib/tags/palette.ts` · asTagColorKey, DEFAULT_TAG_COLOR, nextTagColor, TAG_COLOR_KEYS, TAG_COLORS, TagColorKey
-- `src/lib/tags/service.ts` · attachTag, deleteTag, detachTag, findOrCreateTag, listTags, listTagsPage, mergeTags, removeAllTagsFromTarget, …
+- `src/lib/tags/service.ts` · attachTag, deleteTag, detachTag, findOrCreateTag, listTags, listTagsPage, liveAssignmentCountPipeline, mergeTags, …
 - `src/lib/tags/slug.ts` · isUsableTagName, normalizeTagName, TAG_NAME_MAX, tagSlug
 - `src/lib/uploads/abandonUpload.ts` · abandonUpload, abandonUploadIfImportFailed
 - `src/lib/uploads/inFlight.ts` · InFlightUpload, markDocFinished, mergeInFlightSnapshot, mergeUploadFrame, pruneUploads, UPLOAD_SETTLE_MS, UploadFramePayload
@@ -886,7 +881,7 @@ Clients, helpers and components that live beside the page that uses them.
 
 - `mcp/src/agent.ts` · agentHeaderFrom, normalizeClientName, normalizeClientVersion
 - `mcp/src/api.ts` · ApiActivityItem, ApiActivityPage, ApiChangedPage, ApiClient, ApiClientOptions, ApiDoc, ApiDocChange, ApiDocListItem, …
-- `mcp/src/config.ts` · API_TIMEOUT_MS, Config, DEFAULT_AGENT_HEADER, IDEMPOTENCY_MAX_ENTRIES, IDEMPOTENCY_TTL_MS, loadConfig, log, MCP_SERVER_NAME, …
+- `mcp/src/config.ts` · API_TIMEOUT_MS, Config, DEFAULT_AGENT_HEADER, IDEMPOTENCY_MAX_ENTRIES, IDEMPOTENCY_MAX_PER_CREDENTIAL, IDEMPOTENCY_TTL_MS, loadConfig, log, …
 - `mcp/src/confirm.ts` · clientSupportsElicitation, CONFIRM_FOLLOW_UP_WINDOW_MS, confirmationsEnforced, confirmationsSkipRequestedButUnsafe, DestructivePreview, requireHumanConfirmation, sanitizePreview, setConfirmationWorkspace, …
 - `mcp/src/context.ts` · ToolContext
 - `mcp/src/errors.ts` · handleTool, initializeFailureResponse, isToolError, LINK_NOT_FOUND_ON_DOC, LINK_NOT_FOUND_ON_PROJECT, mapApiError, ToolError, ToolErrorCode, …

@@ -14,6 +14,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
+import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { ProjectModel } from "@/lib/models/Project";
 import { TagModel } from "@/lib/models/Tag";
 import { toTagDTO, targetsForTag } from "@/lib/tags/service";
@@ -63,7 +64,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ slug: strin
      */
     const [docs, projects] = await Promise.all([
       docIds.length
-        ? DocModel.find({ _id: { $in: docIds.map((id) => new Types.ObjectId(id)) }, orgId, isDeleted: { $ne: true } })
+        ? DocModel.find({ _id: { $in: docIds.map((id) => new Types.ObjectId(id)) }, orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter() })
             .select({ title: 1, updatedDate: 1, createdDate: 1, currentVersion: 1, isArchived: 1 })
             .sort({ updatedDate: -1 })
             .lean()
