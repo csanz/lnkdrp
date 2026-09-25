@@ -98,6 +98,19 @@ Every call answered correctly; nothing needed a retry. Two findings:
 1. **A stray "string ·" in a visit brief's interest line.** The model answered an interest as `{ type: "string", text: "…" }` and `oneLine` in `src/lib/ai/visitBrief.ts` joined every string value of the object. Fixed: the joiner now takes the field that plainly carries the line (`text`, `value`, `interest`, …) and otherwise drops JSON Schema type names; `tests/lib/visitBriefs.test.ts` pins it.
 2. **Tags cannot be deleted through the MCP or an API key**, so the harness leaves zero-count tags behind (four now: two `E2E …`, plus the `Fundraising` and `Series A` this pass created). Known from the coverage doc; a `lnkdrp_delete_tag` tool, or the harness deleting its tags through a signed-in session, would close it.
 
+## Sixth pass: every tool, and the refusals
+
+The remaining tools and the error paths, again as a connected agent over OAuth, on a second throwaway document ("MCP test B", from a URL) and room ("MCP room B"):
+
+- `set_share_access`: password, downloads and revision history on the default link; the same `idempotencyKey` with the same arguments answers `replayed: true`, with different arguments is refused as `idempotency_key_reused`; `shareEnabled: false` takes every link down (`anyLinkActive: false`) and `true` brings them back.
+- `share_pdf` replayed with its original key returns the same document, `replayed: true`. `replace_pdf` with the identical file makes a new version marked `unchangedFromPrevious: true`, charges nothing (credits unchanged), and `get_revision` on it reports `compare.state: done` with the reason "text is identical", `changedPageCount: 0`, no changes.
+- Project tools by **slug** as well as id: add documents (one unknown id reported in `notFound`), create a project link, list and search links, update a link (disable and rename, then re-enable with a password and expiry), remove a document (then `wasInProject: false` the second time), delete a link, delete the project. The default project link cannot be deleted (validation); a disabled project link answers 404 on `/p/`, the live default answers 200.
+- `tag` and `untag` on a **project**, with a folded-case removal and an unknown name reported in `notTagged`. `star_docs` on two documents at once; the deleted one drops out of `list_starred`.
+- Paging: `list_revisions { limit: 1 }` then its `nextCursor` returns the next row and a null cursor at the end; `get_activity` cursor paging with a type filter and a `docId`.
+- Refusals: `get_share` with both ids, `get_share_stats` with neither, `update_project` with no fields, `get_revision` by an unknown shareId, `list_docs` with an unknown id in `ids`, and `get_share_link_password`, which is forbidden to a bearer credential as documented.
+
+All correct. One copy nit: the `get_share_link_password` refusal says "An API key cannot reveal a share password" even when the caller is signed in over OAuth; the behaviour is the intended one, the sentence names the wrong credential. Five zero-count tags remain in the workspace (see the tag-deletion gap above).
+
 ## Fixes made during the run
 
 - `/connect`: a renamed personal workspace is now named after its real name (`mcpServerName`), the copy says the workspace's name instead of "Personal", and the Copy button sits in its own column instead of floating over the scrolling code.
