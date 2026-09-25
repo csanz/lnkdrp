@@ -298,7 +298,19 @@ export function subscribeRealtime(type: RealtimeFrame["type"], handler: Handler)
   };
 }
 
-if (typeof window !== "undefined") {
+/**
+ * A real browser, not a test's stub of one. Unit suites in this repo share one worker thread and a
+ * few of them leave a bare `window` object behind; with only `typeof window` as the guard, the
+ * next suite to import this module (through `useAgentStatus`) crashed at load on
+ * `document.addEventListener is not a function`, in a file it had never heard of.
+ */
+const hasDom =
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function" &&
+  typeof document !== "undefined" &&
+  typeof document.addEventListener === "function";
+
+if (hasDom) {
   // A workspace switch changes the ticket's orgId: drop the socket and come back on the new one.
   window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, () => {
     if (!wanted) return;
