@@ -25,7 +25,10 @@ export default function IntegrationsPageClient() {
       href: "/integrations/slack",
       mark: <SlackMark className="h-8 w-8" />,
       status,
-      cta: slack.data && slack.data.connections.length ? "Manage" : "Set up",
+      // Never claim a state the page has not been told. Until the answer lands (a full reload
+      // has no cached one) the button says "Open", which is true whatever the answer turns out
+      // to be; it becomes Manage or Set up when the data does, and never flips the other way.
+      cta: !slack.data ? "Open" : slack.data.connections.length ? "Manage" : "Set up",
     },
   ];
 
