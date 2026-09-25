@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { UploadModel } from "@/lib/models/Upload";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
@@ -78,22 +79,42 @@ export async function GET(
     .select({ blobUrl: 1 })
     .lean();
 
-  const blobUrl = doc?.blobUrl ?? null;
-  if (!blobUrl || typeof blobUrl !== "string") {
+  const docBlobUrl = doc?.blobUrl ?? null;
+  if (!docBlobUrl || typeof docBlobUrl !== "string") {
     return NextResponse.json({ error: "PDF not available" }, { status: 404 });
+  }
+
+  /**
+   * The cache key must name the bytes it caches.
+   *
+   * The client versions this URL with `?v=<currentUploadId>`, and the upload route points the
+   * document at a new upload the moment it is created, before processing has written that
+   * upload's blob. For those seconds the page asked `?v=<new id>` and this route answered with
+   * a redirect to the *previous* version's blob, marked immutable for a year. Chrome kept it:
+   * the header said v3, the compare showed v3, the viewer showed v2 until the cache was cleared.
+   *
+   * So when `v` names one of this document's uploads, the redirect goes to that upload's own
+   * blob and is cacheable only once that blob exists. Anything else (`v=0` before the doc has
+   * loaded, an id this route cannot resolve, an upload still processing) is answered with the
+   * document's current blob and `no-store`, so nothing wrong is ever pinned.
+   */
+  const v = new URL(request.url).searchParams.get("v") ?? "";
+  let target = docBlobUrl;
+  let cacheable = false;
+  if (v && isObjectId(v)) {
+    const upload = (await UploadModel.findOne({ _id: new Types.ObjectId(v), docId: new Types.ObjectId(docId) }).select({ blobUrl: 1 }).lean()) as { blobUrl?: string } | null;
+    if (upload && typeof upload.blobUrl === "string" && upload.blobUrl) {
+      target = upload.blobUrl;
+      cacheable = true;
+    }
   }
 
   // Redirect to the blob URL so the browser downloads bytes directly (avoids double-hop proxying).
   // This keeps the owner-only authorization check here, but prevents the server from streaming
   // potentially large PDF bytes on every request.
-  const res = NextResponse.redirect(blobUrl, { status: 302 });
-  // Cache aggressively in the browser; URL versioning handles invalidation.
-  // Use `private` because this is an authenticated owner endpoint.
-  res.headers.set("cache-control", "private, max-age=31536000, immutable");
+  const res = NextResponse.redirect(target, { status: 302 });
+  // `private` because this is an authenticated owner endpoint; immutable only when the URL names
+  // the exact upload whose bytes it redirects to (see above).
+  res.headers.set("cache-control", cacheable ? "private, max-age=31536000, immutable" : "private, no-store");
   return applyTempUserHeaders(res, actor);
 }
-
-
-
-
-

@@ -21,6 +21,8 @@ import { UploadModel } from "@/lib/models/Upload";
 import { VisitBriefModel } from "@/lib/models/VisitBrief";
 import { publicBaseUrl } from "@/lib/notifications/sendNotificationEmails";
 import { formatDuration, linkDisplayName, realLinkLabel } from "@/lib/notifications/viewNotifications";
+import { splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
+import { viewerPageHref } from "@/lib/metrics/viewerRouteKey";
 import { DEFAULT_LINK_LABEL } from "@/lib/share/links";
 import type { SlackOutbox } from "@/lib/models/SlackOutbox";
 import type { SlackMessage } from "./post";
@@ -78,6 +80,23 @@ function readerName(pro: boolean, name: string | null | undefined, email: string
   return e ? clip(e, 80) : "Someone";
 }
 
+/**
+ * The reader's own page (`/doc/:id/metrics/viewer/:key`, or the project twin when the reading came
+ * through a data-room link). Only when the plan shows identity: on Free the name is "Someone" and
+ * the page would show nothing the message does not already say.
+ */
+function readerPage(f: Facts, args: { docId: Types.ObjectId | null; projectId: Types.ObjectId | null; viewerKey: string | null | undefined; viewerUserId?: string | null }): string | null {
+  if (!f.pro) return null;
+  const key = args.viewerUserId ?? (args.viewerKey ? splitProjectViewerKey(args.viewerKey).botIdHash : "");
+  if (!key) return null;
+  return viewerPageHref({ appUrl: f.appUrl, projectId: args.projectId ? String(args.projectId) : null, docId: args.docId ? String(args.docId) : null, kind: args.viewerUserId ? "authed" : "anon", key });
+}
+
+/** The reader as a link to their page when there is one, else plain bold text. */
+function readerMark(who: string, url: string | null): string {
+  return url ? `*<${url}|${mrkdwn(who)}>*` : `*${mrkdwn(who)}*`;
+}
+
 async function docTitle(orgId: Types.ObjectId, docId: Types.ObjectId | null): Promise<{ title: string; receivedVia: string | null } | null> {
   if (!docId) return null;
   const doc = (await DocModel.findOne({ _id: docId, orgId, isDeleted: { $ne: true } }).select({ title: 1, receivedViaRequestProjectId: 1 }).lean()) as
@@ -107,17 +126,18 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
       const who = readerName(f.pro, ev.viewerName, ev.viewerEmail);
       const via = await linkName(ev.shareId ?? null);
       const docUrl = `${f.appUrl}/doc/${String(ev.docId)}`;
+      const readerUrl = readerPage(f, { docId: (ev.docId as Types.ObjectId | null) ?? null, projectId: (ev.projectId as Types.ObjectId | null) ?? null, viewerKey: ev.viewerKey });
       const text = `${who} opened ${doc.title} via ${via}.`;
       return {
         text,
-        blocks: twoBlocks(`*${mrkdwn(who)}* opened <${docUrl}|${mrkdwn(doc.title)}>`, `via ${mrkdwn(via)} · <${docUrl}/metrics|see who's reading>`),
+        blocks: twoBlocks(`${readerMark(who, readerUrl)} opened <${docUrl}|${mrkdwn(doc.title)}>`, `via ${mrkdwn(via)} · <${readerUrl ?? `${docUrl}/metrics`}|${readerUrl ? "this reader" : "see who's reading"}>`),
       };
     }
     case "briefs": {
       const briefId = (ev.visitBriefId as Types.ObjectId | null) ?? null;
       if (!briefId) return null;
       const brief = (await VisitBriefModel.findOne({ _id: briefId, orgId }).lean()) as
-        | { status?: string; brief?: { headline?: string; body?: string } | null; docId?: unknown; projectId?: unknown; botIdHash?: string; viewerName?: string | null; viewerEmail?: string | null; stats?: { timeSpentMs?: number; pagesSeen?: number }; recapReason?: string | null }
+        | { status?: string; brief?: { headline?: string; body?: string } | null; docId?: unknown; projectId?: unknown; botIdHash?: string; viewerUserId?: unknown; viewerName?: string | null; viewerEmail?: string | null; stats?: { timeSpentMs?: number; pagesSeen?: number }; recapReason?: string | null }
         | null;
       if (!brief) return null;
       const doc = await docTitle(orgId, brief.docId ? new Types.ObjectId(String(brief.docId)) : ((ev.docId as Types.ObjectId | null) ?? null));
@@ -126,8 +146,14 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
       const dur = formatDuration(Number(brief.stats?.timeSpentMs ?? 0));
       const pages = Number(brief.stats?.pagesSeen ?? 0);
       const howFar = [pages > 0 ? `${pages} page${pages === 1 ? "" : "s"}` : null, dur].filter(Boolean).join(" · ");
-      const viewerKey = brief.botIdHash ?? ev.viewerKey ?? "";
-      const readerUrl = doc && ev.docId ? `${f.appUrl}/doc/${String(ev.docId)}/metrics/viewer/${encodeURIComponent(viewerKey)}` : `${f.appUrl}/activity`;
+      const readerPageUrl = readerPage(f, {
+        docId: brief.docId ? new Types.ObjectId(String(brief.docId)) : ((ev.docId as Types.ObjectId | null) ?? null),
+        projectId: brief.projectId ? new Types.ObjectId(String(brief.projectId)) : ((ev.projectId as Types.ObjectId | null) ?? null),
+        viewerKey: brief.botIdHash ?? ev.viewerKey,
+        viewerUserId: brief.viewerUserId ? String(brief.viewerUserId) : null,
+      });
+      const readerUrl = readerPageUrl ?? `${f.appUrl}/activity`;
+      const docUrl = `${f.appUrl}/doc/${String(brief.docId ?? ev.docId)}`;
       if (brief.status === "briefed" && brief.brief?.headline) {
         const headline = clip(brief.brief.headline.trim(), 140);
         const body = clip((brief.brief.body ?? "").trim(), 600);
@@ -140,7 +166,7 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
         };
       }
       const text = `${who} finished reading ${title}${howFar ? ` (${howFar})` : ""}.`;
-      return { text, blocks: twoBlocks(`*${mrkdwn(who)}* finished reading <${readerUrl}|${mrkdwn(title)}>`, `${howFar ? `${mrkdwn(howFar)} · ` : ""}<${readerUrl}|the visit>`) };
+      return { text, blocks: twoBlocks(`${readerMark(who, readerPageUrl)} finished reading <${docUrl}|${mrkdwn(title)}>`, `${howFar ? `${mrkdwn(howFar)} · ` : ""}<${readerUrl}|the visit>`) };
     }
     case "docUpdates": {
       const docId = (ev.docId as Types.ObjectId | null) ?? null;

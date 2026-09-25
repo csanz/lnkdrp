@@ -570,7 +570,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/ai/analyzePdfText.ts` · AiDocAnalysis, AiDocAnalysisSchema, analysisTelemetry, AnalysisTelemetry, analyzePdfText, isFallbackAnalysis, normalizeAiDocAnalysis
 - `src/lib/ai/askFromText.ts` · extractAskDetailFromText, extractDollarAmounts, findRaiseAmount, resolveAsk
 - `src/lib/ai/constants.ts` · CATEGORY_LABELS, CATEGORY_VALUES, CategoryValue, CONFIDENCE_VALUES, ConfidenceValue, INTENDED_AUDIENCE_LABELS, INTENDED_AUDIENCE_VALUES, IntendedAudienceValue, …
-- `src/lib/ai/docChangeDiff.ts` · DocChangeDiff, DocChangeDiffSchema, DocChangeDiffUsage, isNoChangeSummary, NO_CHANGE_SUMMARY, normalizeForCompare, runDocChangeDiff
+- `src/lib/ai/docChangeDiff.ts` · DocChangeDiff, DocChangeDiffSchema, DocChangeDiffUsage, isNoChangeSummary, NO_CHANGE_SUMMARY, normalizeForCompare, runDocChangeDiff, shapeDiff
 - `src/lib/ai/docChangeSummary.ts` · isNoChangeSummary, NO_CHANGE_SUMMARY
 - `src/lib/ai/openaiProviderOptions.ts` · OPENAI_PROVIDER_OPTIONS
 - `src/lib/ai/requestReviewInvestorFocused.ts` · RequestReviewInvestorFocusedOutput, RequestReviewInvestorFocusedSchema, runRequestReviewInvestorFocused

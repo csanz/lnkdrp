@@ -170,7 +170,9 @@ export default function SlackPageClient() {
                 <a href="/api/slack/install" className={`${BTN_SECONDARY} gap-2`}>
                   <SlackMark className="h-4 w-4" /> Add channel
                 </a>
-                <p className="mt-2 text-[12px] text-[var(--muted-2)]">Each channel is its own install on Slack&apos;s side. Route a project to a channel from its card; everything else posts to the default.</p>
+                <p className="mt-2 max-w-[70ch] text-[12px] leading-5 text-[var(--muted-2)]">
+                  Want one project&apos;s activity in its own channel? Click Add channel, pick the channel on Slack&apos;s screen, then choose the project on the new card. Everything else keeps posting to the default channel. Each channel is its own install on Slack&apos;s side.
+                </p>
               </div>
             ) : null}
           </div>
@@ -210,7 +212,7 @@ function ChannelRow({
           <div className="flex items-center gap-2">
             <SlackMark className="h-5 w-5" />
             <span className="text-[15px] font-semibold text-[var(--fg)]">{c.channelName}</span>
-            {c.isDefault ? <span className="rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]">Default</span> : null}
+            {c.isDefault ? <span className="rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]"title="The catch-all: anything not routed to another channel posts here.">Default · catch-all</span> : null}
             {revoked ? <span className="rounded-full bg-[var(--plan-ending-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--plan-ending-fg)]">Disconnected</span> : null}
           </div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
@@ -277,11 +279,18 @@ function ChannelRow({
                 disabled={!canManage || revoked || busy !== null}
                 onClick={() => void call(`ev:${c.id}:${key}`, "PATCH", "/api/orgs/active/slack", { connectionId: c.id, events: { [key]: !on } })}
                 className={[
-                  "relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-60",
-                  on ? "bg-[var(--fg)]" : "bg-[var(--border)]",
+                  "relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                  on ? "bg-[var(--primary-bg)]" : "bg-[var(--border)]",
+                  !canManage || revoked ? "opacity-50" : "cursor-pointer disabled:opacity-60",
                 ].join(" ")}
               >
-                <span className={["absolute top-0.5 h-4 w-4 rounded-full bg-[var(--bg)] transition-transform", on ? "translate-x-4" : "translate-x-0.5"].join(" ")} />
+                <span
+                  aria-hidden="true"
+                  className={[
+                    "inline-block h-4 w-4 transform rounded-full bg-[var(--panel)] shadow ring-1 ring-[var(--border)] transition-transform",
+                    on ? "translate-x-[18px]" : "translate-x-0.5",
+                  ].join(" ")}
+                />
               </button>
             </li>
           );
@@ -331,23 +340,37 @@ function ProjectRouting({
   const options = (projects ?? []).filter((p) => !mapped.includes(p.id));
   const save = (projectIds: string[]) => void call(`route:${c.id}`, "PATCH", "/api/orgs/active/slack", { connectionId: c.id, projectIds });
   const saving = busy === `route:${c.id}`;
+  const live = all.filter((x) => x.status !== "revoked");
+  const onlyChannel = live.length <= 1;
+  const defaultName = live.find((x) => x.isDefault)?.channelName ?? "the default channel";
+  const noProjects = projects !== null && projects.length === 0;
+
+  // What this card does with events, in words a person can act on. The default is the catch-all;
+  // any other card receives nothing until a project is routed to it, and a workspace with no
+  // projects is told that rather than shown an empty picker.
+  const explain = c.isDefault
+    ? onlyChannel
+      ? "Everything posts here. To send one project's activity to its own channel, click Add channel below and pick the project on the new card."
+      : mapped.length
+        ? "The catch-all: these projects, plus anything not routed to another channel."
+        : "The catch-all: anything not routed to another channel posts here."
+    : noProjects
+      ? `No projects yet, so there is nothing to route. Everything posts to ${defaultName} until a project is routed here or this channel is made the default. Create a project with the + next to Projects in the sidebar.`
+      : mapped.length
+        ? `Documents in these projects post here instead of ${defaultName}.`
+        : options.length
+          ? `Nothing posts here yet. Pick a project and its documents post here instead of ${defaultName}.`
+          : `Nothing posts here yet. Every project is already routed; pick one from another card to move it here, or make this channel the default.`;
+  const showPicker = canManage && projects !== null && options.length > 0 && !(c.isDefault && onlyChannel);
 
   return (
     <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-[13px] font-medium text-[var(--fg)]">Projects</div>
-          <div className="text-[12px] text-[var(--muted-2)]">
-            {c.isDefault
-              ? mapped.length
-                ? "Routed here, plus everything not routed to another channel."
-                : "Everything not routed to another channel posts here."
-              : mapped.length
-                ? "Documents in these projects post here instead of the default."
-                : "Nothing routed here yet. Pick a project and its documents post here instead of the default."}
-          </div>
+          <div className="text-[13px] font-medium text-[var(--fg)]">{c.isDefault ? "Routing · catch-all" : "Routing"}</div>
+          <div className="max-w-[60ch] text-[12px] leading-5 text-[var(--muted-2)]">{explain}</div>
         </div>
-        {canManage && projects !== null && options.length ? (
+        {showPicker ? (
           <select
             aria-label={`Route a project to ${c.channelName}`}
             className="max-w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1.5 text-[13px] text-[var(--fg)] disabled:opacity-60"
@@ -370,7 +393,7 @@ function ProjectRouting({
               );
             })}
           </select>
-        ) : canManage && projects === null ? (
+        ) : canManage && projects === null && !c.isDefault ? (
           <span className="text-[12px] text-[var(--muted-2)]">Loading projects…</span>
         ) : null}
       </div>

@@ -68,7 +68,7 @@ describe("briefs", () => {
     state.brief = { status: "briefed", brief: { headline: "Skipped pricing, lingered on the team slide", body: "Two minutes on page 4." }, docId, botIdHash: "abc", viewerName: "Dana", stats: { timeSpentMs: 125_000, pagesSeen: 4 } };
     const m = await renderSlackEvent(row("briefs", { visitBriefId: new Types.ObjectId(), viewerKey: "abc" }));
     expect(m?.text).toContain("Dana finished reading Q3 Deck <draft>: Skipped pricing");
-    expect(flat(m)).toContain(`/doc/${String(docId)}/metrics/viewer/abc`);
+    expect(flat(m)).toMatch(new RegExp(`/doc/${String(docId)}/metrics/viewer/[^"|]*abc`));
     expect(flat(m)).toContain("4 pages");
   });
 

@@ -27,56 +27,79 @@ const MAX_REGION_NOTE_CHARS = 160;
 const MAX_REGION_NOTES = 3;
 const MAX_PAGES_THAT_CHANGED = 30;
 
-/** Output schema for doc change diffs. */
-export const DocChangeDiffSchema = z
-  .object({
-    summary: z.string().max(MAX_SUMMARY_CHARS),
-    changes: z.array(
-      z
-        .object({
-          type: z.string(),
-          title: z.string(),
-          detail: z.string().nullable().optional(),
-        })
-        .strict(),
-    ),
-    pagesThatChanged: z
-      .array(
-        z
-          .object({
-            pageNumber: z.number().int().min(1),
-            summary: z.string().max(MAX_PAGE_SUMMARY_CHARS),
-            /**
-             * What the changed part of the page said before, and what it says now, read off the
-             * images.
-             *
-             * Exists because the extracted text layer is not always readable. A PDF stores glyph
-             * indices, and recovering characters needs the font's ToUnicode map; fonts subset
-             * without one are routine, and the extractor then returns the indices - valid Unicode
-             * that renders as symbols. On one real deck that was 15-26% ASCII-printable, which is
-             * unusable for a word diff.
-             *
-             * The model is looking at the page either way, so it can simply read it. Nullable
-             * because on a purely visual change there is no wording to quote.
-             */
-            previousWording: z.string().max(MAX_PAGE_WORDING_CHARS).nullable().optional(),
-            newWording: z.string().max(MAX_PAGE_WORDING_CHARS).nullable().optional(),
-            /**
-             * One line per attached close-up, in the order they were attached.
-             *
-             * A page can carry more than one change, and the marks drawn over it are otherwise
-             * unexplained: a band whose wording is identical in both versions gets the same
-             * highlight as a rewritten sentence, and the reader is left asking what changed there.
-             * The honest answer is often "only its appearance", which is a thing the model can see
-             * and the page cannot say for itself.
-             */
-            regionNotes: z.array(z.string().max(MAX_REGION_NOTE_CHARS)).max(MAX_REGION_NOTES).nullable().optional(),
-          })
-          .strict(),
-      )
-      .max(MAX_PAGES_THAT_CHANGED),
-  })
-  .strict();
+/**
+ * Output schema for doc change diffs.
+ *
+ * This is the shape the model is asked for, and it is deliberately lenient: no character caps and
+ * unknown keys stripped. The caps live in `shapeDiff` below. A cap on the schema fails the whole
+ * compare the moment the model writes one summary a few characters long (`No object generated:
+ * response did not match schema`), and the customer paid for a result that was fine apart from
+ * its length. Clipping after the fact keeps the result and the stored subdocument stays within
+ * the limits `DocChange` enforces.
+ */
+export const DocChangeDiffSchema = z.object({
+  summary: z.string(),
+  changes: z.array(
+    z.object({
+      type: z.string(),
+      title: z.string(),
+      detail: z.string().nullable().optional(),
+    }),
+  ),
+  pagesThatChanged: z.array(
+    z.object({
+      pageNumber: z.number().int().min(1),
+      summary: z.string(),
+      /**
+       * What the changed part of the page said before, and what it says now, read off the
+       * images.
+       *
+       * Exists because the extracted text layer is not always readable. A PDF stores glyph
+       * indices, and recovering characters needs the font's ToUnicode map; fonts subset
+       * without one are routine, and the extractor then returns the indices - valid Unicode
+       * that renders as symbols. On one real deck that was 15-26% ASCII-printable, which is
+       * unusable for a word diff.
+       *
+       * The model is looking at the page either way, so it can simply read it. Nullable
+       * because on a purely visual change there is no wording to quote.
+       */
+      previousWording: z.string().nullable().optional(),
+      newWording: z.string().nullable().optional(),
+      /**
+       * One line per attached close-up, in the order they were attached.
+       *
+       * A page can carry more than one change, and the marks drawn over it are otherwise
+       * unexplained: a band whose wording is identical in both versions gets the same
+       * highlight as a rewritten sentence, and the reader is left asking what changed there.
+       * The honest answer is often "only its appearance", which is a thing the model can see
+       * and the page cannot say for itself.
+       */
+      regionNotes: z.array(z.string()).nullable().optional(),
+    }),
+  ),
+});
+
+/** Clip a model answer to what `DocChange.diff` stores; the schema above does not. */
+export function shapeDiff(object: DocChangeDiff): DocChangeDiff {
+  const clip = (v: unknown, max: number): string => (typeof v === "string" ? v.trim().slice(0, max).trimEnd() : "");
+  const clipOrNull = (v: unknown, max: number): string | null => (typeof v === "string" && v.trim() ? clip(v, max) : null);
+  const summary = clip(object.summary, MAX_SUMMARY_CHARS);
+  const changes = Array.isArray(object.changes) ? object.changes : [];
+  const pagesThatChanged = (Array.isArray(object.pagesThatChanged) ? object.pagesThatChanged : [])
+    .filter((p) => p && Number.isInteger(p.pageNumber) && p.pageNumber >= 1)
+    .slice(0, MAX_PAGES_THAT_CHANGED)
+    .map((p) => {
+      const notes = Array.isArray(p.regionNotes) ? p.regionNotes.filter((n): n is string => typeof n === "string" && n.trim().length > 0).slice(0, MAX_REGION_NOTES).map((n) => clip(n, MAX_REGION_NOTE_CHARS)) : null;
+      return {
+        pageNumber: p.pageNumber,
+        summary: clip(p.summary, MAX_PAGE_SUMMARY_CHARS),
+        ...(p.previousWording !== undefined ? { previousWording: clipOrNull(p.previousWording, MAX_PAGE_WORDING_CHARS) } : {}),
+        ...(p.newWording !== undefined ? { newWording: clipOrNull(p.newWording, MAX_PAGE_WORDING_CHARS) } : {}),
+        ...(notes && notes.length ? { regionNotes: notes } : {}),
+      };
+    });
+  return { summary, changes, pagesThatChanged };
+}
 
 export type DocChangeDiff = z.infer<typeof DocChangeDiffSchema>;
 
@@ -462,10 +485,7 @@ export async function runDocChangeDiff(input: {
     }
   }
 
-  // Extra guardrail: ensure summary is always <= MAX_SUMMARY_CHARS.
-  const summary = (object.summary ?? "").toString().trim().slice(0, MAX_SUMMARY_CHARS).trimEnd();
-  const changes = Array.isArray(object.changes) ? object.changes : [];
-  const pagesThatChanged = Array.isArray((object as any).pagesThatChanged) ? (object as any).pagesThatChanged : [];
+  const { summary, changes, pagesThatChanged } = shapeDiff(object);
   // The summary and the page list must never contradict each other: if the model echoed the
   // no-change record, it cannot also list changed pages (see `docChangeSummary`).
   if (isNoChangeSummary(summary)) return { summary: NO_CHANGE_SUMMARY, changes: [], pagesThatChanged: [] };
