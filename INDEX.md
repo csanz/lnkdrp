@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 948 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 950 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -800,6 +800,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/onboarding/firstRun.ts` · FIRST_RUN_PATH, FIRST_RUN_SINCE, FirstRunState, markFirstRunDone, needsFirstRun, userNeedsFirstRun
 - `src/lib/onboarding/termsGate.ts` · needsTermsAcceptance, TERMS_ACCEPT_PATH, TERMS_GATE_SINCE, TermsState, userNeedsTermsAcceptance
 - `src/lib/orgs/activeOrgCookie.ts` · ACTIVE_ORG_COOKIE
+- `src/lib/orgs/defaultName.ts` · DEFAULT_WORKSPACE_NAME, isPlaceholderWorkspaceName
 - `src/lib/orgs/orgsClient.ts` · initials, OrgRow, stableSortOrgs
 - `src/lib/orgs/requireOrgEditor.ts` · forbidUnlessOrgRole
 - `src/lib/orgs/requireOrgRole.ts` · isOrgRole, OrgRole, requireOrgRole, RequireOrgRoleInput, RequireOrgRoleResult, roleAtLeast
@@ -821,6 +822,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/share/passwordPolicy.ts` · SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, SHARE_PASSWORD_RANGE_TEXT
 - `src/lib/share/projectLinks.ts` · archiveProjectLink, createProjectLink, CreateProjectLinkResult, ensureDefaultProjectLink, listProjectLinks, listProjectLinksPage, ProjectLike, ProjectLinkDTO, …
 - `src/lib/share/projectPublic.ts` · findProjectDocument, isExpired, listProjectDocuments, PROJECT_DOC_LIST_FIELDS, PROJECT_VIEW_KEY_SEP, projectDocIdFromReferer, projectLinkPasswordEnabled, projectViewerKey, …
+- `src/lib/share/readerIdentity.ts` · loadShareViewIdentities, pickReaderIdentity, ReaderIdentity, resolveReaderIdentity, ShareViewIdentity
 - `src/lib/share/readingClock.ts` · ANTI_STORM_MS, buildSeenPayload, buildTimingPayload, Flush, FlushReason, HEARTBEAT_MS, IDLE_AFTER_MS, IDLE_CHECK_MS, …
 - `src/lib/share/shareBrand.ts` · brandInitials, workspaceBrandForOrg
 - `src/lib/share/shareMetadata.ts` · buildShareMetadata
