@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   doc: { title: "Q3 Deck <draft>", receivedViaRequestProjectId: null as unknown } as Record<string, unknown> | null,
   brief: null as Record<string, unknown> | null,
   change: null as Record<string, unknown> | null,
+  link: { label: "Investors", audience: null as string | null, isDefault: false } as Record<string, unknown> | null,
 }));
 
 const lean = (v: unknown) => ({ select: () => ({ lean: async () => v }), lean: async () => v });
@@ -23,7 +24,7 @@ vi.mock("@/lib/models/ShareView", () => ({
 vi.mock("@/lib/models/ProjectLinkView", () => ({
   ProjectLinkViewModel: { find: () => ({ select: () => ({ limit: () => ({ lean: async () => state.arrivals }) }) }) },
 }));
-vi.mock("@/lib/models/ShareLink", () => ({ ShareLinkModel: { findOne: () => lean({ label: "Investors", audience: null, isDefault: false }) } }));
+vi.mock("@/lib/models/ShareLink", () => ({ ShareLinkModel: { findOne: () => lean(state.link) } }));
 vi.mock("@/lib/models/VisitBrief", () => ({ VisitBriefModel: { findOne: () => lean(state.brief) } }));
 vi.mock("@/lib/models/DocChange", () => ({ DocChangeModel: { findOne: () => lean(state.change) } }));
 vi.mock("@/lib/models/Upload", () => ({ UploadModel: { findOne: () => lean({ originalFileName: "nda-signed.pdf" }) } }));
@@ -47,6 +48,7 @@ beforeEach(() => {
   state.doc = { title: "Q3 Deck <draft>", receivedViaRequestProjectId: null };
   state.brief = null;
   state.change = null;
+  state.link = { label: "Investors", audience: null, isDefault: false };
 });
 
 describe("views", () => {
@@ -118,6 +120,46 @@ describe("docUpdates and requests", () => {
     const m = await renderSlackEvent(row("docUpdates", { uploadId: new Types.ObjectId(), version: 3 }));
     expect(m?.text).toBe("Q3 Deck <draft> was replaced (v3). Pricing page updated; new slide on hiring.");
     expect(flat(m)).toContain("/history");
+  });
+
+  test("a change of replaced still renders the replacement line", async () => {
+    state.change = { diff: { summary: "Pricing page updated." }, toVersion: 2 };
+    const m = await renderSlackEvent(row("docUpdates", { uploadId: new Types.ObjectId(), version: 2, change: "replaced" }));
+    expect(m?.text).toBe("Q3 Deck <draft> was replaced (v2). Pricing page updated.");
+    expect(flat(m)).toContain("/history");
+  });
+
+  test("a new document names the title and the page count, and links to the document", async () => {
+    state.doc = { title: "Q3 Deck <draft>", slideNodes: [{ pageNumber: 1 }, { pageNumber: 2 }, { pageNumber: 3 }] };
+    const m = await renderSlackEvent(row("docs", { change: "created" }));
+    expect(m?.text).toBe("Q3 Deck <draft> was added.");
+    expect(flat(m)).toContain("Q3 Deck &lt;draft&gt;");
+    expect(flat(m)).toContain("3 pages");
+    expect(flat(m)).toContain(`https://www.lnkdrp.com/doc/${String(docId)}`);
+    expect(flat(m)).not.toContain("<@");
+  });
+
+  test("a new document link names the link label and the title, with the audience", async () => {
+    state.link = { label: "Series A <VCs>", audience: "Sequoia", isDefault: false };
+    const m = await renderSlackEvent(row("docUpdates", { change: "link_created", shareId: "s9", linkId: new Types.ObjectId() }));
+    expect(m?.text).toBe("New link Series A <VCs> for Q3 Deck <draft>.");
+    expect(flat(m)).toContain("Series A &lt;VCs&gt;");
+    expect(flat(m)).toContain("for Sequoia");
+    expect(flat(m)).toContain(`https://www.lnkdrp.com/doc/${String(docId)}/links`);
+    expect(flat(m)).not.toContain("<@");
+  });
+
+  test("a new data-room link names the project and links to the room", async () => {
+    const projectId = new Types.ObjectId();
+    const m = await renderSlackEvent(row("docUpdates", { change: "link_created", shareId: "p9", docId: null, projectId }));
+    expect(m?.text).toBe("New link Investors for Acme NDA.");
+    expect(flat(m)).toContain(`https://www.lnkdrp.com/project/${String(projectId)}`);
+    expect(flat(m)).toContain("open the data room");
+  });
+
+  test("a new link whose row is gone renders nothing", async () => {
+    state.link = null;
+    expect(await renderSlackEvent(row("docUpdates", { change: "link_created", shareId: "s9" }))).toBeNull();
   });
 
   test("a document added to a project names the document and the room, and links both", async () => {

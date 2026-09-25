@@ -98,13 +98,21 @@ function readerMark(who: string, url: string | null): string {
   return url ? `*<${url}|${mrkdwn(who)}>*` : `*${mrkdwn(who)}*`;
 }
 
-async function docTitle(orgId: Types.ObjectId, docId: Types.ObjectId | null): Promise<{ title: string; receivedVia: string | null } | null> {
+async function docTitle(orgId: Types.ObjectId, docId: Types.ObjectId | null): Promise<{ title: string; receivedVia: string | null; pages: number | null } | null> {
   if (!docId) return null;
-  const doc = (await DocModel.findOne({ _id: docId, orgId, isDeleted: { $ne: true } }).select({ title: 1, receivedViaRequestProjectId: 1 }).lean()) as
-    | { title?: string; receivedViaRequestProjectId?: unknown }
+  const doc = (await DocModel.findOne({ _id: docId, orgId, isDeleted: { $ne: true } }).select({ title: 1, receivedViaRequestProjectId: 1, "slideNodes.pageNumber": 1 }).lean()) as
+    | { title?: string; receivedViaRequestProjectId?: unknown; slideNodes?: unknown[] }
     | null;
   if (!doc) return null;
-  return { title: (doc.title ?? "").trim() || "Untitled document", receivedVia: doc.receivedViaRequestProjectId ? String(doc.receivedViaRequestProjectId) : null };
+  const pages = Array.isArray(doc.slideNodes) && doc.slideNodes.length > 0 ? doc.slideNodes.length : null;
+  return { title: (doc.title ?? "").trim() || "Untitled document", receivedVia: doc.receivedViaRequestProjectId ? String(doc.receivedViaRequestProjectId) : null, pages };
+}
+
+async function projectName(orgId: Types.ObjectId, projectId: Types.ObjectId | null): Promise<string | null> {
+  if (!projectId) return null;
+  const project = (await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1 }).lean()) as { name?: string } | null;
+  if (!project) return null;
+  return (project.name ?? "").trim() || "a data room";
 }
 
 async function linkName(shareId: string | null): Promise<string> {
@@ -212,6 +220,37 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
     }
     case "docUpdates": {
       const docId = (ev.docId as Types.ObjectId | null) ?? null;
+      const projectId = (ev.projectId as Types.ObjectId | null) ?? null;
+      const docChange = (ev.change as string | null | undefined) ?? null;
+      if (docChange === "link_created") {
+        // A new share link: a document link when the row names a document, else a data-room link.
+        const shareId = ev.shareId ?? null;
+        if (!shareId) return null;
+        const link = (await ShareLinkModel.findOne({ shareId }).select({ shareId: 1, label: 1, audience: 1, isDefault: 1 }).lean()) as
+          | { label?: string; audience?: string | null; isDefault?: boolean }
+          | null;
+        if (!link) return null;
+        const name = linkDisplayName({ shareId, label: link.label ?? null, audience: link.audience ?? null, isDefault: Boolean(link.isDefault), createdDate: null });
+        const audience = clip((link.audience ?? "").trim(), 80);
+        let title: string;
+        let url: string;
+        let more: string;
+        if (docId) {
+          const doc = await docTitle(orgId, docId);
+          if (!doc) return null;
+          title = doc.title;
+          url = `${f.appUrl}/doc/${String(docId)}`;
+          more = `<${url}/links|all links>`;
+        } else {
+          const room = await projectName(orgId, projectId);
+          if (!room || !projectId) return null;
+          title = room;
+          url = `${f.appUrl}/project/${String(projectId)}`;
+          more = `<${url}|open the data room>`;
+        }
+        const text = `New link ${name} for ${title}.`;
+        return { text, blocks: twoBlocks(`New link *${mrkdwn(name)}* for <${url}|${mrkdwn(title)}>`, `${audience ? `for ${mrkdwn(audience)} · ` : ""}${more}`) };
+      }
       const doc = await docTitle(orgId, docId);
       if (!doc || !docId) return null;
       const uploadId = (ev.uploadId as Types.ObjectId | null) ?? null;
@@ -228,11 +267,18 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
       };
     }
     case "docs": {
-      // A document filed into a project: the room's channel (or the default) hears it landed.
       const docId = (ev.docId as Types.ObjectId | null) ?? null;
       const projectId = (ev.projectId as Types.ObjectId | null) ?? null;
       const doc = await docTitle(orgId, docId);
       if (!doc || !docId) return null;
+      if (ev.change === "created") {
+        // A new document finished processing: the title, the page count when the pages are in.
+        const docUrl = `${f.appUrl}/doc/${String(docId)}`;
+        const pages = doc.pages ? `${doc.pages} page${doc.pages === 1 ? "" : "s"}` : null;
+        const text = `${doc.title} was added.`;
+        return { text, blocks: twoBlocks(`*<${docUrl}|${mrkdwn(doc.title)}>* was added${pages ? ` · ${pages}` : ""}`, `<${docUrl}|open it> · <${docUrl}/metrics|metrics>`) };
+      }
+      // A document filed into a project: the room's channel (or the default) hears it landed.
       const project = projectId ? ((await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1, slug: 1 }).lean()) as { name?: string; slug?: string } | null) : null;
       const room = (project?.name ?? "").trim() || "a project";
       const docUrl = `${f.appUrl}/doc/${String(docId)}`;

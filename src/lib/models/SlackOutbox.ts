@@ -29,6 +29,14 @@ const slackOutboxSchema = new Schema(
       version: { type: Number, default: null },
       /** A `views` row that is the reader introducing themselves, not an open. */
       introduced: { type: Boolean, default: false },
+      /**
+       * Which document change a `docUpdates` row is. `null` and `"replaced"` are a new version;
+       * `"created"` a new document that finished processing; `"added_to_project"` a document
+       * joining a data room (`projectId` says which); `"link_created"` a new share link
+       * (`shareId` is the new link's, `linkId` its row).
+       */
+      change: { type: String, enum: ["replaced", "created", "added_to_project", "link_created", null], default: null },
+      linkId: { type: Schema.Types.ObjectId, default: null },
     },
     occurredAt: { type: Date, required: true },
     status: { type: String, enum: ["pending", "sending", "sent", "skipped", "dead"], default: "pending" },

@@ -11,10 +11,11 @@
  * `limit.ok === false`, which comes back as `201 { link, planWarning }` so the UI can show the
  * upgrade prompt with the link already in the list.
  */
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
+import { enqueueSlackPosts } from "@/lib/slack/outbox";
 import { createShareLink, listShareLinksPage, shareLinkStatsByShareId, toShareLinkDTO } from "@/lib/share/links";
 import { accessDocForLinks, linkErrorResponse, planWarningOf } from "./shared";
 import { planLimitResponse } from "@/lib/billing/planLimits";
@@ -145,6 +146,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       title,
       meta: { linkId: dto.id, shareId: dto.shareId, linkLabel: dto.label, audience: dto.audience, enabled: dto.enabled },
       request,
+    });
+    // Slack hears about the new link after the response; `enqueueSlackPosts` never throws.
+    after(async () => {
+      await enqueueSlackPosts({
+        orgId: String(orgId),
+        kind: "docUpdates",
+        sourceId: `link:${String(link._id)}`,
+        event: { docId: docObjectId, projectId: null, shareId: link.shareId, linkId: String(link._id), change: "link_created" },
+      });
     });
 
     const planWarning = planWarningOf(limit);

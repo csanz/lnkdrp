@@ -145,7 +145,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/admin/errors/route.ts` — `/api/admin/errors` · GET, runtime
 - `src/app/api/admin/overview/route.ts` — `/api/admin/overview` · dynamic, GET, runtime
 - `src/app/api/admin/revenue/route.ts` — `/api/admin/revenue` · dynamic, GET, runtime
-- `src/app/api/admin/shareviews/doc/[docId]/route.ts` — `/api/admin/shareviews/doc/:docId` · GET, runtime
+- `src/app/api/admin/shareviews/doc/[docId]/route.ts` — `/api/admin/shareviews/doc/:docId` · DEFAULT_LIMIT, GET, MAX_LIMIT, runtime
 - `src/app/api/admin/shareviews/recent/route.ts` — `/api/admin/shareviews/recent` · GET, runtime
 - `src/app/api/admin/users/[userId]/plan/route.ts` — `/api/admin/users/:userId/plan` · POST, runtime
 - `src/app/api/admin/waitlist/[userId]/approve/route.ts` — `/api/admin/waitlist/:userId/approve` · dynamic, POST, runtime
@@ -597,7 +597,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/analytics/reading/response.ts` · buildMatrixRow, buildPeopleSeries, buildPersonResponse, buildReadingCore, buildReadingResponse, toBasicReading, visitSteps
 - `src/lib/analytics/reading/types.ts` · AllTimePerson, AttentionRow, BASIC_LINK_KEYS, BASIC_READING_KEYS, Callouts, Cell, CellState, HotReason, …
 - `src/lib/analytics/reading/verdict.ts` · buildVerdict, PageTypical, VerdictOptions
-- `src/lib/analytics/reconcileLinkCounters.ts` · CounterDrift, LAST_VIEWED_TOLERANCE_MS, ReconcileResult, reconcileShareLinkCounters
+- `src/lib/analytics/reconcileLinkCounters.ts` · activeSinceFilter, CounterDrift, counterWindowStart, DEFAULT_COUNTER_WINDOW_DAYS, LAST_VIEWED_TOLERANCE_MS, linkTruthPipeline, ReconcileOptions, ReconcileResult, …
 - `src/lib/analytics/shareTiming.ts` · countsAsPageRevisit, FLUSH_REASONS, FlushReasonWire, isPageExit, pageTimeIncrement, parseFlushReason, parsePageBound, parseTimingVersion, …
 - `src/lib/analytics/shareViewAggregates.ts` · ACTIVITY_DAY_KEY_EXPR, activityInWindowExpr, activityWindowMatch, intersectShareIds, LAST_ACTIVITY_EXPR, LINK_VIEWER_KEY_EXPR, mergePageTimeMaps, OWNER_PREVIEW_MATCH, …
 - `src/lib/analytics/teaser.ts` · AnalyticsTeaser, buildAnalyticsTeaser, hiddenDaysBefore, IDENTIFIED_VIEWER_EXPR, teaserFromRow, teaserPipeline
@@ -838,7 +838,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/slack/connections.ts` · listSlackConnections, postThroughConnection, serializeSlackConnection, SLACK_EVENT_KEYS, SlackConnectionDto, SlackEventKey, SlackState
 - `src/lib/slack/crypto.ts` · decryptSlackSecret, encryptSlackSecret, signSlackPayload, verifySlackSignature
 - `src/lib/slack/messages.ts` · mrkdwn, realLinkLabel, renderSlackEvent, slackBurstMessage, slackTestMessage
-- `src/lib/slack/outbox.ts` · DrainResult, drainSlackOutbox, EnqueueSlackInput, enqueueSlackPosts, SlackOutboxEvent
+- `src/lib/slack/outbox.ts` · DrainResult, drainSlackOutbox, EnqueueSlackInput, enqueueSlackPosts, SlackDocChange, SlackOutboxEvent
 - `src/lib/slack/pageState.ts` · slackStateForPage
 - `src/lib/slack/post.ts` · postToSlackWebhook, SLACK_POST_TIMEOUT_MS, SlackMessage, SlackPostOutcome
 - `src/lib/slack/routing.ts` · burstAllowance, RoutableConnection, routeSlackConnections, SLACK_BURST_PER_MINUTE, SLACK_BURST_WINDOW_MS
@@ -881,12 +881,12 @@ Clients, helpers and components that live beside the page that uses them.
 - `mcp/src/agent.ts` · agentHeaderFrom, normalizeClientName, normalizeClientVersion
 - `mcp/src/api.ts` · ApiActivityItem, ApiActivityPage, ApiChangedPage, ApiClient, ApiClientOptions, ApiDoc, ApiDocChange, ApiDocListItem, …
 - `mcp/src/config.ts` · API_TIMEOUT_MS, Config, DEFAULT_AGENT_HEADER, IDEMPOTENCY_MAX_ENTRIES, IDEMPOTENCY_TTL_MS, loadConfig, log, MCP_SERVER_NAME, …
-- `mcp/src/confirm.ts` · clientSupportsElicitation, confirmationsEnforced, confirmationsSkipRequestedButUnsafe, DestructivePreview, requireHumanConfirmation, setConfirmationWorkspace, severityFromTraffic
+- `mcp/src/confirm.ts` · clientSupportsElicitation, CONFIRM_FOLLOW_UP_WINDOW_MS, confirmationsEnforced, confirmationsSkipRequestedButUnsafe, DestructivePreview, requireHumanConfirmation, sanitizePreview, setConfirmationWorkspace, …
 - `mcp/src/context.ts` · ToolContext
 - `mcp/src/errors.ts` · handleTool, initializeFailureResponse, isToolError, LINK_NOT_FOUND_ON_DOC, LINK_NOT_FOUND_ON_PROJECT, mapApiError, ToolError, ToolErrorCode, …
 - `mcp/src/idempotency.ts` · fingerprintArgs, IdempotencyStore
 - `mcp/src/main.ts`
-- `mcp/src/optimize.ts` · decideOptimizedBytes, findGhostscript, ghostscriptArgs, ghostscriptCandidates, looksLikePdf, OPTIMIZE_IMAGE_DPI, OPTIMIZE_MIN_BYTES, OPTIMIZE_MIN_SAVING_RATIO, …
+- `mcp/src/optimize.ts` · decideOptimizedBytes, findGhostscript, ghostscriptArgs, ghostscriptCandidates, looksLikePdf, OPTIMIZE_CONCURRENCY_DEFAULT, OPTIMIZE_IMAGE_DPI, OPTIMIZE_MIN_BYTES, …
 - `mcp/src/realtime.ts` · DOC_POLL_MS, isTerminalDocStatus, WaitForDocInput, waitForDocStatus
 - `mcp/src/server.ts` · createMcpServer, SERVER_INSTRUCTIONS, withWorkspace, workspaceInstructions, workspaceLabel
 - `mcp/src/tools/aiWarnings.ts` · readAiOutcome, warningsFromAi

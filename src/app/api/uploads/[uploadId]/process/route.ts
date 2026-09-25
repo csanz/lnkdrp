@@ -3186,7 +3186,7 @@ export async function POST(
                 orgId: existingDocOrgId,
                 kind: "docUpdates",
                 sourceId: String(uploadId),
-                event: { docId, uploadId, version: uploadVersion },
+                event: { docId, uploadId, version: uploadVersion, change: "replaced" },
               });
             } catch (e) {
               debugError(1, "[process] doc_updates enqueue failed", {
@@ -3247,6 +3247,16 @@ export async function POST(
                   });
                 }),
               );
+              // The Slack side of the same event: a new document finished processing. Keyed on the
+              // document, not the upload, so it posts once per document however often this route
+              // is re-entered for its first version. A request-inbox drop-off is not a "created"
+              // post: it is the `requests` row in the block below.
+              await enqueueSlackPosts({
+                orgId: existingDocOrgId,
+                kind: "docs",
+                sourceId: `created:${String(docId)}`,
+                event: { docId, uploadId, version: uploadVersion, change: "created" },
+              });
             } catch (e) {
               debugError(1, "[process] doc_uploads enqueue failed", {
                 uploadId,

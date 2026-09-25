@@ -15,10 +15,11 @@
  * Works for session cookies and API keys alike: `resolveActor` inside `accessProjectForLinks`
  * handles both, so the MCP reaches these routes with no special case.
  */
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
+import { enqueueSlackPosts } from "@/lib/slack/outbox";
 import { createProjectLink, listProjectLinksPage, projectLinkStatsByShareId, toProjectLinkDTO } from "@/lib/share/projectLinks";
 import { planLimitResponse } from "@/lib/billing/planLimits";
 import { createdViaFor } from "@/lib/share/createdVia";
@@ -133,6 +134,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ projectSlu
       title: name,
       meta: { scope: "project", linkId: dto.id, shareId: dto.shareId, linkLabel: dto.label, audience: dto.audience, enabled: dto.enabled, projectName: name },
       request,
+    });
+    // Slack hears about the new data-room link after the response; `enqueueSlackPosts` never throws.
+    after(async () => {
+      await enqueueSlackPosts({
+        orgId: String(orgId),
+        kind: "docUpdates",
+        sourceId: `link:${String(link._id)}`,
+        event: { docId: null, projectId, shareId: link.shareId, linkId: String(link._id), change: "link_created" },
+      });
     });
 
     return applyTempUserHeaders(NextResponse.json({ link: dto }, { status: 201, headers: { "cache-control": "no-store" } }), actor);

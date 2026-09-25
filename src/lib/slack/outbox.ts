@@ -36,7 +36,13 @@ export type SlackOutboxEvent = {
   version?: number | null;
   /** The reader put a name to their visit; posted under the Opens switch. */
   introduced?: boolean;
+  /** Which document change this is (docUpdates rows); see the model. */
+  change?: SlackDocChange | null;
+  /** The new share link's row, for `change: "link_created"`. */
+  linkId?: string | Types.ObjectId | null;
 };
+
+export type SlackDocChange = "replaced" | "created" | "added_to_project" | "link_created";
 
 export type EnqueueSlackInput = {
   orgId: string | Types.ObjectId;
@@ -108,6 +114,8 @@ export async function enqueueSlackPosts(input: EnqueueSlackInput): Promise<numbe
         viewerEmail: input.event.viewerEmail ?? null,
         version: typeof input.event.version === "number" ? input.event.version : null,
         introduced: input.event.introduced === true,
+        change: input.event.change ?? null,
+        linkId: oid(input.event.linkId),
       },
       occurredAt,
       status: "pending",
