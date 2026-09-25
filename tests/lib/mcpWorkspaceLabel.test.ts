@@ -33,9 +33,12 @@ const usavx: Whoami = {
 describe("workspaceInstructions", () => {
   it("names the workspace and says to ask when more than one connection is available", () => {
     const text = workspaceInstructions(usavx);
-    expect(text).toContain('workspace "USAVX" (team workspace, Free plan)');
+    expect(text).toContain('workspace "USAVX" (Free plan)');
     expect(text).toContain("ask before creating, changing or deleting anything");
-    expect(workspaceInstructions({ orgName: null, isPersonalOrg: true, plan: "pro" })).toContain('"Personal" (personal workspace, Pro plan)');
+    // A workspace is its name, never a kind: no "personal" or "team" anywhere an agent reads.
+    const unnamed = workspaceInstructions({ orgName: null, isPersonalOrg: true, plan: "pro" });
+    expect(unnamed).toContain('"Unnamed workspace" (Pro plan)');
+    expect(unnamed).not.toMatch(/personal/i);
   });
 });
 

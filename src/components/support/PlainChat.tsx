@@ -37,7 +37,11 @@ type PlainInitOptions = {
   style?: { brandColor?: ThemedColor; brandBackgroundColor?: ThemedColor; launcherBackgroundColor?: ThemedColor; launcherIconColor?: ThemedColor };
   customerDetails?: { email: string; emailHash: string; fullName?: string; externalId?: string };
   links?: { icon?: string; text: string; url: string }[];
+  /** Stamped on every thread the widget opens; the `plan` and `workspace` fields are available to Ari. */
+  threadDetails?: { threadFields?: PlainThreadField[] };
 };
+
+export type PlainThreadField = { key: string; type: "STRING" | "ENUM"; stringValue: string };
 
 type PlainGlobal = {
   init: (opts: PlainInitOptions) => void;

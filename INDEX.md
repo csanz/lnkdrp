@@ -502,7 +502,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/people/ContributorsCard.tsx` · default
 - `src/components/project/ProjectHeaderActions.tsx` · default, ProjectHeaderPage
 - `src/components/project/ProjectIdentityRow.tsx` · default
-- `src/components/support/PlainChat.tsx` · default, isViewerPath, openSupportChat, PLAIN_CHAT_SCRIPT, SUPPORT_PATH
+- `src/components/support/PlainChat.tsx` · default, isViewerPath, openSupportChat, PLAIN_CHAT_SCRIPT, PlainThreadField, SUPPORT_PATH
 - `src/components/support/SupportLink.tsx` · default, SUPPORT_EMAIL
 - `src/components/support/SupportOpener.tsx` · default
 - `src/components/tags/TagDot.tsx` · default, TAG_COLOR_HEX

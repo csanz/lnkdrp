@@ -12,6 +12,7 @@ import { authOptions } from "@/lib/auth";
 import { getMetadataBaseUrl } from "@/lib/urls";
 import { Analytics } from "@vercel/analytics/next";
 import PlainChat from "@/components/support/PlainChat";
+import PlainChatWorkspace from "@/components/support/PlainChatWorkspace";
 import { plainChatAppId, plainChatCustomer } from "@/lib/support/plain/chat";
 
 export const metadata: Metadata = {
@@ -99,6 +100,10 @@ export default async function RootLayout({
         />
         <Providers enableAuth={enableAuth} initialSession={initialSession}>
           {children}
+          {/* Signed in and the widget configured: stamp the active workspace and its plan on every
+              support thread, so the AI agent answers Free and Pro questions for the right plan.
+              Inside Providers because it reads the session; nothing here for a visitor. */}
+          {plainChatAppIdValue && initialSession?.user ? <PlainChatWorkspace /> : null}
         </Providers>
         {/*
           Vercel Web Analytics: visitors and page views for the marketing and app pages.

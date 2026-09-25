@@ -269,7 +269,6 @@ export default function WorkspaceManager() {
             {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "–"}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Org"}</Pill> : null}
             {currentOrg?.role ? <Pill>{currentOrg.role}</Pill> : null}
           </div>
         </div>
@@ -313,7 +312,6 @@ export default function WorkspaceManager() {
           {stableOrgs.length ? (
             stableOrgs.map((o) => {
               const isActive = Boolean(activeOrgId && o.id === activeOrgId);
-              const badge = o.type === "personal" ? "Personal" : "Org";
               return (
                 <button
                   key={o.id}
@@ -333,7 +331,7 @@ export default function WorkspaceManager() {
                     <span className="min-w-0">
                       <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{o.name}</div>
                       <div className="text-[11px] text-[var(--muted-2)]">
-                        {badge} • {o.role}
+                        {o.role}
                       </div>
                     </span>
                   </span>
@@ -387,7 +385,7 @@ export default function WorkspaceManager() {
                       <span className="min-w-0">
                         <div className="truncate text-[14px] font-semibold text-[var(--fg)]">{o.name}</div>
                         <div className="text-[12px] text-[var(--muted-2)]">
-                          {o.type === "personal" ? "Personal" : "Org"} • {o.role}
+                          {o.role}
                         </div>
                       </span>
                     </span>

@@ -1,6 +1,6 @@
 # PRD — OAuth for the MCP server
 
-**Status:** Implemented 2026-09-24 (M1–M3, on `next-release`, untested against a live client until the MCP is hosted). M4 (CORS on `/mcp`, per-client rate limits, shared session store) not started. See the review and the implementation note at the end.
+**Status:** Implemented 2026-09-24 (M1–M3, on `next-release`, untested against a live client until the MCP is hosted). M4: CORS on `/mcp` is an origin allow-list (`MCP_CORS_ORIGINS`, 2026-09-24); per-client limits reuse the per-key ceiling keyed on the grant id; the shared session store is not started. See the review and the implementation note at the end.
 **Owner:** chrissanz
 **Last updated:** 2026-09-24
 **Project:** lnkdrp

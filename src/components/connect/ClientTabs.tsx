@@ -31,7 +31,7 @@ export default function ClientTabs({
   mode,
 }: {
   plaintextKey: string | null;
-  /** The active workspace, or null while it loads (commands then use the personal name). */
+  /** The active workspace, or null while it loads (commands then use the default connection name). */
   workspace: { name: string; isPersonal: boolean } | null;
   /** Controlled by the page: the chosen client and the chosen path, which the step rail follows too. */
   client: ClientKey;
@@ -82,23 +82,13 @@ export default function ClientTabs({
       <div role="tabpanel" id={`client-panel-${active.key}`} aria-labelledby={`client-tab-${active.key}`} className="pt-4">
         {workspace ? (
           <p className="mb-3 text-[13px] leading-5 text-[var(--muted)]">
-            {workspace.isPersonal ? (
+            This connects <span className="font-semibold text-[var(--fg)]">{workspace.name}</span> as{" "}
+            <code className="font-mono text-[var(--fg)]">{serverName}</code>. Other workspaces get their own name, such as{" "}
+            <code className="font-mono">{DEFAULT_SERVER_NAME}-acme</code>, so they sit next to this one.
+            {serverName === DEFAULT_SERVER_NAME ? null : (
               <>
-                This connects your personal workspace, <span className="font-semibold text-[var(--fg)]">{workspace.name}</span>, as{" "}
-                <code className="font-mono text-[var(--fg)]">{serverName}</code>. Other workspaces get their own name, such as{" "}
-                <code className="font-mono">{DEFAULT_SERVER_NAME}-acme</code>, so they sit next to this one.
-                {serverName === DEFAULT_SERVER_NAME ? null : (
-                  <>
-                    {" "}
-                    Already added it as plain <code className="font-mono">{DEFAULT_SERVER_NAME}</code>? That keeps working.
-                  </>
-                )}
-              </>
-            ) : (
-              <>
-                This connects <span className="font-semibold text-[var(--fg)]">{workspace.name}</span> as{" "}
-                <code className="font-mono text-[var(--fg)]">{serverName}</code>, next to any connection you already have, such as{" "}
-                <code className="font-mono">{DEFAULT_SERVER_NAME}-personal</code> for Personal. Use a key created in this workspace.
+                {" "}
+                Already added it as plain <code className="font-mono">{DEFAULT_SERVER_NAME}</code>? That keeps working.
               </>
             )}
           </p>

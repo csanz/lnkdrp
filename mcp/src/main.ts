@@ -292,7 +292,30 @@ function createApp() {
    * And the large limit applies only to `/mcp`, since `/healthz` and the well-known document need
    * kilobytes; a junk body aimed anywhere else meets the default 100 KB.
    */
+  /**
+   * CORS on `/mcp`, opt-in by origin.
+   *
+   * A browser-based MCP client (a web app that speaks MCP directly, not through a server) sends
+   * an `Origin`, and without these headers it cannot read a byte of the answer. The endpoint
+   * carries credentials, so this is an allow-list from `MCP_CORS_ORIGINS`, never `*`: an origin
+   * on the list gets itself echoed back and the MCP headers exposed; any other origin gets no
+   * CORS headers at all and the browser refuses, which is the same as today. The preflight is
+   * answered before the bearer gate because a preflight carries no Authorization by definition.
+   */
   app.use("/mcp", (req, res, next) => {
+    const origin = req.header("origin");
+    if (origin && config.corsOrigins.includes(origin.replace(/\/+$/, ""))) {
+      res.set("access-control-allow-origin", origin);
+      res.set("vary", "Origin");
+      res.set("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+      res.set("access-control-allow-headers", "authorization, content-type, mcp-session-id, mcp-protocol-version, last-event-id");
+      res.set("access-control-expose-headers", "mcp-session-id, mcp-protocol-version");
+      res.set("access-control-max-age", "86400");
+    }
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
     if (!bearerFrom(req)) {
       unauthorized(res);
       return;
@@ -354,6 +377,7 @@ async function runHttp(): Promise<void> {
       apiUrl: config.apiUrl,
       publicUrl: config.publicUrl,
       realtime: config.realtimeUrl && config.realtimeSecretConfigured ? config.realtimeUrl : "off (polling only)",
+      cors: config.corsOrigins.length ? config.corsOrigins.join(", ") : "off (no browser origins)",
       ...(skippingConfirmations ? { confirmations: "SKIPPED (dev database)" } : {}),
     });
     // A safety switch that was asked for and refused has to say so out loud: the operator otherwise

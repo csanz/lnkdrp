@@ -134,6 +134,7 @@ Env (read from `.env.local`; the same file the app uses):
 | `NEXT_PUBLIC_REALTIME_URL` | unset | `ws://localhost:8788` locally. When set, `share_pdf` waits on the socket; unset = polling only. |
 | `REALTIME_SECRET` | unset | Shared HMAC secret so the server can sign its own realtime ticket (`signRealtimeTicket`, `src/lib/realtime/ticket.ts`). Only needed with the line above. The code falls back to `NEXTAUTH_SECRET`, but **never set that on an MCP host**: it signs app sessions, so holding it means being able to forge one for any user. It lives only on Vercel, and the two values must differ (DEPLOY.md). |
 | `LNKDRP_API_KEY` | unset | Only for `--stdio` (below): the key the process acts with, because there is no HTTP request to carry a bearer. |
+| `MCP_CORS_ORIGINS` | unset | Comma-separated browser origins (`https://app.example.com`) allowed to call `/mcp` from a page. Unset, no cross-origin browser access: the endpoint carries credentials, so this is an allow-list, never `*`. Server-side clients (Claude Code, Cursor, connectors) never need it. The startup log shows `cors:`. |
 | `LNKDRP_ALLOW_LOCAL_FILES` | unset | `1` allows `share_pdf`/`replace_pdf`'s `filePath` even when `LNKDRP_API_URL` is not localhost. Only set this on a server that really does run on the caller's machine: `filePath` is read from *this process's* filesystem. |
 | `LNKDRP_SKIP_CONFIRMATIONS` | unset | `1`/`true`/`yes` skips the human confirmation on destructive tools, **and only when `LNKDRP_API_URL` is localhost**. For test loops against a dev database, where confirming fifty deletes of rows that existed for four seconds is the whole cost of testing. Gated on the *data* rather than on where the process runs: a local server pointed at production is a supported setup (it is how `filePath` works) and a delete there is a real delete. Set against any other API URL it is ignored, and the server says so at startup — a silently disregarded safety switch is worse than none. |
 | `LNKDRP_GHOSTSCRIPT` | unset | Absolute path to `gs` when it is not on `PATH` (a GUI-launched server often inherits a bare one). Without a working Ghostscript, PDF optimization is skipped and the original bytes are uploaded. |
@@ -1627,8 +1628,8 @@ retry guard, not as a durable dedupe. Use a fresh key per intent (a UUID is fine
   grant on revocation. It is opaque, not a JWT: nothing can be minted or extended offline. PKCE S256
   is mandatory, codes are one-use and five minutes, a replayed code revokes the grant it produced,
   refresh tokens rotate, and the consent form only ever redirects to the URI the client registered.
-  CORS is open on the OAuth endpoints and the metadata documents (they hold no session), and still
-  closed on `/mcp`.
+  CORS is open on the OAuth endpoints and the metadata documents (they hold no session), and on
+  `/mcp` only for the origins in `MCP_CORS_ORIGINS`.
 
 ## Deployment
 

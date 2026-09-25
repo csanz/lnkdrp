@@ -474,7 +474,6 @@ export default function WorkspaceManager() {
             {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "–"}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Shared"}</Pill> : null}
             {currentOrg?.role ? <Pill><span className="capitalize">{currentOrg.role}</span></Pill> : null}
           </div>
         </div>
@@ -527,7 +526,7 @@ export default function WorkspaceManager() {
                           <div className="min-w-0">
                             <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{activeRow.name}</div>
                             <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
-                              {activeRow.type === "personal" ? "Personal" : "Shared"} • Active
+                              <span className="capitalize">{activeRow.role}</span> • Active
                             </div>
                           </div>
                         </div>
@@ -579,7 +578,7 @@ export default function WorkspaceManager() {
                             <div className="min-w-0">
                               <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{o.name}</div>
                               <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
-                                {o.type === "personal" ? "Personal" : "Shared"}
+                                <span className="capitalize">{o.role}</span>
                               </div>
                             </div>
                           </div>

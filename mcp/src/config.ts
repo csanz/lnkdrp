@@ -8,7 +8,8 @@
  * realtime channel instead of polling), `NEXT_PUBLIC_FEATURE_REQUESTS` (same build-time flag the
  * web app reads; surfaced read-only in `lnkdrp_whoami`'s `capabilities` so an agent can tell
  * "request repos don't exist on this deployment" from "no MCP tool happens to cover them yet"),
- * `LNKDRP_API_KEY` (stdio mode only).
+ * `LNKDRP_API_KEY` (stdio mode only), `MCP_CORS_ORIGINS` (comma-separated browser origins allowed to
+ * call `/mcp` cross-origin; unset = none, the default for a credential-bearing endpoint).
  */
 
 export const MCP_SERVER_NAME = "lnkdrp";
@@ -40,6 +41,8 @@ export type Config = {
   realtimeSecretConfigured: boolean;
   /** Whether request repos are enabled on this deployment at all (`NEXT_PUBLIC_FEATURE_REQUESTS=1`). */
   featureRequestsEnabled: boolean;
+  /** Exact browser origins allowed on `/mcp` (`MCP_CORS_ORIGINS`); empty means no cross-origin browser access. */
+  corsOrigins: string[];
   isProduction: boolean;
 };
 
@@ -58,7 +61,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const realtimeUrl = trimSlashes(env.NEXT_PUBLIC_REALTIME_URL || "") || null;
   const realtimeSecretConfigured = Boolean((env.REALTIME_SECRET || env.NEXTAUTH_SECRET || "").trim());
   const featureRequestsEnabled = env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
-  return { apiUrl, port, publicUrl, realtimeUrl, realtimeSecretConfigured, featureRequestsEnabled, isProduction };
+  const corsOrigins = (env.MCP_CORS_ORIGINS || "")
+    .split(",")
+    .map((o) => trimSlashes(o))
+    .filter((o) => /^https?:\/\/[^/\s]+$/i.test(o));
+  return { apiUrl, port, publicUrl, realtimeUrl, realtimeSecretConfigured, featureRequestsEnabled,
+    corsOrigins, isProduction };
 }
 
 /**
