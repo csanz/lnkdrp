@@ -90,7 +90,7 @@ note.
    it.
 
 5. **A Contacts entry in the sidebar, under Activity.** `/contacts`: a table, not cards. Columns
-   name, company, tags, last seen, documents read, visits; sort by any; filter by tag, by
+   name, domain, tags, last seen, documents read, visits; sort by any; filter by tag, by
    document or project ("everyone who has read the pitch deck"), by source link ("everyone who
    came in through the Sequoia link"), and search by name, address or domain. The count is in the
    sidebar the way documents and projects are. `/contacts/:id` is the contact page: identity,
