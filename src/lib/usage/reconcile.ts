@@ -12,6 +12,22 @@ function startOfUtcDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
 }
 
+/**
+ * Match every charged AI run belonging to one of `cycles`, with no date bound: each pair is a
+ * whole billing cycle of one workspace. An empty list matches nothing (`$or: []` is an error in
+ * Mongo, so it is spelled as an impossible filter instead).
+ */
+export function cycleRowsMatch(
+  cycles: ReadonlyArray<{ workspaceId: Types.ObjectId; cycleKey: string }>,
+): Record<string, unknown> {
+  if (cycles.length === 0) return { _id: { $in: [] } };
+  return {
+    status: "charged",
+    eventType: "ai_run",
+    $or: cycles.map((c) => ({ workspaceId: c.workspaceId, cycleKey: c.cycleKey })),
+  };
+}
+
 export type ReconcileUsageAggsResult = {
   ok: true;
   range: { startDay: string; endDayExclusive: string };
@@ -75,9 +91,24 @@ export async function reconcileUsageAggsFromLedger(params: {
     runs: number;
   }>;
 
-  // Cycle aggregates (only where cycleKey exists).
-  const cycleAgg = (await CreditLedgerModel.aggregate([
+  /**
+   * Cycle aggregates: every cycle that has a charged row inside the window, recomputed over the
+   * cycle's whole row set.
+   *
+   * The window bounds which cycles are touched, not which rows are summed. A cycle is a billing
+   * period, not a day range, and one that starts before the window (or the default 45 days) has
+   * rows the window does not cover. Summing only the in-window rows and writing the result with
+   * `$set` replaced the cycle total with a partial sum: `?start=X&end=X` turned every current
+   * cycle's `totalUsedCredits` into one day's spend, and the credits snapshot, the billing summary
+   * and the on-demand spend cap all read that figure until the next hourly run put it back.
+   */
+  const cyclesInWindow = (await CreditLedgerModel.aggregate([
     { $match: { ...matchBase, cycleKey: { $type: "string" } } },
+    { $group: { _id: { workspaceId: "$workspaceId", cycleKey: "$cycleKey" } } },
+  ])) as Array<{ _id: { workspaceId: Types.ObjectId; cycleKey: string } }>;
+
+  const cycleAgg = (await CreditLedgerModel.aggregate([
+    { $match: cycleRowsMatch(cyclesInWindow.map((c) => c._id)) },
     {
       $group: {
         _id: { workspaceId: "$workspaceId", cycleKey: "$cycleKey" },

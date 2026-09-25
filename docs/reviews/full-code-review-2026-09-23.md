@@ -19,6 +19,7 @@ Overall: the security foundations are strong. Tenancy is bound in the query near
 - `uploadSecret` is minted by the request-link and replace-link routes and never cleared or expired (no `$unset`/`null` write anywhere in `src/`). All three secret-auth surfaces check `{ _id, uploadSecret, isDeleted }` with no status guard.
 - Scenario: a recipient uploads via `/r/:token`, owner reviews. Later the recipient reuses the secret: `POST /api/blob/upload` → new bytes → `PATCH /api/uploads/:id { status: "uploaded", blobUrl }` → `POST .../process`. The claim succeeds (`uploaded → processing`), the job reuses the old preview and slides but re-extracts text from the new bytes and rewrites `blobUrl`. No new version, no `DocChange`, no email (deduped on `uploadId`).
 - Fix: `$unset` `uploadSecret` on first transition to `completed`, and refuse secret-auth on `blob/upload`, `PATCH`, and `process` unless `status ∈ {uploading, uploaded}`.
+- **Closed 2026-09-25.** The secret is not cleared, because the recipient page keeps polling `GET` with it until the document is ready. Instead each write surface matches the status in its own filter (`src/lib/uploads/secretAuth.ts`): Blob token and PATCH need `uploading|uploaded`, process needs `uploaded|processing|failed`. A completed row answers the same 404/403 as a wrong secret. Verified live against the dev server on a completed and an uploading row; `tests/upload/secretAuth.test.ts`.
 
 ### H2. Deleting a team workspace leaves its Stripe subscription billing forever
 - `src/app/api/orgs/[orgId]/route.ts:160-172`
@@ -42,17 +43,20 @@ Overall: the security foundations are strong. Tenancy is bound in the query near
 - `$addToSet: { projectIds }` and `$pull: { projectIds }` in one `updateOne` → MongoDB `ConflictingUpdateOperators`. No try/catch around the loop; `ProjectModel.create` at :549 already ran.
 - Scenario: DELETE a request repo with ≥1 doc in this mode → 400 with driver text, repo not deleted, orphan "(imported)" project; each retry creates "(imported) (2)", "(3)"… counting against the Free cap.
 - Fix: two updates (`$pull` then `$addToSet`) or compute and `$set` the array; roll back the created project on failure.
+- **Closed 2026-09-25.** Two updates per document; on any failure the new project is deleted again before the error surfaces. The conflict was reproduced against the dev database ("would create a conflict at 'projectIds'") and the two-step form checked.
 
 ### H6. `usage-agg-reconcile` overwrites `UsageAggCycle` totals with a partial-window sum
 - `src/lib/usage/reconcile.ts:79-104, 130-152`, `src/app/api/cron/usage-agg-reconcile/route.ts:63-83, 110`
 - Cycle aggregate matches ledger rows by `createdDate` in the window, groups by `cycleKey`, and writes with `$set`. Any cycle extending outside the window is replaced by the in-window portion. `getCreditsSnapshot` (fast path), `/api/billing/summary`, `/api/billing/spend` read this figure.
 - Scenario: `?start=2026-09-22&end=2026-09-22` → every workspace's current cycle `totalUsedCredits` becomes one day's sum; on-demand spend cap check understated until the next hourly run. The default 45-day window truncates any cycle older than 45 days.
 - Fix: for cycle rows, recompute each `cycleKey` seen in the window over its full row set (drop the `createdDate` bound).
+- **Closed 2026-09-25.** The window now only selects which (workspace, cycleKey) pairs to touch; each is re-summed over all its rows (`cycleRowsMatch`). `tests/lib/usageReconcile.test.ts` drives a one-day window over a month-long cycle and checks the written total is the cycle's.
 
 ### H7. Frontend: "vN · History" chip on the History page locks the whole app behind an opaque overlay
 - `src/app/providers.tsx:104-115, 121-148`, `src/components/doc/DocIdentityRow.tsx:120`, `src/app/(app)/doc/[docId]/history/pageClient.tsx:691`
 - `shouldTriggerForTarget` fires for any `/doc/` href `!== pathname`; the overlay and nav lock release only on `usePathname()` change. The chip's href is `/doc/:id/history#v-N`, same pathname plus hash → overlay (z-index max, opaque) never releases; every link click is `preventDefault`ed until hard reload.
 - Fix: compare without hash/query, and add a fallback timeout / `popstate` release.
+- **Closed 2026-09-25.** `navPathOf` compares the pathname only; the overlay also releases on `hashchange`, `popstate`, and after 15 s without a pathname change. `tests/lib/navPathOf.test.ts`.
 
 ### H8. Frontend: invite modal on `/preferences` refetches `/api/org-invites` in an infinite loop
 - `src/app/preferences/WorkspaceManager.tsx:152-160`
@@ -103,7 +107,7 @@ Overall: the security foundations are strong. Tenancy is bound in the query near
 ### Infra / models
 - **M18. Catch-alls map infrastructure failures to HTTP 400 and skip ErrorEvent logging.** `src/lib/http/errorResponse.ts:77-88, 99-104` and 12 routes (`docs`, `sidebar`, `share/stats`, `unlock`, `landing`…). `errorJson` logs only for `status >= 500`. Fix: use 500 in catch-alls, or log whenever `code === UNHANDLED_EXCEPTION`.
 - **M19. `ErrorEvent.stack` stored unredacted.** `src/lib/errors/logger.ts:410-446`, `serializeErrorEvent.ts:58`. `Error.stack` begins with the raw message, so emails/URIs redacted from `message` survive in `stack` and render in `/a`. Fix: `redactLogText` on both.
-- **M20. Plaintext capability tokens on `Project` ship to the realtime host via the change stream.** `src/lib/models/Project.ts:45, 52`, `Upload.ts:50`, `Doc.ts:239`, `realtime/server.ts:439-456`. The `projects` watcher has no `$project`, unlike `docs`/`uploads`. Fix: project the watch to `_id, orgId, name`; hash tokens at rest.
+- **M20. Plaintext capability tokens on `Project` ship to the realtime host via the change stream.** `src/lib/models/Project.ts:45, 52`, `Upload.ts:50`, `Doc.ts:239`, `realtime/server.ts:439-456`. The `projects` watcher has no `$project`, unlike `docs`/`uploads`. Fix: project the watch to `_id, orgId, name`; hash tokens at rest. **Watch projected 2026-09-25** to `_id, orgId, name`; tokens are still plaintext at rest.
 
 ### Frontend
 - **M21. `Markdown` renders every inline code span as a block and nests `<pre>` in `<pre>`.** `src/components/Markdown.tsx:177-215` branches on `inline`, removed in react-markdown v9. `HelpMarkdown.tsx:55-75` does it right. Fix: detect by `language-` class; override `pre`.

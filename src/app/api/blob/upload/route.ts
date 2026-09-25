@@ -39,6 +39,7 @@ import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { debugError, debugLog } from "@/lib/debug";
 import { actorRateLimitResponse } from "@/lib/gating/actorRateLimit";
 import { rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
+import { secretWritableFilter } from "@/lib/uploads/secretAuth";
 
 export const runtime = "nodejs";
 
@@ -141,7 +142,16 @@ async function authorizePathname(request: Request, pathname: string, clientPaylo
 
     const secret = uploadSecretFrom(request, clientPayload);
     if (secret) {
-      const ok = await UploadModel.exists({ _id: uploadId, docId, uploadSecret: secret, isDeleted: { $ne: true } });
+      // Status is part of the match: a secret may put bytes on an upload that is still being
+      // uploaded, never on one that has completed (see `src/lib/uploads/secretAuth.ts`). The same
+      // answer for "wrong secret" and "too late", so the response says nothing about the row.
+      const ok = await UploadModel.exists({
+        _id: uploadId,
+        docId,
+        uploadSecret: secret,
+        isDeleted: { $ne: true },
+        ...secretWritableFilter(),
+      });
       if (!ok) throw new BlobUploadAuthError(403, "Upload secret does not match this upload");
       return;
     }

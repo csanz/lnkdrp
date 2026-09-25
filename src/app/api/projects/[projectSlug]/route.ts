@@ -565,30 +565,48 @@ export async function DELETE(
         });
         const newProjectId = new Types.ObjectId(String((created as unknown as { _id: Types.ObjectId })._id));
 
-        // Best-effort: update each doc with updateOne so Project.docCount stays in sync.
-        for (const d of requestDocs) {
-          const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
-          if (!docId) continue;
+        /**
+         * Move each document with two updates, not one. `$addToSet` and `$pull` on the same
+         * `projectIds` path in a single update is a Mongo `ConflictingUpdateOperators` error, so
+         * this loop failed on the first document, every time, after the project above had already
+         * been created: the request repo stayed, the "(imported)" project sat empty, and each
+         * retry made "(imported) (2)", "(3)"... against the Free project cap.
+         *
+         * If the loop fails now (a transient database error is what is left), the project it was
+         * filling is removed again so a retry starts clean instead of leaving another orphan. The
+         * documents already moved keep their new membership; the retry moves the rest.
+         */
+        try {
+          for (const d of requestDocs) {
+            const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
+            if (!docId) continue;
 
-          const currentPrimary =
-            (d as unknown as { primaryProjectId?: unknown }).primaryProjectId ??
-            (d as unknown as { projectId?: unknown }).projectId;
-          const primaryIsRequest = currentPrimary ? String(currentPrimary) === String(projectId) : false;
-          const nextPrimary = primaryIsRequest || !currentPrimary ? newProjectId : currentPrimary;
+            const currentPrimary =
+              (d as unknown as { primaryProjectId?: unknown }).primaryProjectId ??
+              (d as unknown as { projectId?: unknown }).projectId;
+            const primaryIsRequest = currentPrimary ? String(currentPrimary) === String(projectId) : false;
+            const nextPrimary = primaryIsRequest || !currentPrimary ? newProjectId : currentPrimary;
 
-          await DocModel.updateOne(
-            { _id: docId, ...docTenant, isDeleted: { $ne: true } },
-            {
+            const docFilter = { _id: docId, ...docTenant, isDeleted: { $ne: true } };
+            await DocModel.updateOne(docFilter, {
               $set: {
                 primaryProjectId: nextPrimary,
                 projectId: nextPrimary,
                 receivedViaRequestProjectId: null,
                 guideForRequestProjectId: null,
               },
-              $addToSet: { projectIds: newProjectId },
               $pull: { projectIds: projectId },
-            },
-          );
+            });
+            await DocModel.updateOne(docFilter, { $addToSet: { projectIds: newProjectId } });
+          }
+        } catch (err) {
+          debugLog(1, "[api/projects/:id] DELETE copy_to_new_project failed; removing the new project", {
+            projectId: projectIdParam,
+            newProjectId: String(newProjectId),
+            error: err instanceof Error ? err.message : String(err),
+          });
+          await ProjectModel.deleteOne({ _id: newProjectId }).catch(() => undefined);
+          throw err;
         }
       } else if (requestDeleteMode === "orphan") {
         for (const d of requestDocs) {

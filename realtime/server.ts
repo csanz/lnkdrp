@@ -479,6 +479,17 @@ async function main() {
             operationType: { $in: ["insert", "update", "replace", "delete"] },
           },
         },
+        // Only what the broadcast below reads. Without this the whole row travelled: the request
+        // repo's `requestUploadToken` and `requestViewToken` are plaintext capability tokens, and
+        // every update shipped them to this host, plus `updateDescription` with whatever changed.
+        {
+          $project: {
+            operationType: 1,
+            "fullDocument._id": 1,
+            "fullDocument.orgId": 1,
+            "fullDocument.name": 1,
+          },
+        },
       ],
       { fullDocument: "updateLookup" },
     );

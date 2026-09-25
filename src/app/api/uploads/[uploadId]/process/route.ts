@@ -47,6 +47,7 @@ import { agentFromRequest, recordActivity } from "@/lib/activity/log";
 import { agentSummaryToAnalysis, readStoredAgentSummary } from "@/lib/ai/agentSummary";
 import { findRaiseAmount, resolveAsk } from "@/lib/ai/askFromText";
 import { INTERNAL_PROCESS_HEADER, verifyInternalProcessToken } from "@/lib/uploads/internalProcess";
+import { secretProcessableFilter } from "@/lib/uploads/secretAuth";
 import { createUploadProgressReporter } from "@/lib/uploads/progressWriter";
 import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
@@ -935,11 +936,14 @@ export async function POST(
     }
     actor = { kind: "user", userId: ownerUserId, orgId: billingOrgId, personalOrgId: String(orgId) };
   } else if (viaUploadSecret) {
-    // Secret-authorized processing (used by request upload links).
+    // Secret-authorized processing (used by request upload links). The status is part of the
+    // match: a secret can start or retry processing, never re-run it on a completed upload
+    // (`src/lib/uploads/secretAuth.ts`). A completed row answers the same 404 as a wrong secret.
     const upload = await UploadModel.findOne({
       _id: new Types.ObjectId(uploadId),
       uploadSecret: (uploadSecret as string).trim(),
       isDeleted: { $ne: true },
+      ...secretProcessableFilter(),
     })
       .select({ userId: 1, docId: 1 })
       .lean();

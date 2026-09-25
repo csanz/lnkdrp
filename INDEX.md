@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 934 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 937 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -503,6 +503,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/project/ProjectHeaderActions.tsx` · default, ProjectHeaderPage
 - `src/components/project/ProjectIdentityRow.tsx` · default
 - `src/components/support/PlainChat.tsx` · default, isViewerPath, openSupportChat, PLAIN_CHAT_SCRIPT, PlainThreadField, SUPPORT_PATH
+- `src/components/support/PlainChatWorkspace.tsx` · default
 - `src/components/support/SupportLink.tsx` · default, SUPPORT_EMAIL
 - `src/components/support/SupportOpener.tsx` · default
 - `src/components/tags/TagDot.tsx` · default, TAG_COLOR_HEX
@@ -627,6 +628,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/client/entityIdentity.ts` · EntityIdentity, EntityIdentityState, EntityProjectPill, loadEntityIdentity, noteEntityName, useEntityIdentity
 - `src/lib/client/entityTitles.ts` · clearEntityTitles, EntityKind, forgetEntityTitle, recallEntityTitle, rememberEntityTitle, rememberEntityTitles, resolveEntityTitle, useEntityTitle
 - `src/lib/client/knownEmpty.ts` · KnownEmpty, peekKnownEmpty, useKnownEmpty
+- `src/lib/client/navPathOf.ts` · navPathOf
 - `src/lib/client/outOfCredits.ts` · dispatchOutOfCredits, OUT_OF_CREDITS_EVENT, OutOfCreditsReason, outOfCreditsReasonFromCode
 - `src/lib/client/pageCache.ts` · clearPageCache, readPageCache, writePageCache
 - `src/lib/client/planLimit.ts` · clearPlanLimitHit, comparesFor, CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, markPlanLimitHit, parsePlanLimitError, PLAN_LIMIT_HIT_EVENT, …
@@ -843,9 +845,10 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/uploads/progress.ts` · IN_FLIGHT_UPLOAD_STATUSES, isTerminalUploadStatus, PROGRESS_MIN_INTERVAL_MS, RENDER_PERCENT_END, RENDER_PERCENT_START, shouldWriteProgress, UPLOAD_STAGE_PERCENT, UploadProgress, …
 - `src/lib/uploads/progressWriter.ts` · createUploadProgressReporter, ReportOptions, UploadProgressReporter
 - `src/lib/uploads/recipientCaps.ts` · checkRecipientUploadCap, FREE_RECIPIENT_UPLOADS_PER_WORKSPACE_PER_DAY, RECIPIENT_UPLOAD_LIMIT_CODE, RECIPIENT_UPLOADS_PER_TOKEN_PER_DAY, RecipientCapResult
+- `src/lib/uploads/secretAuth.ts` · SECRET_PROCESSABLE_STATUSES, SECRET_WRITABLE_STATUSES, secretProcessableFilter, secretWritableFilter
 - `src/lib/uploads/summaryRerun.ts` · queueSummaryRerun, SummaryRerunResult
 - `src/lib/urls.ts` · buildPublicProjectUrl, buildPublicReplaceUrl, buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getMetadataBaseUrl, getPublicSiteBase, resolveConfiguredSiteUrl
-- `src/lib/usage/reconcile.ts` · reconcileUsageAggsFromLedger, ReconcileUsageAggsResult
+- `src/lib/usage/reconcile.ts` · cycleRowsMatch, reconcileUsageAggsFromLedger, ReconcileUsageAggsResult
 - `src/lib/vercel/client.ts` · getDeployment, getProject, isVercelConfigured, listDeployments, VERCEL_TIMEOUT_MS, vercelConfig, VercelConfig, VercelDeployment, …
 - `src/lib/visits/pageOutline.ts` · getPageOutline, outlineEntryFromText, PAGE_OUTLINE_MAX_PAGES, PAGE_OUTLINE_VERSION, PAGE_TEXT_MAX_CHARS, PageOutlineEntry
 - `src/lib/visits/scheduleVisitBrief.ts` · dueAtFor, scheduleVisitBrief, ScheduleVisitBriefInput, VISIT_QUIET_MS

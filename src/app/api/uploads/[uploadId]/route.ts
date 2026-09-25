@@ -14,6 +14,7 @@ import {
   UNSUPPORTED_FILE_TYPE_CODE,
 } from "@/lib/blob/serverClientUploadRoute";
 import { recordActivity } from "@/lib/activity/log";
+import { SECRET_WRITABLE_STATUSES, secretWritableFilter } from "@/lib/uploads/secretAuth";
 
 export const runtime = "nodejs";
 /**
@@ -404,10 +405,18 @@ export async function PATCH(
         _id: new Types.ObjectId(uploadId),
         isDeleted: { $ne: true },
       })
-        .select({ _id: 1, uploadSecret: 1, docId: 1, contentType: 1, originalFileName: 1 })
+        .select({ _id: 1, uploadSecret: 1, docId: 1, contentType: 1, originalFileName: 1, status: 1 })
         .lean();
       const stored =
         exists && typeof (exists as any).uploadSecret === "string" ? String((exists as any).uploadSecret).trim() : "";
+      /**
+       * The secret stops writing once the upload has completed. Before this, a recipient who kept
+       * it could PATCH a finished upload back to `uploaded` with new bytes and have processing
+       * rewrite the version in place (`src/lib/uploads/secretAuth.ts`). Refused with the same 404
+       * as a wrong secret, for the reason given above; the log carries the real reason.
+       */
+      const writable =
+        Boolean(exists) && (SECRET_WRITABLE_STATUSES as readonly string[]).includes(String((exists as any).status ?? ""));
       /**
        * Constant-time, because this is a bearer secret compared in the application.
        *
@@ -423,10 +432,17 @@ export async function PATCH(
         return a.length === b.length && crypto.timingSafeEqual(a, b);
       })();
 
-      if (!exists || !secretOk) {
+      if (!exists || !secretOk || !writable) {
         debugLog(1, "[api/uploads/:uploadId] PATCH secret refused", {
           uploadId,
-          reason: !exists ? "no_such_upload" : !stored ? "secret_not_enabled" : "secret_mismatch",
+          reason: !exists
+            ? "no_such_upload"
+            : !stored
+              ? "secret_not_enabled"
+              : !secretOk
+                ? "secret_mismatch"
+                : "upload_not_writable",
+          status: exists ? String((exists as any).status ?? "") : null,
         });
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
@@ -446,7 +462,7 @@ export async function PATCH(
       }
 
       const upload = await UploadModel.findOneAndUpdate(
-        { _id: new Types.ObjectId(uploadId), uploadSecret: trimmed, isDeleted: { $ne: true } },
+        { _id: new Types.ObjectId(uploadId), uploadSecret: trimmed, isDeleted: { $ne: true }, ...secretWritableFilter() },
         update,
         { new: true },
       ).lean();

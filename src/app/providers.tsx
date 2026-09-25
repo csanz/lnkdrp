@@ -21,6 +21,7 @@ import {
 } from "@/components/SwitchingOverlay";
 import OutOfCreditsListener from "@/components/OutOfCreditsListener";
 import { UpgradeModalProvider } from "@/components/UpgradeModalProvider";
+import { navPathOf } from "@/lib/client/navPathOf";
 
 const AuthEnabledContext = createContext(false);
 export function useAuthEnabled() {
@@ -95,6 +96,12 @@ function NavigationLockProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Longest the document/project navigation overlay may stay up without a pathname change. A route
+ * that takes longer than this is still loading behind it; the overlay just stops blocking clicks.
+ */
+const NAV_OVERLAY_MAX_MS = 15_000;
+
 function DocNavOverlayController() {
   const pathname = usePathname() ?? "";
   const ctx = useContext(NavigationLockContext);
@@ -129,10 +136,40 @@ function DocNavOverlayController() {
       const href = a.getAttribute("href") ?? "";
       const kind = href.startsWith("/doc/") ? "doc" : href.startsWith("/project/") ? "project" : null;
       if (!kind) return null;
-      // Avoid flashing an overlay when clicking a link to the current route.
-      if (href === pathname) return null;
+      // Avoid flashing an overlay when clicking a link to the current route. Compared without the
+      // hash and query: the overlay is released by a pathname change, and a link to the same page
+      // plus `#v-3` (the History chips) changes no pathname, so it never released. The page sat
+      // behind an opaque overlay with every click swallowed until a hard reload.
+      if (navPathOf(href) === pathname) return null;
       return { href, kind };
     }
+
+    // Fallbacks for the cases where no pathname change is coming: a hash-only navigation, going
+    // back from a navigation that was cancelled, or a route that simply never resolves. Without
+    // them the only exit was a hard reload.
+    const release = () => {
+      hideSwitchingOverlay(DOC_NAV_OVERLAY_ID);
+      hideSwitchingOverlay(PROJECT_NAV_OVERLAY_ID);
+      if (releaseRef.current) {
+        try {
+          releaseRef.current();
+        } finally {
+          releaseRef.current = null;
+        }
+      }
+    };
+    let releaseTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const show = (hit: { href: string; kind: "doc" | "project" }) => {
+      showSwitchingOverlay({
+        id: hit.kind === "doc" ? DOC_NAV_OVERLAY_ID : PROJECT_NAV_OVERLAY_ID,
+        title: hit.kind === "doc" ? "Loading document…" : "Loading project…",
+        subtitle: "Just a moment.",
+      });
+      if (!releaseRef.current) releaseRef.current = ctx.acquire();
+      if (releaseTimer) clearTimeout(releaseTimer);
+      releaseTimer = setTimeout(release, NAV_OVERLAY_MAX_MS);
+    };
 
     const onClickCapture = (e: MouseEvent) => {
       // Left-click only.
@@ -140,31 +177,26 @@ function DocNavOverlayController() {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
       const hit = shouldTriggerForTarget(e.target);
       if (!hit) return;
-      showSwitchingOverlay({
-        id: hit.kind === "doc" ? DOC_NAV_OVERLAY_ID : PROJECT_NAV_OVERLAY_ID,
-        title: hit.kind === "doc" ? "Loading document…" : "Loading project…",
-        subtitle: "Just a moment.",
-      });
-      if (!releaseRef.current) releaseRef.current = ctx.acquire();
+      show(hit);
     };
 
     const onKeyDownCapture = (e: KeyboardEvent) => {
       if (e.key !== "Enter" && e.key !== " ") return;
       const hit = shouldTriggerForTarget(e.target);
       if (!hit) return;
-      showSwitchingOverlay({
-        id: hit.kind === "doc" ? DOC_NAV_OVERLAY_ID : PROJECT_NAV_OVERLAY_ID,
-        title: hit.kind === "doc" ? "Loading document…" : "Loading project…",
-        subtitle: "Just a moment.",
-      });
-      if (!releaseRef.current) releaseRef.current = ctx.acquire();
+      show(hit);
     };
 
     document.addEventListener("click", onClickCapture, true);
     document.addEventListener("keydown", onKeyDownCapture, true);
+    window.addEventListener("hashchange", release);
+    window.addEventListener("popstate", release);
     return () => {
       document.removeEventListener("click", onClickCapture, true);
       document.removeEventListener("keydown", onKeyDownCapture, true);
+      window.removeEventListener("hashchange", release);
+      window.removeEventListener("popstate", release);
+      if (releaseTimer) clearTimeout(releaseTimer);
     };
   }, [ctx, pathname]);
 
