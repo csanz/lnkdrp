@@ -19,8 +19,8 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/(app)/doc/[docId]/metrics/viewer/[viewerKey]/page.tsx` — `/doc/:docId/metrics/viewer/:viewerKey` · default, dynamic, metadata, runtime
 - `src/app/(app)/doc/[docId]/page.tsx` — `/doc/:docId` · default
 - `src/app/(app)/doc/[docId]/review/page.tsx` — `/doc/:docId/review` · default
-- `src/app/(app)/integrations/page.tsx` — `/integrations` · default, metadata
-- `src/app/(app)/integrations/slack/page.tsx` — `/integrations/slack` · default, metadata
+- `src/app/(app)/integrations/page.tsx` — `/integrations` · default, dynamic, metadata
+- `src/app/(app)/integrations/slack/page.tsx` — `/integrations/slack` · default, dynamic, metadata
 - `src/app/(app)/layout.tsx` · default
 - `src/app/(app)/metrics/page.tsx` — `/metrics` · default, metadata
 - `src/app/(app)/project/[projectSlug]/links/page.tsx` — `/project/:projectSlug/links` · default
@@ -313,7 +313,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/(app)/doc/[docId]/review/pageClient.tsx` · default
 - `src/app/(app)/integrations/pageClient.tsx` · default
 - `src/app/(app)/integrations/slack/pageClient.tsx` · default
-- `src/app/(app)/integrations/slack/slackShared.tsx` · SlackMark, SlackState, slackStatusLine, useSlackConnections
+- `src/app/(app)/integrations/slack/slackShared.tsx` · SlackMark, slackStatusLine, useSlackConnections
 - `src/app/(app)/metrics/pageClient.tsx` · default
 - `src/app/(app)/project/[projectSlug]/links/pageClient.tsx` · default
 - `src/app/(app)/project/[projectSlug]/metrics/pageClient.tsx` · default, MetricsHeaderPlaceholder
@@ -830,7 +830,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/sharePassword.ts` · decryptSharePassword, encryptSharePassword, hashSharePassword, shareAuthCookieName, shareAuthCookieValue, verifySharePassword
 - `src/lib/sidebarCache.ts` · ACTIVE_ORG_CHANGED_EVENT, ACTIVE_ORG_STORAGE_KEY, clearSidebarCache, DOC_LEAVING_EVENT, DocLeavingDetail, DOCS_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocLeaving, …
 - `src/lib/slack/config.ts` · SLACK_AUTH_REVOKE_URL, SLACK_CALLBACK_PATH, SLACK_OAUTH_ACCESS_URL, SLACK_OAUTH_AUTHORIZE_URL, SLACK_SCOPE, slackAppConfig, SlackAppConfig, slackEnabled, …
-- `src/lib/slack/connections.ts` · listSlackConnections, postThroughConnection, serializeSlackConnection, SLACK_EVENT_KEYS, SlackConnectionDto, SlackEventKey
+- `src/lib/slack/connections.ts` · listSlackConnections, postThroughConnection, serializeSlackConnection, SLACK_EVENT_KEYS, SlackConnectionDto, SlackEventKey, SlackState
 - `src/lib/slack/crypto.ts` · decryptSlackSecret, encryptSlackSecret, signSlackPayload, verifySlackSignature
 - `src/lib/slack/messages.ts` · mrkdwn, realLinkLabel, renderSlackEvent, slackBurstMessage, slackTestMessage
 - `src/lib/slack/outbox.ts` · DrainResult, drainSlackOutbox, EnqueueSlackInput, enqueueSlackPosts, SlackOutboxEvent

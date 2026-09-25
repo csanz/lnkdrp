@@ -8,22 +8,28 @@ import { useCallback, useEffect, useState } from "react";
 
 import { readPageCache, writePageCache } from "@/lib/client/pageCache";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
-import type { SlackConnectionDto } from "@/lib/slack/connections";
+import type { SlackState } from "@/lib/slack/connections";
 
-export type SlackState = { enabled: boolean; connections: SlackConnectionDto[] };
+export type { SlackState } from "@/lib/slack/connections";
 
 const CACHE_KEY = "integrations:slack";
 
 /**
- * The workspace's Slack state. Paints the last answer this tab saw at once (`pageCache`, per
- * workspace) and refreshes underneath, so coming back to the page never redraws "not connected"
- * for a channel that was on screen a moment ago. On a full reload nothing is known yet, and
- * `data` stays `null` until the answer lands: callers must not claim a state before then.
+ * The workspace's Slack state. Starts from `initial` when the page resolved it on the server
+ * (`slackStateForPage`), so the first paint is already right; else from the last answer this
+ * tab saw for the workspace (`pageCache`); and refreshes underneath either way. Only with
+ * neither is `data` null, and callers must not claim a state before it lands.
  */
-export function useSlackConnections(): { data: SlackState | null; error: string | null; loading: boolean; refresh: () => Promise<void>; setData: (next: SlackState) => void } {
-  const [data, setDataState] = useState<SlackState | null>(() => readPageCache<SlackState>(CACHE_KEY));
+export function useSlackConnections(initial: SlackState | null = null): { data: SlackState | null; error: string | null; loading: boolean; refresh: () => Promise<void>; setData: (next: SlackState) => void } {
+  const [data, setDataState] = useState<SlackState | null>(() => {
+    if (initial) {
+      writePageCache(CACHE_KEY, initial);
+      return initial;
+    }
+    return readPageCache<SlackState>(CACHE_KEY);
+  });
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initial);
   const setData = useCallback((next: SlackState) => {
     writePageCache(CACHE_KEY, next);
     setDataState(next);

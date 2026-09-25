@@ -11,10 +11,10 @@ import Link from "next/link";
 import { PuzzlePieceIcon } from "@heroicons/react/24/outline";
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
-import { SlackMark, useSlackConnections, slackStatusLine } from "./slack/slackShared";
+import { SlackMark, useSlackConnections, slackStatusLine, type SlackState } from "./slack/slackShared";
 
-export default function IntegrationsPageClient() {
-  const slack = useSlackConnections();
+export default function IntegrationsPageClient({ initialSlack }: { initialSlack: SlackState | null }) {
+  const slack = useSlackConnections(initialSlack);
   const status = slackStatusLine(slack);
 
   const integrations = [

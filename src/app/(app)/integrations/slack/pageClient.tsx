@@ -16,7 +16,7 @@ import { useCallback, useEffect, useState } from "react";
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import { usePlan } from "@/lib/client/usePlan";
 import type { SlackConnectionDto, SlackEventKey } from "@/lib/slack/connections";
-import { SlackMark, useSlackConnections } from "./slackShared";
+import { SlackMark, useSlackConnections, type SlackState } from "./slackShared";
 
 const EVENT_COPY: Record<SlackEventKey, { title: string; body: string }> = {
   views: { title: "Opens", body: "The first time a recipient opens a share link." },
@@ -60,11 +60,11 @@ const BTN_PRIMARY =
 const BTN_SECONDARY =
   "inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
 
-export default function SlackPageClient() {
+export default function SlackPageClient({ initialSlack = null }: { initialSlack?: SlackState | null }) {
   const params = useSearchParams();
   const landed = params.get("slack");
   const reason = params.get("reason") ?? "";
-  const { data, error, loading, refresh, setData } = useSlackConnections();
+  const { data, error, loading, refresh, setData } = useSlackConnections(initialSlack);
   const { plan } = usePlan();
   const canManage = plan?.role === "owner" || plan?.role === "admin";
   const [busy, setBusy] = useState<string | null>(null);

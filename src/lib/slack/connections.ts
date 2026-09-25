@@ -11,6 +11,9 @@ export type SlackEventKey = "views" | "briefs" | "docUpdates" | "requests";
 export const SLACK_EVENT_KEYS: readonly SlackEventKey[] = ["views", "briefs", "docUpdates", "requests"];
 
 /** What a member may see about a connection. No URL, no team id. */
+/** What the integrations pages render: whether Slack is configured on this deployment, and the workspace's connections. */
+export type SlackState = { enabled: boolean; connections: SlackConnectionDto[] };
+
 export type SlackConnectionDto = {
   id: string;
   teamName: string;

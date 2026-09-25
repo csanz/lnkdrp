@@ -6,10 +6,14 @@
  */
 import type { Metadata } from "next";
 
+import { slackStateForPage } from "@/lib/slack/pageState";
 import IntegrationsPageClient from "./pageClient";
 
 export const metadata: Metadata = { title: "Integrations" };
+export const dynamic = "force-dynamic";
 
-export default function IntegrationsPage() {
-  return <IntegrationsPageClient />;
+export default async function IntegrationsPage() {
+  // Resolved here so the first paint already says Manage or Set up; see `slackStateForPage`.
+  const initialSlack = await slackStateForPage();
+  return <IntegrationsPageClient initialSlack={initialSlack} />;
 }
