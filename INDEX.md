@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 942 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 943 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -834,6 +834,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/slack/crypto.ts` · decryptSlackSecret, encryptSlackSecret, signSlackPayload, verifySlackSignature
 - `src/lib/slack/messages.ts` · mrkdwn, realLinkLabel, renderSlackEvent, slackBurstMessage, slackTestMessage
 - `src/lib/slack/outbox.ts` · DrainResult, drainSlackOutbox, EnqueueSlackInput, enqueueSlackPosts, SlackOutboxEvent
+- `src/lib/slack/pageState.ts` · slackStateForPage
 - `src/lib/slack/post.ts` · postToSlackWebhook, SLACK_POST_TIMEOUT_MS, SlackMessage, SlackPostOutcome
 - `src/lib/slack/routing.ts` · burstAllowance, RoutableConnection, routeSlackConnections, SLACK_BURST_PER_MINUTE, SLACK_BURST_WINDOW_MS
 - `src/lib/slack/state.ts` · createSlackInstallState, SLACK_STATE_TTL_MS, SlackInstallState, verifySlackInstallState
