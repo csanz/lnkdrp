@@ -14,7 +14,7 @@
  */
 import { describe, expect, test } from "vitest";
 
-import { jsonForScript } from "@/app/org/switch/route";
+import { jsonForScript } from "@/lib/http/jsonForScript";
 
 /** What a browser's JS parser would hand back, once the element has been parsed as script. */
 function asJsWouldSee(escaped: string): unknown {

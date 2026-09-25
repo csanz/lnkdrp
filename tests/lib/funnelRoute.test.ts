@@ -20,7 +20,8 @@ vi.mock("@/lib/http/rateLimit", () => ({
 }));
 vi.mock("@/lib/activity/log", () => ({ recordActivity: mocks.recordActivity }));
 
-import { parseFunnelBody, POST } from "@/app/api/funnel/route";
+import { POST } from "@/app/api/funnel/route";
+import { parseFunnelBody } from "@/lib/funnel/body";
 
 const ORG_ID = "66f0a2b3c4d5e6f7a8b9c0d1";
 const USER_ID = "66f0a2b3c4d5e6f7a8b9c0d2";

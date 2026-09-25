@@ -19,9 +19,9 @@ import { dateIdCursorClause, decodeDateIdCursor, encodeDateIdCursor, parseLimit 
 export const runtime = "nodejs";
 
 /** Rows per page when the caller does not say. */
-export const DEFAULT_LIMIT = 100;
+const DEFAULT_LIMIT = 100;
 /** The most rows one page may carry. */
-export const MAX_LIMIT = 500;
+const MAX_LIMIT = 500;
 
 /** One page of a document's share views. */
 export async function GET(

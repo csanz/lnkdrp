@@ -33,6 +33,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { UserModel } from "@/lib/models/User";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
@@ -72,7 +73,7 @@ function decodeCursor(raw: string | null): Cursor | null {
  * `since` as a Date: a relative window (`24h`, `7d`, `this_week`, `this_month`) or an ISO date.
  * Invalid input answers null so the caller can 400 rather than silently list everything.
  */
-export function parseSince(raw: string | null, now: Date = new Date()): { since: Date | null; invalid: boolean } {
+function parseSince(raw: string | null, now: Date = new Date()): { since: Date | null; invalid: boolean } {
   const s = (raw ?? "").trim().toLowerCase();
   if (!s) return { since: null, invalid: false };
   const rel = /^(\d{1,4})\s*(h|d)$/.exec(s);
@@ -116,11 +117,14 @@ export async function GET(request: Request) {
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
 
-    // The workspace's live documents, which is what "the workspace's history" means here.
-    const docFilter: Record<string, unknown> = allowLegacyByUserId
-      ? { isDeleted: { $ne: true }, ...workspaceListableDocFilter(), $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] }
-      : { orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter() };
-    if (docIdRaw) docFilter._id = new Types.ObjectId(docIdRaw);
+    // The workspace's live documents, which is what "the workspace's history" means here. With
+    // `?docId=` it is one document instead, and that is the shared by-id match (plus the same
+    // visibility rule the listing applies) rather than the listing filter with an `_id` bolted on.
+    const docFilter: Record<string, unknown> = docIdRaw
+      ? { ...buildDocMatch(new Types.ObjectId(docIdRaw), orgId, legacyUserId, allowLegacyByUserId), ...workspaceListableDocFilter() }
+      : allowLegacyByUserId
+        ? { isDeleted: { $ne: true }, ...workspaceListableDocFilter(), $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] }
+        : { orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter() };
     const docs = (await DocModel.find(docFilter)
       .select({ _id: 1, title: 1, shareId: 1, updatedDate: 1 })
       .sort({ updatedDate: -1 })

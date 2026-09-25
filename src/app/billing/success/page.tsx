@@ -17,9 +17,9 @@ import SuccessClient from "./successClient";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-export default async function BillingSuccessPage(props: { searchParams?: Promise<SearchParams> | SearchParams }) {
-  // Next.js (App Router) provides `searchParams` as an async value in newer versions.
-  // Unwrap it before reading properties to avoid the "sync dynamic APIs" warning.
+export default async function BillingSuccessPage(props: { searchParams?: Promise<SearchParams> }) {
+  // Next 15+ hands `searchParams` over as a promise, and the production build's page type check
+  // refuses a union with the plain object (the old accepted-either signature failed `next build`).
   const sp = (await props.searchParams) ?? {};
 
   const raw = sp.session_id;
