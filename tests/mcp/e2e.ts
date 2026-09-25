@@ -947,6 +947,12 @@ async function main(): Promise<void> {
         (refused as ToolCallError).code === "forbidden",
         `expected code forbidden, got ${(refused as ToolCallError).code}`,
       );
+      // The refusal names "a connected agent", not "an API key": the same guard answers an OAuth
+      // agent, and the old wording blamed a credential the caller was not using.
+      assert(
+        /connected agent/.test((refused as ToolCallError).message),
+        `refusal should name a connected agent, got: ${(refused as ToolCallError).message}`,
+      );
 
       const ok = await callTool<{ matches: boolean }>(live, "lnkdrp_verify_share_password", {
         docId: shared.docId,
