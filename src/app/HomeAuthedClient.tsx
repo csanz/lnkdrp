@@ -162,6 +162,13 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
     }
 
     setUrlBusy(true);
+    /**
+     * The document is created before the link is fetched (the import route attaches bytes to an
+     * existing upload), so a bad link used to leave an "Untitled document" behind every time. On
+     * any failure after creation the document is deleted again (code review 2026-09-23, M31). A
+     * tab closed mid-fetch still leaves one; only creating after the fetch would close that.
+     */
+    let createdDocId: string | null = null;
     try {
       // Ensure the "Fetching…" UI renders immediately before we do any async work.
       await waitForNextPaint();
@@ -170,6 +177,7 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
       // For URL uploads, don't name the doc from the URL path (e.g. ".../view" → "view").
       // Start with a neutral placeholder; the processing pipeline will rename using AI `docName`.
       const docId = await apiCreateDoc({ title: "Untitled document" });
+      createdDocId = docId;
       const upload = await apiCreateUpload({
         docId,
         originalFileName: inferredName,
@@ -191,8 +199,12 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
       // Trigger processing (async background job).
       await fetchWithTempUser(`/api/uploads/${encodeURIComponent(upload.id)}/process`, { method: "POST" });
 
+      createdDocId = null;
       router.push(`/doc/${encodeURIComponent(docId)}`);
     } catch (e) {
+      if (createdDocId) {
+        await fetchWithTempUser(`/api/docs/${encodeURIComponent(createdDocId)}`, { method: "DELETE" }).catch(() => undefined);
+      }
       if (e instanceof PlanLimitClientError) {
         openUpgrade("documents", {
           used: e.planLimit.used,

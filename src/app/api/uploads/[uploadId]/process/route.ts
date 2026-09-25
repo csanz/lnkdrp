@@ -47,6 +47,7 @@ import { agentFromRequest, recordActivity } from "@/lib/activity/log";
 import { agentSummaryToAnalysis, readStoredAgentSummary } from "@/lib/ai/agentSummary";
 import { findRaiseAmount, resolveAsk } from "@/lib/ai/askFromText";
 import { INTERNAL_PROCESS_HEADER, verifyInternalProcessToken } from "@/lib/uploads/internalProcess";
+import { restoreDocToLastGood } from "@/lib/uploads/restoreDocAfterFailure";
 import { secretProcessableFilter } from "@/lib/uploads/secretAuth";
 import { createUploadProgressReporter } from "@/lib/uploads/progressWriter";
 import { forbidWaitlisted } from "@/lib/gating/waitlist";
@@ -135,9 +136,18 @@ async function updateDocUnlessSuperseded(
   const newer = await UploadModel.find({ docId, version: { $gt: version }, isDeleted: { $ne: true } })
     .select({ _id: 1 })
     .lean();
-  const res = await DocModel.updateOne({ _id: docId, currentUploadId: { $nin: newer.map((u) => u._id) } }, update);
+  // A deleted document is not written either: the job used to flip one back to `ready` and
+  // email every member about a version of something that no longer exists (review M7).
+  const res = await DocModel.updateOne(
+    { _id: docId, isDeleted: { $ne: true }, currentUploadId: { $nin: newer.map((u) => u._id) } },
+    update,
+  );
   if (res.matchedCount === 0) {
-    debugLog(1, "[process] doc write skipped: a newer upload is current", { docId: String(docId), uploadId: String(upload._id), version });
+    debugLog(1, "[process] doc write skipped: document deleted or a newer upload is current", {
+      docId: String(docId),
+      uploadId: String(upload._id),
+      version,
+    });
     return false;
   }
   return true;
@@ -1223,7 +1233,29 @@ export async function POST(
           ? Boolean((existingDoc as unknown as { isDeleted?: unknown }).isDeleted)
           : false;
 
-      const allProjects = await ProjectModel.find({ userId: new Types.ObjectId(actor.userId) })
+      /**
+       * A deleted document gets no processing: no credits reserved, no `ready`, no emails. The
+       * flag was computed here and never read (review M7), so a replacement queued just before a
+       * delete, or a job retried after one, billed the workspace and announced a version of a
+       * document nobody could open. The upload is failed so nothing retries it.
+       */
+      if (existingDocIsDeleted) {
+        debugLog(1, "[process] document deleted; not processing", { traceId, uploadId, docId: String(docId) });
+        await UploadModel.findByIdAndUpdate(uploadId, {
+          status: "failed",
+          error: { message: "Document was deleted before processing ran" },
+        });
+        await progress.report("failed", { force: true });
+        return;
+      }
+
+      /**
+       * Projects of the document's workspace only. This was `{ userId }` alone, so a person in
+       * three workspaces had every project of all three offered to the routing model and, with
+       * `autoAddFiles`, written into `projectIds`: a document in workspace A filed into a project
+       * of workspace B, which `PATCH /api/docs/:id` refuses to do by hand (review M6).
+       */
+      const allProjects = await ProjectModel.find({ orgId: existingDocOrgId, isDeleted: { $ne: true } })
         .select({ _id: 1, name: 1, description: 1, autoAddFiles: 1 })
         .sort({ updatedDate: -1 })
         .limit(250)
@@ -1248,10 +1280,12 @@ export async function POST(
           status: "failed",
           error: { message: "Missing blobUrl" },
         });
-        // IMPORTANT: for replacement uploads, do not mark the existing doc as failed.
-        // A failed replacement must not overwrite the last good version.
+        // A first version fails the document; a failed replacement puts it back on its last good
+        // version instead of leaving it in `preparing` pointing at this upload (review M5).
         if (!isReplacement) {
           await updateDocUnlessSuperseded(docId, upload, { status: "failed" });
+        } else {
+          await restoreDocToLastGood({ docId, failedUploadId: uploadId });
         }
         return;
       }
@@ -1495,7 +1529,7 @@ export async function POST(
             if (finalProjectIdsForReview.length) {
               const reqProject = await ProjectModel.findOne({
                 _id: { $in: finalProjectIdsForReview },
-                userId: new Types.ObjectId(actor.userId),
+                orgId: existingDocOrgId,
                 $or: [
                   { isRequest: true },
                   { requestUploadToken: { $exists: true, $nin: [null, ""] } },
@@ -1858,6 +1892,8 @@ export async function POST(
         });
         if (!isReplacement) {
           await updateDocUnlessSuperseded(docId, upload, { status: "failed" });
+        } else {
+          await restoreDocToLastGood({ docId, failedUploadId: uploadId });
         }
         return;
       }
@@ -2873,7 +2909,7 @@ export async function POST(
       if (finalProjectIdsForReview.length) {
         const reqProject = await ProjectModel.findOne({
           _id: { $in: finalProjectIdsForReview },
-          userId: new Types.ObjectId(actor.userId),
+          orgId: existingDocOrgId,
           $or: [
             { isRequest: true },
             { requestUploadToken: { $exists: true, $nin: [null, ""] } },
@@ -3030,6 +3066,10 @@ export async function POST(
       let docWriteLanded = false;
       if (!isReplacement || !failed) {
         docWriteLanded = await updateDocUnlessSuperseded(docId, upload, docUpdate);
+      } else {
+        // The replacement did not produce a usable version: hand the document back to the one
+        // it had, rather than leaving it in `preparing` behind this failed upload (review M5).
+        await restoreDocToLastGood({ docId, failedUploadId: uploadId });
       }
 
       // Last frame of the run: forced past the throttle so the bar always finishes, rather than
@@ -3309,6 +3349,12 @@ export async function POST(
         // The reporter built inside the try is out of scope here, so this one resolves the
         // workspace itself.
         await createUploadProgressReporter({ uploadId }).report("failed", { force: true });
+        // And the document: a crashed first version fails it, a crashed replacement goes back to
+        // the last good version (review M5). `restoreDocToLastGood` only moves a document still
+        // pointing at this upload, so a first version (whose document also points here) with no
+        // completed upload lands on `failed`, and a superseded one is left alone.
+        const crashed = await UploadModel.findById(uploadId).select({ docId: 1 }).lean();
+        if (crashed?.docId) await restoreDocToLastGood({ docId: crashed.docId, failedUploadId: uploadId });
       } catch {
         // ignore
       }

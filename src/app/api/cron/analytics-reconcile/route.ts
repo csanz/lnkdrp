@@ -17,7 +17,7 @@
 import { NextResponse } from "next/server";
 
 import { connectMongo } from "@/lib/mongodb";
-import { CronHealthModel } from "@/lib/models/CronHealth";
+import { writeCronHealth } from "@/lib/cron/health";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { reconcileShareLinkCounters } from "@/lib/analytics/reconcileLinkCounters";
@@ -126,11 +126,7 @@ async function handle(request: Request) {
 
   try {
     await connectMongo();
-    await CronHealthModel.updateOne(
-      { jobKey },
-      { $set: { status: "running", lastStartedAt: startedAt, lastRunAt: startedAt, lastParams: { dryRun }, lastError: null } },
-      { upsert: true },
-    );
+    await writeCronHealth(jobKey, { status: "running", lastStartedAt: startedAt, lastRunAt: startedAt, lastParams: { dryRun }, lastError: null }, { dryRun });
   } catch {
     // ignore
   }
@@ -148,21 +144,19 @@ async function handle(request: Request) {
 
     const finishedAt = new Date();
     try {
-      await CronHealthModel.updateOne(
-        { jobKey },
+      await writeCronHealth(
+        jobKey,
         {
-          $set: {
-            status: pageTimeOverruns.length ? "error" : "ok",
-            lastFinishedAt: finishedAt,
-            lastRunAt: finishedAt,
-            lastDurationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
-            lastResult: result,
-            ...(pageTimeOverruns.length
-              ? { lastErrorAt: finishedAt, lastError: `${pageTimeOverruns.length} row(s) report more page time than total time` }
-              : {}),
-          },
+          status: pageTimeOverruns.length ? "error" : "ok",
+          lastFinishedAt: finishedAt,
+          lastRunAt: finishedAt,
+          lastDurationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
+          lastResult: result,
+          ...(pageTimeOverruns.length
+            ? { lastErrorAt: finishedAt, lastError: `${pageTimeOverruns.length} row(s) report more page time than total time` }
+            : {}),
         },
-        { upsert: true },
+        { dryRun },
       );
     } catch {
       // ignore
@@ -183,19 +177,17 @@ async function handle(request: Request) {
     });
     try {
       await connectMongo();
-      await CronHealthModel.updateOne(
-        { jobKey },
+      await writeCronHealth(
+        jobKey,
         {
-          $set: {
-            status: "error",
-            lastFinishedAt: finishedAt,
-            lastRunAt: finishedAt,
-            lastDurationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
-            lastErrorAt: finishedAt,
-            lastError: message,
-          },
+          status: "error",
+          lastFinishedAt: finishedAt,
+          lastRunAt: finishedAt,
+          lastDurationMs: Math.max(0, finishedAt.getTime() - startedAt.getTime()),
+          lastErrorAt: finishedAt,
+          lastError: message,
         },
-        { upsert: true },
+        { dryRun },
       );
     } catch {
       // ignore

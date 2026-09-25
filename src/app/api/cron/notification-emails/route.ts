@@ -14,7 +14,7 @@
  */
 import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
-import { CronHealthModel } from "@/lib/models/CronHealth";
+import { writeCronHealth } from "@/lib/cron/health";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
 import { sendNotificationEmails } from "@/lib/notifications/sendNotificationEmails";
 import { drainSlackOutbox } from "@/lib/slack/outbox";
@@ -59,18 +59,16 @@ async function handle(request: Request) {
 
   try {
     await connectMongo();
-    await CronHealthModel.updateOne(
-      { jobKey },
+    await writeCronHealth(
+      jobKey,
       {
-        $set: {
-          status: "running",
-          lastStartedAt: startedAt,
-          lastRunAt: startedAt,
-          lastParams: { dryRun, forceDigest, workspaceId, userId, limitMembers, limitEventsPerMember },
-          lastError: null,
-        },
+        status: "running",
+        lastStartedAt: startedAt,
+        lastRunAt: startedAt,
+        lastParams: { dryRun, forceDigest, workspaceId, userId, limitMembers, limitEventsPerMember },
+        lastError: null,
       },
-      { upsert: true },
+      { dryRun },
     );
   } catch {
     // ignore
@@ -114,23 +112,21 @@ async function handle(request: Request) {
 
     try {
       await connectMongo();
-      await CronHealthModel.updateOne(
-        { jobKey },
+      await writeCronHealth(
+        jobKey,
         {
-          $set: {
-            status: problems.length ? "error" : "ok",
-            lastFinishedAt: finishedAt,
-            lastRunAt: finishedAt,
-            lastDurationMs: durationMs,
-            lastResult: { ...result, slack },
-            ...(problems.length
-              ? { lastErrorAt: finishedAt, lastError: problems.join("; ") }
-              : {}),
-            // Retryable failures are worth seeing without being worth an alarm.
-            ...(failures > 0 && !problems.length ? { lastError: `${failures} send(s) failed and will retry` } : {}),
-          },
+          status: problems.length ? "error" : "ok",
+          lastFinishedAt: finishedAt,
+          lastRunAt: finishedAt,
+          lastDurationMs: durationMs,
+          lastResult: { ...result, slack },
+          ...(problems.length
+            ? { lastErrorAt: finishedAt, lastError: problems.join("; ") }
+            : {}),
+          // Retryable failures are worth seeing without being worth an alarm.
+          ...(failures > 0 && !problems.length ? { lastError: `${failures} send(s) failed and will retry` } : {}),
         },
-        { upsert: true },
+        { dryRun },
       );
     } catch {
       // ignore
@@ -154,19 +150,17 @@ async function handle(request: Request) {
 
     try {
       await connectMongo();
-      await CronHealthModel.updateOne(
-        { jobKey },
+      await writeCronHealth(
+        jobKey,
         {
-          $set: {
-            status: "error",
-            lastFinishedAt: finishedAt,
-            lastRunAt: finishedAt,
-            lastDurationMs: durationMs,
-            lastErrorAt: finishedAt,
-            lastError: message,
-          },
+          status: "error",
+          lastFinishedAt: finishedAt,
+          lastRunAt: finishedAt,
+          lastDurationMs: durationMs,
+          lastErrorAt: finishedAt,
+          lastError: message,
         },
-        { upsert: true },
+        { dryRun },
       );
     } catch {
       // ignore

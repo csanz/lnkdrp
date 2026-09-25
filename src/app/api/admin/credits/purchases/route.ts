@@ -17,12 +17,12 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { OrgModel } from "@/lib/models/Org";
-import { SubscriptionModel } from "@/lib/models/Subscription";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { CreditPurchaseModel } from "@/lib/models/CreditPurchase";
 import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
-import { buildCycleKey } from "@/lib/credits/grants";
+import { cycleKeyForUsage, usageCycleStart } from "@/lib/credits/cycleKey";
+import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { asNumber, isPurchasePastExpiry } from "@/lib/admin/creditsAdmin";
 
 export const runtime = "nodejs";
@@ -110,18 +110,20 @@ export async function GET(request: Request) {
     ]),
   ]);
 
-  // Scoped to one workspace, the exact cycle total is a unique-index hit on UsageAggCycle. It needs
-  // the cycleKey, which only exists once Stripe has opened a billing cycle for the workspace.
+  // Scoped to one workspace, the exact cycle total is a unique-index hit on UsageAggCycle. The
+  // key is the *usage* key (`cycleKeyForUsage`: workspace id + the balance row's period start, or
+  // the UTC month when there is no Stripe period), which is what the charging path files rows
+  // under. This used to build the *grant* key (`buildCycleKey`, Stripe subscription id + unix
+  // start) and so never matched a row: every workspace's cycle total read 0 here.
   let cycle: { cycleKey: string; onDemandUsedCredits: number; totalUsedCredits: number } | null = null;
   let cycleUnavailableReason: string | null = null;
   if (orgId) {
-    const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-      .select({ stripeSubscriptionId: 1, currentPeriodStart: 1 })
+    const balance = await WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
+      .select({ currentPeriodStart: 1 })
       .lean();
-    const stripeSubscriptionId = typeof sub?.stripeSubscriptionId === "string" ? sub.stripeSubscriptionId : null;
-    const currentPeriodStart = sub?.currentPeriodStart instanceof Date ? sub.currentPeriodStart : null;
-    if (stripeSubscriptionId && currentPeriodStart) {
-      const cycleKey = buildCycleKey({ stripeSubscriptionId, currentPeriodStart });
+    if (balance) {
+      const cycleStart = usageCycleStart(balance.currentPeriodStart ?? null);
+      const cycleKey = cycleKeyForUsage({ workspaceId: String(orgId), cycleStart });
       const agg = await UsageAggCycleModel.findOne({ workspaceId: orgId, cycleKey })
         .select({ onDemandUsedCredits: 1, totalUsedCredits: 1 })
         .lean();
@@ -131,7 +133,7 @@ export async function GET(request: Request) {
         totalUsedCredits: asNumber(agg?.totalUsedCredits),
       };
     } else {
-      cycleUnavailableReason = "no Stripe billing cycle on this workspace (no subscription period recorded)";
+      cycleUnavailableReason = "no credit balance row on this workspace yet (it has never run an AI action)";
     }
   }
 

@@ -18,6 +18,7 @@ import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse, type LimitCheck, type PlanLimitBlocked } from "@/lib/billing/planLimits";
 import { ensureDefaultLink, setAllLinksEnabled, syncDocShareState, updateShareLink } from "@/lib/share/links";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { restoreDocToLastGood } from "@/lib/uploads/restoreDocAfterFailure";
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
 import { enqueueSlackPosts } from "@/lib/slack/outbox";
 
@@ -569,36 +570,34 @@ export async function GET(
      * row while the browser streams it to blob storage, so a short timeout would kill live work.
      */
     const stuckUpload = (lite ? uploadLite : upload) as any;
-    if (
-      docLean.status === "preparing" &&
+    const neverStarted =
       stuckUpload &&
       stuckUpload.status === "uploading" &&
       !stuckUpload.blobUrl &&
       stuckUpload.createdDate instanceof Date &&
-      Date.now() - stuckUpload.createdDate.getTime() > STALE_UPLOAD_MS
-    ) {
-      const lastGood = (await UploadModel.findOne({ docId: docLean._id, status: "completed" })
-        .sort({ version: -1 })
-        .select({ _id: 1, blobUrl: 1, previewImageUrl: 1, firstPagePngUrl: 1 })
-        .lean()) as any;
-      const nextStatus = lastGood ? "ready" : "draft";
+      Date.now() - stuckUpload.createdDate.getTime() > STALE_UPLOAD_MS;
+    // The other way a document sticks in `preparing`: its current upload failed while it was a
+    // replacement, before the processing job restored documents itself (review M5). Rows from
+    // before that fix are still out there; this repairs them on the next read.
+    const failedInPlace = stuckUpload && stuckUpload.status === "failed";
+    if (docLean.status === "preparing" && (neverStarted || failedInPlace)) {
+      if (neverStarted) {
+        await UploadModel.updateOne({ _id: stuckUpload._id, status: "uploading" }, { $set: { status: "failed" } });
+      }
+      const restored = await restoreDocToLastGood({
+        docId: docLean._id,
+        failedUploadId: stuckUpload._id,
+        noVersionStatus: "draft",
+      });
+      const lastGood = restored.restoredTo
+        ? ((await UploadModel.findById(restored.restoredTo)
+            .select({ _id: 1, blobUrl: 1, previewImageUrl: 1, firstPagePngUrl: 1 })
+            .lean()) as any)
+        : null;
       const nextPreview = lastGood?.previewImageUrl ?? lastGood?.firstPagePngUrl ?? docLean.previewImageUrl ?? docLean.firstPagePngUrl ?? null;
 
-      await UploadModel.updateOne({ _id: stuckUpload._id, status: "uploading" }, { $set: { status: "failed" } });
-      await DocModel.updateOne(
-        { ...docMatch },
-        {
-          $set: {
-            status: nextStatus,
-            ...(lastGood ? { currentUploadId: lastGood._id, uploadId: lastGood._id, blobUrl: lastGood.blobUrl ?? docLean.blobUrl ?? null } : {}),
-            previewImageUrl: nextPreview,
-            firstPagePngUrl: nextPreview,
-          },
-        },
-      );
-
       // Same snapshot fix-up the completed-upload repair does, so this response is already correct.
-      docLean.status = nextStatus;
+      docLean.status = restored.status;
       if (lastGood) {
         (docLean as any).currentUploadId = lastGood._id;
         (docLean as any).uploadId = lastGood._id;

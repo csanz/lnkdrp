@@ -1,4 +1,5 @@
 import type { ActionType, CreditBucket, LedgerStatus, QualityTier } from "@/lib/credits/types";
+import { cycleKeyForUsage, startOfUtcMonth, usageCycleStart } from "./cycleKey";
 import { creditsForRun } from "@/lib/credits/schedule";
 import type { CreditStore, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
@@ -29,18 +30,9 @@ function startOfUtcDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
 }
 
-function startOfUtcMonth(d: Date): Date {
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
-}
-
 function utcDayKey(d: Date): string {
   // YYYY-MM-DD
   return d.toISOString().slice(0, 10);
-}
-
-function cycleKeyForUsage(params: { workspaceId: string; cycleStart: Date }): string {
-  // Stable per-workspace per-cycle key. (Does not rely on Stripe ids.)
-  return `${params.workspaceId}:${params.cycleStart.toISOString()}`;
 }
 
 function clampNonNegInt(n: number): number {
@@ -143,7 +135,7 @@ export function createCreditService(store: CreditStore) {
         nextBalance.subscriptionCreditsRemaining = 0;
       }
 
-      const cycleStart = nextBalance.currentPeriodStart ?? startOfUtcMonth(now);
+      const cycleStart = usageCycleStart(nextBalance.currentPeriodStart, now);
       const cycleEnd = nextBalance.currentPeriodEnd ?? null;
       const cycleKey = cycleKeyForUsage({ workspaceId: params.workspaceId, cycleStart });
 

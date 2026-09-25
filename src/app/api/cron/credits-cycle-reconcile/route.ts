@@ -19,7 +19,7 @@ import Stripe from "stripe";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { CronHealthModel } from "@/lib/models/CronHealth";
+import { writeCronHealth } from "@/lib/cron/health";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { buildCycleKey, creditWindowIndex, grantCycleIncludedCredits } from "@/lib/credits/grants";
@@ -52,18 +52,16 @@ async function handle(request: Request) {
 
   try {
     await connectMongo();
-    await CronHealthModel.updateOne(
-      { jobKey },
+    await writeCronHealth(
+      jobKey,
       {
-        $set: {
-          status: "running",
-          lastStartedAt: startedAt,
-          lastRunAt: startedAt,
-          lastParams: { limit, staleHours, dryRun },
-          lastError: null,
-        },
+        status: "running",
+        lastStartedAt: startedAt,
+        lastRunAt: startedAt,
+        lastParams: { limit, staleHours, dryRun },
+        lastError: null,
       },
-      { upsert: true },
+      { dryRun },
     );
   } catch {
     // ignore
@@ -245,19 +243,17 @@ async function handle(request: Request) {
     const failure = errors > 0 ? `${errors} of ${checked} subscriptions failed` : null;
     try {
       await connectMongo();
-      await CronHealthModel.updateOne(
-        { jobKey },
+      await writeCronHealth(
+        jobKey,
         {
-          $set: {
-            status: failure ? "error" : "ok",
-            lastFinishedAt: finishedAt,
-            lastRunAt: finishedAt,
-            lastDurationMs: durationMs,
-            lastResult: result,
-            ...(failure ? { lastErrorAt: finishedAt, lastError: failure } : {}),
-          },
+          status: failure ? "error" : "ok",
+          lastFinishedAt: finishedAt,
+          lastRunAt: finishedAt,
+          lastDurationMs: durationMs,
+          lastResult: result,
+          ...(failure ? { lastErrorAt: finishedAt, lastError: failure } : {}),
         },
-        { upsert: true },
+        { dryRun },
       );
     } catch {
       // ignore
@@ -280,19 +276,17 @@ async function handle(request: Request) {
     });
     try {
       await connectMongo();
-      await CronHealthModel.updateOne(
-        { jobKey },
+      await writeCronHealth(
+        jobKey,
         {
-          $set: {
-            status: "error",
-            lastFinishedAt: finishedAt,
-            lastRunAt: finishedAt,
-            lastDurationMs: durationMs,
-            lastErrorAt: finishedAt,
-            lastError: message,
-          },
+          status: "error",
+          lastFinishedAt: finishedAt,
+          lastRunAt: finishedAt,
+          lastDurationMs: durationMs,
+          lastErrorAt: finishedAt,
+          lastError: message,
         },
-        { upsert: true },
+        { dryRun },
       );
     } catch {
       // ignore

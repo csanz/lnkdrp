@@ -768,7 +768,10 @@ export function composeImmediateEmail(params: {
    * always has somewhere to go.
    */
   const single = events.length === 1 ? events[0] : null;
-  const readerUrl = single ? buildReaderUrl(ctx.appUrl, single, links.get(single.shareId)) : null;
+  // Pro only: the reader page is deep analytics, and on Free it answers "No reader by that id",
+  // a dead end for the one button the mail has (code review 2026-09-23, M24). Free goes to the
+  // metrics page, which carries the real-count teaser.
+  const readerUrl = pro && single ? buildReaderUrl(ctx.appUrl, single, links.get(single.shareId)) : null;
   const metricsUrl = buildMetricsUrl(ctx.appUrl, doc.docId, shareIds.length === 1 ? shareIds[0] : null);
   const actionUrl = readerUrl ?? metricsUrl;
   const actionLabel = readerUrl ? READER_ACTION_LABEL : PRIMARY_ACTION_LABEL;

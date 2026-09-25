@@ -40,10 +40,13 @@ import { hadSession, rememberSignedIn } from "@/lib/client/sessionMemory";
  * and an unexplained bounce. A browser that was never signed in gets the plain page; see
  * `src/lib/client/sessionMemory.ts`.
  */
+/** Confirmed sessions the hook has ignored before the gate offers a sign-in link instead of a spinner. */
+const STUCK_AFTER_CONFIRMATIONS = 3;
+
 function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() ?? "/";
-  const { status } = useSession();
+  const { status, update } = useSession();
 
   /**
    * Confirm before bouncing — and never bounce on an answer we did not get.
@@ -67,12 +70,23 @@ function AuthGate({ children }: { children: React.ReactNode }) {
    * the first request that completes; a signed-in one whose network dropped keeps their page.
    */
   const [unreachable, setUnreachable] = useState(false);
+  /**
+   * The server keeps saying there is a session and the hook keeps saying there is not.
+   *
+   * `router.refresh()` re-renders server components; it does not touch next-auth's client state,
+   * so a session recovered after a blip (the server answered 200 with a user) left `status` at
+   * "unauthenticated" and this gate on its spinner for good. The hook is now told to refetch
+   * (`update()`), and the check keeps polling until `status` flips. If it has not after a few
+   * confirmations, the person gets a way out rather than a spinner.
+   */
+  const [stuck, setStuck] = useState(false);
 
   useEffect(() => {
     if (status !== "unauthenticated") return;
     let cancelled = false;
     let timer: number | undefined;
     let attempt = 0;
+    let confirmedSessions = 0;
 
     const goToLogin = () => {
       const query = new URLSearchParams();
@@ -98,7 +112,18 @@ function AuthGate({ children }: { children: React.ReactNode }) {
         if (cancelled) return;
         if (json && typeof json === "object" && json.user) {
           setUnreachable(false);
+          confirmedSessions += 1;
+          // Refetch the client session so `status` can flip, then re-render the server tree.
+          try {
+            await update();
+          } catch {
+            // The poll below asks again.
+          }
+          if (cancelled) return;
           router.refresh();
+          if (confirmedSessions >= STUCK_AFTER_CONFIRMATIONS) setStuck(true);
+          // Not done until `status` changes (which re-runs this effect and cancels this run).
+          schedule();
           return;
         }
         // A clean answer: nobody is signed in here.
@@ -143,7 +168,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       window.removeEventListener("online", retryNow);
       document.removeEventListener("visibilitychange", retryNow);
     };
-  }, [router, pathname, status]);
+  }, [router, pathname, status, update]);
 
   // One bit, written while the session is known good, read only when it is gone.
   useEffect(() => {
@@ -151,12 +176,20 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   }, [status]);
 
   if (status !== "authenticated") {
+    const loginHref = `/login?next=${encodeURIComponent(pathname || "/")}`;
     return (
       <div className="grid h-[100svh] w-full place-items-center gap-3 bg-[var(--bg)]">
         <Spinner className="h-6 w-6 text-[var(--muted)]" />
         {/* Only once a request has actually failed: a spinner that explains itself after a few
             seconds is reassuring, one that explains itself immediately is alarming. */}
-        {unreachable ? (
+        {stuck ? (
+          <div className="text-center text-[13px] text-[var(--muted)]">
+            Still signing you in.{" "}
+            <Link href={loginHref} className="font-medium text-[var(--fg)] underline underline-offset-4">
+              Sign in again
+            </Link>
+          </div>
+        ) : unreachable ? (
           <div className="text-center text-[13px] text-[var(--muted)]">
             Can&apos;t reach the server. Retrying&hellip;
           </div>

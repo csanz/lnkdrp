@@ -49,6 +49,7 @@ import DocIdentityRow from "@/components/doc/DocIdentityRow";
 import ProjectIdentityRow from "@/components/project/ProjectIdentityRow";
 import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
+import { mergeSilentRefresh } from "@/lib/client/metricsPayload";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { usePlan } from "@/lib/client/usePlan";
@@ -1418,7 +1419,10 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
           throw new Error("Invalid response");
         }
         const parsed = json as MetricsResponse;
-        setData(parsed);
+        // A silent refresh keeps the viewer rows on screen: the lite payload never carries them,
+        // and replacing the whole object blanked the list until the viewers request below landed
+        // (src/lib/client/metricsPayload.ts).
+        setData((prev) => mergeSilentRefresh(prev, parsed, silent));
         // A silent refresh left `viewersLoaded` alone so the list would not blink out; clearing it
         // here, once the new payload is in hand, is what makes the list follow it.
         if (silent) setViewersLoaded(false);

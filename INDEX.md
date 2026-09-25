@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 943 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 948 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -633,6 +633,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/client/entityTitles.ts` · clearEntityTitles, EntityKind, forgetEntityTitle, recallEntityTitle, rememberEntityTitle, rememberEntityTitles, resolveEntityTitle, useEntityTitle
 - `src/lib/client/funnel.ts` · FunnelCta, FunnelEvent, FunnelFields, funnelSurface, trackFunnel
 - `src/lib/client/knownEmpty.ts` · KnownEmpty, peekKnownEmpty, useKnownEmpty
+- `src/lib/client/metricsPayload.ts` · mergeSilentRefresh, ViewerRowsPayload
 - `src/lib/client/navPathOf.ts` · navPathOf
 - `src/lib/client/outOfCredits.ts` · dispatchOutOfCredits, OUT_OF_CREDITS_EVENT, OutOfCreditsReason, outOfCreditsReasonFromCode
 - `src/lib/client/pageCache.ts` · clearPageCache, readPageCache, writePageCache
@@ -650,6 +651,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/credits/aiAutomation.ts` · AI_AUTOMATION_DEFAULT, AiAutomation, getAiAutomation, isAutomationOn, parseAutomationFlag, resolveAiAutomation
 - `src/lib/credits/costCatalog.ts` · COST_CATALOG, costAnchorId, CostCatalogEntry, costEntryForAction, FREE_ACTIONS, QUALITY_BLURBS, QUALITY_LABELS, QUALITY_TIERS
 - `src/lib/credits/creditService.ts` · defaultBalanceForWorkspace, failAndRefundLedger, FREE_DAILY_CREDIT_CAP, markLedgerCharged, recordUnbilledRun, reserveCreditsOrThrow, starterCreditsForWorkspace
+- `src/lib/credits/cycleKey.ts` · cycleKeyForUsage, startOfUtcMonth, usageCycleStart
 - `src/lib/credits/errors.ts` · DAILY_CAP_CODE, isDailyCapError, isOutOfCreditsError, OUT_OF_CREDITS_CODE
 - `src/lib/credits/grants.ts` · buildCycleKey, creditMonthIndex, creditWindowIndex, FREE_STARTER_CREDITS, grantCycleIncludedCredits, INCLUDED_CREDITS_PER_CYCLE
 - `src/lib/credits/idempotency.ts` · generateIdempotencyKey, idempotencyKeyFromRequest
@@ -667,6 +669,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/credits/types.ts` · ActionType, CreditBucket, LedgerStatus, QualityTier
 - `src/lib/cron/auth.ts` · requireCronAuth, requireCronMonitorAuth
 - `src/lib/cron/dryRun.ts` · refuseUnsupportedDryRun
+- `src/lib/cron/health.ts` · writeCronHealth
 - `src/lib/cron/jobs.ts` · CRON_JOBS, CronHealthRowLike, CronJobHealth, CronJobSpec, judgeCronHealth, LATE_AFTER_INTERVALS, RUNNING_STUCK_AFTER_MS, STUCK_MARGIN_MS, …
 - `src/lib/cron/lease.ts` · acquireCronLease, AcquireCronLeaseParams, CronLease, releaseCronLease
 - `src/lib/crypto/randomBase62.ts` · newSecretToken, newShareId, newShareIdWithRetry, randomBase62
@@ -851,6 +854,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/uploads/progress.ts` · IN_FLIGHT_UPLOAD_STATUSES, isTerminalUploadStatus, PROGRESS_MIN_INTERVAL_MS, RENDER_PERCENT_END, RENDER_PERCENT_START, shouldWriteProgress, UPLOAD_STAGE_PERCENT, UploadProgress, …
 - `src/lib/uploads/progressWriter.ts` · createUploadProgressReporter, ReportOptions, UploadProgressReporter
 - `src/lib/uploads/recipientCaps.ts` · checkRecipientUploadCap, FREE_RECIPIENT_UPLOADS_PER_WORKSPACE_PER_DAY, RECIPIENT_UPLOAD_LIMIT_CODE, RECIPIENT_UPLOADS_PER_TOKEN_PER_DAY, RecipientCapResult
+- `src/lib/uploads/restoreDocAfterFailure.ts` · RestoreDocOutcome, restoreDocToLastGood
 - `src/lib/uploads/secretAuth.ts` · SECRET_PROCESSABLE_STATUSES, SECRET_WRITABLE_STATUSES, secretProcessableFilter, secretWritableFilter
 - `src/lib/uploads/summaryRerun.ts` · queueSummaryRerun, SummaryRerunResult
 - `src/lib/urls.ts` · buildPublicProjectUrl, buildPublicReplaceUrl, buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getMetadataBaseUrl, getPublicSiteBase, resolveConfiguredSiteUrl
@@ -988,4 +992,5 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `db/migration/20260916_0001_billing_unique_indexes.mjs` · up
 - `db/migration/20260916_0002_shareviews_activity_window_indexes.mjs` · up
 - `db/migration/20260917_0001_shareviews_workspace_window_index.mjs` · up
+- `db/migration/20260925_0001_orgmemberships_plain_indexes.mjs` · up
 - `db/migration/run.mjs`

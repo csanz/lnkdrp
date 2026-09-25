@@ -18,6 +18,7 @@ import type { Actor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { createUploadProgressReporter } from "@/lib/uploads/progressWriter";
+import { restoreDocToLastGood } from "@/lib/uploads/restoreDocAfterFailure";
 import { connectMongo } from "@/lib/mongodb";
 
 export async function abandonUpload(input: { uploadId: string; userId: string; reason: string }): Promise<void> {
@@ -43,19 +44,7 @@ export async function abandonUpload(input: { uploadId: string; userId: string; r
   if (typeof upload.version === "number") {
     await DocModel.updateOne({ _id: upload.docId, versionCounter: upload.version }, { $inc: { versionCounter: -1 } });
   }
-  const previous = await UploadModel.findOne({
-    docId: upload.docId,
-    _id: { $ne: upload._id },
-    status: "completed",
-    isDeleted: { $ne: true },
-  })
-    .sort({ version: -1 })
-    .select({ _id: 1 })
-    .lean();
-  const restore = previous
-    ? { status: "ready", currentUploadId: previous._id, uploadId: previous._id }
-    : { status: "failed" };
-  const res = await DocModel.updateOne({ _id: upload.docId, currentUploadId: upload._id }, { $set: restore });
+  const restored = await restoreDocToLastGood({ docId: upload.docId, failedUploadId: upload._id });
   // Stop the live bar: a watcher on the Activity feed would otherwise be left with an entry that
   // simply stopped moving, with nothing saying the import never happened.
   await createUploadProgressReporter({ uploadId: String(upload._id), docId: String(upload.docId) })
@@ -64,8 +53,8 @@ export async function abandonUpload(input: { uploadId: string; userId: string; r
   debugLog(1, "[uploads] abandoned upload after failed import", {
     uploadId: input.uploadId,
     docId: String(upload.docId),
-    restoredTo: previous ? String(previous._id) : "failed",
-    docUpdated: res.modifiedCount > 0,
+    restoredTo: restored.restoredTo ?? "failed",
+    docUpdated: restored.docUpdated,
   });
 }
 

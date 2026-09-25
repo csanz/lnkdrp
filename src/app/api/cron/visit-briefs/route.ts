@@ -15,7 +15,7 @@
  */
 import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
-import { CronHealthModel } from "@/lib/models/CronHealth";
+import { writeCronHealth } from "@/lib/cron/health";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
 import { runVisitBriefs } from "@/lib/visits/visitBriefs";
 import { requireCronAuth } from "@/lib/cron/auth";
@@ -53,18 +53,16 @@ async function handle(request: Request) {
 
   try {
     await connectMongo();
-    await CronHealthModel.updateOne(
-      { jobKey },
+    await writeCronHealth(
+      jobKey,
       {
-        $set: {
-          status: "running",
-          lastStartedAt: startedAt,
-          lastRunAt: startedAt,
-          lastParams: { dryRun, workspaceId, limit },
-          lastError: null,
-        },
+        status: "running",
+        lastStartedAt: startedAt,
+        lastRunAt: startedAt,
+        lastParams: { dryRun, workspaceId, limit },
+        lastError: null,
       },
-      { upsert: true },
+      { dryRun },
     );
   } catch {
     // ignore
@@ -89,20 +87,18 @@ async function handle(request: Request) {
 
     try {
       await connectMongo();
-      await CronHealthModel.updateOne(
-        { jobKey },
+      await writeCronHealth(
+        jobKey,
         {
-          $set: {
-            status: problems.length ? "error" : "ok",
-            lastFinishedAt: finishedAt,
-            lastRunAt: finishedAt,
-            lastDurationMs: durationMs,
-            lastResult: result,
-            ...(problems.length ? { lastErrorAt: finishedAt, lastError: problems.join("; ") } : {}),
-            ...(result.retried > 0 && !problems.length ? { lastError: `${result.retried} brief(s) will retry` } : {}),
-          },
+          status: problems.length ? "error" : "ok",
+          lastFinishedAt: finishedAt,
+          lastRunAt: finishedAt,
+          lastDurationMs: durationMs,
+          lastResult: result,
+          ...(problems.length ? { lastErrorAt: finishedAt, lastError: problems.join("; ") } : {}),
+          ...(result.retried > 0 && !problems.length ? { lastError: `${result.retried} brief(s) will retry` } : {}),
         },
-        { upsert: true },
+        { dryRun },
       );
     } catch {
       // ignore
@@ -126,19 +122,17 @@ async function handle(request: Request) {
 
     try {
       await connectMongo();
-      await CronHealthModel.updateOne(
-        { jobKey },
+      await writeCronHealth(
+        jobKey,
         {
-          $set: {
-            status: "error",
-            lastFinishedAt: finishedAt,
-            lastRunAt: finishedAt,
-            lastDurationMs: durationMs,
-            lastErrorAt: finishedAt,
-            lastError: message,
-          },
+          status: "error",
+          lastFinishedAt: finishedAt,
+          lastRunAt: finishedAt,
+          lastDurationMs: durationMs,
+          lastErrorAt: finishedAt,
+          lastError: message,
         },
-        { upsert: true },
+        { dryRun },
       );
     } catch {
       // ignore

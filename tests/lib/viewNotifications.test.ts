@@ -440,11 +440,14 @@ describe("email composition", () => {
     );
   });
 
-  test("immediate Free single viewer: primary to the reader page, upsell to the metrics teaser", () => {
+  test("immediate Free single viewer: primary to the metrics page, never the reader page", () => {
+    // The reader page is deep analytics; on Free it says "No reader by that id" (M24). The
+    // metrics page carries the real-count teaser instead, and the upsell goes to pricing.
     const email = vn.composeImmediateEmail({ ctx: ctxFree, doc: DOC, events: [view()], links });
-    expect(email.text).toContain(`${vn.READER_ACTION_LABEL}: ${APP}/doc/d1/metrics/viewer/a_bot1`);
-    expect(email.text).toContain(`See who opened it: ${APP}/doc/d1/metrics?shareId=shareA&from=view_email`);
-    expect(email.html).toContain(`href="${APP}/doc/d1/metrics?shareId=shareA&amp;from=view_email"`);
+    expect(email.text).not.toContain("/metrics/viewer/");
+    expect(email.html).not.toContain("/metrics/viewer/");
+    expect(email.text).toContain(`${vn.PRIMARY_ACTION_LABEL}: ${APP}/doc/d1/metrics?shareId=shareA`);
+    expect(email.text).toContain(`See who opened it: ${APP}/pricing?from=view_email`);
   });
 
   test("immediate Free single viewer on a named link reads 'Someone on the X link'", () => {

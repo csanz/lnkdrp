@@ -33,6 +33,8 @@ import PageReadingDetail from "@/components/metrics/PageReadingDetail";
 import ReaderDocuments, { type DocDetail } from "@/components/metrics/ReaderDocuments";
 import VisitBriefCards from "@/components/metrics/VisitBriefCards";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import Button from "@/components/ui/Button";
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import { useEntityIdentity } from "@/lib/client/entityIdentity";
 import { parseViewerRouteKey, viewerRouteKey } from "@/lib/metrics/viewerRouteKey";
@@ -124,6 +126,13 @@ export default function ViewerProfile({
   const [viewer, setViewer] = useState<ViewerRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  /**
+   * The workspace is on the basic tier: the server answered with no viewer rows because the plan
+   * withholds them, not because this reader does not exist. That case used to render as "No
+   * reader by that id" (code review 2026-09-23, M24); it is an upgrade wall, and says so.
+   */
+  const [basicTier, setBasicTier] = useState(false);
+  const { openUpgrade } = useUpgradeModal();
   const [visits, setVisits] = useState<Visit[]>([]);
   const [visitsLoading, setVisitsLoading] = useState(true);
   /** Bumped on every refresh so the visit-brief cards refetch with the rest of the page. */
@@ -190,7 +199,18 @@ export default function ViewerProfile({
         cache: "no-store",
       });
       if (!res.ok) throw new Error(String(res.status));
-      const json = (await res.json()) as { viewers?: ViewerRow[]; anonymousViewers?: ViewerRow[] };
+      const json = (await res.json()) as {
+        viewers?: ViewerRow[];
+        anonymousViewers?: ViewerRow[];
+        analyticsTier?: "basic" | "deep";
+      };
+      if (json.analyticsTier === "basic") {
+        setBasicTier(true);
+        setViewer(null);
+        setNotFound(false);
+        return;
+      }
+      setBasicTier(false);
       const row =
         who.kind === "authed"
           ? (json.viewers ?? []).find((v) => String(v.userId ?? "") === who.key)
@@ -563,6 +583,25 @@ export default function ViewerProfile({
 
   if (loading) {
     return <div className="text-[13px] text-[var(--muted)]">Loading…</div>;
+  }
+
+  if (basicTier) {
+    return (
+      <div className="rounded-2xl border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted)]">
+        <div className="text-[15px] font-medium text-[var(--fg)]">Who read this is a Pro feature.</div>
+        <p className="mx-auto mt-1 max-w-md">
+          Pro shows this reader by name, how long they spent on each page, and every visit since day one.
+        </p>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+          <Button variant="solid" size="sm" onClick={() => openUpgrade("analytics_history")}>
+            Upgrade to Pro
+          </Button>
+          <Link href={backHref} className="font-medium text-[var(--fg)] underline underline-offset-4">
+            Back to metrics
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   if (notFound || !viewer) {
