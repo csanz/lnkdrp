@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 969 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 971 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -328,7 +328,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/(app)/tag/[slug]/pageClient.tsx` · default
 - `src/app/(app)/tags/pageClient.tsx` · default
 - `src/app/(app)/upload/pageClient.tsx` · default
-- `src/app/HomeAuthedClient.tsx` · default, UploadHome
+- `src/app/HomeAuthedClient.tsx` · default, UploadHome, UploadProjectOption, UploadProjectPicker, UploadProjectPickerState, useUploadProjectPicker
 - `src/app/HomeUnauthedClient.tsx` · default
 - `src/app/accept/AcceptClient.tsx` · default
 - `src/app/api/docs/[docId]/links/shared.ts` · accessDocForLinks, DocAccess, DocAccessResult, linkErrorResponse, PlanWarning, planWarningOf
@@ -679,6 +679,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/db/mongoose.ts` · connectMongoose
 - `src/lib/debug.ts` · debugEnabled, debugError, debugLog, debugWarn
 - `src/lib/docs/docMatch.ts` · buildDocMatch
+- `src/lib/docs/visibility.ts` · canContain, containedDocIds, DocVisibility, WORKSPACE_LISTABLE_MATCH, workspaceListableDocFilter
 - `src/lib/email/catalog.ts` · EMAIL_CATALOG
 - `src/lib/email/catalogCopy.ts` · EMAIL_COPY, EmailAudience, EmailCopy
 - `src/lib/email/layout.ts` · Block, EmailFooter, EmailWorkspace, escapeHtml, renderHtml, renderText
@@ -855,7 +856,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/support/plain/chat.ts` · plainChatAppId, plainChatCustomer, PlainChatCustomer, plainChatEmailHash
 - `src/lib/support/plain/signature.ts` · configuredPlainSigningSecret, PLAIN_SIGNATURE_HEADER, signPlainBody, verifyPlainSignature
 - `src/lib/tags/palette.ts` · asTagColorKey, DEFAULT_TAG_COLOR, nextTagColor, TAG_COLOR_KEYS, TAG_COLORS, TagColorKey
-- `src/lib/tags/service.ts` · attachTag, deleteTag, detachTag, findOrCreateTag, listTags, listTagsPage, mergeTags, removeAllTagsFromTarget, …
+- `src/lib/tags/service.ts` · attachTag, deleteTag, detachTag, findOrCreateTag, listTags, listTagsPage, liveAssignmentCountPipeline, mergeTags, …
 - `src/lib/tags/slug.ts` · isUsableTagName, normalizeTagName, TAG_NAME_MAX, tagSlug
 - `src/lib/uploads/abandonUpload.ts` · abandonUpload, abandonUploadIfImportFailed
 - `src/lib/uploads/inFlight.ts` · InFlightUpload, markDocFinished, mergeInFlightSnapshot, mergeUploadFrame, pruneUploads, UPLOAD_SETTLE_MS, UploadFramePayload
@@ -903,6 +904,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `mcp/src/tools/aiWarnings.ts` · readAiOutcome, warningsFromAi
 - `mcp/src/tools/discover.ts` · registerGetActivityTool, registerListDocsTool
 - `mcp/src/tools/docLifecycle.ts` · registerArchiveDocTool, registerDeleteDocTool
+- `mcp/src/tools/docVisibility.ts` · registerSetDocVisibilityTool, setDocVisibilityInputShape
 - `mcp/src/tools/findShareLink.ts` · findShareLinkInputShape, registerFindShareLinkTool
 - `mcp/src/tools/getShare.ts` · registerGetShareTool
 - `mcp/src/tools/getShareStats.ts` · getShareStatsInputShape, registerGetShareStatsTool
