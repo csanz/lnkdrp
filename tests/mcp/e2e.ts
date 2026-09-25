@@ -35,6 +35,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
+import { Types } from "mongoose";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -45,6 +46,8 @@ import { apiKeyPrefix, createApiKey, revokeApiKey } from "@/lib/agents/apiKeys";
 import { creditsForRun } from "@/lib/credits/schedule";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { UploadModel } from "@/lib/models/Upload";
+import { TagModel } from "@/lib/models/Tag";
+import { TagAssignmentModel } from "@/lib/models/TagAssignment";
 
 // ---------------------------------------------------------------------------------------------
 // Config
@@ -360,6 +363,13 @@ async function main(): Promise<void> {
   let docId: string | null = null;
   let shareUrl: string | null = null;
   let status: string | null = null;
+  /**
+   * Tags this run creates, deleted in `finally`. No API deletes a tag for a bearer credential
+   * (`DELETE /api/tags/:id` refuses keys), so every run used to leave a zero-count "E2E <stamp>"
+   * tag in the workspace; the coverage doc counted thirty of them. The rows go straight out of
+   * Mongo, the same way the key is minted and revoked.
+   */
+  const createdTags: string[] = [];
 
   try {
     // 0. Fail fast with a useful message when the server is not running (before minting a key).
@@ -1403,6 +1413,7 @@ async function main(): Promise<void> {
 
     await step("lnkdrp_tag, lnkdrp_list_tags and lnkdrp_untag file the document and unfile it", async () => {
       const name = `E2E ${Date.now()}`;
+      createdTags.push(name);
       const tagged = await callTool<{ tags: Array<{ name: string; slug: string }>; createdTags: string[] }>(live, "lnkdrp_tag", {
         docId: shared.docId,
         // The same name three ways: folding means one tag, not three.
@@ -1571,6 +1582,20 @@ async function main(): Promise<void> {
           signal: AbortSignal.timeout(15_000),
         }).catch(() => null);
         console.log(`[--] delete project ${id} ${res?.ok ? "ok" : `FAILED (${res ? `HTTP ${res.status}` : "network"})`}`);
+      }
+    }
+    if (createdTags.length) {
+      try {
+        const orgId = new Types.ObjectId(ORG_ID);
+        const tags = (await TagModel.find({ orgId, name: { $in: createdTags } }).select({ _id: 1 }).lean()) as Array<{ _id: Types.ObjectId }>;
+        const tagIds = tags.map((t) => t._id);
+        if (tagIds.length) {
+          await TagAssignmentModel.deleteMany({ tagId: { $in: tagIds } });
+          await TagModel.deleteMany({ _id: { $in: tagIds } });
+        }
+        console.log(`[--] delete ${tagIds.length} test tag(s) ok`);
+      } catch (err) {
+        console.log(`[--] delete test tags FAILED: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     if (keyId) {

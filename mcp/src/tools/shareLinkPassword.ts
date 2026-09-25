@@ -60,8 +60,8 @@ export function registerGetShareLinkPasswordTool(server: McpServer, ctx: ToolCon
     {
       title: "Show a link's password",
       description:
-        "Return the password set on one share link, in plain text. IMPORTANT: this refuses when called with an API key, " +
-        "which is how every MCP connection authenticates - so in practice it will answer forbidden and tell the human to " +
+        "Return the password set on one share link, in plain text. IMPORTANT: this refuses every connected agent, whether it " +
+        "authenticates with an API key or by signing in - so in practice it will answer forbidden and tell the human to " +
         "sign in to the app. Reading a secret back out is deliberately not something a bearer key can do. Reach for " +
         "lnkdrp_verify_share_password instead: it confirms whether a password a human already gave you opens the link, " +
         "it works over MCP, and it is the answer to almost every question this tool looks like it answers. Use this one " +

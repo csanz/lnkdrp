@@ -33,10 +33,13 @@ import type { Actor } from "@/lib/gating/actor";
  */
 export function forbidApiKey(actor: Actor, what: string): NextResponse | null {
   if (actor.kind !== "user" || !actor.viaApiKey) return null;
+  // "A connected agent", not "an API key": an agent that signed in over OAuth takes the same path
+  // and was being told it held a key it never had. Either way the point is the same: this needs
+  // the person, in the app.
   return NextResponse.json(
     {
       error: "api_key_forbidden",
-      message: `An API key cannot ${what}. Sign in and do it from the app.`,
+      message: `A connected agent cannot ${what}: that needs the person, signed in to the app.`,
     },
     { status: 403, headers: { "cache-control": "no-store" } },
   );

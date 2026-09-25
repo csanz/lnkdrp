@@ -117,6 +117,14 @@ All correct. One copy nit: the `get_share_link_password` refusal says "An API ke
 - `tests/mcp/e2e.ts`: plan-aware on Free (see above).
 - `tests/share/traffic.ts`: introductions are a separate `introduced: true` post.
 
+## Seventh pass: the two findings, fixed
+
+- `src/lib/gating/forbidApiKey.ts` now says "A connected agent cannot reveal a share password: that needs the person, signed in to the app." The error code `api_key_forbidden` is unchanged, so nothing that matches on it moves. The `get_share_link_password` tool description and `docs/MCP.md` say the same thing in the same words.
+- `tests/mcp/e2e.ts` deletes the `E2E <stamp>` tag it creates (tag assignments first, then the tag row) in its `finally`, so a run no longer leaves a zero-count tag in the workspace. The five orphans from earlier passes were removed by hand. A `lnkdrp_delete_tag` tool is still the right long-term answer for agents.
+- Re-run against a fresh MCP instance (`MCP_PORT=8790`): 58/58, and the cleanup line reads `delete 1 test tag(s) ok`.
+
+One thing to know: the MCP process on :8787 was started before the revisions commit and still lists 33 tools. A harness run against it fails at "listTools exposes the 36 lnkdrp tools". Restart it (`npm run mcp`) before the next run.
+
 ## Open items
 
 - `docs/reviews/mcp-test-coverage-2026-09-21.md` §2 is stale: all 33 tools are in the e2e harness now (`f6bd055`, `5f00a05`). Update or retire the matrix.
