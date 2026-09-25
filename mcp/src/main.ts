@@ -32,7 +32,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import express, { type Request, type Response } from "express";
 
-import { UPLOAD_MAX_BASE64_CHARS } from "../../src/lib/limits/uploads";
+import { INLINE_UPLOAD_MAX_BASE64_CHARS, INLINE_UPLOAD_MAX_LABEL } from "./inlineLimits";
+import { admitSession, sessionCapsFromEnv } from "./sessionCaps";
 import { agentHeaderFrom } from "./agent";
 import { ApiClient, type Whoami } from "./api";
 import { DEFAULT_AGENT_HEADER, MCP_SERVER_VERSION, SESSION_IDLE_MS, SESSION_SWEEP_MS, loadConfig, log, type Config } from "./config";
@@ -43,6 +44,7 @@ import { createMcpServer } from "./server";
 
 const config: Config = loadConfig();
 const idempotency = new IdempotencyStore();
+const sessionCaps = sessionCapsFromEnv();
 
 type Session = {
   id: string | null;
@@ -219,6 +221,23 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
   }
   state.whoami = whoami;
 
+  // Caps on live sessions (`./sessionCaps`): a credential at its cap loses its stalest session to
+  // the new one; a process at its total cap refuses, so one credential cannot push everyone else off.
+  const admission = admitSession(
+    Array.from(sessions, ([id, s]) => ({ id, credentialId: s.credentialId, lastSeenAt: s.lastSeenAt })),
+    whoami.credentialId,
+    sessionCaps,
+  );
+  if (!admission.admit) {
+    log("initialize refused: total session cap", { agent: agentHeader, sessions: sessions.size, cap: sessionCaps.total });
+    jsonRpcError(res, 429, -32000, `This server is at its limit of ${sessionCaps.total} live sessions. Try again in a few minutes.`);
+    return;
+  }
+  for (const id of admission.evict) {
+    const stale = sessions.get(id);
+    if (stale) await closeSession(stale, `per-credential cap (${sessionCaps.perCredential})`);
+  }
+
   const server = createMcpServer(ctx);
   const session: Session = {
     id: null,
@@ -322,13 +341,24 @@ function createApp() {
     }
     next();
   });
-  app.use("/mcp", express.json({ limit: UPLOAD_MAX_BASE64_CHARS + 2 * 1024 * 1024 }));
+  app.use("/mcp", express.json({ limit: INLINE_UPLOAD_MAX_BASE64_CHARS + 2 * 1024 * 1024 }));
   app.use(express.json());
+  // A body over the parser's limit used to come back as Express's HTML "request entity too large".
+  // Say it in JSON-RPC, with the ceiling and the way round it.
+  app.use((err: unknown, _req: Request, res: Response, next: express.NextFunction) => {
+    const type = (err as { type?: unknown } | null)?.type;
+    if (type === "entity.too.large") {
+      jsonRpcError(res, 413, -32600, `Request body too large: a PDF sent inline is capped at ${INLINE_UPLOAD_MAX_LABEL}. Pass sourceUrl instead.`);
+      return;
+    }
+    next(err);
+  });
 
   app.get("/healthz", (_req, res) => {
     res.json({
       ok: true,
       sessions: sessions.size,
+      sessionCaps,
       version: MCP_SERVER_VERSION,
       apiUrl: config.apiUrl,
       // "enforced" or "skipped": whether a destructive tool will stop and ask a human.
@@ -378,6 +408,7 @@ async function runHttp(): Promise<void> {
       publicUrl: config.publicUrl,
       realtime: config.realtimeUrl && config.realtimeSecretConfigured ? config.realtimeUrl : "off (polling only)",
       cors: config.corsOrigins.length ? config.corsOrigins.join(", ") : "off (no browser origins)",
+      sessionCaps: `${sessionCaps.perCredential} per credential, ${sessionCaps.total} total`,
       ...(skippingConfirmations ? { confirmations: "SKIPPED (dev database)" } : {}),
     });
     // A safety switch that was asked for and refused has to say so out loud: the operator otherwise

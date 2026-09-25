@@ -141,6 +141,10 @@ shareVisitSchema.index({ orgId: 1, createdDate: -1 });
  */
 shareVisitSchema.index({ orgId: 1, lastEventAt: -1 });
 
+// The nightly analytics reconcile selects visits by `lastEventAt` alone. Also created by
+// db/migration/20260925_0002.
+shareVisitSchema.index({ lastEventAt: -1 });
+
 export type ShareVisit = InferSchemaType<typeof shareVisitSchema>;
 
 export const ShareVisitModel: Model<ShareVisit> =

@@ -3,6 +3,8 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+import { codeText, isBlockCode } from "@/lib/client/markdownCode";
+
 type Tone = "light" | "dark";
 /**
  * Normalize Markdown Text (uses isArray, join, map).
@@ -10,9 +12,7 @@ type Tone = "light" | "dark";
 
 
 function normalizeMarkdownText(children: unknown) {
-  // react-markdown passes code contents as `children: [string]` in most cases
-  if (Array.isArray(children)) return children.map((c) => String(c)).join("");
-  return String(children ?? "");
+  return codeText(children);
 }
 /**
  * Render the DiffBlock UI.
@@ -174,9 +174,11 @@ export default function Markdown({
               children?: unknown;
               [key: string]: unknown;
             };
-            const inline = Boolean((codeProps as unknown as { inline?: unknown }).inline);
             const raw = normalizeMarkdownText(codeChildren);
             const lang = (codeClassName ?? "").replace("language-", "").trim().toLowerCase();
+            // react-markdown v9 dropped the `inline` prop this used to branch on, so every span
+            // rendered as a block inside the default `<pre>` (see src/lib/client/markdownCode.ts).
+            const inline = !isBlockCode(codeClassName, raw);
 
             if (!inline && (lang === "diff" || lang === "patch")) {
               return <DiffBlock text={raw} tone={tone} />;
@@ -214,6 +216,8 @@ export default function Markdown({
               </pre>
             );
           },
+          // The block branch above owns its `<pre>`; the default one would nest it in another.
+          pre: ({ children: preChildren }) => <>{preChildren}</>,
         }}
       >
         {children}

@@ -10,7 +10,7 @@
  */
 
 /** Steps the browser reports; the route accepts exactly these. */
-export type FunnelEvent = "modal_shown" | "cta_clicked";
+export type FunnelEvent = "modal_shown" | "cta_clicked" | "teaser_shown";
 
 /** What was pressed on a modal. `manage` is the monthly-Pro on-demand door, kept for completeness. */
 export type FunnelCta = "upgrade" | "pack" | "compare" | "manage" | "dismiss";
@@ -22,6 +22,9 @@ export type FunnelFields = {
   /** The surface that opened the modal (`doc_page`, `sidebar`, `out_of_credits`, ...). */
   from?: string | null;
   cta?: FunnelCta | null;
+  /** `teaser_shown` only: the lifetime viewer counts the Free analytics teaser was showing. */
+  uniqueViewers?: number | null;
+  identifiedViewers?: number | null;
 };
 
 /**
@@ -46,7 +49,15 @@ export function trackFunnel(event: FunnelEvent, fields: FunnelFields = {}): void
     void fetch("/api/funnel", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ event, reason: fields.reason ?? null, from: fields.from ?? null, cta: fields.cta ?? null }),
+      body: JSON.stringify({
+        event,
+        reason: fields.reason ?? null,
+        from: fields.from ?? null,
+        cta: fields.cta ?? null,
+        ...(event === "teaser_shown"
+          ? { uniqueViewers: fields.uniqueViewers ?? null, identifiedViewers: fields.identifiedViewers ?? null }
+          : {}),
+      }),
       keepalive: true,
       credentials: "same-origin",
     }).catch(() => undefined);

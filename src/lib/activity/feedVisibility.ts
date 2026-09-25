@@ -17,7 +17,12 @@
 import type { ActivityType } from "@/lib/activity/log";
 
 /** Types never shown without an explicit type filter. */
-export const FEED_HIDDEN_TYPES: readonly ActivityType[] = ["funnel.modal_shown", "funnel.cta_clicked", "checkout.started"];
+export const FEED_HIDDEN_TYPES: readonly ActivityType[] = [
+  "funnel.modal_shown",
+  "funnel.cta_clicked",
+  "funnel.teaser_shown",
+  "checkout.started",
+];
 
 /** `plan.limit_reached` rows whose `meta.limit` is one of these are hidden too. */
 export const FEED_HIDDEN_LIMIT_KEYS: readonly string[] = ["version_history", "analytics_history", "project_links"];

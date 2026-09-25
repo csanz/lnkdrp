@@ -89,6 +89,7 @@ const ACTIVITY_TYPES = [
   // the feed by default (the app hides them); listed here so an agent can ask for them by name.
   "funnel.modal_shown",
   "funnel.cta_clicked",
+  "funnel.teaser_shown",
   "checkout.started",
 ] as const;
 

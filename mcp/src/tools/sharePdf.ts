@@ -20,12 +20,16 @@ import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+import { UPLOAD_MAX_LABEL } from "../../../src/lib/limits/uploads";
 import {
-  UPLOAD_BASE64_SCHEMA_MAX_CHARS,
-  UPLOAD_MAX_BASE64_CHARS,
-  UPLOAD_MAX_BYTES,
-  UPLOAD_MAX_LABEL,
-} from "../../../src/lib/limits/uploads";
+  INLINE_BASE64_SCHEMA_MAX_CHARS,
+  INLINE_UPLOAD_MAX_BASE64_CHARS,
+  INLINE_UPLOAD_MAX_BYTES,
+  INLINE_UPLOAD_MAX_LABEL,
+  INLINE_SEND_MAX_LABEL,
+  inlineSendMaxBytes,
+  inlineSendMaxLabel,
+} from "../inlineLimits";
 import type { PlanWarning } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
@@ -137,10 +141,12 @@ export function resolvePdfSource(
   }
 
   const base64 = (args.fileBase64 as string).trim();
-  if (base64.length > UPLOAD_MAX_BASE64_CHARS) {
+  // From the string's length, before a byte is decoded: an oversized payload never enters the heap
+  // twice (`mcp/src/inlineLimits.ts`).
+  if (base64.length > INLINE_UPLOAD_MAX_BASE64_CHARS) {
     throw new ToolError(
       "too_large",
-      `fileBase64 decodes to more than ${UPLOAD_MAX_LABEL}. Use sourceUrl for a file this size.`,
+      `fileBase64 decodes to more than ${INLINE_UPLOAD_MAX_LABEL}, the ceiling for a PDF sent inline. Use sourceUrl for a file this size.`,
     );
   }
   return { kind: "bytes", base64, fileName: (args.fileName ?? "").trim() || "document.pdf" };
@@ -148,7 +154,7 @@ export function resolvePdfSource(
 
 /**
  * Read and vet a local PDF: it must be a regular file this process can read, non-empty, no larger
- * than `UPLOAD_MAX_BYTES`, and a PDF by its `%PDF-` byte signature — the name is never trusted.
+ * than `INLINE_UPLOAD_MAX_BYTES`, and a PDF by its `%PDF-` byte signature — the name is never trusted.
  */
 export async function readLocalPdf(filePath: string): Promise<Buffer> {
   let stat: Awaited<ReturnType<typeof fs.stat>>;
@@ -161,10 +167,10 @@ export async function readLocalPdf(filePath: string): Promise<Buffer> {
     throw new ToolError("validation", `${filePath} is not a regular file (a directory, device or socket cannot be uploaded).`);
   }
   if (stat.size <= 0) throw new ToolError("validation", `${filePath} is empty.`);
-  if (stat.size > UPLOAD_MAX_BYTES) {
+  if (stat.size > INLINE_UPLOAD_MAX_BYTES) {
     throw new ToolError(
       "too_large",
-      `${filePath} is ${Math.round(stat.size / (1024 * 1024))}MB, over the ${UPLOAD_MAX_LABEL} limit. Use sourceUrl for a file this size.`,
+      `${filePath} is ${Math.round(stat.size / (1024 * 1024))}MB, over the ${INLINE_UPLOAD_MAX_LABEL} ceiling for a PDF sent inline. Use sourceUrl for a file this size.`,
     );
   }
   let bytes: Buffer;
@@ -194,7 +200,7 @@ export type InlineUpload = {
  * when that is safe (see `../optimize`). Optimization never fails the call: on any problem the
  * original bytes go and `optimizeNote` says why.
  */
-export async function prepareInlineUpload(source: InlinePdfSource, opts: { optimize: boolean }): Promise<InlineUpload> {
+export async function prepareInlineUpload(source: InlinePdfSource, opts: { optimize: boolean; apiUrl: string }): Promise<InlineUpload> {
   let bytes: Buffer;
   /**
    * The encoded form we actually checked, which is not always the one the caller sent.
@@ -241,8 +247,17 @@ export async function prepareInlineUpload(source: InlinePdfSource, opts: { optim
   }
 
   const outcome = await optimizePdf(bytes, { requested: opts.optimize });
-  if (outcome.bytes.byteLength > UPLOAD_MAX_BYTES) {
-    throw new ToolError("too_large", `The PDF is larger than ${UPLOAD_MAX_LABEL}. Use sourceUrl for a file this size.`);
+  // What actually crosses the wire: on a hosted API this is bounded by the platform's function
+  // body cap, and the refusal has to be ours, with the reason, rather than the platform's 413.
+  const sendMax = inlineSendMaxBytes(opts.apiUrl);
+  if (outcome.bytes.byteLength > sendMax) {
+    const mb = (outcome.bytes.byteLength / (1024 * 1024)).toFixed(1);
+    throw new ToolError(
+      "too_large",
+      `The PDF is ${mb} MB${outcome.optimized ? " after optimization" : ""}, over the ${inlineSendMaxLabel(opts.apiUrl)} that can be sent inline to this ` +
+        "deployment (its request bodies are capped by the platform). Put the file at an https URL and pass sourceUrl, " +
+        "which has no such ceiling.",
+    );
   }
   // Nothing changed and we already hold the encoded form we validated: send exactly that. `encoded`
   // rather than `source.base64`, so a stripped `data:` prefix stays stripped.
@@ -274,11 +289,12 @@ export const sharePdfInputShape = {
   fileBase64: z
     .string()
     .min(1)
-    .max(UPLOAD_BASE64_SCHEMA_MAX_CHARS)
+    .max(INLINE_BASE64_SCHEMA_MAX_CHARS)
     .optional()
     .describe(
       `The PDF's bytes, base64-encoded, for a file with no public URL (locally generated, a private attachment). ` +
-        `Decoded size up to ${UPLOAD_MAX_LABEL}. Prefer filePath when the file is already on this machine: emitting a ` +
+        `Decoded size up to ${INLINE_UPLOAD_MAX_LABEL} before optimization; on a hosted deployment what is sent after ` +
+        `optimization must be under ${INLINE_SEND_MAX_LABEL}, or the call says so and points at sourceUrl. Prefer filePath when the file is already on this machine: emitting a ` +
         "multi-megabyte base64 string as a tool argument is slow and easy to garble. " +
         "Exactly one of sourceUrl / fileBase64 / filePath is required.",
     ),
@@ -291,7 +307,8 @@ export const sharePdfInputShape = {
       "Absolute path to a PDF, read from disk BY THE MCP SERVER - so this only works when the server runs on the same " +
         "machine as the file (a local stdio/localhost server; otherwise the call is refused with a validation error " +
         "telling you to use sourceUrl). Expand ~ yourself: /Users/you/Downloads/deck.pdf. This is the right way to " +
-        `share a file the human has locally: no base64 to emit, and up to ${UPLOAD_MAX_LABEL}. ` +
+        `share a file the human has locally: no base64 to emit, and up to ${INLINE_UPLOAD_MAX_LABEL} before optimization ` +
+        `(under ${INLINE_SEND_MAX_LABEL} after it on a hosted deployment; sourceUrl has no such ceiling). ` +
         "Exactly one of sourceUrl / fileBase64 / filePath is required.",
     ),
   optimize: z
@@ -489,7 +506,8 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
       const run = async (): Promise<SharePdfResult> => {
         // Read (and shrink) local bytes before anything exists server-side: a missing file or a
         // non-PDF then fails with nothing created, exactly like a bad sourceUrl.
-        const inline = source.kind === "url" ? null : await prepareInlineUpload(source, { optimize: args.optimize !== false });
+        const inline =
+          source.kind === "url" ? null : await prepareInlineUpload(source, { optimize: args.optimize !== false, apiUrl: ctx.config.apiUrl });
         const optimizeFields = inline
           ? { optimized: inline.optimized, ...(inline.optimizeNote ? { optimizeNote: inline.optimizeNote } : {}) }
           : {};

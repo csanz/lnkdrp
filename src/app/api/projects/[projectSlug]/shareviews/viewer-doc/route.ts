@@ -244,7 +244,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
     );
   } catch (err) {
     return errorJson(err, {
-      status: 400,
+      status: 500,
       publicMessage: "Could not load this reading",
       context: "[api/projects/:projectSlug/shareviews/viewer-doc] GET failed",
     });

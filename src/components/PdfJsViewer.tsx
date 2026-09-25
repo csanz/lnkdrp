@@ -1677,7 +1677,20 @@ export function PdfJsViewer({
       toRender.add(p - 1);
       toRender.add(p + 1);
     }
-    if (toRender.size === 0) toRender.add(Math.min(Math.max(1, pageNumber), totalPages));
+    if (toRender.size === 0) toRender.add(Math.min(Math.max(1, pageNumberRef.current), totalPages));
+
+    // Only renders for pages that left the window are cancelled. This effect runs on every scroll
+    // tick (`visiblePages` changes), and its cleanup used to cancel every in-flight render, so a
+    // page could be started and cancelled several times before a paint ever landed (review M33).
+    for (const [p, inFlight] of allRenderTasksRef.current) {
+      if (toRender.has(p)) continue;
+      try {
+        inFlight.task.cancel?.();
+      } catch {
+        // ignore
+      }
+      allRenderTasksRef.current.delete(p);
+    }
 
     // Hand back the memory of pages the reader has scrolled well past, before painting the ones
     // they are looking at. Without this a long PDF accumulates one full-resolution bitmap per page
@@ -1716,9 +1729,11 @@ export function PdfJsViewer({
         const prevKey = allRenderedKeyRef.current.get(p);
         if (prevKey === key) return;
 
-        // Cancel any in-flight render for this page (prevents stale paints when switching modes / resizing).
+        // An in-flight render for this page at the same key is the one we want; let it finish. A
+        // different key (a resize, a zoom, a mode switch) means it would paint stale, so cancel it.
         const prevTask = allRenderTasksRef.current.get(p);
         if (prevTask) {
+          if (prevTask.key === key) return;
           try {
             prevTask.task.cancel?.();
           } catch {
@@ -1744,21 +1759,31 @@ export function PdfJsViewer({
         };
         allRenderTasksRef.current.set(p, { key, task: renderTask });
         await renderTask.promise;
-        if (cancelled) return;
-
-        allRenderedKeyRef.current.set(p, key);
+        // The paint landed whether or not a later run of this effect has started since, so record
+        // it; otherwise the next run would repaint a page that is already on screen.
         const latest = allRenderTasksRef.current.get(p);
-        if (latest?.key === key) allRenderTasksRef.current.delete(p);
+        if (latest?.task === renderTask) {
+          allRenderedKeyRef.current.set(p, key);
+          allRenderTasksRef.current.delete(p);
+        }
       } catch {
-        // ignore per-page rendering failures
+        // ignore per-page rendering failures (a cancelled render rejects here too)
       }
     }
 
     for (const p of toRender) void renderPage(p, pdf, totalPages);
 
     return () => {
+      // Renders already started keep going: the next run decides what to cancel, by page. Only
+      // stop this run from starting new ones. Leaving all-pages mode or changing document cancels
+      // everything, in the effect right below.
       cancelled = true;
-      // Best-effort: cancel any in-flight renders started by this effect.
+    };
+  }, [allPagesWidth, numPages, pdfVersion, viewMode, visiblePages, viewportSize.w, zoom]);
+
+  // Leaving all-pages mode, or moving to another document: nothing in flight is worth finishing.
+  useEffect(() => {
+    return () => {
       for (const { task } of allRenderTasksRef.current.values()) {
         try {
           task.cancel?.();
@@ -1768,7 +1793,7 @@ export function PdfJsViewer({
       }
       allRenderTasksRef.current.clear();
     };
-  }, [allPagesWidth, numPages, pageNumber, pdfVersion, viewMode, visiblePages, viewportSize.w, zoom]);
+  }, [viewMode, pdfVersion]);
 
   // "Grid" mode: render thumbnail tiles (lazy, visible + neighbors).
   const gridContainerRef = useRef<HTMLDivElement | null>(null);

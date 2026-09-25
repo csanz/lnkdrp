@@ -44,6 +44,45 @@ function normalizePlan(raw: string): "free" | "pro" {
   return v === "pro" ? "pro" : "free";
 }
 
+/**
+ * One plan panel. Module scope, not inside the card: declared inside render it was a new
+ * component type every render, so React unmounted and remounted its subtree each time and the
+ * spend-limit module in `rightSlot` lost whatever the person was typing (review M32).
+ */
+function PlanPanel({
+  planLabel,
+  price,
+  subtitle,
+  cta,
+  rightSlot,
+  banner,
+}: {
+  planLabel: string;
+  price?: string;
+  subtitle: React.ReactNode;
+  cta: React.ReactNode;
+  rightSlot?: React.ReactNode;
+  /** Full-width notice above both columns (a cancelled plan), so it never shifts one column against the other. */
+  banner?: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5 sm:p-6">
+      {banner ? <div className="mb-5">{banner}</div> : null}
+      <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-2">
+            <div className="text-[18px] font-semibold tracking-tight text-[var(--fg)]">{planLabel}</div>
+            {price ? <div className="text-[14px] font-semibold text-[var(--muted-2)]">{price}</div> : null}
+          </div>
+          <div className="mt-4 text-[12px] text-[var(--muted-2)]">{subtitle}</div>
+          <div className="mt-5">{cta}</div>
+        </div>
+        {rightSlot ? <div className="w-full md:w-auto md:shrink-0">{rightSlot}</div> : null}
+      </div>
+    </div>
+  );
+}
+
 export default function SubscriptionCard() {
   const router = useRouter();
   // Live limits/usage for the Free meters. Rows render (with empty bars) before the snapshot lands.
@@ -166,40 +205,6 @@ export default function SubscriptionCard() {
     } finally {
       setManageBusy(false);
     }
-  }
-
-  function PlanPanel({
-    planLabel,
-    price,
-    subtitle,
-    cta,
-    rightSlot,
-    banner,
-  }: {
-    planLabel: string;
-    price?: string;
-    subtitle: React.ReactNode;
-    cta: React.ReactNode;
-    rightSlot?: React.ReactNode;
-    /** Full-width notice above both columns (a cancelled plan), so it never shifts one column against the other. */
-    banner?: React.ReactNode;
-  }) {
-    return (
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5 sm:p-6">
-        {banner ? <div className="mb-5">{banner}</div> : null}
-        <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-baseline gap-2">
-              <div className="text-[18px] font-semibold tracking-tight text-[var(--fg)]">{planLabel}</div>
-              {price ? <div className="text-[14px] font-semibold text-[var(--muted-2)]">{price}</div> : null}
-            </div>
-            <div className="mt-4 text-[12px] text-[var(--muted-2)]">{subtitle}</div>
-            <div className="mt-5">{cta}</div>
-          </div>
-          {rightSlot ? <div className="w-full md:w-auto md:shrink-0">{rightSlot}</div> : null}
-        </div>
-      </div>
-    );
   }
 
   /**

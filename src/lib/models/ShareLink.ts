@@ -152,6 +152,10 @@ ShareLinkSchema.index({ orgId: 1, enabled: 1, archivedAt: 1, expiresAt: 1 });
  */
 ShareLinkSchema.index({ label: "text", audience: "text" }, { name: "sharelinks_label_audience_text", weights: { label: 5, audience: 1 } });
 
+// The nightly analytics reconcile picks the links whose stored counter moved since its window
+// started. Also created by db/migration/20260925_0002.
+ShareLinkSchema.index({ lastViewedAt: -1 });
+
 export type ShareLink = InferSchemaType<typeof ShareLinkSchema> & { _id: mongoose.Types.ObjectId };
 
 export const ShareLinkModel: Model<ShareLink> =

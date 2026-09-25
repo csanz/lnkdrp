@@ -7,12 +7,16 @@
  * closed it. Those two moments are the funnel's middle, and only the browser knows them. This
  * route writes them as activity rows (`funnel.modal_shown`, `funnel.cta_clicked`) so the admin
  * funnel can count workspaces at each step; the workspace feed hides them
- * (`src/lib/activity/feedVisibility.ts`).
+ * (`src/lib/activity/feedVisibility.ts`). The Free analytics teaser reports itself the same way
+ * (`funnel.teaser_shown`, with the viewer counts it showed), so the funnel page can say how much
+ * a workspace was looking at when it did or did not upgrade (Phase 4.2).
  *
- * Body: `{ event: "modal_shown" | "cta_clicked", reason?, cta?, from? }`. `reason` is the upsell
- * key or out-of-credits reason the modal opened for, `from` the surface that opened it, `cta` what
- * was pressed (required for `cta_clicked`). Signed-in members only: a temp workspace has no funnel
- * and an API key has no modal. Best-effort on the client side, so the answer is a bare `{ ok }`.
+ * Body: `{ event: "modal_shown" | "cta_clicked" | "teaser_shown", reason?, cta?, from?,
+ * uniqueViewers?, identifiedViewers? }`. `reason` is the upsell key or out-of-credits reason the
+ * modal opened for, `from` the surface that opened it, `cta` what was pressed (required for
+ * `cta_clicked`); the two counts are read for `teaser_shown` only. Signed-in members only: a temp
+ * workspace has no funnel and an API key has no modal. Best-effort on the client side, so the
+ * answer is a bare `{ ok }`.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -25,7 +29,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Funnel steps the browser may report. */
-export const FUNNEL_EVENTS = ["modal_shown", "cta_clicked"] as const;
+export const FUNNEL_EVENTS = ["modal_shown", "cta_clicked", "teaser_shown"] as const;
 /** What can be pressed on an upgrade or out-of-credits modal. */
 export const FUNNEL_CTAS = ["upgrade", "pack", "compare", "manage", "dismiss"] as const;
 
@@ -35,6 +39,9 @@ export type FunnelBody = {
   reason: string | null;
   cta: (typeof FUNNEL_CTAS)[number] | null;
   from: string | null;
+  /** `teaser_shown` only: the lifetime viewer counts the teaser was showing. */
+  uniqueViewers: number | null;
+  identifiedViewers: number | null;
 };
 
 const TOKEN_RE = /^[a-z0-9_.-]{1,64}$/i;
@@ -60,7 +67,16 @@ export function parseFunnelBody(raw: unknown): FunnelBody | string {
   if (ctaRaw !== null && !(FUNNEL_CTAS as readonly unknown[]).includes(ctaRaw)) return `cta must be one of ${FUNNEL_CTAS.join(", ")}`;
   const cta = ctaRaw as FunnelBody["cta"];
   if (event === "cta_clicked" && !cta) return "cta is required for cta_clicked";
-  return { event: event as FunnelBody["event"], reason, cta, from };
+  const count = (v: unknown, name: string): number | null | Error => {
+    if (event !== "teaser_shown" || v === undefined || v === null) return null;
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 1_000_000_000) return new Error(`${name} must be a count`);
+    return Math.floor(v);
+  };
+  const uniqueViewers = count(b.uniqueViewers, "uniqueViewers");
+  if (uniqueViewers instanceof Error) return uniqueViewers.message;
+  const identifiedViewers = count(b.identifiedViewers, "identifiedViewers");
+  if (identifiedViewers instanceof Error) return identifiedViewers.message;
+  return { event: event as FunnelBody["event"], reason, cta, from, uniqueViewers, identifiedViewers };
 }
 
 /** `POST /api/funnel`: record one funnel step for the signed-in member's active workspace. */
@@ -78,13 +94,19 @@ export async function POST(request: Request) {
   const body = parseFunnelBody(await request.json().catch(() => null));
   if (typeof body === "string") return NextResponse.json({ error: body }, { status: 400 });
 
-  const type: ActivityType = body.event === "modal_shown" ? "funnel.modal_shown" : "funnel.cta_clicked";
+  const type: ActivityType =
+    body.event === "modal_shown" ? "funnel.modal_shown" : body.event === "teaser_shown" ? "funnel.teaser_shown" : "funnel.cta_clicked";
   void recordActivity({
     orgId: actor.orgId,
     userId: actor.userId,
     actorKind: "user",
     type,
-    meta: { reason: body.reason, cta: body.cta, from: body.from },
+    meta: {
+      reason: body.reason,
+      cta: body.cta,
+      from: body.from,
+      ...(body.event === "teaser_shown" ? { uniqueViewers: body.uniqueViewers, identifiedViewers: body.identifiedViewers } : {}),
+    },
     request,
   });
   return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });

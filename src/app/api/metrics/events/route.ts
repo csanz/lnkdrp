@@ -308,7 +308,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Unknown type" }, { status: 400 });
   } catch (err) {
-    return errorJson(err, { status: 400, publicMessage: "Could not record event", context: "[api/metrics/events] POST failed" });
+    return errorJson(err, { status: 500, publicMessage: "Could not record event", context: "[api/metrics/events] POST failed" });
   }
 }
 

@@ -229,6 +229,8 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [docs, setDocs] = useState<Paged<DocListItem>>({ items: [], total: 0, page: 1, limit: 25 });
   const [docsLoading, setDocsLoading] = useState(true);
+  /** A failed docs request, shown with a retry instead of a spinner that never ends (review M28). */
+  const [docsError, setDocsError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [notFound, setNotFound] = useState(false);
   const [starredTick, setStarredTick] = useState(0);
@@ -274,6 +276,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
       }
 
       setDocsLoading(!cached);
+      setDocsError(null);
       try {
         const qStr = trimmedQ ? `&q=${encodeURIComponent(trimmedQ)}` : "";
         const archivedStr = view === "archived" ? "&archived=1" : "";
@@ -313,7 +316,13 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
           setDocsLoading(false);
           return;
         }
-        if (!res.ok) return;
+        if (!res.ok) {
+          // Anything but "not found" or "unchanged" used to return here with `docsLoading` still
+          // true, so the list read "Loading..." until a reload. Say what happened and offer a retry.
+          setDocsLoading(false);
+          setDocsError(`Could not load documents (${res.status}).`);
+          return;
+        }
         const json = (await res.json()) as ProjectDocsResponse;
         if (cancelled) return;
         const nextProject = json.project ?? null;
@@ -338,9 +347,10 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
           return computed;
         });
         setDocsLoading(false);
-      } catch {
-        // ignore
-        if (!cancelled) setDocsLoading(false);
+      } catch (e) {
+        if (cancelled) return;
+        setDocsLoading(false);
+        setDocsError(e instanceof Error && e.message ? e.message : "Could not load documents.");
       }
     }
     void load();
@@ -755,9 +765,10 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
       }
       // Best-effort: notify other UI surfaces (sidebar cache) that projects changed.
       window.dispatchEvent(new Event(PROJECTS_CHANGED_EVENT));
-      setShowSettings(false);
 
-      // Optional: upload/attach a request guide PDF (best-effort).
+      // The guide upload below can fail after the settings themselves saved. The modal used to close
+      // before it ran, so the failure went to `saveError` on a modal nobody could see and review sat
+      // enabled with no guide (review M27). It closes once the whole flow has finished.
       if (json?.project?.isRequest && (draftRequestGuideFile || hasGuideText)) {
         // If guide is pasted text, create a lightweight doc with extractedText (no upload pipeline).
         if (!draftRequestGuideFile && hasGuideText) {
@@ -851,6 +862,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
       if (enablingAutoAddFiles) {
         void loadSuggestedDocsAfterEnablingAutoAdd();
       }
+      setShowSettings(false);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : "Failed to save project.");
     } finally {
@@ -1226,6 +1238,22 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                   {docsLoading ? (
                     <li>
                       <div className="py-8 text-sm text-[var(--muted)]">Loading…</div>
+                    </li>
+                  ) : docsError ? (
+                    <li>
+                      <div className="flex flex-wrap items-center gap-3 py-8 text-sm text-[var(--muted)]">
+                        <span>{docsError}</span>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-[12px] font-medium text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                          onClick={() => {
+                            setDocsLoading(true);
+                            setDocsChangedTick((t) => t + 1);
+                          }}
+                        >
+                          Try again
+                        </button>
+                      </div>
                     </li>
                   ) : !docs.items.length ? (
                     <li>

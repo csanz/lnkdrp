@@ -227,17 +227,38 @@ function redactString(s: string): string {
  * matches in place so the rest of the message (e.g. a Mongo `E11000 dup key` line) stays readable.
  */
 export function redactLogText(input: string, maxChars = 500): string {
-  const s = String(input ?? "")
-    // Credentials in connection strings / URLs: scheme://user:pass@host
-    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1[REDACTED_CREDENTIALS]@")
-    .replace(/\bbearer\s+[A-Za-z0-9\-_.=]{8,}/gi, "Bearer [REDACTED]")
-    .replace(/\b[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\b/g, "[REDACTED_JWT]")
-    // Our API keys, and Stripe / Resend secrets.
-    .replace(/\b(?:lnk|sk|rk|whsec|re)_[A-Za-z0-9_]{12,}/g, "[REDACTED_KEY]")
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
+  const s = redactSecretsInText(String(input ?? ""))
     .replace(/\s+/g, " ")
     .trim();
   return truncate(s, maxChars);
+}
+
+/**
+ * The redaction `redactLogText` applies, without flattening whitespace: credentials in URLs, bearer
+ * tokens, JWTs, our own and our vendors' secret keys, and email addresses.
+ *
+ * Split out for stack traces. `Error.stack` begins with the raw message, so everything
+ * `redactString` took out of `message` survived in `stack` and rendered in `/a` (code review
+ * 2026-09-23, M19). A stack has to keep its line breaks to be readable, which is why it does not
+ * simply go through `redactLogText`.
+ */
+export function redactSecretsInText(input: string): string {
+  return (
+    String(input ?? "")
+      // Credentials in connection strings / URLs: scheme://user:pass@host
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1[REDACTED_CREDENTIALS]@")
+      .replace(/\bbearer\s+[A-Za-z0-9\-_.=]{8,}/gi, "Bearer [REDACTED]")
+      .replace(/\b[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\b/g, "[REDACTED_JWT]")
+      // Our API keys, and Stripe / Resend secrets.
+      .replace(/\b(?:lnk|sk|rk|whsec|re)_[A-Za-z0-9_]{12,}/g, "[REDACTED_KEY]")
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
+  );
+}
+
+/** A stack trace with the same secrets redacted as the message, line breaks kept. */
+export function redactStack(stack: string | null | undefined): string | null {
+  if (typeof stack !== "string" || !stack) return null;
+  return redactSecretsInText(stack);
 }
 
 function isSensitiveKey(k: string): boolean {
@@ -411,7 +432,9 @@ export async function logErrorEvent(input: LogErrorEventInput): Promise<void> {
 
   const captureStack = cfg.captureStackBySeverity[severity] ?? false;
   const rawStack = captureStack && input.err instanceof Error ? input.err.stack ?? null : null;
-  const stack = rawStack ? truncate(rawStack, cfg.maxStackChars) : null;
+  // Redacted like the message: a stack starts with the message, so it carried whatever the message
+  // had just been stripped of.
+  const stack = rawStack ? truncate(redactSecretsInText(rawStack), cfg.maxStackChars) : null;
 
   const fingerprint = buildFingerprint({ code: input.code, category: input.category, route, stack, message });
 

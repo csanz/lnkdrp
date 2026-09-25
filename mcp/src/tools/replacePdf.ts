@@ -26,7 +26,8 @@ import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { waitForDocStatus } from "../realtime";
-import { UPLOAD_BASE64_SCHEMA_MAX_CHARS, UPLOAD_MAX_LABEL } from "../../../src/lib/limits/uploads";
+import { UPLOAD_MAX_LABEL } from "../../../src/lib/limits/uploads";
+import { INLINE_BASE64_SCHEMA_MAX_CHARS, INLINE_SEND_MAX_LABEL, INLINE_UPLOAD_MAX_LABEL } from "../inlineLimits";
 import type { OptimizeReport } from "../optimize";
 import { fileNameFromUrl, type InlineUpload, prepareInlineUpload, resolvePdfSource } from "./sharePdf";
 import { readAiOutcome } from "./aiWarnings";
@@ -62,10 +63,11 @@ export const replacePdfInputShape = {
   fileBase64: z
     .string()
     .min(1)
-    .max(UPLOAD_BASE64_SCHEMA_MAX_CHARS)
+    .max(INLINE_BASE64_SCHEMA_MAX_CHARS)
     .optional()
     .describe(
-      `The new PDF's bytes, base64-encoded, for a file with no public URL. Decoded size up to ${UPLOAD_MAX_LABEL}. ` +
+      `The new PDF's bytes, base64-encoded, for a file with no public URL. Decoded size up to ${INLINE_UPLOAD_MAX_LABEL} ` +
+        `before optimization, under ${INLINE_SEND_MAX_LABEL} after it on a hosted deployment. ` +
         "Prefer filePath when the file is already on this machine. Exactly one of sourceUrl / fileBase64 / filePath is required.",
     ),
   filePath: z
@@ -76,7 +78,7 @@ export const replacePdfInputShape = {
     .describe(
       "Absolute path to the new PDF, read from disk BY THE MCP SERVER - so this only works when the server runs on the " +
         "same machine as the file (otherwise the call is refused with a validation error telling you to use sourceUrl). " +
-        `Expand ~ yourself: /Users/you/Downloads/deck.pdf. Up to ${UPLOAD_MAX_LABEL}. ` +
+        `Expand ~ yourself: /Users/you/Downloads/deck.pdf. Up to ${INLINE_UPLOAD_MAX_LABEL} before optimization. ` +
         "Exactly one of sourceUrl / fileBase64 / filePath is required.",
     ),
   optimize: z
@@ -286,8 +288,9 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         "so it is never blocked by plan_limit the way lnkdrp_share_pdf is. Pass exactly one of sourceUrl (an https URL " +
         "the server fetches), filePath (an absolute path READ BY THE MCP SERVER ITSELF, so only for a server running on " +
         "the same machine as the file) or fileBase64 (the new PDF's bytes inline). " +
-        `Up to ${UPLOAD_MAX_LABEL} either way, though a hosted deployment may cap request bodies far below that, so a ` +
-        "large inline upload can still be refused by the platform - sourceUrl never has that problem. On the filePath " +
+        `sourceUrl takes a PDF up to ${UPLOAD_MAX_LABEL}. filePath and fileBase64 take up to ${INLINE_UPLOAD_MAX_LABEL} and, on a hosted ` +
+        `deployment, must come out under ${INLINE_SEND_MAX_LABEL} after optimization or the call refuses with too_large and says ` +
+        "to use sourceUrl, which never has that problem. On the filePath " +
         "and fileBase64 paths the PDF is shrunk first when that helps and is safe (optimize: false turns it off); the " +
         "result's optimized field reports what happened. Returns { docId, shareId, shareUrl, status, " +
         "version, uploadId, optimized, warnings, creditsRemaining }. "
@@ -329,7 +332,8 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         // `POST /api/uploads`'s own doc lookup happens to say.
         // Read (and shrink) local bytes first: a missing file or a non-PDF then fails before the
         // document is flipped to "preparing", leaving the live one untouched.
-        const inline = source.kind === "url" ? null : await prepareInlineUpload(source, { optimize: args.optimize !== false });
+        const inline =
+          source.kind === "url" ? null : await prepareInlineUpload(source, { optimize: args.optimize !== false, apiUrl: ctx.config.apiUrl });
         const optimizeFields = inline
           ? { optimized: inline.optimized, ...(inline.optimizeNote ? { optimizeNote: inline.optimizeNote } : {}) }
           : {};

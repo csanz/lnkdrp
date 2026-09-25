@@ -384,6 +384,6 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ items, nextCursor }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
-    return errorJson(err, { status: 400, publicMessage: "Could not load activity", context: "[api/activity] GET failed" });
+    return errorJson(err, { status: 500, publicMessage: "Could not load activity", context: "[api/activity] GET failed" });
   }
 }

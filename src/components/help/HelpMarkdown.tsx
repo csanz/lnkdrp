@@ -10,6 +10,7 @@
  */
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { codeText, isBlockCode } from "@/lib/client/markdownCode";
 
 /** Drop react-markdown's `node` prop, which is not a DOM attribute. */
 function dom<T extends { node?: unknown }>(props: T): Omit<T, "node"> {
@@ -55,8 +56,8 @@ export default function HelpMarkdown({ children }: { children: string }) {
           code: (codeProps) => {
             const { className, children, node: _node, ...props } = codeProps as { className?: string; children?: unknown; node?: unknown };
             void _node;
-            const text = Array.isArray(children) ? children.map(String).join("") : String(children ?? "");
-            const block = /language-/.test(className ?? "") || text.includes("\n");
+            const text = codeText(children);
+            const block = isBlockCode(className, text);
             if (block) {
               return (
                 <pre className="mt-4 overflow-x-auto rounded-xl border border-white/10 bg-white/[0.03] p-4 text-[13px] leading-6 text-white/80">

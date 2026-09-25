@@ -8,6 +8,7 @@ import { ArrowUpTrayIcon, DocumentTextIcon } from "@heroicons/react/24/outline";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname, buildDocPreviewPngPathname } from "@/lib/blob/clientUpload";
 import { extractErrorMessage, fetchJson } from "@/lib/http/fetchJson";
+import { renderPdfFirstPagePngBestEffort } from "@/lib/client/pdfThumbnail";
 import BrandHeader from "@/components/BrandHeader";
 
 type DocMeta = {
@@ -48,50 +49,6 @@ function isPdfFile(file: File) {
   return t === "application/pdf" || name.endsWith(".pdf");
 }
 
-async function renderPdfFirstPagePngBestEffort(file: File): Promise<Blob | null> {
-  try {
-    if (!isPdfFile(file)) return null;
-
-    const pdfBytes = new Uint8Array(await file.arrayBuffer());
-
-    // Load PDF.js from our vendored ESM bundle in /public (same approach as PdfJsViewer).
-    const pdfjsModuleUrl = "/pdfjs/pdf.min.mjs";
-    const pdfjs = (await import(/* webpackIgnore: true */ pdfjsModuleUrl)) as any;
-
-    // Best-effort thumbnail: disable worker for maximum compatibility.
-    const loadingTask = pdfjs.getDocument({ data: pdfBytes, disableWorker: true });
-    const pdf = await loadingTask.promise;
-    const page = await pdf.getPage(1);
-
-    const scale = 2;
-    const maxWidth = 1200;
-    const baseViewport = page.getViewport({ scale });
-    const finalScale = baseViewport.width > maxWidth ? scale * (maxWidth / baseViewport.width) : scale;
-    const viewport = page.getViewport({ scale: finalScale });
-
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-
-    await page.render({ canvasContext: ctx, viewport }).promise;
-
-    const pngBlob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob((b) => resolve(b), "image/png");
-    });
-
-    try {
-      await pdf.destroy?.();
-    } catch {
-      // ignore
-    }
-
-    return pngBlob;
-  } catch {
-    return null;
-  }
-}
 
 function formatBytes(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return "";

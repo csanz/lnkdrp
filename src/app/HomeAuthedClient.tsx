@@ -202,6 +202,9 @@ export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean 
       createdDocId = null;
       router.push(`/doc/${encodeURIComponent(docId)}`);
     } catch (e) {
+      // The server removes a fileless document itself when the import fails (abandonUpload), so
+      // this is for the failures it never sees: the upload row refused, or a request that never
+      // reached it. A 404 here means the server got there first.
       if (createdDocId) {
         await fetchWithTempUser(`/api/docs/${encodeURIComponent(createdDocId)}`, { method: "DELETE" }).catch(() => undefined);
       }

@@ -139,6 +139,11 @@ shareViewSchema.index({ orgId: 1, createdDate: -1 });
 // on the document. Also created by db/migration/20260917_0001 so it exists before traffic.
 shareViewSchema.index({ orgId: 1, lastViewedAt: -1 });
 
+// The nightly analytics reconcile selects rows by `lastViewedAt` alone (a settled window with no
+// document or workspace in the match), which none of the compounds above can serve. Also created
+// by db/migration/20260925_0002.
+shareViewSchema.index({ lastViewedAt: -1 });
+
 export type ShareView = InferSchemaType<typeof shareViewSchema>;
 
 export const ShareViewModel: Model<ShareView> =

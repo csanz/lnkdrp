@@ -74,6 +74,14 @@ const activityEventSchema = new Schema(
  * `orgId_1_createdDate_-1` has to be dropped by hand; see the index check in DEPLOY.md.
  */
 activityEventSchema.index({ orgId: 1, createdDate: -1, _id: -1 });
+
+/**
+ * The funnel report (`src/lib/funnel/report.ts`) reads a handful of types across every workspace
+ * for the last N weeks. `type_1` alone serves it by scanning every row of those types and
+ * filtering the date afterwards, which grows with the life of the deployment; with the date in the
+ * index the range is index-served and the cost is the window's rows only.
+ */
+activityEventSchema.index({ type: 1, createdDate: -1 });
 /**
  * The `who=` filter row. `who=me` and `who=team` both narrow on `actorKind` and `userId`, and
  * neither was indexed at all: the same whole-workspace sort as above, but on page one, so it bit

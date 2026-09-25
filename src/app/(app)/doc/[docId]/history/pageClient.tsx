@@ -410,17 +410,28 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     return { items: next, nextCursor: parsedNextCursor };
   }
 
+  /**
+   * Which query the list currently belongs to. Every first-page load bumps it; a response (first
+   * page or "load more") whose number no longer matches is dropped. Without this, changing the sort
+   * or page size while a request was in flight let the older response land last and paint the
+   * wrong order, and its cursor then paged the wrong query (review M26).
+   */
+  const queryGenRef = useRef(0);
+
   const refreshFirstPage = useCallback(
     async (params?: { keepExpanded?: boolean }) => {
+      const gen = ++queryGenRef.current;
       const changesRes = await fetchWithTempUser(
         `/api/docs/${encodeURIComponent(docId)}/changes?noText=1&sort=${encodeURIComponent(sort)}&limit=${encodeURIComponent(
           String(pageSize),
         )}`,
         { cache: "no-store" },
       );
+      if (gen !== queryGenRef.current) return;
 
       if (changesRes.ok) {
         const json = (await changesRes.json()) as any;
+        if (gen !== queryGenRef.current) return;
         const t = typeof json?.docTitle === "string" ? json.docTitle.trim() : "";
         if (t) setDocTitle(t);
         const v = typeof json?.currentUploadVersion === "number" && Number.isFinite(json.currentUploadVersion) ? json.currentUploadVersion : null;
@@ -442,6 +453,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     if (!nextCursor) return;
     if (loadingMore) return;
     setLoadingMore(true);
+    const gen = queryGenRef.current;
     try {
       const res = await fetchWithTempUser(
         `/api/docs/${encodeURIComponent(docId)}/changes?noText=1&sort=${encodeURIComponent(sort)}&limit=${encodeURIComponent(
@@ -451,6 +463,8 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
       );
       if (!res.ok) return;
       const json = (await res.json().catch(() => null)) as any;
+      // The cursor came from an earlier query; its page belongs to that list, not this one.
+      if (gen !== queryGenRef.current) return;
       const parsed = parseChangeListPayload(json);
       setItems((prev) => {
         const seen = new Set(prev.map((x) => x.id));

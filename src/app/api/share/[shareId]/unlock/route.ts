@@ -220,7 +220,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     });
     return res;
   } catch (err) {
-    return errorJson(err, { status: 400, publicMessage: "Could not unlock this share", context: "[api/share/:shareId/unlock] POST failed" });
+    return errorJson(err, { status: 500, publicMessage: "Could not unlock this share", context: "[api/share/:shareId/unlock] POST failed" });
   }
 }
 

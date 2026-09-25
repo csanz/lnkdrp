@@ -463,7 +463,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
       return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
     } catch (err) {
-      return errorJson(err, { status: 400, publicMessage: "Could not record this visit", context: "[api/share/:shareId/landing] POST failed" });
+      return errorJson(err, { status: 500, publicMessage: "Could not record this visit", context: "[api/share/:shareId/landing] POST failed" });
     }
   });
 }

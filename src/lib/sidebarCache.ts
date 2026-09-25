@@ -82,6 +82,11 @@ const fullyFetchedOrgs = new Set<string>();
 
 const memByKey = new Map<string, SidebarCacheSnapshot>();
 const inFlightByKey = new Map<string, Promise<void>>();
+/**
+ * A forced refresh asked for while another request was already in flight, queued to run after it.
+ * One per org: a burst of forced calls during one in-flight request shares a single follow-up.
+ */
+const queuedForcedByKey = new Map<string, Promise<void>>();
 
 /** Return whether we're in a browser environment where events/storage are available. */
 function isBrowser(): boolean {
@@ -440,9 +445,28 @@ export async function refreshSidebarCache(opts?: { force?: boolean; reason?: str
 
   if (!force && recentlyRefreshed) return;
   const inFlight = inFlightByKey.get(key) ?? null;
-  // Coalesce concurrent refresh calls (even when `force` is true) to avoid
-  // duplicate network work during app boot / org-sync transitions.
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    // Coalesce concurrent unforced calls onto the request already running.
+    if (!force) return inFlight;
+    /**
+     * A forced call means "something just changed; the list you are fetching may already be
+     * stale". Handing it the in-flight promise let a delete resurrect its document: the sidebar
+     * request started before the delete, the delete's forced refresh coalesced onto it, and the
+     * response that arrived was the pre-delete list, stored as current (review M34). So a forced
+     * call during a request queues one more fetch to run after it, shared by every forced call
+     * that arrives while the first is still in flight.
+     */
+    const queued = queuedForcedByKey.get(key);
+    if (queued) return queued;
+    const followUp: Promise<void> = inFlight
+      .catch(() => undefined)
+      .then(() => refreshSidebarCache({ force: true, reason: `${reason}:after-in-flight` }))
+      .finally(() => {
+        if (queuedForcedByKey.get(key) === followUp) queuedForcedByKey.delete(key);
+      });
+    queuedForcedByKey.set(key, followUp);
+    return followUp;
+  }
 
   const run = (async () => {
     try {

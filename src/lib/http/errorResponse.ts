@@ -74,7 +74,12 @@ export function errorJson(err: unknown, opts: ErrorJsonOptions): NextResponse {
     message: redactLogText(message),
     ...(debugEnabled(1) && opts.logMeta ? { meta: sanitizeMeta(opts.logMeta) } : {}),
   });
-  if (opts.status >= 500) {
+  // Every response this helper builds is an unhandled exception (`code` below says so), so every
+  // one is an ErrorEvent, whatever status the route chose. This used to be gated on `>= 500`, and
+  // a dozen catch-alls answered 400 for a thrown error (a Mongo outage read as "bad request"), so
+  // an infrastructure failure on the sidebar, docs list, share ingest or unlock left nothing in
+  // `/a` at all (code review 2026-09-23, M18). Those routes answer 500 now, and the gate is gone.
+  {
     // No-ops unless ERROR_LOGGING_ENABLED=true; never throws.
     void logErrorEvent({
       severity: "error",

@@ -102,6 +102,10 @@ export type ActivityType =
   // the browser; hidden from the workspace feed (`src/lib/activity/feedVisibility.ts`).
   | "funnel.modal_shown"
   | "funnel.cta_clicked"
+  // The Free analytics teaser was shown; `meta.uniqueViewers` / `identifiedViewers` are the
+  // counts it showed, so the funnel can say how much a workspace was looking at when it did or
+  // did not upgrade.
+  | "funnel.teaser_shown"
   // A Stripe Checkout session was created: `meta.kind` is "pro" (with `meta.interval`) or
   // "credit_pack" (with `meta.pack`, `meta.credits`). `plan.upgraded` is the webhook's answer to
   // the one that completed. Hidden from the feed like the two above.

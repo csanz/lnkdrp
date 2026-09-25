@@ -35,14 +35,27 @@ function post(body: unknown): Request {
 }
 
 describe("parseFunnelBody", () => {
-  test("accepts the two events and the five ctas", () => {
+  test("accepts the three events and the five ctas", () => {
     expect(parseFunnelBody({ event: "modal_shown", reason: "documents", from: "doc.x" })).toEqual({
       event: "modal_shown",
       reason: "documents",
       cta: null,
       from: "doc.x",
+      uniqueViewers: null,
+      identifiedViewers: null,
     });
     expect(parseFunnelBody({ event: "cta_clicked", cta: "pack" })).toMatchObject({ event: "cta_clicked", cta: "pack" });
+    expect(parseFunnelBody({ event: "teaser_shown", uniqueViewers: 20.7, identifiedViewers: 9 })).toMatchObject({
+      event: "teaser_shown",
+      uniqueViewers: 20,
+      identifiedViewers: 9,
+    });
+  });
+
+  test("the counts are read for teaser_shown only, and must be counts", () => {
+    expect(parseFunnelBody({ event: "modal_shown", uniqueViewers: 5 })).toMatchObject({ uniqueViewers: null });
+    expect(parseFunnelBody({ event: "teaser_shown", uniqueViewers: -1 })).toMatch(/uniqueViewers must be a count/);
+    expect(parseFunnelBody({ event: "teaser_shown", identifiedViewers: "9" })).toMatch(/identifiedViewers must be a count/);
   });
 
   test("refuses an unknown event, an unknown cta, a click without a cta, and a long reason", () => {
@@ -90,6 +103,15 @@ describe("POST /api/funnel", () => {
       meta: { reason: "analytics_history", cta: "upgrade", from: "doc.x.metrics" },
     });
     expect(mocks.rateLimit).toHaveBeenCalledWith(expect.objectContaining({ key: `funnel:${USER_ID}` }));
+  });
+
+  test("teaser_shown maps to funnel.teaser_shown and carries the counts", async () => {
+    mocks.resolveActor.mockResolvedValue(USER);
+    await POST(post({ event: "teaser_shown", reason: "analytics_history", from: "doc.x.metrics", uniqueViewers: 20, identifiedViewers: 9 }));
+    expect((mocks.recordActivity.mock.calls as unknown[][])[0][0]).toMatchObject({
+      type: "funnel.teaser_shown",
+      meta: { reason: "analytics_history", cta: null, from: "doc.x.metrics", uniqueViewers: 20, identifiedViewers: 9 },
+    });
   });
 
   test("modal_shown maps to funnel.modal_shown with a null cta", async () => {

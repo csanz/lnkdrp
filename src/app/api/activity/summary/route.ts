@@ -144,6 +144,6 @@ export async function GET(request: Request) {
       { headers: { "cache-control": "no-store" } },
     );
   } catch (err) {
-    return errorJson(err, { status: 400, publicMessage: "Could not load activity totals", context: "[api/activity/summary] GET failed" });
+    return errorJson(err, { status: 500, publicMessage: "Could not load activity totals", context: "[api/activity/summary] GET failed" });
   }
 }

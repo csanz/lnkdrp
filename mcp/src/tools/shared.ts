@@ -189,9 +189,11 @@ export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: Sh
  * through, while the tool refuses it after a dismissed prompt.
  */
 export const DISMISSED_PROMPT_NOTE =
-  "If the prompt comes back dismissed (userAction 'cancel' - a client that cannot show it dismisses it automatically), " +
-  "nobody was asked: put the preview in details to the human yourself, and call again with confirm: true only if they " +
-  "say yes. A human who actually declined (userAction 'decline') is final and confirm: true will not override it. ";
+  "If the prompt comes back dismissed (userAction 'cancel' - a client that cannot show it dismisses it automatically) " +
+  "or could not be delivered (details.elicitationFailed), nobody was asked and that call is refused even with " +
+  "confirm: true: put the preview in details to the human yourself, and call again with confirm: true only if they " +
+  "say yes; that follow-up goes through without asking again. Never set confirm: true on a first call. A human who " +
+  "actually declined (userAction 'decline') is final and confirm: true will not override it. ";
 
 /** The `lnkdrp_get_share` result for a doc. */
 export function shareView(api: ApiClient, doc: ApiDoc): ShareView {

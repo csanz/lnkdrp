@@ -304,6 +304,9 @@ document id outside it and 200 for one inside. That sorts guessed ids into "in t
 which is precisely what the password withholds.
 → *Rule:* behind a gate, every candidate must get a byte-identical answer, and the membership
 lookup must not even run.
+The fourth door was `POST /api/share/:shareId/download-requests`, which resolved link and document
+together and answered 404 or 401 by membership (code review 2026-09-23, M8; closed 2026-09-25: the
+link is resolved alone, gated, and only then is the document looked up).
 
 **9. Trusting a caller-supplied dedupe key.** `visitId` came off the request body and was the only
 thing deduplicating visit counts.

@@ -1187,7 +1187,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       // Do NOT return stats here (owner-only); POST is used by public viewers.
       return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
     } catch (err) {
-      return errorJson(err, { status: 400, publicMessage: "Could not record view", context: "[api/share/:shareId/stats] POST failed" });
+      return errorJson(err, { status: 500, publicMessage: "Could not record view", context: "[api/share/:shareId/stats] POST failed" });
     }
   });
 }

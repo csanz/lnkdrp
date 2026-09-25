@@ -392,7 +392,7 @@ export async function GET(request: Request) {
       actor,
     );
   } catch (err) {
-    return errorJson(err, { status: 400, publicMessage: "Could not load docs", context: "[api/docs] GET failed" });
+    return errorJson(err, { status: 500, publicMessage: "Could not load docs", context: "[api/docs] GET failed" });
   }
 }
 
@@ -554,7 +554,7 @@ export async function POST(request: Request) {
     );
   } catch (err) {
     return errorJson(err, {
-      status: 400,
+      status: 500,
       publicMessage: "Could not create doc",
       context: "[api/docs] POST failed",
       logMeta: describeMongoError(err),

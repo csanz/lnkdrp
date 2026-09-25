@@ -1,4 +1,4 @@
-import { sanitizeMeta } from "@/lib/errors/logger";
+import { redactStack, sanitizeMeta } from "@/lib/errors/logger";
 
 const SENSITIVE_KEYS = [
   "authorization",
@@ -55,7 +55,8 @@ export function serializeErrorEventForAdmin(doc: any) {
     category: typeof doc?.category === "string" ? doc.category : null,
     code: typeof doc?.code === "string" ? doc.code : null,
     message: typeof doc?.message === "string" ? doc.message : null,
-    stack: typeof doc?.stack === "string" ? doc.stack : null,
+    // Redacted again on the way out, for rows written before stacks were redacted at rest.
+    stack: redactStack(typeof doc?.stack === "string" ? doc.stack : null),
     route: typeof doc?.route === "string" ? doc.route : null,
     method: typeof doc?.method === "string" ? doc.method : null,
     statusCode: typeof doc?.statusCode === "number" ? doc.statusCode : null,

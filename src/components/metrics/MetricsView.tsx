@@ -25,6 +25,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { funnelSurface, trackFunnel } from "@/lib/client/funnel";
 import {
   ClipboardDocumentCheckIcon,
   DocumentTextIcon,
@@ -937,6 +938,21 @@ function LockedViewersBlock({
   const identified = teaser ? teaser.identifiedViewers : 0;
   const anonymous = teaser ? Math.max(0, teaser.uniqueViewers - teaser.identifiedViewers) : 0;
   const nobody = teaser ? teaser.uniqueViewers <= 0 : count <= 0;
+
+  // The funnel's view of this block: once per page load, with the counts the person was shown,
+  // so the admin funnel can put "how many readers were they looking at" next to whether they
+  // upgraded (pricing plan, Phase 4.2). Only once the numbers are real; never for an empty state.
+  const teaserReported = useRef(false);
+  useEffect(() => {
+    if (pending || loading || !teaser || nobody || teaserReported.current) return;
+    teaserReported.current = true;
+    trackFunnel("teaser_shown", {
+      reason: "analytics_history",
+      from: funnelSurface(typeof window !== "undefined" ? window.location.pathname : null),
+      uniqueViewers: teaser.uniqueViewers,
+      identifiedViewers: teaser.identifiedViewers,
+    });
+  }, [pending, loading, teaser, nobody]);
 
   const proLine = "Pro shows who they were, how long they spent on each page, and everything since day one.";
 

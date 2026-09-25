@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { isLocalApiUrl, isLocalFileAccessAllowed, prepareInlineUpload, resolvePdfSource } from "../../mcp/src/tools/sharePdf";
-import { UPLOAD_MAX_BYTES } from "../../src/lib/limits/uploads";
+import { INLINE_UPLOAD_MAX_BYTES as UPLOAD_MAX_BYTES } from "../../mcp/src/inlineLimits";
 import { ToolError } from "../../mcp/src/errors";
 
 /**
@@ -182,7 +182,7 @@ describe("inline upload: the prefix is stripped from what is sent, not only from
   it("re-sends the stripped form, so the bytes round-trip to a real PDF", async () => {
     const prepared = await prepareInlineUpload(
       { kind: "bytes", base64: `data:application/pdf;base64,${clean}`, fileName: "x.pdf" },
-      { optimize: false },
+      { optimize: false, apiUrl: API_URL },
     );
     // The payload must decode back to the same file the caller meant.
     expect(Buffer.from(prepared.base64, "base64").toString("latin1")).toBe(pdfBytes.toString("latin1"));
@@ -192,14 +192,14 @@ describe("inline upload: the prefix is stripped from what is sent, not only from
   it("is unchanged for a caller that sends no prefix", async () => {
     const prepared = await prepareInlineUpload(
       { kind: "bytes", base64: clean, fileName: "x.pdf" },
-      { optimize: false },
+      { optimize: false, apiUrl: API_URL },
     );
     expect(Buffer.from(prepared.base64, "base64").toString("latin1")).toBe(pdfBytes.toString("latin1"));
   });
 
   it("still refuses a string that is not base64 at all", async () => {
     await expect(
-      prepareInlineUpload({ kind: "bytes", base64: "not-base64!!!***", fileName: "x.pdf" }, { optimize: false }),
+      prepareInlineUpload({ kind: "bytes", base64: "not-base64!!!***", fileName: "x.pdf" }, { optimize: false, apiUrl: API_URL }),
     ).rejects.toThrow(/not base64/i);
   });
 });

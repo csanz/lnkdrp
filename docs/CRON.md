@@ -199,7 +199,7 @@ manual-run command for each, and `tests/lib/cronMap.test.ts` pins that one to `v
 - `/api/cron/notification-emails` — **every 5 minutes** (view, doc update + request repo notification emails)
 - `/api/cron/plan-limits` — **hourly** (Free plan-limit grace period: start / remind / block + owner emails)
 - `/api/cron/credits-stale-reservations` — **hourly** (releases credit reservations whose run never finished, so the balance is not held hostage by a crashed job)
-- `/api/cron/analytics-reconcile` — **nightly, 03:50 UTC** (repairs `ShareLink`'s denormalized counters from the analytics rows, and *reports* — never repairs — rows whose per-page time exceeds their total, the signature of an ingest double count. This is the one job whose output you read rather than just check for a 200)
+- `/api/cron/analytics-reconcile` — **nightly, 03:50 UTC** (repairs `ShareLink`'s denormalized counters from the analytics rows, and *reports* — never repairs — rows whose per-page time exceeds their total, the signature of an ingest double count. This is the one job whose output you read rather than just check for a 200. Since 2026-09-25 the counter pass is bounded to links with activity in the last `?days=N` (default 2); `?full=1` recomputes every link, for after a maintenance job that rewrites rows. Holds the cron lease.)
 - `/api/cron/credits-purchase-expiry` — **nightly, 04:05 UTC** (expires prepaid credit packs 12 months after purchase)
 - `/api/cron/account-purge` — **nightly, 04:30 UTC** (hard-deletes accounts past their 30-day purge window after a self-service account deletion)
 

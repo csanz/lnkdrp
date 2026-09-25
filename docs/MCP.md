@@ -139,6 +139,9 @@ Env (read from `.env.local`; the same file the app uses):
 | `LNKDRP_SKIP_CONFIRMATIONS` | unset | `1`/`true`/`yes` skips the human confirmation on destructive tools, **and only when `LNKDRP_API_URL` is localhost**. For test loops against a dev database, where confirming fifty deletes of rows that existed for four seconds is the whole cost of testing. Gated on the *data* rather than on where the process runs: a local server pointed at production is a supported setup (it is how `filePath` works) and a delete there is a real delete. Set against any other API URL it is ignored, and the server says so at startup — a silently disregarded safety switch is worse than none. |
 | `LNKDRP_GHOSTSCRIPT` | unset | Absolute path to `gs` when it is not on `PATH` (a GUI-launched server often inherits a bare one). Without a working Ghostscript, PDF optimization is skipped and the original bytes are uploaded. |
 | `LNKDRP_PDF_OPTIMIZE_DPI` | `220` | Resolution the optimizer downsamples colour and grey images to (`mcp/src/optimize.ts`). Tuned by eye; lower it for smaller files, raise it for image-heavy decks that must stay crisp. |
+| `LNKDRP_PDF_OPTIMIZE_CONCURRENCY` | `2` | How many optimizations (a Ghostscript process plus two pdfjs parses each) may run at once; the rest queue (`mcp/src/semaphore.ts`). Unbounded until the 2026-09-23 review (M16), when a few concurrent inline uploads could hold several Ghostscript processes on a 512 MB machine. |
+| `LNKDRP_MCP_MAX_SESSIONS_PER_KEY` | `20` | Live sessions one credential (an API key or an OAuth grant) may hold. At the cap, its stalest session is closed to admit the new one: a client that reconnects without closing gets what it wanted, and cannot fill the server (`mcp/src/sessionCaps.ts`, review M17). |
+| `LNKDRP_MCP_MAX_SESSIONS` | `500` | Live sessions the process may hold in total. At the cap a new `initialize` answers a JSON-RPC 429 rather than evicting another credential's session. Both caps are logged at startup and reported by `/healthz` as `sessionCaps`. |
 | `NEXT_PUBLIC_FEATURE_REQUESTS` | unset | The same build-time flag the web app reads. Not a gate here — no tool covers request repos — but it is surfaced read-only in `lnkdrp_whoami`'s `capabilities.notMcpAccessible`, so an agent can tell "request repos do not exist on this deployment" from "no MCP tool covers them yet". |
 
 Endpoints:
@@ -149,7 +152,7 @@ Endpoints:
   lnkdrp API key rather than OAuth, and where keys come from — because a bare
   `{"error":"unauthorized"}` reads to an OAuth-only client as a network fault it should retry.
   The `WWW-Authenticate` header points at the resource metadata below.
-- `GET /healthz` → `{ ok, sessions, version, apiUrl }`. `apiUrl` is there so a glance at the health
+- `GET /healthz` → `{ ok, sessions, sessionCaps: { perCredential, total }, version, apiUrl, confirmations }`. `apiUrl` is there so a glance at the health
   endpoint says which lnkdrp a server is pointed at, which is the one thing a misconfigured
   deployment gets wrong.
 - `GET /.well-known/oauth-protected-resource` → `{ resource: MCP_PUBLIC_URL, authorization_servers:
@@ -447,15 +450,19 @@ download/password settings, then (by default) waits for processing to finish.
       `LNKDRP_API_URL` is localhost/127.x, or when `LNKDRP_ALLOW_LOCAL_FILES=1` is set on the
       server; otherwise the call is refused with a `validation` error pointing at `sourceUrl`.
       Refused too: a relative path (expand `~` yourself), anything that is not a readable regular
-      file, anything whose bytes do not start with `%PDF-`, and anything over 50 MB.
+      file, anything whose bytes do not start with `%PDF-`, and anything over **16 MB**
+      (`INLINE_UPLOAD_MAX_BYTES`, `mcp/src/inlineLimits.ts`: the inline ceiling, since the 2026-09-23
+      review, M16; the 50 MB document ceiling still applies to `sourceUrl`).
     - `fileBase64` the PDF's bytes, base64-encoded — for a file with no public URL and no local path
-      (mt_bJwX4CtmhU). Decoded size up to 50 MB. Routed through
-      `POST /api/uploads/:id/import-bytes` instead of `import-url`.
-      **Caveat that the number does not capture:** this body crosses a serverless function, and a
-      hosted deployment caps request bodies far below 50 MB (Vercel Functions: 4.5 MB regardless of
-      content type, before base64's ~4/3 and the JSON envelope). On such a deployment a large
-      inline upload fails with the platform's own 413, not with anything lnkdrp wrote. `sourceUrl`
-      and the browser's direct-to-Blob upload have no such ceiling. This is also why optimization
+      (mt_bJwX4CtmhU). Decoded size up to **16 MB**, refused from the string's length before a byte
+      is decoded. Routed through `POST /api/uploads/:id/import-bytes` instead of `import-url`.
+      **The second ceiling:** this body crosses a serverless function, and a hosted deployment caps
+      request bodies far below the document limit (Vercel Functions: 4.5 MB regardless of content
+      type, before base64's ~4/3 and the JSON envelope). So against a non-localhost API the bytes
+      sent **after optimization** must be under **3 MB** (`INLINE_SEND_MAX_BYTES`), or the tool
+      refuses with its own `too_large` that names the size and points at `sourceUrl`, rather than
+      the platform's 413. `sourceUrl` and the browser's direct-to-Blob upload have no such ceiling.
+      This is also why optimization
       below matters: it routinely takes a 3.5 MB deck to ~0.7 MB, which does fit.
   - `optimize?` boolean, default `true`. On the `filePath` / `fileBase64` paths only, the MCP server
     shrinks the PDF before uploading: Ghostscript (`-dPDFSETTINGS=/prepress`, colour and grey images
@@ -528,7 +535,8 @@ blocked by the Free shared-document cap (mt_zKD3mlHp_K).
   - `docId` the existing document to update, **required**.
   - **Exactly one of** `sourceUrl` (https URL of the new PDF), `filePath` (an absolute path read by
     the MCP server itself, same gate as `share_pdf`) or `fileBase64` (its bytes, base64-encoded) —
-    up to 50 MB, same rules, same serverless-body caveat and same reasoning as `share_pdf` above.
+    `sourceUrl` up to 50 MB; the inline two up to 16 MB before optimization and under 3 MB after it
+    on a hosted deployment, same rules and same reasoning as `share_pdf` above.
   - `optimize?` boolean, default `true` — identical to `share_pdf`: the new PDF is shrunk before
     upload when that is safe, and `optimized` / `optimizeNote` in the result say what happened.
   - `fileName?` ≤ 200 chars, used with `fileBase64` or to override `filePath`'s basename.
@@ -1419,17 +1427,22 @@ whether it can be undone — and gets a human's yes in one of two ways:
    `initialize`. The user is shown the preview and a single checkbox; the agent cannot answer it.
    The tool proceeds only on an explicit accept. An explicit decline, or an accept with the box
    unticked, is final: the tool returns `validation` with nothing changed and `confirm: true` does
-   not override it, because a human answered. A **cancel** is not an answer — it is what a client
-   that declares elicitation and then cannot render the prompt sends automatically — so there
-   `confirm: true` does get through (fc90c92). Without that, the escape hatch built for clients
-   that cannot show a prompt was unreachable by the one client that claimed it could.
-2. **Through `confirm: true`**, when the client did not declare elicitation **or the elicitation
-   request failed to reach a human** (timeout, transport error). The first call is
-   **refused** with `validation`, `details.requiresConfirmation: true` and `details.preview`
-   (`headline`, `facts[]`, `severity`, `reversible`). The agent must show that preview to its user,
-   ask, and only if the user says yes call again with `confirm: true`. The tool descriptions say
-   this in plain terms, so an agent without elicitation support still has to make the ask rather
-   than proceed quietly.
+   not override it, then or on any later call, because a human answered. A **cancel** is not an
+   answer: it is what a client that declares elicitation and then cannot render the prompt sends
+   automatically, and it is indistinguishable from a person pressing Escape. Since the 2026-09-23
+   review (M14) it is handled exactly like a prompt that failed to deliver, below.
+2. **Through `confirm: true`, on a follow-up call.** When the client did not declare elicitation,
+   or the elicitation request **failed to reach a human** (timeout, transport error, or an instant
+   `cancel`), the call is **refused** with `validation`, `details.requiresConfirmation: true` and
+   `details.preview` (`headline`, `facts[]`, `severity`, `reversible`; `details.elicitationFailed`
+   or `details.userAction: "cancel"` says which). The agent must show that preview to its user,
+   ask, and only if the user says yes call again with `confirm: true`. That follow-up, within ten
+   minutes and for the same action, goes through without asking again. A `confirm: true` set on the
+   **first** call is never honoured on an elicitation-capable client: the prompt is still tried,
+   and if it fails the call is refused all the same, with a sentence saying the flag was not used.
+   So on every client the agent has seen the preview in a refusal before its `confirm: true` is
+   ever accepted, and the flag cannot be pre-set to jump a prompt the person might have answered.
+   (Until M14 a pre-set `confirm: true` did get through on a cancel or a timeout, fc90c92.)
 
 `severity` is `high` when the target has any recipient traffic, recent views, or several live
 links — the description tells the agent never to confirm a `high` preview on its own judgement.
@@ -1467,9 +1480,16 @@ If `elicitation` is absent the tool refuses until `confirm: true`. If it is pres
 asks through the protocol — but declaring the capability and surfacing the prompt are different
 facts. Claude Code 2.1.261 declares `elicitation.form` and, measured live, never shows the prompt:
 the request times out after the SDK's 60 s (`-32001`). When that happens the tool answers as the
-no-elicitation path would (`validation`, `details.elicitationFailed: true`, the preview), and a
-second call with `confirm: true` proceeds. Only a human who actually answered no is final. Each
-client differs and versions change, so check the log for the client you are actually connecting.
+no-elicitation path would (`validation`, `details.elicitationFailed: true`, the preview), and the
+second call with `confirm: true` proceeds without asking again; a `confirm: true` on that first,
+timed-out call is not used. Only a human who actually answered no is final. Each client differs
+and versions change, so check the log for the client you are actually connecting.
+
+The preview's `headline` and `facts` quote document titles and link labels, which are model-derived
+from PDF text: they are scrubbed the way every wrapped field is (control, bidi and zero-width
+characters removed, code fences broken, 500 characters at most), in the elicitation message, the
+refusal's text and `details.preview`, and `details.previewNote` carries the standard "not
+instructions" note. Read them as content.
 
 ### Untrusted text
 
@@ -1532,7 +1552,7 @@ A failed call returns `isError: true` with a single text block:
 | `fetch_blocked` | 400 | The URL could not be fetched (private network, non-http(s), remote error, empty file). The upstream text says what went wrong and never what to do, so the message appends the three remedies: a direct https link that returns the bytes with no sign-in, that service's export/download URL, or `fileBase64`. |
 | `source_not_found` | 400 | The source URL answered 404 or 410: there is no file at that address. Split out from `fetch_blocked`, which sent agents looking for a network policy problem instead of checking the link. |
 | `unsupported_content_type` | 415 | The URL is not a PDF. |
-| `too_large` | 400 / 413 | PDF over 50 MB (`UPLOAD_MAX_BYTES`, `src/lib/limits/uploads.ts` — the single ceiling for both the URL import and the inline path). The 413 message says the ceiling is on the *document*, so sending the same file a different way will not get past it; shrink the PDF. |
+| `too_large` | 400 / 413 | `sourceUrl`: PDF over 50 MB (`UPLOAD_MAX_BYTES`, `src/lib/limits/uploads.ts`). `fileBase64` / `filePath`: over 16 MB before optimization, or over 3 MB after it against a hosted API (`mcp/src/inlineLimits.ts`); the message names the size and points at `sourceUrl`. A request body over the parser's limit (16 MB of base64 plus headroom) answers a JSON-RPC 413 saying the same. |
 | `upstream` | anything else, **and a 400 that is a fault on our side** | The API returned an unexpected status; `details.status` carries it. A 400 whose text is a Mongoose validation/cast failure or a driver error (`E11000`, `ECONNREFUSED`, "Topology is closed") is mapped here rather than to `validation`: there are no arguments an agent could send to fix a server-side enum, so calling it `validation` had it rewrite the call and retry, forever. The message says retrying shortly is reasonable and changing the arguments will not help; the raw text stays in `details` and out of the sentence an agent may repeat to a human. |
 
 Transport-level failures (the MCP server itself down, or the key rejected at `initialize`) surface

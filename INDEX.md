@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 950 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 964 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -51,6 +51,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/a/emails/page.tsx` — `/a/emails` · default
 - `src/app/a/env/page.tsx` — `/a/env` · default
 - `src/app/a/errors/page.tsx` — `/a/errors` · default
+- `src/app/a/funnel/page.tsx` — `/a/funnel` · default
 - `src/app/a/layout.tsx` · default
 - `src/app/a/page.tsx` — `/a` · default
 - `src/app/a/shareviews/[docId]/page.tsx` — `/a/shareviews/:docId` · default
@@ -143,6 +144,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/admin/emails/previews/route.ts` — `/api/admin/emails/previews` · GET, runtime
 - `src/app/api/admin/env/route.ts` — `/api/admin/env` · dynamic, GET, runtime
 - `src/app/api/admin/errors/route.ts` — `/api/admin/errors` · GET, runtime
+- `src/app/api/admin/funnel/route.ts` — `/api/admin/funnel` · dynamic, GET, runtime
 - `src/app/api/admin/overview/route.ts` — `/api/admin/overview` · dynamic, GET, runtime
 - `src/app/api/admin/revenue/route.ts` — `/api/admin/revenue` · dynamic, GET, runtime
 - `src/app/api/admin/shareviews/doc/[docId]/route.ts` — `/api/admin/shareviews/doc/:docId` · DEFAULT_LIMIT, GET, MAX_LIMIT, runtime
@@ -633,10 +635,12 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/client/entityTitles.ts` · clearEntityTitles, EntityKind, forgetEntityTitle, recallEntityTitle, rememberEntityTitle, rememberEntityTitles, resolveEntityTitle, useEntityTitle
 - `src/lib/client/funnel.ts` · FunnelCta, FunnelEvent, FunnelFields, funnelSurface, trackFunnel
 - `src/lib/client/knownEmpty.ts` · KnownEmpty, peekKnownEmpty, useKnownEmpty
+- `src/lib/client/markdownCode.ts` · codeText, isBlockCode
 - `src/lib/client/metricsPayload.ts` · mergeSilentRefresh, ViewerRowsPayload
 - `src/lib/client/navPathOf.ts` · navPathOf
 - `src/lib/client/outOfCredits.ts` · dispatchOutOfCredits, OUT_OF_CREDITS_EVENT, OutOfCreditsReason, outOfCreditsReasonFromCode
 - `src/lib/client/pageCache.ts` · clearPageCache, readPageCache, writePageCache
+- `src/lib/client/pdfThumbnail.ts` · loadPdfJs, renderPdfFirstPagePngBestEffort
 - `src/lib/client/planLimit.ts` · clearPlanLimitHit, comparesFor, CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, markPlanLimitHit, parsePlanLimitError, PLAN_LIMIT_HIT_EVENT, …
 - `src/lib/client/planNumbers.ts` · COMPARE_CREDITS, comparesFor, CREDITS_COPY, FREE_PLAN_LIMITS_COPY, plural, PRO_SEATS_COPY
 - `src/lib/client/realtime.ts` · REALTIME_STATE_EVENT, RealtimeFrame, realtimeState, RealtimeState, subscribeRealtime
@@ -712,6 +716,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/format/initials.ts` · initialsFromNameOrEmail
 - `src/lib/format/money.ts` · formatUsdFromCents, formatUsdOrNotAvailable
 - `src/lib/format/number.ts` · clampNonNegInt, formatInt
+- `src/lib/funnel/report.ts` · buildFunnelReport, firstWallPipeline, FUNNEL_REPORT_CTAS, FUNNEL_STEP_TYPES, FunnelReport, FunnelReportCta, funnelStepsPipeline, FunnelWeek, …
 - `src/lib/gating/actor.ts` · accountDisabledChanged, activeOrgCandidateOrder, activeOrgChanged, Actor, applyTempUserHeaders, isActiveMember, membershipChanged, resolveActor, …
 - `src/lib/gating/actorRateLimit.ts` · ActorRateLimitError, actorRateLimitResponse, API_KEY_REQUEST_LIMIT, API_KEY_REQUEST_WINDOW_MS, guardApiKeyRequest, guardTempWorkspaceCreation, TEMP_WORKSPACE_CREATE_LIMIT, TEMP_WORKSPACE_CREATE_WINDOW_MS
 - `src/lib/gating/apiKeyActor.ts` · ApiKeyAuthError, bearerTokenFromRequest, clientLabelFromRequest, OAUTH_DISPLAY_PREFIX, tryResolveApiKeyActor, UNKNOWN_AGENT_CLIENT, VerifiedApiKey, verifyBearer, …
@@ -729,6 +734,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/history/textReadability.ts` · isReadableText, MIN_READABLE_RATIO, readableRatio
 - `src/lib/history/visualPageSweep.ts` · regionsMeanChanged, SweepCandidate, sweepVisualChanges
 - `src/lib/history/wordDiff.ts` · changedFraction, diffPresentation, DiffPresentation, DiffSpan, INLINE_MAX_CHANGED, INLINE_MAX_RUNS, tokenize, wordDiff
+- `src/lib/http/dateIdCursor.ts` · DateIdCursor, dateIdCursorClause, decodeDateIdCursor, encodeDateIdCursor, parseLimit
 - `src/lib/http/errorResponse.ts` · authOrRateLimitResponse, errorJson, ErrorJsonOptions, errorMessage
 - `src/lib/http/fetchJson.ts` · ApiErrorShape, extractErrorMessage, fetchJson
 - `src/lib/http/rateLimit.ts` · clientIpFromRequest, rateLimit, rateLimitedResponse, RateLimitInput, RateLimitResult
@@ -885,10 +891,13 @@ Clients, helpers and components that live beside the page that uses them.
 - `mcp/src/context.ts` · ToolContext
 - `mcp/src/errors.ts` · handleTool, initializeFailureResponse, isToolError, LINK_NOT_FOUND_ON_DOC, LINK_NOT_FOUND_ON_PROJECT, mapApiError, ToolError, ToolErrorCode, …
 - `mcp/src/idempotency.ts` · fingerprintArgs, IdempotencyStore
+- `mcp/src/inlineLimits.ts` · decodedBytesFromBase64Length, INLINE_BASE64_SCHEMA_MAX_CHARS, INLINE_SEND_MAX_BYTES, INLINE_SEND_MAX_LABEL, INLINE_UPLOAD_MAX_BASE64_CHARS, INLINE_UPLOAD_MAX_BYTES, INLINE_UPLOAD_MAX_LABEL, inlineSendMaxBytes, …
 - `mcp/src/main.ts`
 - `mcp/src/optimize.ts` · decideOptimizedBytes, findGhostscript, ghostscriptArgs, ghostscriptCandidates, looksLikePdf, OPTIMIZE_CONCURRENCY_DEFAULT, OPTIMIZE_IMAGE_DPI, OPTIMIZE_MIN_BYTES, …
 - `mcp/src/realtime.ts` · DOC_POLL_MS, isTerminalDocStatus, WaitForDocInput, waitForDocStatus
+- `mcp/src/semaphore.ts` · Semaphore
 - `mcp/src/server.ts` · createMcpServer, SERVER_INSTRUCTIONS, withWorkspace, workspaceInstructions, workspaceLabel
+- `mcp/src/sessionCaps.ts` · admitSession, DEFAULT_SESSION_CAPS, SessionAdmission, SessionCaps, sessionCapsFromEnv, SessionSummary
 - `mcp/src/tools/aiWarnings.ts` · readAiOutcome, warningsFromAi
 - `mcp/src/tools/discover.ts` · registerGetActivityTool, registerListDocsTool
 - `mcp/src/tools/docLifecycle.ts` · registerArchiveDocTool, registerDeleteDocTool
@@ -913,6 +922,10 @@ Clients, helpers and components that live beside the page that uses them.
 
 Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 
+- `scripts/_tmp-dataroom-full.ts`
+- `scripts/_tmp-dataroom-intro.ts`
+- `scripts/_tmp-dataroom-sim.ts`
+- `scripts/_tmp-mini.ts`
 - `scripts/admin-add.ts` · refuseIfUnusable
 - `scripts/ai-ask-repair.ts`
 - `scripts/audit-stored-blob-urls.ts`
@@ -995,4 +1008,5 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `db/migration/20260916_0002_shareviews_activity_window_indexes.mjs` · up
 - `db/migration/20260917_0001_shareviews_workspace_window_index.mjs` · up
 - `db/migration/20260925_0001_orgmemberships_plain_indexes.mjs` · up
+- `db/migration/20260925_0002_analytics_activity_indexes.mjs` · up
 - `db/migration/run.mjs`

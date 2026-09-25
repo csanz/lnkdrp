@@ -351,10 +351,15 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
   }, [session?.user, navLocked]);
 
   // Load org list for workspace quick switch (best-effort cache + background refresh).
+  //
+  // Keyed on the address, not the `session.user` object: next-auth hands out a new object on every
+  // session refetch (each window focus), and with `force: true` that was a fresh `/api/orgs` call
+  // per focus (review M30). The refresh is only forced when nothing is cached yet.
+  const sessionEmail = session?.user?.email ?? null;
   useEffect(() => {
-    if (!session?.user) return;
+    if (!sessionEmail) return;
     let cancelled = false;
-    const userKey = session.user.email ?? "";
+    const userKey = sessionEmail;
 
     const cached = readOrgsCacheSnapshot(userKey);
     if (cached) {
@@ -368,7 +373,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
 
     void (async () => {
       try {
-        const snap = await refreshOrgsCache({ userKey, force: true });
+        const snap = await refreshOrgsCache({ userKey, force: !cached });
         if (cancelled) return;
         if (snap) {
           setOrgs(Array.isArray(snap.orgs) ? snap.orgs : []);
@@ -399,7 +404,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
       cancelled = true;
       window.removeEventListener(ORGS_CACHE_UPDATED_EVENT, onCacheUpdated);
     };
-  }, [session?.user]);
+  }, [sessionEmail]);
 
   async function switchOrg(nextOrgId: string) {
     if (!nextOrgId) return;

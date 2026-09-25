@@ -10,6 +10,7 @@ describe("feed visibility", () => {
   it("hides funnel rows and Checkout starts", () => {
     expect(isHiddenFromFeed({ type: "funnel.modal_shown" })).toBe(true);
     expect(isHiddenFromFeed({ type: "funnel.cta_clicked" })).toBe(true);
+    expect(isHiddenFromFeed({ type: "funnel.teaser_shown" })).toBe(true);
     expect(isHiddenFromFeed({ type: "checkout.started" })).toBe(true);
   });
 
@@ -30,7 +31,7 @@ describe("feed visibility", () => {
   it("the Mongo clauses say the same thing", () => {
     const clauses = feedHiddenClauses();
     expect(clauses).toEqual([
-      { type: { $in: ["funnel.modal_shown", "funnel.cta_clicked", "checkout.started"] } },
+      { type: { $in: ["funnel.modal_shown", "funnel.cta_clicked", "funnel.teaser_shown", "checkout.started"] } },
       { type: "plan.limit_reached", "meta.limit": { $in: ["version_history", "analytics_history", "project_links"] } },
     ]);
   });

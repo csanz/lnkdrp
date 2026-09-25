@@ -478,6 +478,16 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
         cta === "upgrade" ? "chose Upgrade" : cta === "pack" ? "chose a credit pack" : cta === "compare" ? "opened Compare plans" : cta === "manage" ? "opened credit settings" : "dismissed the upgrade prompt";
       return { subject, verb, object: reason ? `for ${reason.replace(/_/g, " ")}` : "", suffix: null };
     }
+    case "funnel.teaser_shown": {
+      const raw = item.meta?.uniqueViewers;
+      const readers = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+      return {
+        subject,
+        verb: "saw the analytics teaser",
+        object: readers !== null ? `counting ${readers} ${readers === 1 ? "reader" : "readers"}` : "",
+        suffix: null,
+      };
+    }
     case "checkout.started": {
       const kind = metaString(item.meta, "kind");
       const interval = metaString(item.meta, "interval");

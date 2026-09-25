@@ -268,7 +268,7 @@ export async function GET(request: Request) {
       actor,
     );
   } catch (err) {
-    return errorJson(err, { status: 400, publicMessage: "Could not load sidebar", context: "[api/sidebar] GET failed" });
+    return errorJson(err, { status: 500, publicMessage: "Could not load sidebar", context: "[api/sidebar] GET failed" });
   }
 }
 

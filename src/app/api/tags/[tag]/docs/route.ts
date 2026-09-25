@@ -92,7 +92,7 @@ export async function GET(
       actor,
     );
   } catch (err) {
-    return errorJson(err, { status: 400, publicMessage: "Could not load docs for tag", context: "[api/tags/:tag/docs] GET failed" });
+    return errorJson(err, { status: 500, publicMessage: "Could not load docs for tag", context: "[api/tags/:tag/docs] GET failed" });
   }
 }
 

@@ -26,6 +26,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { log } from "./config";
+import { Semaphore } from "./semaphore";
 
 /**
  * Below this, leave the file alone. A small PDF is already well inside every body limit, and the
@@ -42,6 +43,21 @@ export const OPTIMIZE_MIN_SAVING_RATIO = 0.05;
 
 /** How long Ghostscript gets before it is killed and the original is used. */
 export const OPTIMIZE_TIMEOUT_MS = 120_000;
+
+/**
+ * How many optimizations (a Ghostscript process plus two pdfjs parses each) may run at once.
+ * `LNKDRP_PDF_OPTIMIZE_CONCURRENCY` overrides; anything that is not a positive integer keeps the
+ * default. Calls past the limit queue rather than fail (`mcp/src/semaphore.ts`).
+ */
+export const OPTIMIZE_CONCURRENCY_DEFAULT = 2;
+
+/** The configured concurrency, from the environment. */
+export function optimizeConcurrency(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number.parseInt((env.LNKDRP_PDF_OPTIMIZE_CONCURRENCY ?? "").trim(), 10);
+  return Number.isInteger(n) && n > 0 ? n : OPTIMIZE_CONCURRENCY_DEFAULT;
+}
+
+const heavyWork = new Semaphore(optimizeConcurrency());
 
 /** What optimization did, as reported back to the agent in the tool result. */
 export type OptimizeReport = {
@@ -272,6 +288,7 @@ export async function optimizePdf(
   }
 
   let dir: string | null = null;
+  const release = await heavyWork.acquire();
   try {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "lnkdrp-optimize-"));
     const inputPath = path.join(dir, "in.pdf");
@@ -313,6 +330,7 @@ export async function optimizePdf(
     log("optimize: failed", err instanceof Error ? err.message : err);
     return { bytes, optimized: null, note: "Optimization failed, so the original was sent." };
   } finally {
+    release();
     if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
   }
 }

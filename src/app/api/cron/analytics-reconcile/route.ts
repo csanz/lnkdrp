@@ -11,16 +11,20 @@
  * signature of a double count) is surfaced in `CronHealth.lastResult` because it is a code bug and
  * must not be silently "fixed" by overwriting data.
  *
- * `?dryRun=1` reports without writing. Vercel Cron invokes this with `GET` +
- * `Authorization: Bearer $CRON_SECRET`; `POST` is kept for manual invocation.
+ * `?dryRun=1` reports without writing. `?days=N` (default 2) bounds the counter pass to links with
+ * activity in the last N days; `?full=1` recomputes every link, for after a maintenance job that
+ * rewrites rows. Vercel Cron invokes this with `GET` + `Authorization: Bearer $CRON_SECRET`;
+ * `POST` is kept for manual invocation. Holds the cron lease, so a slow night cannot overlap the
+ * next tick.
  */
 import { NextResponse } from "next/server";
 
 import { connectMongo } from "@/lib/mongodb";
 import { writeCronHealth } from "@/lib/cron/health";
+import { acquireCronLease, releaseCronLease } from "@/lib/cron/lease";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
-import { reconcileShareLinkCounters } from "@/lib/analytics/reconcileLinkCounters";
+import { counterWindowStart, reconcileShareLinkCounters } from "@/lib/analytics/reconcileLinkCounters";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
 import { requireCronAuth } from "@/lib/cron/auth";
 
@@ -51,6 +55,9 @@ const TIME_TOLERANCE_MS = 2000;
  * of looking grows without limit.
  */
 const OVERRUN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Lease TTL: longer than `maxDuration`, so a run that was killed still lets the next one in. */
+const LEASE_TTL_MS = 6 * 60 * 1000;
 
 /**
  * Settled rows whose per-page times do not fit inside their total. Reported, never repaired.
@@ -121,18 +128,34 @@ async function handle(request: Request) {
 
   const url = new URL(request.url);
   const dryRun = url.searchParams.get("dryRun") === "1";
+  const since = counterWindowStart(url);
   const jobKey = "analytics-reconcile";
   const startedAt = new Date();
 
+  const lease = await acquireCronLease({ jobKey, ttlMs: LEASE_TTL_MS });
+  if (!lease) {
+    return NextResponse.json({ ok: true, skipped: "locked", jobKey });
+  }
+
   try {
     await connectMongo();
-    await writeCronHealth(jobKey, { status: "running", lastStartedAt: startedAt, lastRunAt: startedAt, lastParams: { dryRun }, lastError: null }, { dryRun });
+    await writeCronHealth(
+      jobKey,
+      {
+        status: "running",
+        lastStartedAt: startedAt,
+        lastRunAt: startedAt,
+        lastParams: { dryRun, since: since ? since.toISOString() : null },
+        lastError: null,
+      },
+      { dryRun },
+    );
   } catch {
     // ignore
   }
 
   try {
-    const counters = await reconcileShareLinkCounters({ dryRun });
+    const counters = await reconcileShareLinkCounters({ dryRun, since });
     const pageTimeOverruns = await findPageTimeOverruns();
     const result = {
       ...counters,
@@ -193,6 +216,8 @@ async function handle(request: Request) {
       // ignore
     }
     return NextResponse.json({ error: message }, { status: 500 });
+  } finally {
+    await releaseCronLease(lease);
   }
 }
 

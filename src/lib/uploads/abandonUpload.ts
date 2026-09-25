@@ -45,6 +45,21 @@ export async function abandonUpload(input: { uploadId: string; userId: string; r
     await DocModel.updateOne({ _id: upload.docId, versionCounter: upload.version }, { $inc: { versionCounter: -1 } });
   }
   const restored = await restoreDocToLastGood({ docId: upload.docId, failedUploadId: upload._id });
+  /**
+   * A document that never got a file is not a document. "Import from a link" creates the row
+   * before it fetches, so a bad URL left an "Untitled document" in `failed` on the home page for
+   * every failed import; the client deletes it when it can, but a tab closed mid-fetch cannot
+   * (review M31). So when no completed version exists to fall back to, the row is soft-deleted
+   * here, the same way `DELETE /api/docs/:id` does it. A document with a good version keeps it.
+   */
+  let removed = false;
+  if (restored.restoredTo === null && restored.docUpdated) {
+    const res = await DocModel.updateOne(
+      { _id: upload.docId, currentUploadId: upload._id, isDeleted: { $ne: true } },
+      { $set: { isDeleted: true, deletedDate: new Date() } },
+    );
+    removed = res.modifiedCount > 0;
+  }
   // Stop the live bar: a watcher on the Activity feed would otherwise be left with an entry that
   // simply stopped moving, with nothing saying the import never happened.
   await createUploadProgressReporter({ uploadId: String(upload._id), docId: String(upload.docId) })
@@ -53,7 +68,7 @@ export async function abandonUpload(input: { uploadId: string; userId: string; r
   debugLog(1, "[uploads] abandoned upload after failed import", {
     uploadId: input.uploadId,
     docId: String(upload.docId),
-    restoredTo: restored.restoredTo ?? "failed",
+    restoredTo: restored.restoredTo ?? (removed ? "deleted" : "failed"),
     docUpdated: restored.docUpdated,
   });
 }

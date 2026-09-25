@@ -30,14 +30,20 @@
  * Claude Code 2.1.261, where the request times out at the protocol level (`-32001`) every time.
  * Until mt_N2E6syf6Lq, that client had no way through: `confirm` was read only on the
  * no-capability branch, so the escape hatch built for "cannot show the user a prompt" was
- * unreachable for the one client that claimed it could. Now a request that fails to *deliver*
- * (error or timeout) falls through to the `confirm: true` check, exactly as if the capability had
- * never been declared. A human who answered and said no still blocks regardless of `confirm`.
+ * unreachable for the one client that claimed it could.
+ *
+ * The policy since the 2026-09-23 review (M14): a prompt that fails to *deliver* (error, timeout,
+ * or an instant `cancel`) refuses the call it was made on, `confirm: true` or not, and remembers
+ * the failure for ten minutes; the next call for the same action with `confirm: true` then goes
+ * through without asking again. So on every client the agent sees the preview in a refusal before
+ * its `confirm: true` is ever accepted, and the flag cannot be pre-set to jump a prompt the person
+ * might have answered. A human who answered and said no blocks regardless of `confirm`.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { ToolError } from "./errors";
 import { isLocalApiUrl } from "./tools/sharePdf";
+import { sanitizeUntrustedText, UNTRUSTED_LIMITS, UNTRUSTED_NOTE } from "./untrusted";
 
 /**
  * Skip the prompt while developing against a throwaway database.
@@ -98,6 +104,53 @@ export function confirmationsSkipRequestedButUnsafe(env: NodeJS.ProcessEnv = pro
  */
 const workspaceLabels = new WeakMap<object, () => string>();
 
+/**
+ * How long a prompt that failed to reach a human stays remembered, so that the follow-up call with
+ * `confirm: true` for the same action goes through without asking again.
+ */
+export const CONFIRM_FOLLOW_UP_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * Per server (so per session), the actions whose prompt was dismissed or never delivered, keyed by
+ * the preview headline, with when. This is what makes `confirm: true` mean "after the refusal"
+ * rather than "instead of the prompt": the flag is honoured on an elicitation-capable client only
+ * for an action the server has already tried, and failed, to put to the human.
+ */
+const undeliveredPrompts = new WeakMap<object, Map<string, number>>();
+
+function noteUndelivered(server: object, key: string): void {
+  let m = undeliveredPrompts.get(server);
+  if (!m) {
+    m = new Map();
+    undeliveredPrompts.set(server, m);
+  }
+  m.set(key, Date.now());
+}
+
+function forgetUndelivered(server: object, key: string): void {
+  undeliveredPrompts.get(server)?.delete(key);
+}
+
+function recentlyUndelivered(server: object, key: string): boolean {
+  const at = undeliveredPrompts.get(server)?.get(key);
+  return typeof at === "number" && Date.now() - at < CONFIRM_FOLLOW_UP_WINDOW_MS;
+}
+
+/**
+ * The preview with document titles and link labels made safe to show. Headlines and facts quote
+ * text the model derived from PDF content, and until now this was the one path that returned it
+ * bare, in the error whose `confirm: true` is the gate (code review 2026-09-23, M15). The same
+ * scrubbing every read tool applies: control, bidi and zero-width characters out, code fences
+ * broken, length capped.
+ */
+export function sanitizePreview(preview: DestructivePreview): DestructivePreview {
+  return {
+    ...preview,
+    headline: sanitizeUntrustedText(preview.headline, UNTRUSTED_LIMITS.short).text,
+    facts: preview.facts.map((f) => sanitizeUntrustedText(f, UNTRUSTED_LIMITS.short).text),
+  };
+}
+
 /** Record the workspace name `requireHumanConfirmation` shows for this server. */
 export function setConfirmationWorkspace(server: McpServer, label: () => string): void {
   workspaceLabels.set(server, label);
@@ -138,23 +191,39 @@ export function clientSupportsElicitation(server: McpServer): boolean {
  */
 export async function requireHumanConfirmation(
   server: McpServer,
-  preview: DestructivePreview,
+  rawPreview: DestructivePreview,
   args: { confirm?: boolean | undefined },
 ): Promise<{ via: "elicitation" | "confirm_flag"; elicitationFailed?: true }> {
   // Dev escape hatch, gated on the data being a dev database rather than on where this process
   // runs. See `skipConfirmations`.
   if (skipConfirmations()) return { via: "confirm_flag" };
 
+  const preview = sanitizePreview(rawPreview);
   const workspace = workspaceLabels.get(server)?.() ?? null;
   const previewDetails = {
     requiresConfirmation: true,
     ...(workspace ? { workspace } : {}),
     preview,
+    previewNote: UNTRUSTED_NOTE,
     reversible: preview.reversible,
     severity: preview.severity,
   };
+  const actionKey = preview.headline;
 
   if (clientSupportsElicitation(server)) {
+    /**
+     * The follow-up path. A prompt for this same action was dismissed or never delivered a moment
+     * ago and the call was refused with the preview; the agent has now put it to the human in
+     * conversation and is back with `confirm: true`. That, and only that, is when the flag stands
+     * in for the prompt on a client that claims it can show one. A `confirm: true` on the first
+     * call is not honoured (below), so the flag cannot be pre-set to skip a prompt the person
+     * might have seen (code review 2026-09-23, M14).
+     */
+    if (args.confirm === true && recentlyUndelivered(server, actionKey)) {
+      forgetUndelivered(server, actionKey);
+      return { via: "confirm_flag", elicitationFailed: true };
+    }
+
     let result: { action: string; content?: Record<string, unknown> | undefined };
     try {
       result = await server.server.elicitInput({
@@ -177,40 +246,42 @@ export async function requireHumanConfirmation(
       });
     } catch (err) {
       // The request never reached a human (timeout, transport error): nobody said no, nobody said
-      // yes. Treat it exactly like a client without elicitation — proceed on the agent's explicit
-      // `confirm: true`, otherwise refuse with the preview so the agent can ask in conversation.
-      if (args.confirm === true) return { via: "confirm_flag", elicitationFailed: true };
+      // yes. Refused, whatever `confirm` says on this call: the agent has not yet seen the preview
+      // it is supposed to relay. The failure is remembered, so the next call for this action with
+      // `confirm: true` proceeds without asking again (the follow-up path above).
+      noteUndelivered(server, actionKey);
       throw new ToolError(
         "validation",
         `Could not ask the user to confirm (${err instanceof Error ? err.message : String(err)}). Nothing was changed. ` +
-          `Show them the preview in details, get an explicit yes, then call again with confirm: true.`,
+          `Show them the preview in details, get an explicit yes, then call again with confirm: true.` +
+          (args.confirm === true ? PRESET_CONFIRM_NOTE : ""),
         { status: 400, details: { ...previewDetails, elicitationFailed: true } },
       );
     }
-    if (result.action === "accept" && result.content?.confirmed === true) return { via: "elicitation" };
-    // `cancel` means the form was dismissed without an answer. Some clients return it with nobody
-    // there at all (Claude Code in `-p` mode cancels instantly), but it is indistinguishable from a
-    // person pressing Escape, so it stays final like a decline. What differs is the guidance: the
-    // agent needs to know a retry cannot get through and where the human can act instead.
+    if (result.action === "accept" && result.content?.confirmed === true) {
+      forgetUndelivered(server, actionKey);
+      return { via: "elicitation" };
+    }
+    // `cancel` is "dismissed without an answer", which the protocol keeps separate from `decline`.
+    // Clients that cannot render the form return it instantly and nobody ever saw the question
+    // (measured 2026-09-18 on Claude Code), and it is indistinguishable from a person pressing
+    // Escape. Either way nobody said yes, so this call is refused, `confirm: true` included; the
+    // dismissal is remembered and the agent's follow-up with `confirm: true`, after putting the
+    // preview to the human itself, goes through. An explicit `decline` below is never overridden.
     if (result.action === "cancel") {
-      // `cancel` is "dismissed without an answer", which the protocol keeps separate from `decline`.
-      // Clients that cannot render the form return it instantly and nobody ever saw the question —
-      // measured 2026-09-18, when an interactive Claude Code session timed out on the first call and
-      // got `cancel` on the retry, leaving deletes unreachable from every client we have. So it is
-      // treated exactly like a prompt that failed to deliver: the agent's `confirm: true`, its
-      // assertion that the human said yes in conversation, goes through. An explicit `decline`
-      // below still cannot be overridden.
-      if (args.confirm === true) return { via: "confirm_flag", elicitationFailed: true };
+      noteUndelivered(server, actionKey);
       throw new ToolError(
         "validation",
         "The confirmation prompt was dismissed without an answer (a client that cannot show it dismisses it " +
           "automatically). Nothing was changed. Show the user the preview in details, get an explicit yes in " +
-          "conversation, then call again with confirm: true.",
+          "conversation, then call again with confirm: true." +
+          (args.confirm === true ? PRESET_CONFIRM_NOTE : ""),
         { status: 400, details: { ...previewDetails, userAction: result.action } },
       );
     }
     // Declined, or accepted with the box unticked: a human answered no, so `confirm: true` does not
-    // override it.
+    // override it, now or on a follow-up.
+    forgetUndelivered(server, actionKey);
     throw new ToolError("validation", "The user declined. Nothing was changed; calling again with confirm: true will not override it.", {
       status: 400,
       details: { ...previewDetails, userAction: result.action },
@@ -235,6 +306,14 @@ export async function requireHumanConfirmation(
     { status: 400, details: previewDetails },
   );
 }
+
+/**
+ * Appended when `confirm: true` arrived on the very call whose prompt failed: the flag is an
+ * assertion the human agreed, and it cannot have been made before the agent saw the preview.
+ */
+const PRESET_CONFIRM_NOTE =
+  " confirm: true on this call was not used: it can only stand in for the prompt on a follow-up call, after you have " +
+  "shown the human this preview.";
 
 /** Grade a target by its traffic: any recipient view makes deletion a `high`-stakes act. */
 export function severityFromTraffic(input: { recipientViews: number; recentViews?: number; activeLinks?: number }): "low" | "high" {

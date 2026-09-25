@@ -67,6 +67,9 @@ export default function ShareViewsDocAdminPage() {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const [reloadKey, setReloadKey] = useState(0);
+  /** The route pages by a keyset cursor (review M13); null once the last page is in. */
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const normalized = useMemo(() => (Array.isArray(items) ? items : []), [items]);
   const header = useMemo(() => (normalized.length ? docInfo(normalized[0]) : null), [normalized]);
@@ -142,18 +145,39 @@ export default function ShareViewsDocAdminPage() {
     setError(null);
     void (async () => {
       try {
-        const data = await fetchJson<{ items?: unknown }>(`/api/admin/shareviews/doc/${encodeURIComponent(docId)}`, {
-          method: "GET",
-        });
+        const data = await fetchJson<{ items?: unknown; nextCursor?: unknown }>(
+          `/api/admin/shareviews/doc/${encodeURIComponent(docId)}?limit=200`,
+          { method: "GET" },
+        );
         setItems(Array.isArray(data.items) ? (data.items as ShareViewItem[]) : []);
+        setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load share views");
         setItems([]);
+        setNextCursor(null);
       } finally {
         setLoading(false);
       }
     })();
   }, [canUseAdmin, docId, reloadKey]);
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const data = await fetchJson<{ items?: unknown; nextCursor?: unknown }>(
+        `/api/admin/shareviews/doc/${encodeURIComponent(docId)}?limit=200&cursor=${encodeURIComponent(nextCursor)}`,
+        { method: "GET" },
+      );
+      const more = Array.isArray(data.items) ? (data.items as ShareViewItem[]) : [];
+      setItems((prev) => [...prev, ...more]);
+      setNextCursor(typeof data.nextCursor === "string" ? data.nextCursor : null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load more share views");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   if (!canUseAdmin) {
     return <AdminAccessState access={access} title="Share views" callbackUrl={`/a/shareviews/${encodeURIComponent(docId)}`} />;
@@ -183,9 +207,16 @@ export default function ShareViewsDocAdminPage() {
           noun="viewers"
           loading={loading}
           actions={
-            <Button variant="outline" onClick={() => setReloadKey((k) => k + 1)} disabled={loading}>
-              Refresh
-            </Button>
+            <>
+              {nextCursor ? (
+                <Button variant="outline" onClick={() => void loadMore()} disabled={loading || loadingMore}>
+                  {loadingMore ? "Loading more" : "Load older views"}
+                </Button>
+              ) : null}
+              <Button variant="outline" onClick={() => setReloadKey((k) => k + 1)} disabled={loading}>
+                Refresh
+              </Button>
+            </>
           }
         >
           <AdminSearchInput

@@ -7,7 +7,8 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
-import { resolveShareLink, shareLinkUnlocked } from "@/lib/share/links";
+import { resolveShareLink, shareLinkUnlocked, type PasswordProtectedLink } from "@/lib/share/links";
+import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { resolveProjectStatsTarget } from "@/lib/share/projectPublic";
 import { UserModel } from "@/lib/models/User";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
@@ -102,6 +103,24 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
      * in `resolveClaimLink`, which the three claim routes now share, so both ends understand a room.
      */
     const directLink = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
+    /**
+     * A locked room answers the same thing about every document id, member or not.
+     *
+     * `resolveProjectStatsTarget` resolves the link and the document together, so on a room the
+     * caller had no password for this route answered 404 for an id outside the room and 401 for
+     * one inside it: an inventory of the room, handed out by the one thing the password is there
+     * to withhold (docs/SECURITY.md, 7.8; the page, the PDF proxy and the ingest were closed
+     * first, this was the fourth door). So the link is resolved on its own first, the password
+     * gate runs on it, and only then is the document looked up. The membership lookup does not run
+     * for a locked room at all.
+     */
+    if (!directLink) {
+      const roomLink = await resolveProjectLink(shareId);
+      if (!roomLink || roomLink.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      if (!shareLinkUnlocked(request, shareId, roomLink.link as PasswordProtectedLink)) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
+    }
     const roomTarget = directLink
       ? null
       : await resolveProjectStatsTarget({
@@ -302,7 +321,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     return NextResponse.json({ ok: true, kind: "created" as const });
   } catch (err) {
     return errorJson(err, {
-      status: 400,
+      status: 500,
       publicMessage: "Could not submit download request",
       context: "[api/share/*/download-requests] POST failed",
     });
