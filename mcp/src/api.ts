@@ -85,7 +85,7 @@ export type SlackChannelInfo = {
   isDefault: boolean;
   status: "active" | "revoked";
   projectIds: string[];
-  events: { views: boolean; briefs: boolean; docUpdates: boolean; requests: boolean };
+  events: { views: boolean; briefs: boolean; docUpdates: boolean; requests: boolean; docs: boolean };
   lastPostAt: string | null;
 };
 
@@ -102,7 +102,7 @@ function slackChannelsFrom(raw: unknown): SlackChannelInfo[] {
         isDefault: Boolean(r.isDefault),
         status: r.status === "revoked" ? "revoked" : "active",
         projectIds: Array.isArray(r.projectIds) ? r.projectIds.filter((p): p is string => typeof p === "string") : [],
-        events: { views: ev.views !== false, briefs: ev.briefs !== false, docUpdates: ev.docUpdates !== false, requests: ev.requests !== false },
+        events: { views: ev.views !== false, briefs: ev.briefs !== false, docUpdates: ev.docUpdates !== false, requests: ev.requests !== false, docs: ev.docs !== false },
         lastPostAt: strOrNull(r.lastPostAt),
       },
     ];

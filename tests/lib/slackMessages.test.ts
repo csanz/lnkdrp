@@ -91,6 +91,14 @@ describe("docUpdates and requests", () => {
     expect(flat(m)).toContain("/history");
   });
 
+  test("a document added to a project names the document and the room, and links both", async () => {
+    state.doc = { title: "Acme cap table" };
+    const m = await renderSlackEvent(row("docs", { projectId: new Types.ObjectId() }));
+    expect(m?.text).toBe("Acme cap table was added to Acme NDA.");
+    expect(flat(m)).toContain("/doc/");
+    expect(flat(m)).toContain("/project/");
+  });
+
   test("a received file names the file and the inbox", async () => {
     state.doc = { title: "nda-signed", receivedViaRequestProjectId: new Types.ObjectId() };
     const m = await renderSlackEvent(row("requests", { uploadId: new Types.ObjectId() }));

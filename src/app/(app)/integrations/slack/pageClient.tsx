@@ -23,6 +23,7 @@ const EVENT_COPY: Record<SlackEventKey, { title: string; body: string }> = {
   briefs: { title: "Visit briefs", body: "The write-up after a recipient finishes reading (Pro)." },
   docUpdates: { title: "Replaced documents", body: "A new version of a document, with what changed." },
   requests: { title: "Received files", body: "A file dropped into a request inbox." },
+  docs: { title: "New documents", body: "A document added to a project routed here, or to any project for the default channel." },
 };
 
 const REASON_COPY: Record<string, string> = {

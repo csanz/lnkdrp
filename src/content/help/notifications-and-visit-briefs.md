@@ -31,7 +31,7 @@ Every view email ends with **Turn off these emails** and **Change how often**. T
 
 ## Slack
 
-The same moments can post to a Slack channel: a first open, a visit brief, a replaced document and a received file, each with a link back. Connect a channel from Integrations in the sidebar; see [Slack](/help/slack).
+The same moments can post to a Slack channel: a first open, a visit brief, a replaced document, a received file and a document added to a project, each with a link back. Connect a channel from Integrations in the sidebar; see [Slack](/help/slack).
 
 ## The activity feed
 

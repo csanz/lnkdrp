@@ -90,8 +90,11 @@ first integration listed there; the page is built to list more.
    - `visit_briefs` (`visitBriefs.ts` `announceAndEnqueue`) → "brief",
    - `doc_updates` (`process/route.ts`) → "replaced",
    - `repo_link_requests` (`process/route.ts`) → "received".
-   `doc_uploads` (a teammate added a document) is not posted: the channel is for what recipients
-   do, and the feed already has it. Return visits are covered by the brief. This keeps one
+   `doc_uploads` (a teammate uploaded a document) is not posted: the channel is for what recipients
+   do, and the feed already has it. Amended 2026-09-25: a document *added to a project*
+   (`doc.added_to_project`, `src/app/api/docs/[docId]/route.ts`) does post, as the fifth kind
+   `docs`, because a routed room's channel is exactly where "a document landed in this deal room"
+   belongs; Chris asked for it after watching a data room fill up in silence. Return visits are covered by the brief. This keeps one
    definition of "an event happened" for both channels.
 
 6. **Content follows the plan, as email does.** On Free, `share.viewed` carries no viewer

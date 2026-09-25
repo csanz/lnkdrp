@@ -3,7 +3,7 @@
  *
  * Fetches and updates a doc (ensures it has a public `/s/:shareId`).
  */
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
@@ -19,6 +19,7 @@ import { checkLimit, planLimitResponse, type LimitCheck, type PlanLimitBlocked }
 import { ensureDefaultLink, setAllLinksEnabled, syncDocShareState, updateShareLink } from "@/lib/share/links";
 import { buildDocMatch } from "@/lib/docs/docMatch";
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
+import { enqueueSlackPosts } from "@/lib/slack/outbox";
 
 /**
  * How long an upload may sit in `uploading` with nothing written before a read treats it as dead.
@@ -1225,6 +1226,22 @@ export async function PATCH(
           title: doc.title ?? null,
           request,
         });
+        // The room's Slack channel hears a document landed (the `docs` switch). Posted after the
+        // response, like the other four events, so filing never waits on Slack. The source key
+        // carries the minute, so a double-fired add posts once and a later re-add posts again.
+        if (t.type === "doc.added_to_project") {
+          const orgId = actor.orgId;
+          const docId = String(doc._id);
+          const projectId = t.projectId;
+          after(async () => {
+            await enqueueSlackPosts({
+              orgId,
+              kind: "docs",
+              sourceId: `${docId}:${projectId}:${Math.floor(Date.now() / 60_000)}`,
+              event: { docId, projectId },
+            });
+          });
+        }
       }
     }
 

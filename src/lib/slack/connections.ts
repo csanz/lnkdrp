@@ -7,8 +7,12 @@ import { SlackConnectionModel, type SlackConnection } from "@/lib/models/SlackCo
 import { decryptSlackSecret } from "./crypto";
 import { postToSlackWebhook, type SlackMessage, type SlackPostOutcome } from "./post";
 
-export type SlackEventKey = "views" | "briefs" | "docUpdates" | "requests";
-export const SLACK_EVENT_KEYS: readonly SlackEventKey[] = ["views", "briefs", "docUpdates", "requests"];
+/**
+ * The five moments a channel can receive. `docs` is the one about the workspace's own hands: a
+ * document added to a project. The other four are about recipients and their files.
+ */
+export type SlackEventKey = "views" | "briefs" | "docUpdates" | "requests" | "docs";
+export const SLACK_EVENT_KEYS: readonly SlackEventKey[] = ["views", "briefs", "docUpdates", "requests", "docs"];
 
 /** What a member may see about a connection. No URL, no team id. */
 /** What the integrations pages render: whether Slack is configured on this deployment, and the workspace's connections. */
@@ -41,6 +45,7 @@ export function serializeSlackConnection(row: SlackConnection): SlackConnectionD
       briefs: events.briefs !== false,
       docUpdates: events.docUpdates !== false,
       requests: events.requests !== false,
+      docs: events.docs !== false,
     },
     status: row.status === "revoked" ? "revoked" : "active",
     lastPostAt: row.lastPostAt ? new Date(row.lastPostAt).toISOString() : null,

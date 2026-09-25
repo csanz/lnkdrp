@@ -41,6 +41,8 @@ const slackConnectionSchema = new Schema(
       briefs: { type: Boolean, default: true },
       docUpdates: { type: Boolean, default: true },
       requests: { type: Boolean, default: true },
+      /** A document added to a project. Absent on rows written before the switch existed, which reads as on. */
+      docs: { type: Boolean, default: true },
     },
 
     /**

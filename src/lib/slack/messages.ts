@@ -42,11 +42,11 @@ function twoBlocks(headline: string, context: string): unknown[] {
 }
 
 export function slackTestMessage(input: { workspaceName: string; channelName: string; appUrl: string }): SlackMessage {
-  const text = `LinkDrop is connected to ${input.channelName} for ${input.workspaceName}. Opens, visit briefs, replaced documents and received files will show up here.`;
+  const text = `LinkDrop is connected to ${input.channelName} for ${input.workspaceName}. Opens, visit briefs, replaced documents, received files and new documents will show up here.`;
   return {
     text,
     blocks: twoBlocks(
-      `*LinkDrop is connected to ${mrkdwn(input.channelName)}* for ${mrkdwn(input.workspaceName)}.\nOpens, visit briefs, replaced documents and received files will show up here.`,
+      `*LinkDrop is connected to ${mrkdwn(input.channelName)}* for ${mrkdwn(input.workspaceName)}.\nOpens, visit briefs, replaced documents, received files and new documents will show up here.`,
       `Change what posts, or the channel, under <${input.appUrl}/integrations/slack|Integrations>.`,
     ),
   };
@@ -183,6 +183,22 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
       return {
         text,
         blocks: twoBlocks(`*<${docUrl}|${mrkdwn(doc.title)}>* was replaced${version ? `, now v${version}` : ""}${summary ? `\n${mrkdwn(summary)}` : ""}`, `Every link keeps working and shows the new version · <${docUrl}/history|what changed>`),
+      };
+    }
+    case "docs": {
+      // A document filed into a project: the room's channel (or the default) hears it landed.
+      const docId = (ev.docId as Types.ObjectId | null) ?? null;
+      const projectId = (ev.projectId as Types.ObjectId | null) ?? null;
+      const doc = await docTitle(orgId, docId);
+      if (!doc || !docId) return null;
+      const project = projectId ? ((await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1, slug: 1 }).lean()) as { name?: string; slug?: string } | null) : null;
+      const room = (project?.name ?? "").trim() || "a project";
+      const docUrl = `${f.appUrl}/doc/${String(docId)}`;
+      const roomUrl = project?.slug ? `${f.appUrl}/project/${encodeURIComponent(project.slug)}` : projectId ? `${f.appUrl}/project/${String(projectId)}` : null;
+      const text = `${doc.title} was added to ${room}.`;
+      return {
+        text,
+        blocks: twoBlocks(`*<${docUrl}|${mrkdwn(doc.title)}>* was added to ${roomUrl ? `*<${roomUrl}|${mrkdwn(room)}>*` : `*${mrkdwn(room)}*`}`, `Everyone with the room's link sees it now · <${docUrl}|open it>`),
       };
     }
     case "requests": {

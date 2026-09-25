@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 import { burstAllowance, routeSlackConnections, SLACK_BURST_PER_MINUTE, type RoutableConnection } from "@/lib/slack/routing";
 import { slackBurstMessage } from "@/lib/slack/messages";
 
-const on = { views: true, briefs: true, docUpdates: true, requests: true };
+const on = { views: true, briefs: true, docUpdates: true, requests: true, docs: true };
 const conn = (id: string, extra: Partial<RoutableConnection> = {}): RoutableConnection => ({ id, isDefault: false, status: "active", projectIds: [], events: { ...on }, ...extra });
 
 describe("routing", () => {

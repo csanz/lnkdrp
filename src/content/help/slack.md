@@ -6,12 +6,13 @@ order: 75
 
 ## What the Slack integration does
 
-Connect a Slack channel and lnkdrp posts a short message there, with a link back, at four moments:
+Connect a Slack channel and lnkdrp posts a short message there, with a link back, at five moments:
 
 - **Opened**: a recipient opens one of your share links for the first time.
 - **Visit brief**: a recipient finished reading and the brief is ready.
 - **Replaced**: a document got a new version, with what changed.
 - **Received**: someone uploaded a file to one of your request inboxes.
+- **Added**: a document was added to a project, so the people watching that room know it landed.
 
 Messages go out one per event, at the same moments the notification emails do. The integration only posts. It does not read your Slack, it has no commands, and it never replies.
 
@@ -35,7 +36,7 @@ Click **Add channel** to connect another one. Each channel has its own switches 
 
 ## Choose what posts
 
-Each channel has four switches, all on to begin with: **Opens**, **Visit briefs**, **Replaced documents** and **Received files**. Turn off what you do not want in that channel. These are workspace switches, so they do not change anyone's email preferences.
+Each channel has five switches, all on to begin with: **Opens**, **Visit briefs**, **Replaced documents**, **Received files** and **New documents**. Turn off what you do not want in that channel. These are workspace switches, so they do not change anyone's email preferences.
 
 ## What a message says
 

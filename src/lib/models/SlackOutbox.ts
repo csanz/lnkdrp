@@ -13,8 +13,8 @@ const slackOutboxSchema = new Schema(
   {
     orgId: { type: Schema.Types.ObjectId, ref: "Org", required: true, index: true },
     connectionId: { type: Schema.Types.ObjectId, ref: "SlackConnection", required: true, index: true },
-    kind: { type: String, enum: ["views", "briefs", "docUpdates", "requests"], required: true },
-    /** `${kind}:${connectionId}:${sourceId}`; the source is the ShareView, VisitBrief or Upload. */
+    kind: { type: String, enum: ["views", "briefs", "docUpdates", "requests", "docs"], required: true },
+    /** `${kind}:${connectionId}:${sourceId}`; the source is the ShareView, VisitBrief or Upload, or `doc:project:minute` for a filing. */
     dedupeKey: { type: String, required: true, unique: true },
     event: {
       docId: { type: Schema.Types.ObjectId, default: null },
@@ -53,7 +53,7 @@ slackOutboxSchema.index({ sentAt: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60, 
 
 export type SlackOutbox = InferSchemaType<typeof slackOutboxSchema> & {
   _id: mongoose.Types.ObjectId;
-  kind: "views" | "briefs" | "docUpdates" | "requests";
+  kind: "views" | "briefs" | "docUpdates" | "requests" | "docs";
   status: "pending" | "sending" | "sent" | "skipped" | "dead";
 };
 
