@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 931 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 934 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -764,6 +764,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/models/ShareViewerEmail.ts` · ShareViewerEmail, ShareViewerEmailModel
 - `src/lib/models/ShareVisit.ts` · ShareVisit, ShareVisitModel
 - `src/lib/models/SlackConnection.ts` · SlackConnection, SlackConnectionModel
+- `src/lib/models/SlackOutbox.ts` · SlackOutbox, SlackOutboxModel
 - `src/lib/models/StarredDoc.ts` · StarredDoc, StarredDocModel
 - `src/lib/models/StripeEvent.ts` · StripeEvent, StripeEventModel
 - `src/lib/models/Subscription.ts` · Subscription, SubscriptionModel
@@ -825,7 +826,9 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/slack/connections.ts` · listSlackConnections, postThroughConnection, serializeSlackConnection, SLACK_EVENT_KEYS, SlackConnectionDto, SlackEventKey
 - `src/lib/slack/crypto.ts` · decryptSlackSecret, encryptSlackSecret, signSlackPayload, verifySlackSignature
 - `src/lib/slack/messages.ts` · mrkdwn, realLinkLabel, renderSlackEvent, slackBurstMessage, slackTestMessage
+- `src/lib/slack/outbox.ts` · DrainResult, drainSlackOutbox, EnqueueSlackInput, enqueueSlackPosts, SlackOutboxEvent
 - `src/lib/slack/post.ts` · postToSlackWebhook, SLACK_POST_TIMEOUT_MS, SlackMessage, SlackPostOutcome
+- `src/lib/slack/routing.ts` · burstAllowance, RoutableConnection, routeSlackConnections, SLACK_BURST_PER_MINUTE, SLACK_BURST_WINDOW_MS
 - `src/lib/slack/state.ts` · createSlackInstallState, SLACK_STATE_TTL_MS, SlackInstallState, verifySlackInstallState
 - `src/lib/starredDocs.ts` · getStarredDocs, isDocStarred, moveStarredDoc, refreshStarredDocsFromServer, STARRED_DOCS_CHANGED_EVENT, StarredDoc, toggleStarredDoc, upsertStarredDocMeta, …
 - `src/lib/support/plain/cards.ts` · buildAccountCard, buildCards, buildErrorsCard, CARD_KEYS, CardKey, CustomerContext, ErrorContext, loadCustomerContext, …
