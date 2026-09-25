@@ -4,13 +4,14 @@
  * Starts an upload for a request link (creates doc + upload) and returns an upload secret.
  */
 import { NextResponse } from "next/server";
+import { errorJson } from "@/lib/http/errorResponse";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
-import { debugError, debugLog } from "@/lib/debug";
+import { debugLog } from "@/lib/debug";
 import { BOT_ID_HEADER } from "@/lib/botId";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { tryResolveUserActor } from "@/lib/gating/actor";
@@ -368,12 +369,13 @@ export async function POST(
       { status: 201 },
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/requests/:token/uploads] POST failed", {
-      message,
-      ...(describeMongoError(err) as Record<string, unknown>),
+    // A fixed message: this caller is anonymous, and the raw one named collections and ids.
+    return errorJson(err, {
+      status: 500,
+      publicMessage: "Something went wrong",
+      context: "[api/requests/:token/uploads] POST failed",
+      logMeta: describeMongoError(err) as Record<string, unknown>,
     });
-    return NextResponse.json({ error: message }, { status: 400 });
   }
 }
 

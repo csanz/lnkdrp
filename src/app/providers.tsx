@@ -412,6 +412,16 @@ function TempUserClaimOnLogin() {
 /**
  * Keep client caches scoped to the current active org by syncing a stable org id into localStorage.
  */
+/**
+ * How long one `/api/orgs/active` answer stands for the same signed-in person. The sync effect
+ * re-runs on every client navigation (it keys on `pathname` so the doc and dashboard branches can
+ * pick their behaviour), and used to fetch every time (code review 2026-09-23, Low). A workspace
+ * switch goes through `PENDING_ACTIVE_ORG_ID_KEY` and a reload, so the cookie cannot change
+ * underneath a live tab; a minute is only a bound on how stale a second tab's switch can look.
+ */
+const ACTIVE_ORG_SYNC_TTL_MS = 60_000;
+let activeOrgSync: { userKey: string; at: number } | null = null;
+
 function ActiveOrgCacheSync() {
   const { status, data: session } = useSession();
   const pathname = usePathname();
@@ -518,6 +528,18 @@ function ActiveOrgCacheSync() {
       };
     }
 
+    const user = session?.user as { id?: unknown; email?: unknown } | undefined;
+    const userKey = typeof user?.id === "string" ? user.id : typeof user?.email === "string" ? user.email : "";
+    if (
+      userKey &&
+      activeOrgSync &&
+      activeOrgSync.userKey === userKey &&
+      Date.now() - activeOrgSync.at < ACTIVE_ORG_SYNC_TTL_MS &&
+      prevRef.current
+    ) {
+      return;
+    }
+
     let cancelled = false;
     void (async () => {
       try {
@@ -539,6 +561,7 @@ function ActiveOrgCacheSync() {
           await refreshSidebarCache({ force: true, reason: "active-org-sync" });
         }
         prevRef.current = next;
+        if (userKey && next) activeOrgSync = { userKey, at: Date.now() };
       } catch {
         // Fall back to session field (best-effort).
         const raw =

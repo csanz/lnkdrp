@@ -68,15 +68,8 @@ export async function GET(request: Request) {
 
   await connectMongo();
 
-  // Backfill: ensure `isRequest=true` is persisted for any repo that already has a token.
-  // Admin views should reflect the canonical discriminator to avoid confusion.
-  await ProjectModel.updateMany(
-    {
-      requestUploadToken: { $exists: true, $nin: [null, ""] },
-      $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }],
-    },
-    { $set: { isRequest: true } },
-  );
+  // The `isRequest` backfill for repos that only had a token ran here on every list; it is now
+  // `db/migration/20260925_0005_request_repos_is_request.mjs`, and this list is read-only.
 
   // Request repos are stored as Projects with request-only fields (e.g. requestUploadToken).
   const isRequestRepo: Record<string, unknown> = {

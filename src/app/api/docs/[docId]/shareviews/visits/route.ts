@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { PROJECT_LINK_FILTER, ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { projectLinkSlugsForDocs } from "@/lib/analytics/docScope";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
@@ -64,21 +65,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const docObjectId = new Types.ObjectId(docId);
-    const docExists = await DocModel.exists({
-      ...(allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: docObjectId, orgId, isDeleted: { $ne: true } },
-              {
-                _id: docObjectId,
-                userId: legacyUserId,
-                isDeleted: { $ne: true },
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: docObjectId, orgId, isDeleted: { $ne: true } }),
-    });
+    const docExists = await DocModel.exists(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId));
     if (!docExists) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }

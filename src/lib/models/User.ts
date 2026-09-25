@@ -15,7 +15,13 @@ const userSchema = new Schema(
      * - is identified by `_id` + a client-held secret (sent in headers)
      */
     isTemp: { type: Boolean, default: false, index: true },
-    tempSecretHash: { type: String, default: null },
+    /**
+     * `select: false`: a bearer hash that only `resolveActor` and `/api/auth/claim-temp` compare.
+     * Every other read of a user row (admin lists, session lookups, support cards) gets it left
+     * out unless it asks with `+tempSecretHash`, so safety no longer depends on each of those
+     * projecting it away.
+     */
+    tempSecretHash: { type: String, default: null, select: false },
 
     email: {
       type: String,

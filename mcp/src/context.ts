@@ -12,6 +12,6 @@ export type ToolContext = {
   /** Identity captured at `initialize` (refreshed by `lnkdrp_whoami`). */
   whoami: () => Whoami;
   setWhoami: (next: Whoami) => void;
-  /** Process-wide idempotency cache (keys are namespaced by orgId, so sharing is safe). */
+  /** Process-wide idempotency cache (keys are namespaced by orgId and credential, so sharing is safe). */
   idempotency: IdempotencyStore;
 };

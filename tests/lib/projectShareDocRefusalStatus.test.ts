@@ -34,6 +34,8 @@ vi.mock("next/navigation", () => ({
 const resolveProjectLink = vi.fn();
 vi.mock("@/lib/share/projectLinks", () => ({
   resolveProjectLink: (...a: any[]) => (resolveProjectLink as any)(...a),
+  // The page-render wrapper (React.cache over resolveProjectLink) resolves through the same mock.
+  resolveProjectLinkForPage: (shareId: string) => (resolveProjectLink as any)(shareId, { select: { description: 1, isRequest: 1 } }),
 }));
 
 const findProjectDocument = vi.fn();
@@ -96,7 +98,9 @@ describe("/p/:shareId/:docId refuses a non-member document with a 404 status, no
 
   test("`isRequest` is asked for explicitly, since an unselected field would read as undefined", async () => {
     await render(MEMBER_DOC);
-    expect(resolveProjectLink).toHaveBeenCalledWith(SHARE_ID, { select: { isRequest: 1 } });
+    // The page goes through `resolveProjectLinkForPage`, whose select is the union every segment of
+    // the page needs; `isRequest` must be in it, whatever else is.
+    expect(resolveProjectLink).toHaveBeenCalledWith(SHARE_ID, expect.objectContaining({ select: expect.objectContaining({ isRequest: 1 }) }));
   });
 });
 

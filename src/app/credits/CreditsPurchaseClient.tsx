@@ -30,6 +30,9 @@ import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { cn } from "@/lib/cn";
 import WorkspaceIcon from "@/components/WorkspaceIcon";
 
+/** 20 polls at 1.5 s plus 40 at 5 s: the grant normally lands in seconds; four minutes is patience enough. */
+const GRANT_POLL_MAX_TRIES = 60;
+
 type Props = {
   packs: CreditPack[];
   proPriceLabel: string | null;
@@ -103,9 +106,11 @@ function Body({
   const [workspaceFailed, setWorkspaceFailed] = useState(false);
   const [busyPack, setBusyPack] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [grant, setGrant] = useState<{ state: "pending" | "granted" | "slow"; credits?: number; expiresAt?: string } | null>(
+  const [grant, setGrant] = useState<{ state: "pending" | "granted" | "slow" | "stalled"; credits?: number; expiresAt?: string } | null>(
     purchase === "success" && sessionId ? { state: "pending" } : null,
   );
+  // Bumped by "Check again" once the poll has given up.
+  const [pollRound, setPollRound] = useState(0);
 
   const loadWorkspace = useCallback(async () => {
     try {
@@ -178,14 +183,21 @@ function Body({
       }
       if (cancelled) return;
       if (tries === 20) setGrant({ state: "slow" });
+      // 20 quick polls then 40 slow ones: about four minutes, then stop rather than poll forever
+      // on a tab left open (code review 2026-09-23, Low). "Check again" starts another round.
+      if (tries >= GRANT_POLL_MAX_TRIES) {
+        setGrant({ state: "stalled" });
+        return;
+      }
       timer = window.setTimeout(tick, tries < 20 ? 1500 : 5000);
     };
+    setGrant((g) => (g && g.state === "stalled" ? { state: "pending" } : g));
     let timer = window.setTimeout(tick, 0);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [signedIn, purchase, sessionId, loadWorkspace]);
+  }, [signedIn, purchase, sessionId, loadWorkspace, pollRound]);
 
   async function buy(pack: CreditPack) {
     if (busyPack) return;
@@ -238,6 +250,18 @@ function Body({
               </>
             ) : grant?.state === "slow" ? (
               "Payment received. Your credits are taking longer than usual to appear; this page updates as soon as they do."
+            ) : grant?.state === "stalled" ? (
+              <>
+                Payment received, but the credits have not appeared yet.{" "}
+                <button
+                  type="button"
+                  onClick={() => setPollRound((r) => r + 1)}
+                  className="font-semibold text-white underline underline-offset-4 hover:text-white/80"
+                >
+                  Check again
+                </button>
+                , or contact support if they do not arrive.
+              </>
             ) : grant?.state === "pending" ? (
               "Payment received. Adding your credits…"
             ) : (

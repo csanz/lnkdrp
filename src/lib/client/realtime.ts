@@ -85,6 +85,10 @@ const handlers = new Map<string, Set<Handler>>();
 let socket: WebSocket | null = null;
 let state: RealtimeState = "idle";
 let reconnectTimer: number | null = null;
+// The liveness check of the current socket. `disconnect()` nulls `onclose` before closing, which
+// is where the interval used to be cleared, so every workspace switch and every last-subscriber
+// close leaked a 15 s timer that outlived its socket (code review 2026-09-23, Low).
+let watchdogTimer: number | null = null;
 let attempts = 0;
 let wanted = false;
 // Bumped on every disconnect/reconnect so a connect() still awaiting its ticket can tell it has
@@ -179,11 +183,13 @@ async function connect(): Promise<void> {
    */
   const DEAD_AFTER_MS = 70_000;
   let lastFrameAt = Date.now();
+  if (watchdogTimer !== null) window.clearInterval(watchdogTimer);
   const watchdog = window.setInterval(() => {
     if (socket !== ws) return;
     if (Date.now() - lastFrameAt < DEAD_AFTER_MS) return;
     ws.close();
   }, 15_000);
+  watchdogTimer = watchdog;
   ws.onopen = () => {
     attempts = 0;
     lastFrameAt = Date.now();
@@ -208,6 +214,7 @@ async function connect(): Promise<void> {
   };
   ws.onclose = () => {
     window.clearInterval(watchdog);
+    if (watchdogTimer === watchdog) watchdogTimer = null;
     // An old socket closing after a switch says nothing about the current one.
     if (socket !== ws) return;
     socket = null;
@@ -257,6 +264,10 @@ function disconnect() {
   }
   const ws = socket;
   socket = null;
+  if (watchdogTimer !== null) {
+    window.clearInterval(watchdogTimer);
+    watchdogTimer = null;
+  }
   if (ws) {
     ws.onclose = null;
     ws.close();

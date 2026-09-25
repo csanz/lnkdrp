@@ -103,14 +103,18 @@ projectSchema.pre("validate", function () {
   }
 });
 
-// Org-aware uniqueness (preferred).
+// Org-aware uniqueness (preferred), among live projects only. A soft-deleted project (an admin
+// delete, or a deleted workspace) used to keep its name, so creating one with that name answered
+// 409 for a project nobody could see. `isDeleted: false` is an equality, so rows without the field
+// escape the index: `db/migration/20260925_0003_projects_live_unique_names.mjs` backfills it and
+// rebuilds these two under the same names, and the schema default keeps new rows in.
 projectSchema.index(
   { orgId: 1, name: 1 },
-  { unique: true, partialFilterExpression: { orgId: { $type: "objectId" } } },
+  { unique: true, partialFilterExpression: { orgId: { $type: "objectId" }, isDeleted: false } },
 );
 projectSchema.index(
   { orgId: 1, slug: 1 },
-  { unique: true, partialFilterExpression: { orgId: { $type: "objectId" } } },
+  { unique: true, partialFilterExpression: { orgId: { $type: "objectId" }, isDeleted: false } },
 );
 
 // Legacy per-user uniqueness for older records that don't have orgId yet.

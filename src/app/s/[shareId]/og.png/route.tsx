@@ -80,7 +80,16 @@ export async function GET(
   // The OG image is the document's, never the link's: labels and audiences stay private
   // (docs/prds/lnkdrp-multi-links.md). A refused link has no preview at all.
   const resolved = await resolveShareLink(shareId, {
-    select: { title: 1, aiOutput: 1, previewImageUrl: 1, firstPagePngUrl: 1 } as Record<string, 1>,
+    // The three `openGraph` fields this card reads, not the whole AI output: `aiOutput` carries the
+    // full summary, key points and per-page material, megabytes on a long report, for an unfurl.
+    select: {
+      title: 1,
+      "aiOutput.openGraph.title": 1,
+      "aiOutput.openGraph.imageUrl": 1,
+      "aiOutput.openGraph.imagePath": 1,
+      previewImageUrl: 1,
+      firstPagePngUrl: 1,
+    } as Record<string, 1>,
   });
   if (!resolved || resolved.refusal) notFound();
   // A password-protected link has no preview either. This image is rendered from the document's

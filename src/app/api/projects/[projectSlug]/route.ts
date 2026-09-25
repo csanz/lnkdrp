@@ -13,7 +13,7 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { newSecretToken, newShareId } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
-import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
+import { authOrRateLimitResponse, errorJson } from "@/lib/http/errorResponse";
 import { setAllProjectLinksEnabled, syncProjectShareState } from "@/lib/share/projectLinks";
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
 import { liveProjectByIdMatch } from "@/lib/projects/scope";
@@ -432,7 +432,6 @@ export async function PATCH(
   } catch (err) {
     const authOrLimited = authOrRateLimitResponse(err);
     if (authOrLimited) return authOrLimited;
-    const message = err instanceof Error ? err.message : "Unknown error";
     // Surface a clean message for duplicate-name per user.
     if (
       err &&
@@ -442,8 +441,7 @@ export async function PATCH(
     ) {
       return NextResponse.json({ error: "A project with that name already exists" }, { status: 409 });
     }
-    debugError(1, "[api/projects/:slug] PATCH failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Could not update the project", context: "[api/projects/:slug] PATCH failed" });
   }
 }
 /**
@@ -648,6 +646,20 @@ export async function DELETE(
       }
     }
 
+    // A request repo's documents also point back at it as the inbox they arrived through, and its
+    // guide points at it too; the modes above clear those for the docs they handle, and a delete
+    // with no mode left them pointing at a project that no longer existed.
+    if (isRequest) {
+      await DocModel.updateMany(
+        { $and: [docTenant, { receivedViaRequestProjectId: projectId }] },
+        { $set: { receivedViaRequestProjectId: null } },
+      );
+      await DocModel.updateMany(
+        { $and: [docTenant, { guideForRequestProjectId: projectId }] },
+        { $set: { guideForRequestProjectId: null } },
+      );
+    }
+
     // Remove project membership from docs (best-effort).
     await DocModel.updateMany(
       { $and: [docTenant, { $or: [{ projectId }, { primaryProjectId: projectId }] }] },
@@ -692,9 +704,7 @@ export async function DELETE(
   } catch (err) {
     const authOrLimited = authOrRateLimitResponse(err);
     if (authOrLimited) return authOrLimited;
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/projects/:slug] DELETE failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Could not delete the project", context: "[api/projects/:slug] DELETE failed" });
   }
 }
 

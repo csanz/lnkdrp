@@ -37,6 +37,15 @@ function canRun(): boolean {
   return Boolean(process.env.MONGODB_URI) && Boolean(ORG_ID);
 }
 
+/**
+ * Say so when this file is skipped. The vitest configs point `envDir` at `./tmp`, which is
+ * git-ignored, so `.env.local` is never loaded here and the guard above is false unless
+ * `MONGODB_URI` is exported into the shell. The skip used to be silent, which read as a pass.
+ */
+if (!canRun()) {
+  console.warn(`[${__filename.split(/[\\/]/).pop()}] skipped: export MONGODB_URI (and any id the guard needs) to run the database-backed checks`);
+}
+
 /** How many of the workspace's top documents are checked. Three is the PRD's verification bar. */
 const DOCS_TO_CHECK = 3;
 

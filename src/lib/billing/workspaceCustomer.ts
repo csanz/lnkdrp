@@ -46,9 +46,19 @@ export async function ensureWorkspaceStripeCustomer(params: {
   }
 
   const email = (params.email ?? "").trim();
-  const customer = await stripe.customers.create({ name: workspaceName, email: email || undefined, metadata });
+  /**
+   * Idempotent on the workspace: two checkouts started together used to create two customers and
+   * the second write won, leaving the first customer (and any card saved to it) orphaned in Stripe.
+   * With the key, Stripe returns the same customer for the same workspace for 24 hours, so the
+   * race collapses to one row. The Subscription row is matched on the live row only: a deleted
+   * workspace's old row must not be revived with a fresh customer id.
+   */
+  const customer = await stripe.customers.create(
+    { name: workspaceName, email: email || undefined, metadata },
+    { idempotencyKey: `workspace-customer:${String(orgId)}` },
+  );
   await SubscriptionModel.updateOne(
-    { orgId },
+    { orgId, isDeleted: { $ne: true } },
     { $setOnInsert: { orgId, isDeleted: false }, $set: { stripeCustomerId: customer.id } },
     { upsert: true },
   );

@@ -516,6 +516,10 @@ export default function ActivityPageClient() {
   const freshTimersRef = useRef<number[]>([]);
   const arrivalQueueRef = useRef<ActivityItem[]>([]);
   const drainTimerRef = useRef<number | null>(null);
+  // Read by the refresh and the drain, which both run from timers that captured an older
+  // `pageIndex`: a page-one refresh answered after Next was clicked used to prepend its rows
+  // onto page two (code review 2026-09-23, Low).
+  const pageIndexRef = useRef(0);
   const lastInsertAtRef = useRef(0);
   useEffect(
     () => () => {
@@ -530,6 +534,11 @@ export default function ActivityPageClient() {
   const drainArrivals = useCallback(() => {
     drainTimerRef.current = null;
     if (!arrivalQueueRef.current.length) return;
+    if (pageIndexRef.current !== 0) {
+      // Only page one shows arrivals; the page-one fetch on the way back replaces the list anyway.
+      arrivalQueueRef.current = [];
+      return;
+    }
     // Minimum spacing between inserts, even when arrivals come from separate refreshes a few
     // milliseconds apart (three quick writes = three frames = three refetches).
     const wait = STAGE_MS - (Date.now() - lastInsertAtRef.current);
@@ -555,6 +564,9 @@ export default function ActivityPageClient() {
   // cursors[i] is the cursor that opened page i (null for the first page); pageIndex points at the current page.
   const [cursors, setCursors] = useState<Array<string | null>>([null]);
   const [pageIndex, setPageIndex] = useState(0);
+  useEffect(() => {
+    pageIndexRef.current = pageIndex;
+  }, [pageIndex]);
   const [loading, setLoading] = useState(true);
   const showSkeleton = useSkeletonDelay(loading);
   const [pending, setPending] = useState(false);
@@ -748,6 +760,8 @@ export default function ActivityPageClient() {
       if (document.visibilityState !== "visible" || pageIndex !== 0 || pending || loading) return;
       fetchPage(null)
         .then((page) => {
+          // The tab moved off page one while this was in flight.
+          if (pageIndexRef.current !== 0) return;
           setItems((prev) => {
             /**
              * Identity, not just arrival.

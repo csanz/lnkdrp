@@ -595,7 +595,7 @@ async function tryResolveExistingTempActor(request: Request): Promise<Actor | nu
 
   await connectMongo();
   const u = await UserModel.findOne({ _id: new Types.ObjectId(tempId), isTemp: true })
-    .select({ _id: 1, tempSecretHash: 1 })
+    .select("_id +tempSecretHash")
     .lean();
   if (!u || !verifyTempUserSecret({ secret: tempSecret, secretHash: u.tempSecretHash ?? null })) return null;
 

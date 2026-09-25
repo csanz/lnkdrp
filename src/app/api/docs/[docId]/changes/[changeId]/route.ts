@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
@@ -38,21 +39,7 @@ export async function GET(
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const docObjectId = new Types.ObjectId(docId);
-    const docExists = await DocModel.exists({
-      ...(allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: docObjectId, orgId, isDeleted: { $ne: true } },
-              {
-                _id: docObjectId,
-                userId: legacyUserId,
-                isDeleted: { $ne: true },
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: docObjectId, orgId, isDeleted: { $ne: true } }),
-    });
+    const docExists = await DocModel.exists(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId));
     if (!docExists) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const change = await DocChangeModel.findOne({

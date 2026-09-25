@@ -694,10 +694,11 @@ npm run mongo:clear:ai-runs-requests -- --yes
 ## Running Tests
 
 ```bash
-# Agent tests (CLI mode)
+# Agent evals (CLI mode). These call a live model and spend credits; they are not part of
+# `npm test` and are not run in CI.
 npm run tests:agent:cli
 
-# Agent tests (Vitest)
+# Agent evals (Vitest runner, same live model)
 npm run tests:agent:vitest
 
 # Upload pipeline tests
@@ -804,8 +805,8 @@ is the table of schedules, and `tests/lib/cronMap.test.ts` keeps it honest. All 
 | Script | Command | Description |
 |--------|---------|-------------|
 | `npm run tests:lib:vitest` | `vitest run --config tests/lib/vitest.config.ts` | The big one — ~219 files, and the suite that guards the cron map |
-| `npm run tests:agent` / `:cli` | `tsx tests/agent/agent.cli.ts` | Agent tests, CLI mode |
-| `npm run tests:agent:vitest` | `vitest run --config tests/agent/vitest.config.ts` | Agent tests |
+| `npm run tests:agent` / `:cli` | `tsx tests/agent/agent.cli.ts` | Live-model agent evals, CLI mode (spend credits; not in `npm test` or CI) |
+| `npm run tests:agent:vitest` | `vitest run --config tests/agent/vitest.config.ts` | The same evals under the vitest runner |
 | `npm run tests:upload:vitest` | `vitest run --config tests/upload/vitest.config.ts` | Upload pipeline |
 | `npm run tests:credits:vitest` | `vitest run --config tests/credits/vitest.config.ts` | Credits and billing |
 | `npm run tests:routes` | `node scripts/tests-routes.mjs` | Route tests (needs the dev server) |

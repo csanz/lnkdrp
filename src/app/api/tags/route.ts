@@ -17,6 +17,7 @@ import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { findOrCreateTag, listTags, listTagsPage } from "@/lib/tags/service";
 import { isUsableTagName } from "@/lib/tags/slug";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,8 +61,7 @@ export async function GET(request: Request) {
         actor,
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not load tags";
-      return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+      return applyTempUserHeaders(errorJson(err, { status: 500, publicMessage: "Could not load tags", context: "[api/tags] GET failed" }), actor);
     }
   });
 }
@@ -87,8 +87,7 @@ export async function POST(request: Request) {
       const { tag, created } = await findOrCreateTag({ orgId: actor.orgId, name, userId: actor.userId });
       return applyTempUserHeaders(NextResponse.json({ ok: true, tag, created }, { status: created ? 201 : 200 }), actor);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not create the tag";
-      return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+      return applyTempUserHeaders(errorJson(err, { status: 500, publicMessage: "Could not create the tag", context: "[api/tags] POST failed" }), actor);
     }
   });
 }

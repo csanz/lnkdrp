@@ -22,6 +22,7 @@
  * - **No `allowRevisionHistory`.** A project link has no single document whose versions it could
  *   list; the field stays false on every project row.
  */
+import { cache } from "react";
 import { Types, type ProjectionType } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
@@ -308,6 +309,19 @@ export async function resolveProjectLink(shareId: string, opts: { select?: Recor
   const refusal: ResolvedProjectLink["refusal"] = link.archivedAt ? "archived" : !link.enabled ? "disabled" : isExpired(link) ? "expired" : null;
   return { link, project, refusal };
 }
+
+/**
+ * {@link resolveProjectLink} for the `/p/:shareId` page tree, memoised per request.
+ *
+ * The room layout, its metadata, the room page, the document layout and the document page each
+ * resolved the slug again; with `React.cache` they share one read. `description` and `isRequest`
+ * are the two fields outside `PROJECT_SHARE_FIELDS` any of them needs, so the projection is the
+ * union. Routes (`/pdf`, `/preview`) keep calling the uncached function.
+ */
+export const resolveProjectLinkForPage = cache(
+  (shareId: string): Promise<ResolvedProjectLink | null> =>
+    resolveProjectLink(shareId, { select: { description: 1, isRequest: 1 } }),
+);
 
 /**
  * Resolve a project inside a workspace, with the same legacy fallback the project routes use:

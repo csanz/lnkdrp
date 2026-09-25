@@ -21,7 +21,18 @@ export type AiRunMeta = {
 };
 
 /** Trim and cap stored prompt/output text to avoid oversized Mongo documents (preserves head + tail). */
-function trimForStorage(input: string | null | undefined, max = 120_000): string | null {
+/**
+ * Longest prompt text kept on an `AiRun` row, in characters.
+ *
+ * The row exists for debugging (what was sent, what came back), not as an archive: the user
+ * prompt carries the customer's document text, and 220k characters of it per run sat in the
+ * database with no expiry. The head and tail are what a debugging read needs; the middle is the
+ * document, which the upload already stores. Rows also expire (`AI_RUN_RETENTION_DAYS`, see
+ * `src/lib/models/AiRun.ts`).
+ */
+export const AI_RUN_PROMPT_MAX_CHARS = 50_000;
+
+function trimForStorage(input: string | null | undefined, max = AI_RUN_PROMPT_MAX_CHARS): string | null {
   const text = (input ?? "").toString().trim();
   if (!text) return null;
   if (text.length <= max) return text;
@@ -60,7 +71,7 @@ export async function startAiRun(args: {
     await connectMongo();
     const meta = args.meta ?? null;
     const systemPrompt = trimForStorage(args.systemPrompt);
-    const userPrompt = trimForStorage(args.userPrompt, 220_000);
+    const userPrompt = trimForStorage(args.userPrompt);
     const created = await AiRunModel.create({
       kind: args.kind,
       status: "started",

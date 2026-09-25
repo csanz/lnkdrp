@@ -28,6 +28,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ErrorEventModel } from "@/lib/models/ErrorEvent";
 import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { UserModel } from "@/lib/models/User";
 
 export const CARD_KEYS = ["lnkdrp-account", "lnkdrp-errors"] as const;
@@ -221,7 +222,12 @@ async function loadWorkspace(orgId: Types.ObjectId, name: string, type: "persona
     getWorkspacePlan(orgId),
     getWorkspaceGrace(orgId),
     getWorkspaceUsage(orgId),
-    getCreditsSnapshot({ workspaceId: orgId.toString(), fast: true }).catch(() => null),
+    // A support card is a read. `getCreditsSnapshot` seeds the balance row when there is none
+    // (the starter grant), which a lookup from the support desk must not do to a workspace that
+    // has never touched credits; with no row there is nothing to report yet.
+    WorkspaceCreditBalanceModel.exists({ workspaceId: orgId })
+      .then((row) => (row ? getCreditsSnapshot({ workspaceId: orgId.toString(), fast: true }) : null))
+      .catch(() => null),
     getAgentStatus(orgId).catch(() => null),
   ]);
   const limits = limitsForPlan(plan);

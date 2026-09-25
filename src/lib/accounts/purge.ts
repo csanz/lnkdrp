@@ -150,8 +150,9 @@ export async function planPurge(userId: string): Promise<PurgePlan | null> {
 
   const soloOrgIds: Types.ObjectId[] = [];
   const sharedOrgIds: Types.ObjectId[] = [];
+  const otherMembers = await countOtherMembersByOrg(id, memberships.map((m) => m.orgId));
   for (const m of memberships) {
-    const others = await OrgMembershipModel.countDocuments({ orgId: m.orgId, userId: { $ne: id }, isDeleted: { $ne: true } });
+    const others = otherMembers.get(String(m.orgId))?.others ?? 0;
     (others === 0 ? soloOrgIds : sharedOrgIds).push(m.orgId);
   }
 
@@ -474,15 +475,44 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
 }
 
 /** Accounts whose grace period has run out. */
-export async function findAccountsDueForPurge(now = new Date(), limit = 25): Promise<string[]> {
+export async function findAccountsDueForPurge(now = new Date(), limit = 25, onlyUserId?: string | null): Promise<string[]> {
   await connectMongo();
+  // `?userId=` on the cron used to fetch the first thousand due accounts and look for the id in
+  // that list, so an account past the thousandth was reported as not due. Ask for that one row.
+  const only = (onlyUserId ?? "").trim();
   const rows = (await UserModel.find({
+    ...(only ? { _id: new Types.ObjectId(only) } : {}),
     deletionRequestedAt: { $ne: null },
     deletionPurgedAt: null,
     deletionPurgeAfter: { $lte: now },
   })
     .select({ _id: 1 })
-    .limit(limit)
+    .limit(only ? 1 : limit)
     .lean()) as Array<{ _id: Types.ObjectId }>;
   return rows.map((r) => String(r._id));
+}
+
+/** Per workspace, how many members other than `userId` remain, and how many of them are owner or admin. */
+export type OtherMembers = { others: number; admins: number };
+
+/**
+ * One aggregate for every workspace at once. Deletion planning asked two counts per membership
+ * in a loop (up to a thousand queries for one request); this is the same numbers in one round trip.
+ * Workspaces with nobody else are absent from the map: read them as `{ others: 0, admins: 0 }`.
+ */
+export async function countOtherMembersByOrg(userId: Types.ObjectId, orgIds: Types.ObjectId[]): Promise<Map<string, OtherMembers>> {
+  const out = new Map<string, OtherMembers>();
+  if (!orgIds.length) return out;
+  const rows = (await OrgMembershipModel.aggregate([
+    { $match: { orgId: { $in: orgIds }, userId: { $ne: userId }, isDeleted: { $ne: true } } },
+    {
+      $group: {
+        _id: "$orgId",
+        others: { $sum: 1 },
+        admins: { $sum: { $cond: [{ $in: ["$role", ["owner", "admin"]] }, 1, 0] } },
+      },
+    },
+  ])) as Array<{ _id: Types.ObjectId; others: number; admins: number }>;
+  for (const r of rows) out.set(String(r._id), { others: r.others ?? 0, admins: r.admins ?? 0 });
+  return out;
 }

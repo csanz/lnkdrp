@@ -264,26 +264,27 @@ export async function POST(request: Request) {
      * and is only refused the next one. Taking a workspace away from an existing user to enforce a
      * cap introduced after they made it would be the wrong trade.
      */
-    const ownedOrgIds = await ownedWorkspaceIds(userId);
-    if (ownedOrgIds.length >= FREE_WORKSPACES) {
-      const plans = await Promise.all(ownedOrgIds.map((id) => getWorkspacePlan(id)));
-      if (!plans.some((plan) => plan === "pro")) {
-        return planLimitResponse(
-          {
+    const refuse = (used: number, extra?: Record<string, unknown>) =>
+      planLimitResponse(
+        {
           ok: false,
           code: "plan_limit",
           limit: "team_workspaces",
-          used: ownedOrgIds.length,
+          used,
           requested: 1,
           max: FREE_WORKSPACES,
           grace: null,
           upgradeUrl: UPGRADE_URL,
           message: `Free accounts can have ${FREE_WORKSPACES === 2 ? "two" : FREE_WORKSPACES} workspaces. Upgrade to Pro to create another.`,
-          },
-          // A per-person limit; the row goes to the workspace the person is acting from.
-          { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, request },
-        );
-      }
+        },
+        // A per-person limit; the row goes to the workspace the person is acting from.
+        { orgId: actor.orgId, userId: actor.userId, actorKind: actor.kind, request, ...(extra ? { meta: extra } : {}) },
+      );
+    const anyPro = async (orgIds: Types.ObjectId[]) => (await Promise.all(orgIds.map((id) => getWorkspacePlan(id)))).some((p) => p === "pro");
+
+    const ownedOrgIds = await ownedWorkspaceIds(userId);
+    if (ownedOrgIds.length >= FREE_WORKSPACES && !(await anyPro(ownedOrgIds))) {
+      return refuse(ownedOrgIds.length);
     }
 
     const base = slugify(slugRaw || name);
@@ -313,6 +314,23 @@ export async function POST(request: Request) {
       createdDate: now,
       updatedDate: now,
     });
+
+    /**
+     * The check above is check-then-create: two requests in flight together both pass it and both
+     * create, and a Free account ends up one over the cap. Re-counting after the write is the
+     * same shape the invite claim uses for collaborators. Over the cap, and none of the *other*
+     * workspaces is Pro, the one just made is removed again (nothing references it yet) and the
+     * caller gets the same 402 the pre-check gives.
+     */
+    const ownedAfter = await ownedWorkspaceIds(userId);
+    if (ownedAfter.length > FREE_WORKSPACES) {
+      const others = ownedAfter.filter((id) => String(id) !== orgId);
+      if (!(await anyPro(others))) {
+        await OrgMembershipModel.deleteOne({ orgId: new Types.ObjectId(orgId), userId });
+        await OrgModel.deleteOne({ _id: new Types.ObjectId(orgId) });
+        return refuse(others.length, { raced: true });
+      }
+    }
 
     return NextResponse.json(
       {

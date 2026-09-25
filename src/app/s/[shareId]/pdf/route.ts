@@ -8,6 +8,7 @@ import { DOWNLOAD_INSTANTS_KEPT, ShareViewModel } from "@/lib/models/ShareView";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
 import { clientIpFromRequest, rateLimit } from "@/lib/http/rateLimit";
 import crypto from "node:crypto";
 import net from "node:net";
@@ -308,7 +309,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     const cookieName = shareAuthCookieName(shareId);
     const cookie = getCookie(request, cookieName) ?? "";
     const expected = shareAuthCookieValue({ shareId, sharePasswordHash: sharePasswordHash as string });
-    if (!cookie || cookie !== expected) {
+    if (!shareAuthCookieMatches(cookie, expected)) {
       return new Response("Unauthorized", { status: 401 });
     }
   }

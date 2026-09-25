@@ -35,7 +35,7 @@
  * that same one-click body, so the human path and the provider path share one write; a submission
  * that arrives from a browser (it accepts HTML) gets the confirmation page instead of a blank one.
  */
-import { VIEW_EMAIL_PREFERENCES_PATH } from "@/lib/notifications/viewNotifications";
+import { normalizeViewEmailMode, VIEW_EMAIL_PREFERENCES_PATH } from "@/lib/notifications/viewNotifications";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
@@ -139,8 +139,13 @@ const OFF_COPY: Record<
 
 type ViewEmailMode = "off" | "daily" | "immediate";
 
-/** Read a stored mode; a missing or unknown value means the schema default, "daily". */
-function normalizeMode(v: unknown): ViewEmailMode {
+/**
+ * Read a stored mode. A missing or unknown value means the schema default, which is "daily" for
+ * every kind except `views`: that one defaults to "immediate" (`DEFAULT_VIEW_EMAIL_MODE`, shared
+ * with the sender), and this page used to say "set to a daily digest" about it.
+ */
+function normalizeMode(kind: EmailOffKind, v: unknown): ViewEmailMode {
+  if (kind === "views") return normalizeViewEmailMode(v);
   return v === "off" || v === "immediate" ? v : "daily";
 }
 
@@ -334,7 +339,7 @@ async function handle(request: Request, opts: { write: boolean }): Promise<Respo
 
     const membership = await OrgMembershipModel.findOne(notDeleted).select({ orgId: 1, [field]: 1 }).lean();
     if (!membership) return invalidPage();
-    const mode = normalizeMode((membership as Record<string, unknown>)[field]);
+    const mode = normalizeMode(kind, (membership as Record<string, unknown>)[field]);
     const name = await loadWorkspaceName((membership as { orgId?: unknown }).orgId);
     const stateLine = `${escapeHtml(copy.sentence[mode])} for ${workspaceLabel(name)}.`;
 

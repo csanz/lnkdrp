@@ -238,11 +238,24 @@ export async function reconcileShareLinkCounters(opts: ReconcileOptions = {}): P
     // `timestamps: false`: this is maintenance. Mongoose stamps `updatedDate` on any update query,
     // and `updatedDate` is a fallback for "last activity" elsewhere — a repair pass must not look
     // like traffic.
-    await ShareLinkModel.updateOne(
-      { _id: link._id },
+    /**
+     * Compare-and-set on the values read above. A view that lands between the read and this write
+     * has already bumped `viewCount` by one on the row; a plain `$set` of the recomputed truth
+     * would erase that increment and the counter would read one low until tomorrow's pass. With
+     * the stored values in the filter, a row that moved is simply skipped, and the next run, which
+     * recomputes from the rows that view wrote, gets it right.
+     */
+    const res = await ShareLinkModel.updateOne(
+      {
+        _id: link._id,
+        viewCount: link.viewCount ?? null,
+        downloadCount: link.downloadCount ?? null,
+        lastViewedAt: storedLast ?? null,
+      },
       { $set: { viewCount: truth.viewCount, downloadCount: truth.downloadCount, lastViewedAt: truth.lastViewedAt } },
       { timestamps: false },
     );
+    if (res.matchedCount === 0) linksReconciled -= 1;
   }
 
   return { linksChecked: links.length, linksReconciled, dryRun, since: since ? since.toISOString() : null, drift };

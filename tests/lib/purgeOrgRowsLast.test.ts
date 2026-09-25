@@ -70,6 +70,8 @@ vi.mock("@/lib/models/OrgMembership", () => ({
     // One workspace, and nobody else in it: the solo case the purge is written for.
     find: () => ({ select: () => ({ limit: () => ({ lean: async () => [{ orgId: ORG_ID, role: "owner" }] }) }) }),
     countDocuments: async () => 0,
+    // `planPurge` counts the other members of every workspace in one aggregate (nobody else here).
+    aggregate: async () => [],
     deleteMany: async () => {
       deleteCalls.push("OrgMembership");
       if (failing.name === "OrgMembership") throw new Error("OrgMembership.deleteMany failed");

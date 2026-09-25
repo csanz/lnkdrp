@@ -14,6 +14,7 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { loadAuthorship } from "@/lib/people/contributors";
 import { debugError } from "@/lib/debug";
@@ -42,19 +43,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
      */
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const doc = (await DocModel.findOne(
-      allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } },
-              {
-                _id: new Types.ObjectId(docId),
-                isDeleted: { $ne: true },
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-                userId: new Types.ObjectId(actor.userId),
-              },
-            ],
-          }
-        : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } },
+      buildDocMatch(new Types.ObjectId(docId), orgId, new Types.ObjectId(actor.userId), allowLegacyByUserId),
     )
       .select({ _id: 1, orgId: 1, userId: 1 })
       .lean()) as { orgId?: unknown; userId?: unknown } | null;

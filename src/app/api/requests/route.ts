@@ -4,10 +4,11 @@
  * Lists and creates inbound upload requests and returns a `/request/:token` upload path.
  */
 import { NextResponse } from "next/server";
+import { errorJson } from "@/lib/http/errorResponse";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
-import { debugError, debugLog } from "@/lib/debug";
+import { debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
@@ -258,9 +259,7 @@ export async function GET(request: Request) {
 
     return applyTempUserHeaders(NextResponse.json(requests), actor);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/requests] GET failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Something went wrong", context: "[api/requests] GET failed" });
   }
 }
 
@@ -426,9 +425,7 @@ export async function POST(request: Request) {
       actor,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/requests] POST failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Something went wrong", context: "[api/requests] POST failed" });
   }
 }
 

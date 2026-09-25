@@ -39,6 +39,18 @@ vi.mock("@/lib/http/rateLimit", () => ({
   clientIpFromRequest: vi.fn(() => "203.0.113.7"),
 }));
 vi.mock("@/lib/share/links", () => ({ listShareLinks, resolveShareLink }));
+// The route reads the one link by id now (review Low: no more loading the whole list to check
+// one id); the rows the test feeds `listShareLinks` are the rows the model answers with.
+vi.mock("@/lib/models/ShareLink", () => ({
+  ShareLinkModel: {
+    findOne: (filter: { _id?: unknown }) => ({
+      lean: async () => {
+        const rows = (await listShareLinks()) as Array<{ _id: unknown }>;
+        return rows.find((r) => String(r._id) === String(filter._id)) ?? null;
+      },
+    }),
+  },
+}));
 vi.mock("@/lib/share/projectLinks", () => ({ resolveProjectLink: vi.fn(async () => null) }));
 vi.mock("@/lib/share/ownerSide", () => ({ isOwnerSideViewer: vi.fn(async () => true) }));
 vi.mock("@/lib/activity/log", () => ({ recordActivity: vi.fn() }));

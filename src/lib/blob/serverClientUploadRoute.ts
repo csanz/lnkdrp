@@ -225,6 +225,24 @@ export function isBlobStoreHost(hostname: string): boolean {
  * Validate that a client-reported blob URL points at *our* store and lives under the
  * given upload's folder (`docs/{docId}/uploads/{uploadId}/`).
  */
+/**
+ * Is this a URL on our own blob store at all (https, allowlisted host)?
+ *
+ * The narrower {@link isBlobUrlForUpload} also pins the path to one upload. This one is for a
+ * `blobUrl` read back from a document row where the upload is not known: the owner PDF redirect
+ * and the "save a copy" route handed such a URL straight to the browser, so a row with a foreign
+ * URL in that field (a bug, or a write through some future path) became an open redirect.
+ */
+export function isBlobStoreUrl(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  return u.protocol === "https:" && isBlobStoreHost(u.hostname);
+}
+
 export function isBlobUrlForUpload(url: string, params: { docId: string; uploadId: string }): boolean {
   let u: URL;
   try {

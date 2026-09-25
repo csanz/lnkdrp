@@ -4,13 +4,14 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
-import { resolveShareLink } from "@/lib/share/links";
+import { resolveShareLinkForPage } from "@/lib/share/links";
 import { ownerCanShowVersionHistory } from "@/lib/share/ownerPlan";
 import type { AiOutput } from "@/components/PdfJsViewer";
 import ShareViewerClient from "./ShareViewerClient";
 import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "./PasswordGate";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
 import { buildShareMetadata } from "@/lib/share/shareMetadata";
 import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
 
@@ -88,18 +89,7 @@ export async function generateMetadata(props: {
 
   // One link → one document (docs/prds/lnkdrp-multi-links.md). A refused link keeps the generic
   // title so a disabled/expired link never leaks the document's name into a link preview.
-  const resolved = await resolveShareLink(shareId, {
-    select: {
-      title: 1,
-      // Perf: only pull the minimal metadata-related AI fields (avoid huge aiOutput JSON).
-      "aiOutput.meta_title": 1,
-      "aiOutput.meta_description": 1,
-      "aiOutput.openGraph.title": 1,
-      "aiOutput.openGraph.description": 1,
-      previewImageUrl: 1,
-      firstPagePngUrl: 1,
-    } as Record<string, 1>,
-  });
+  const resolved = await resolveShareLinkForPage(shareId);
   // A password-protected link gets the same generic card as a refused one. Otherwise pasting the
   // URL into Slack unfurled the deck's real title and its first page to the whole channel, which is
   // the leak the password exists to prevent — and the unfurl happens before anyone types anything.
@@ -127,7 +117,9 @@ export async function generateMetadata(props: {
   // link was forwarded to disclosed both, to anyone who saw the message rather than only to whoever
   // opened the link. `/s/:shareId/og.png` re-serves the same bytes from this origin and applies the
   // same refusal and password gates the page does, so a revoked link stops unfurling too.
-  return buildShareMetadata({ title, description, previewUrl: `/s/${shareId}/og.png` });
+  // No image for a refused or locked link: `/s/:shareId/og.png` refuses those with a 404, and a
+  // card that points at a 404 is worse than a card with no image.
+  return buildShareMetadata({ title, description, previewUrl: doc ? `/s/${shareId}/og.png` : null });
 }
 
 /**
@@ -144,30 +136,7 @@ export default async function SharePage(props: {
 
   // The link is the unit of sharing: it carries the password, the download and revision-history
   // permissions, and whether the page may be served at all (docs/prds/lnkdrp-multi-links.md).
-  const resolved = await resolveShareLink(shareId, {
-    select: {
-      title: 1,
-      blobUrl: 1,
-      // The workspace behind the link, so the header can say who shared this.
-      orgId: 1,
-      // Perf: only fetch receiver-facing AI snapshot fields (avoid huge aiOutput JSON).
-      "aiOutput.one_liner": 1,
-      "aiOutput.core_problem_or_need": 1,
-      "aiOutput.primary_capabilities_or_scope": 1,
-      "aiOutput.intended_use_or_context": 1,
-      "aiOutput.outcomes_or_value": 1,
-      "aiOutput.maturity_or_status": 1,
-      "aiOutput.summary": 1,
-      "aiOutput.company_or_project_name": 1,
-      "aiOutput.category": 1,
-      "aiOutput.tags": 1,
-      "aiOutput.key_metrics": 1,
-      "aiOutput.ask": 1,
-      receiverRelevanceChecklist: 1,
-      previewImageUrl: 1,
-      firstPagePngUrl: 1,
-    } as Record<string, 1>,
-  });
+  const resolved = await resolveShareLinkForPage(shareId);
   // Disabled, expired, archived or deleted: the link behaves as if it never existed.
   if (!resolved || resolved.refusal) notFound();
   const { link, doc } = resolved;
@@ -209,7 +178,7 @@ export default async function SharePage(props: {
       shareId,
       sharePasswordHash: sharePasswordHash as string,
     });
-    if (!cookie || cookie !== expected) {
+    if (!shareAuthCookieMatches(cookie, expected)) {
       // Nothing about the document before the password: not its name, and certainly not the
       // rendered first page, which is the document. A gate that shows a deck's title and its cover
       // slide to anyone holding the URL has already given away most of what the password was set

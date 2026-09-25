@@ -45,12 +45,14 @@ export async function GET(request: Request) {
     .limit(200)
     .lean()) as Array<Record<string, unknown>>;
 
-  // How much is still standing for each account, so the purge is not a surprise.
-  const counts = await Promise.all(
-    rows.map((r) =>
-      OrgMembershipModel.countDocuments({ userId: r._id, isDeleted: { $ne: true } }).catch(() => 0),
-    ),
-  );
+  // How much is still standing for each account, so the purge is not a surprise. One aggregate
+  // for the page rather than one count per row.
+  const membershipRows = (await OrgMembershipModel.aggregate([
+    { $match: { userId: { $in: rows.map((r) => r._id) }, isDeleted: { $ne: true } } },
+    { $group: { _id: "$userId", n: { $sum: 1 } } },
+  ]).catch(() => [])) as Array<{ _id: unknown; n: number }>;
+  const membershipsByUser = new Map(membershipRows.map((m) => [String(m._id), m.n ?? 0]));
+  const counts = rows.map((r) => membershipsByUser.get(String(r._id)) ?? 0);
 
   const job = (await CronHealthModel.findOne({ jobKey: "account-purge" })
     .select({ status: 1, lastRunAt: 1, lastResult: 1, lastError: 1 })

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { isBlobStoreUrl } from "@/lib/blob/serverClientUploadRoute";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { UploadModel } from "@/lib/models/Upload";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 
@@ -61,21 +63,7 @@ export async function GET(
   const orgId = new Types.ObjectId(actor.orgId);
   const legacyUserId = new Types.ObjectId(actor.userId);
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-  const doc = await DocModel.findOne({
-    ...(allowLegacyByUserId
-      ? {
-          $or: [
-            { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } },
-            {
-              _id: new Types.ObjectId(docId),
-              userId: legacyUserId,
-              isDeleted: { $ne: true },
-              $or: [{ orgId: { $exists: false } }, { orgId: null }],
-            },
-          ],
-        }
-      : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
-  })
+  const doc = await DocModel.findOne(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId))
     .select({ blobUrl: 1 })
     .lean();
 
@@ -107,6 +95,12 @@ export async function GET(
       target = upload.blobUrl;
       cacheable = true;
     }
+  }
+
+  // Only our own store is ever redirected to: a stored URL that points elsewhere is answered as
+  // no PDF, the same as a missing one, rather than sent to the browser as an open redirect.
+  if (!isBlobStoreUrl(target)) {
+    return applyTempUserHeaders(NextResponse.json({ error: "PDF not available" }, { status: 404 }), actor);
   }
 
   // Redirect to the blob URL so the browser downloads bytes directly (avoids double-hop proxying).

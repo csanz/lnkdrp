@@ -46,9 +46,13 @@ vi.mock("@/lib/email/templates", () => ({
   downloadRequestOwnerEmail: () => ({ subject: "s", text: "t" }),
   downloadRequestReceivedEmail: () => ({ subject: "s", text: "t" }),
 }));
-vi.mock("@/lib/urls", () => ({ getPublicSiteBase: () => "https://lnkdrp.test" }));
+vi.mock("@/lib/urls", () => ({
+  getPublicSiteBase: () => "https://lnkdrp.test",
+  buildPublicShareUrl: (shareId: string) => `https://lnkdrp.test/s/${shareId}`,
+  buildPublicProjectUrl: (shareId: string) => `https://lnkdrp.test/p/${shareId}`,
+}));
 vi.mock("@/lib/activity/log", () => ({ recordActivity }));
-vi.mock("@/lib/debug", () => ({ debugLog: vi.fn(), debugWarn: vi.fn(), debugError: vi.fn() }));
+vi.mock("@/lib/debug", () => ({ debugLog: vi.fn(), debugWarn: vi.fn(), debugError: vi.fn(), debugEnabled: () => false }));
 vi.mock("@/lib/http/rateLimit", () => ({
   clientIpFromRequest: () => "203.0.113.7",
   rateLimit: async () => ({ ok: true }),

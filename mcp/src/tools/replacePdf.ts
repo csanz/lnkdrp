@@ -478,7 +478,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         }
       };
 
-      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "replace_pdf", args.idempotencyKey), run, {
+      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "replace_pdf", args.idempotencyKey, ctx.whoami().credentialId), run, {
         fingerprint: fingerprintArgs(args),
         // The sibling 0fd858a wired into share_pdf and create_project and missed here: a document
         // deleted between the two calls is not one to hand back as a fresh success.

@@ -22,20 +22,25 @@ import { z } from "zod";
 
 import { completeAiRun, failAiRun, startAiRun, type AiRunMeta } from "@/lib/ai/aiRunRecorder";
 
-/** Output schema for the investor-focused request review agent. */
-export const RequestReviewInvestorFocusedSchema = z
-  .object({
-    stage_match: z.boolean(),
-    notes: z.string(),
-    relevancy: z.enum(["low", "medium", "high"]),
-    relevancy_reason: z.string(),
-    strengths: z.array(z.string()),
-    weaknesses: z.array(z.string()),
-    key_open_questions: z.array(z.string()),
-    summary_markdown: z.string(),
-    founder_note: z.string(),
-  })
-  .strict();
+/**
+ * Output schema for the investor-focused request review agent.
+ *
+ * Unknown keys are stripped, not refused. The answer is JSON pulled out of free text the model
+ * wrote, and `.strict()` failed the whole review (after the run was paid for) whenever the model
+ * added a field the prompt did not ask for, such as a `confidence` it thought helpful. The nine
+ * fields below are still required with their types; anything extra is simply dropped.
+ */
+export const RequestReviewInvestorFocusedSchema = z.object({
+  stage_match: z.boolean(),
+  notes: z.string(),
+  relevancy: z.enum(["low", "medium", "high"]),
+  relevancy_reason: z.string(),
+  strengths: z.array(z.string()),
+  weaknesses: z.array(z.string()),
+  key_open_questions: z.array(z.string()),
+  summary_markdown: z.string(),
+  founder_note: z.string(),
+});
 
 export type RequestReviewInvestorFocusedOutput = z.infer<typeof RequestReviewInvestorFocusedSchema>;
 

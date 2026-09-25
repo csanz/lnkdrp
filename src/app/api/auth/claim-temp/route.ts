@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       _id: new Types.ObjectId(tempUserId),
       isTemp: true,
     })
-      .select({ _id: 1, tempSecretHash: 1 })
+      .select("_id +tempSecretHash")
       .lean();
 
     if (

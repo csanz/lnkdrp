@@ -6,6 +6,15 @@ function canRun() {
   return Boolean(process.env.MONGODB_URI) && Boolean(process.env.API_TEST_USER_ID);
 }
 
+/**
+ * Say so when this file is skipped. The vitest configs point `envDir` at `./tmp`, which is
+ * git-ignored, so `.env.local` is never loaded here and the guard above is false unless
+ * `MONGODB_URI` is exported into the shell. The skip used to be silent, which read as a pass.
+ */
+if (!canRun()) {
+  console.warn(`[${__filename.split(/[\\/]/).pop()}] skipped: export MONGODB_URI (and any id the guard needs) to run the database-backed checks`);
+}
+
 describe("stats endpoints mongo op guardrails (dev-only)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();

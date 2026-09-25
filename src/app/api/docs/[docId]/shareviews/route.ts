@@ -59,6 +59,7 @@ import { Types } from "mongoose";
 import { after } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { UserModel } from "@/lib/models/User";
@@ -264,21 +265,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const orgId = new Types.ObjectId(actor.orgId);
       const legacyUserId = new Types.ObjectId(actor.userId);
       const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-      const doc = await DocModel.findOne({
-        ...(allowLegacyByUserId
-          ? {
-              $or: [
-                { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } },
-                {
-                  _id: new Types.ObjectId(docId),
-                  userId: legacyUserId,
-                  isDeleted: { $ne: true },
-                  $or: [{ orgId: { $exists: false } }, { orgId: null }],
-                },
-              ],
-            }
-          : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
-      })
+      const doc = await DocModel.findOne(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId))
         .select({
           _id: 1,
           orgId: 1,

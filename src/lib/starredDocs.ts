@@ -225,6 +225,30 @@ export function isDocStarred(docId: string): boolean {
   if (!docId) return false;
   return getStarredDocs().some((d) => d.id === docId);
 }
+/** Same documents in the same order: the cache is still the state this optimistic write produced. */
+function sameOrder(a: StarredDoc[], b: StarredDoc[]): boolean {
+  return a.length === b.length && a.every((d, i) => d.id === b[i]?.id);
+}
+
+/**
+ * Undo an optimistic starred-list write the server refused.
+ *
+ * The cache is put back to `previous` only while it still holds `expected`: a second click that
+ * landed in the meantime is that person's newer intent and must not be undone by an older
+ * failure. Returns whether anything was written. Exported for the unit test.
+ */
+export function revertStarredOptimistic(expected: StarredDoc[], previous: StarredDoc[]): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const current = readStarredDocsUnsafe();
+    if (!sameOrder(current, expected)) return false;
+    writeStarredDocsUnsafe(previous);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Optimistically toggles a doc in the local starred cache and syncs to the server.
  *
@@ -257,13 +281,17 @@ export function toggleStarredDoc(doc: { id: string; title: string }): { starred:
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ docId: doc.id, title: doc.title || "Document" }),
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          // The server said no (a cap, a deleted doc, a sign-out): the star must not stay lit.
+          revertStarredOptimistic(next, prev);
+          return;
+        }
         const json = (await res.json()) as unknown;
         const docs = (json && typeof json === "object" && "docs" in json ? (json as { docs?: unknown }).docs : []) ?? [];
         const normalized = normalizeStarredDocs(docs);
         if (normalized.length || exists) writeStarredDocsUnsafe(normalized);
       } catch {
-        // ignore
+        revertStarredOptimistic(next, prev);
       }
     })();
 
@@ -358,13 +386,16 @@ export function moveStarredDoc(docId: string, dir: "up" | "down"): { docs: Starr
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ docIds: withKeys.map((d) => d.id) }),
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          revertStarredOptimistic(withKeys, prev);
+          return;
+        }
         const json = (await res.json()) as unknown;
         const docs = (json && typeof json === "object" && "docs" in json ? (json as { docs?: unknown }).docs : []) ?? [];
         const normalized = normalizeStarredDocs(docs);
         if (normalized.length) writeStarredDocsUnsafe(normalized);
       } catch {
-        // ignore
+        revertStarredOptimistic(withKeys, prev);
       }
     })();
     return { docs: withKeys, moved: true };

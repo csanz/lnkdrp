@@ -8,9 +8,11 @@
  * Only the recipient-facing version list on share pages is a Pro feature.
  */
 import { NextResponse } from "next/server";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
@@ -50,21 +52,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const docObjectId = new Types.ObjectId(docId);
-    const doc = await DocModel.findOne({
-      ...(allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: docObjectId, orgId, isDeleted: { $ne: true } },
-              {
-                _id: docObjectId,
-                userId: legacyUserId,
-                isDeleted: { $ne: true },
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: docObjectId, orgId, isDeleted: { $ne: true } }),
-    })
+    const doc = await DocModel.findOne(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId))
       .select({ _id: 1, orgId: 1, title: 1, currentUploadVersion: 1, currentUploadId: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -90,7 +78,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
      */
     const debug = wantsDebug && process.env.NODE_ENV !== "production";
     const debugInfo: Record<string, unknown> | null = debug ? {} : null;
-    if (includeChangeList) {
+    /**
+     * The backfill writes rows, and this is a GET that viewers and read-only keys can reach. A
+     * read must not let a viewer create history rows, so only a member or above triggers it; a
+     * viewer simply sees the rows that exist. (Review 2026-09-23, docs/uploads Low.)
+     */
+    const mayBackfill = includeChangeList && (await forbidUnlessOrgRole(actor, "member")) === null;
+    if (mayBackfill) {
       try {
         const insertedVersions: number[] = [];
         const uploads = (await UploadModel.find({

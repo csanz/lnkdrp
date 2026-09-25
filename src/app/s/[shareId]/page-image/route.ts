@@ -20,9 +20,11 @@ import { debugError } from "@/lib/debug";
 import { resolveShareLink } from "@/lib/share/links";
 import { UploadModel } from "@/lib/models/Upload";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 import { ownerCanShowVersionHistory } from "@/lib/share/ownerPlan";
+import { MAX_PREVIEW_BYTES, pinnedImageMime } from "@/lib/share/pinnedImageMime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,7 +80,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       if (passwordEnabled) {
         const cookie = getCookie(request, shareAuthCookieName(shareId)) ?? "";
         const expected = shareAuthCookieValue({ shareId, sharePasswordHash: sharePasswordHash as string });
-        if (!cookie || cookie !== expected) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        if (!shareAuthCookieMatches(cookie, expected)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
 
       const upload = (await UploadModel.findOne({
@@ -113,10 +115,23 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       const upstream = await fetchStoredBlob(target);
       if (!upstream || !upstream.ok || !upstream.body) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-      return new NextResponse(upstream.body, {
+      // The type is decided by the bytes, never echoed from the store (`pinnedImageMime`): this
+      // route copied the upstream header while its two sibling image routes sniffed, and an
+      // upstream answering `text/html` would have made this origin serve markup.
+      const declaredLength = Number(upstream.headers.get("content-length") ?? "");
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_PREVIEW_BYTES) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      const bytes = Buffer.from(await upstream.arrayBuffer());
+      if (bytes.length > MAX_PREVIEW_BYTES) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      const mime = pinnedImageMime(bytes);
+      if (!mime) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+      return new NextResponse(bytes, {
         status: 200,
         headers: {
-          "content-type": upstream.headers.get("content-type") ?? "image/jpeg",
+          "content-type": mime,
+          "content-length": String(bytes.length),
           // `private`, and short. A shared cache keyed on the URL alone would go on serving these
           // after the link is disabled, which is the thing this route exists to prevent; the small
           // max-age still absorbs a recipient scrolling their own history panel.

@@ -281,8 +281,15 @@ export type WorkspacePlan = "free" | "pro";
  * `/welcome`, and everyone can change it in Settings.
  */
 export function normalizeViewEmailMode(v: unknown): ViewEmailMode {
-  return v === "off" || v === "immediate" || v === "daily" ? v : "immediate";
+  return v === "off" || v === "immediate" || v === "daily" ? v : DEFAULT_VIEW_EMAIL_MODE;
 }
+
+/**
+ * What a membership row with no `viewEmailMode` means. The schema default, the sender above and
+ * the "turn off view emails" page all read this one value; the page used to assume "daily" and told
+ * people their view emails were a digest when they were arriving immediately.
+ */
+export const DEFAULT_VIEW_EMAIL_MODE: ViewEmailMode = "immediate";
 
 /**
  * One line of untrusted text: control characters and line/paragraph separators become spaces,

@@ -4,6 +4,7 @@
  * Authenticated endpoint to save an approved shared doc into the signed-in user's account.
  */
 import { NextResponse } from "next/server";
+import { isBlobStoreUrl } from "@/lib/blob/serverClientUploadRoute";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { resolveActor } from "@/lib/gating/actor";
@@ -103,6 +104,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ token: str
 
     const title = typeof (src as { title?: unknown }).title === "string" ? String((src as { title: string }).title) : "Shared document";
     const blobUrl = (src as { blobUrl?: unknown }).blobUrl;
+    // The copy references the same bytes, so the URL has to be ours. A stored URL that points
+    // elsewhere would otherwise be served to whoever opens the copy.
+    if (typeof blobUrl === "string" && blobUrl && !isBlobStoreUrl(blobUrl)) {
+      return NextResponse.json({ error: "PDF not available" }, { status: 404 });
+    }
     const fileName = typeof (src as { fileName?: unknown }).fileName === "string" ? String((src as { fileName: string }).fileName) : null;
     const previewImageUrl =
       typeof (src as { previewImageUrl?: unknown }).previewImageUrl === "string"

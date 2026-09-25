@@ -464,7 +464,11 @@ export default function QuickStats({
         const res = await fetchWithTempUser(cfg.statsUrl(DAYS, TOP_LINKS_LIMIT), { cache: "no-store" });
         if (!res.ok) throw new Error(String(res.status));
         const json = (await res.json()) as StatsResponse;
-        if (!cancelled) setLive(json);
+        if (!cancelled) {
+          setLive(json);
+          // A refresh that lands after a failed one clears "Live stats unavailable".
+          setFailed(false);
+        }
       } catch {
         if (!cancelled) setFailed(true);
       }

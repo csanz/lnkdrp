@@ -15,7 +15,7 @@
  * and points at `sourceUrl`, which never crosses a function body. Against a localhost API there is
  * no platform cap, so the send ceiling is the input ceiling.
  */
-import { isLocalApiUrl } from "./tools/sharePdf";
+import { isLocalApiUrl } from "./localApi";
 
 /** Decoded size an inline PDF may have before optimization. */
 export const INLINE_UPLOAD_MAX_BYTES = 16 * 1024 * 1024;

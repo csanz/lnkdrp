@@ -15,10 +15,11 @@ import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendEmailContent } from "@/lib/email/sendTextEmail";
 import { downloadRequestOwnerEmail, downloadRequestReceivedEmail } from "@/lib/email/templates";
 import { workspaceForEmail } from "@/lib/email/workspaceIdentity";
-import { getPublicSiteBase } from "@/lib/urls";
+import { buildPublicProjectUrl, buildPublicShareUrl, getPublicSiteBase } from "@/lib/urls";
 import { debugLog, debugWarn } from "@/lib/debug";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { errorJson } from "@/lib/http/errorResponse";
+import { pendingDuplicateFilter } from "@/lib/share/downloadRequestDedupe";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { recordActivity } from "@/lib/activity/log";
 
@@ -177,12 +178,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
      * The window itself is unchanged and is now expressed in the query rather than recomputed from
      * `createdDate`: a row newer than `DEDUPE_WINDOW_MS` suppresses this submission entirely.
      */
-    const recentPending = await ShareDownloadRequestModel.findOne({
-      shareId,
-      requesterEmail: email,
-      status: "pending",
-      createdDate: { $gt: new Date(Date.now() - DEDUPE_WINDOW_MS) },
-    })
+    const recentPending = await ShareDownloadRequestModel.findOne(
+      // The document is part of the key: on a data room, two of its documents inside a minute are
+      // two requests (`src/lib/share/downloadRequestDedupe.ts`).
+      pendingDuplicateFilter({ shareId, docId: (doc as { _id: unknown })._id, requesterEmail: email, now: Date.now(), windowMs: DEDUPE_WINDOW_MS }),
+    )
       .sort({ createdDate: -1 })
       .select({ _id: 1 })
       .lean();
@@ -197,6 +197,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     const requestTokenHash = sha256Hex(requestToken);
     const docId = (doc as { _id: unknown })._id;
     const ownerUserId = (doc as { userId?: unknown }).userId;
+    // The page the request was made on. A room's request used to be mailed `/s/<room slug>`,
+    // which is a document link's address and 404s for a room; the room's document page is the
+    // one the requester was on and the one the owner wants to see.
+    const requestPageUrl = directLink
+      ? buildPublicShareUrl(shareId)
+      : (() => {
+          const room = buildPublicProjectUrl(shareId);
+          return room ? `${room}/${encodeURIComponent(String(docId))}` : "";
+        })();
 
     const created = await ShareDownloadRequestModel.create({
       shareId,
@@ -238,9 +247,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     // (Do this only when we create a new request record to avoid spamming on within-window dupes.)
     let emailedRequester = false;
     try {
-      const base = getPublicSiteBase();
       const title = docTitle ?? "Shared document";
-      const shareUrl = base ? new URL(`/s/${encodeURIComponent(shareId)}`, base).toString() : "";
+      const shareUrl = requestPageUrl;
       await sendEmailContent({
         to: email,
         ...downloadRequestReceivedEmail({ title, shareUrl, workspace: await workspaceForEmail(activityOrgId) }),
@@ -267,7 +275,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
     const base = getPublicSiteBase();
     const title = docTitle ?? "Shared document";
-    const shareUrl = base ? new URL(`/s/${encodeURIComponent(shareId)}`, base).toString() : "";
+    const shareUrl = requestPageUrl;
     const approveUrl = base
       ? new URL(
           `/api/share/${encodeURIComponent(shareId)}/download-requests/${encodeURIComponent(requestToken)}/approve`,

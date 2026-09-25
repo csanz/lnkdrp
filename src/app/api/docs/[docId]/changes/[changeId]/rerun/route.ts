@@ -12,6 +12,7 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { runDocChangeDiff, type DocChangeDiffUsage } from "@/lib/ai/docChangeDiff";
@@ -95,27 +96,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const docObjectId = new Types.ObjectId(docId);
-    const docExists = await DocModel.exists({
-      ...(allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: docObjectId, orgId, isDeleted: { $ne: true } },
-              {
-                _id: docObjectId,
-                userId: legacyUserId,
-                isDeleted: { $ne: true },
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: docObjectId, orgId, isDeleted: { $ne: true } }),
-    });
+    const docExists = await DocModel.exists(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId));
     if (!docExists) return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
 
+    // By docId alone, as the list route reads them: document access is checked above, and older
+    // rows carry a missing or stale orgId (legacy, backfills, workspace moves) that would make a
+    // change the list shows unrerunnable here.
     const change = await DocChangeModel.findOne({
       _id: new Types.ObjectId(changeId),
       docId: docObjectId,
-      ...(allowLegacyByUserId ? {} : { orgId }),
     })
       .select({ _id: 1, docId: 1, previousText: 1, newText: 1, fromVersion: 1, toUploadId: 1 })
       .lean();

@@ -7,13 +7,13 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
-import { debugError, debugLog } from "@/lib/debug";
+import { debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
-import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
+import { authOrRateLimitResponse, errorJson } from "@/lib/http/errorResponse";
 import { liveProjectFilter } from "@/lib/projects/scope";
 import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
@@ -205,16 +205,13 @@ export async function GET(request: Request) {
         const slug = await ensureUniqueSlug({ orgId, legacyUserId: allowLegacyByUserId ? legacyUserId : undefined, base });
         await ProjectModel.updateOne(
           {
-            _id: p._id,
-            ...(allowLegacyByUserId
-              ? {
-                  $or: [
-                    { orgId },
-                    { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-                  ],
-                }
-              : { orgId }),
-            $or: [{ slug: { $exists: false } }, { slug: null }, { slug: "" }],
+            // `$and`, not a spread: the legacy tenant clause is its own `$or`, and a second `$or`
+            // key in the same object literal replaced it, dropping the workspace filter.
+            $and: [
+              { _id: p._id },
+              allowLegacyByUserId ? { $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] } : { orgId },
+              { $or: [{ slug: { $exists: false } }, { slug: null }, { slug: "" }] },
+            ],
           },
           { $set: { slug } },
           // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
@@ -259,9 +256,7 @@ export async function GET(request: Request) {
   } catch (err) {
     const authOrLimited = authOrRateLimitResponse(err);
     if (authOrLimited) return authOrLimited;
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/projects] GET failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Could not load projects", context: "[api/projects] GET failed" });
   }
 }
 
@@ -366,7 +361,6 @@ export async function POST(request: Request) {
   } catch (err) {
     const authOrLimited = authOrRateLimitResponse(err);
     if (authOrLimited) return authOrLimited;
-    const message = err instanceof Error ? err.message : "Unknown error";
     // Surface a clean message for duplicate-name per user.
     if (
       err &&
@@ -376,8 +370,7 @@ export async function POST(request: Request) {
     ) {
       return NextResponse.json({ error: "A project with that name already exists" }, { status: 409 });
     }
-    debugError(1, "[api/projects] POST failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Could not create the project", context: "[api/projects] POST failed" });
   }
 }
 

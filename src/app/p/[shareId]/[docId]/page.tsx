@@ -32,7 +32,8 @@ import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "@/components/PasswordGate";
 import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
-import { resolveProjectLink } from "@/lib/share/projectLinks";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
+import { resolveProjectLinkForPage } from "@/lib/share/projectLinks";
 import { findProjectDocument, projectLinkPasswordEnabled, resolveProjectDocument } from "@/lib/share/projectPublic";
 import { buildShareMetadata } from "@/lib/share/shareMetadata";
 import ShareViewerClient from "@/app/s/[shareId]/ShareViewerClient";
@@ -149,7 +150,7 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
    * recipient already holds, not of its contents, so an expired link still says "expired" rather
    * than asking for a password it will not accept.
    */
-  const resolvedLink = await resolveProjectLink(shareId, { select: { isRequest: 1 } });
+  const resolvedLink = await resolveProjectLinkForPage(shareId);
   if (!resolvedLink) notFound();
   // A request repo has no public room — the rule, and why, is at `/p/[shareId]/page.tsx`. Repeated
   // here because a deep link to one document must not be the way around the room's own 404.
@@ -172,7 +173,7 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
     const expected = shareAuthCookieValue({ shareId, sharePasswordHash: link.passwordHash as string });
     // One cookie for the whole link: unlocking the project page unlocks every document behind it,
     // and arriving here by deep link with no cookie asks for the password rather than 404ing.
-    if (!cookie || cookie !== expected)
+    if (!shareAuthCookieMatches(cookie, expected))
       return <PasswordGate shareId={shareId} title={null} previewUrl={null} workspace={workspace} />;
   }
 

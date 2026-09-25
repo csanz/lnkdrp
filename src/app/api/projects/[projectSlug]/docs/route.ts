@@ -10,11 +10,13 @@ import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { ReviewModel } from "@/lib/models/Review";
-import { debugError, debugLog } from "@/lib/debug";
+import { debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import crypto from "node:crypto";
 import { randomBase62 } from "@/lib/crypto/randomBase62";
-import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
+import { authOrRateLimitResponse, errorJson } from "@/lib/http/errorResponse";
+import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
+import { requestUploadPathFor } from "@/lib/projects/requestSettings";
 import { ensureDefaultProjectLink } from "@/lib/share/projectLinks";
 import { liveProjectByIdMatch } from "@/lib/projects/scope";
 
@@ -133,16 +135,13 @@ export async function GET(
         const nextShareId = randomBase62(12);
         await ProjectModel.updateOne(
           {
-            _id: project._id,
-            ...(allowLegacyByUserId
-              ? {
-                  $or: [
-                    { orgId },
-                    { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-                  ],
-                }
-              : { orgId }),
-            $or: [{ shareId: { $exists: false } }, { shareId: null }, { shareId: "" }],
+            // `$and`, not a spread: the legacy tenant clause is its own `$or`, and a second `$or`
+            // key in the same object literal replaced it, dropping the workspace filter.
+            $and: [
+              { _id: project._id },
+              allowLegacyByUserId ? { $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] } : { orgId },
+              { $or: [{ shareId: { $exists: false } }, { shareId: null }, { shareId: "" }] },
+            ],
           },
           { $set: { shareId: nextShareId } },
         );
@@ -184,7 +183,9 @@ export async function GET(
       if (isRequest) {
         const tokenRaw = (project as unknown as { requestUploadToken?: unknown }).requestUploadToken;
         const token = typeof tokenRaw === "string" && tokenRaw.trim() ? tokenRaw.trim() : "";
-        const uploadPath = token ? `/request/${encodeURIComponent(token)}` : null;
+        // The upload token is a bearer; a viewer seat gets the view path only (requestSettings.ts).
+        const mayUpload = (await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "member" })).ok;
+        const uploadPath = requestUploadPathFor({ token, mayUpload });
 
         // View-only link token (best-effort backfill for older request repos).
         let viewToken = "";
@@ -196,16 +197,12 @@ export async function GET(
             const next = randomBase62(32);
             await ProjectModel.updateOne(
               {
-                _id: project._id,
-                ...(allowLegacyByUserId
-                  ? {
-                      $or: [
-                        { orgId },
-                        { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-                      ],
-                    }
-                  : { orgId }),
-                $or: [{ requestViewToken: { $exists: false } }, { requestViewToken: null }, { requestViewToken: "" }],
+                // Same shape as the shareId backfill above: `$and`, so the tenant `$or` survives.
+                $and: [
+                  { _id: project._id },
+                  allowLegacyByUserId ? { $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] } : { orgId },
+                  { $or: [{ requestViewToken: { $exists: false } }, { requestViewToken: null }, { requestViewToken: "" }] },
+                ],
               },
               { $set: { requestViewToken: next } },
             );
@@ -457,9 +454,7 @@ export async function GET(
   } catch (err) {
     const authOrLimited = authOrRateLimitResponse(err);
     if (authOrLimited) return authOrLimited;
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/projects/:slug/docs] GET failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 500, publicMessage: "Could not load the project's documents", context: "[api/projects/:slug/docs] GET failed" });
   }
 }
 

@@ -151,27 +151,51 @@ export async function ensurePersonalOrgForUserId(opts: {
 
   // 2) Create org + membership.
   const now = new Date();
-  const created = await OrgModel.create({
-    type: "personal",
-    personalForUserId: userId,
-    name,
-    // Intentionally no `slug`: personal orgs must not participate in the partial unique slug index.
-    createdByUserId: userId,
-    isDeleted: false,
-    createdDate: now,
-    updatedDate: now,
-  });
-  const org = (Array.isArray(created) ? created[0] : created) as typeof created;
+  let orgId: Types.ObjectId;
+  try {
+    const created = await OrgModel.create({
+      type: "personal",
+      personalForUserId: userId,
+      name,
+      // Intentionally no `slug`: personal orgs must not participate in the partial unique slug index.
+      createdByUserId: userId,
+      isDeleted: false,
+      createdDate: now,
+      updatedDate: now,
+    });
+    const org = (Array.isArray(created) ? created[0] : created) as typeof created;
+    orgId = (org as unknown as { _id: Types.ObjectId })._id;
+  } catch (err) {
+    /**
+     * Two requests bootstrapping the same new user at once (the first page load fires several
+     * API calls) both miss the find above and both create; the partial unique index on
+     * `personalForUserId` lets exactly one through and the other threw E11000 out of every
+     * route that called this. The loser re-reads and joins the winner's workspace instead.
+     */
+    if (!isDuplicateKey(err)) throw err;
+    const winner = await OrgModel.findOne({ type: "personal", personalForUserId: userId, isDeleted: { $ne: true } })
+      .select({ _id: 1 })
+      .lean();
+    if (!winner?._id) throw err;
+    orgId = winner._id as Types.ObjectId;
+  }
 
-  await OrgMembershipModel.create({
-    orgId: (org as unknown as { _id: Types.ObjectId })._id,
-    userId,
-    role: "owner",
-    createdDate: now,
-    updatedDate: now,
-  });
+  // Upsert, not create: the same race on the membership row, and the winner may have written it.
+  // No `updatedDate` here: the schema's timestamps already `$set` it on an upsert, and naming it
+  // in `$setOnInsert` too is a path conflict Mongo refuses.
+  await OrgMembershipModel.updateOne(
+    { orgId, userId },
+    { $setOnInsert: { orgId, userId, role: "owner", createdDate: now } },
+    { upsert: true },
+  );
 
-  return { orgId: (org as unknown as { _id: Types.ObjectId })._id };
+  return { orgId };
+}
+
+/** Mongo's duplicate-key error, in either of the shapes the driver throws it. */
+function isDuplicateKey(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === 11000 || code === 11001;
 }
 
 

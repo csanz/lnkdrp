@@ -42,7 +42,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { ToolError } from "./errors";
-import { isLocalApiUrl } from "./tools/sharePdf";
+import { isLocalApiUrl } from "./localApi";
 import { sanitizeUntrustedText, UNTRUSTED_LIMITS, UNTRUSTED_NOTE } from "./untrusted";
 
 /**

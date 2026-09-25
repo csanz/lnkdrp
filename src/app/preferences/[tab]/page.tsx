@@ -1,9 +1,9 @@
 /**
- * Page for `/preferences/:tab` — pretty URL wrapper around `/preferences?tab=...`.
+ * `/preferences/:tab` redirects to the dashboard tab it used to be a pretty URL for.
  */
 import { redirect } from "next/navigation";
 
-const ALLOWED = new Set(["account", "workspace", "usage", "spending", "billing"]);
+import { dashboardTabFor } from "../tabs";
 
 export default async function PreferencesTabPage({
   params,
@@ -11,8 +11,5 @@ export default async function PreferencesTabPage({
   params: Promise<{ tab?: string }>;
 }) {
   const { tab } = await params;
-  const next = typeof tab === "string" ? tab : "";
-  redirect(`/preferences?tab=${encodeURIComponent(ALLOWED.has(next) ? next : "account")}`);
+  redirect(`/dashboard?tab=${encodeURIComponent(dashboardTabFor(tab))}`);
 }
-
-

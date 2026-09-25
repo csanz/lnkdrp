@@ -193,7 +193,7 @@ export function registerSetShareAccessTool(server: McpServer, ctx: ToolContext):
        * `replayed` is said out loud so a caller can tell the key was a repeat.
        */
       const { value, replayed } = await ctx.idempotency.run(
-        IdempotencyStore.key(orgId, "set_share_access", args.idempotencyKey),
+        IdempotencyStore.key(orgId, "set_share_access", args.idempotencyKey, ctx.whoami().credentialId),
         apply,
         { fingerprint: fingerprintArgs(args) },
       );

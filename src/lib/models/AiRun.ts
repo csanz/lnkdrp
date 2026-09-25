@@ -62,6 +62,18 @@ const aiRunSchema = new Schema(
 aiRunSchema.index({ kind: 1, createdDate: -1 });
 aiRunSchema.index({ projectId: 1, createdDate: -1 });
 
+/**
+ * Rows expire. They hold prompt text built from customers' documents, kept for debugging, and
+ * before this they were kept forever. `AI_RUN_RETENTION_DAYS` overrides the 30-day default; the
+ * same number is applied by `db/migration/20260925_0004_airuns_ttl.mjs`, which also updates an
+ * index created with a different value.
+ */
+export const AI_RUN_RETENTION_DAYS = (() => {
+  const raw = Number((process.env.AI_RUN_RETENTION_DAYS ?? "").trim());
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 30;
+})();
+aiRunSchema.index({ createdDate: 1 }, { expireAfterSeconds: AI_RUN_RETENTION_DAYS * 24 * 60 * 60, name: "createdDate_ttl" });
+
 export type AiRun = InferSchemaType<typeof aiRunSchema>;
 
 export const AiRunModel: Model<AiRun> =

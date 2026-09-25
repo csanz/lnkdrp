@@ -1,16 +1,21 @@
 /**
  * In-memory idempotency cache for write tools.
  *
- * Keyed by `${orgId}:${tool}:${idempotencyKey}`; a replay within the TTL returns the stored result
- * (or joins the in-flight promise) instead of running the write again. Failed runs are evicted so
- * a retry after an error re-executes. Bounded by dropping the oldest entries.
+ * Keyed by `${orgId}:${credentialId}:${tool}:${idempotencyKey}`; a replay within the TTL returns
+ * the stored result (or joins the in-flight promise) instead of running the write again. Failed
+ * runs are evicted so a retry after an error re-executes. Bounded per credential and globally by
+ * dropping the oldest entries.
+ *
+ * The credential is in the key on purpose: two keys of one workspace choosing the same
+ * `idempotencyKey` are two callers, and one replaying the other's result would hand it a document
+ * it never made. The cap is per credential for the same reason (see `IDEMPOTENCY_MAX_PER_CREDENTIAL`).
  */
 import { createHash } from "node:crypto";
 
-import { IDEMPOTENCY_MAX_ENTRIES, IDEMPOTENCY_TTL_MS } from "./config";
+import { IDEMPOTENCY_MAX_ENTRIES, IDEMPOTENCY_MAX_PER_CREDENTIAL, IDEMPOTENCY_TTL_MS } from "./config";
 import { ToolError } from "./errors";
 
-type Entry = { promise: Promise<unknown>; expiresAt: number; fingerprint?: string | undefined };
+type Entry = { promise: Promise<unknown>; expiresAt: number; fingerprint?: string | undefined; scope: string };
 
 /**
  * Arguments that say how long the caller will wait, not what they are asking for.
@@ -47,11 +52,14 @@ export function fingerprintArgs(args: Record<string, unknown>): string {
 /** Bounded, TTL-limited map of idempotency key to result promise. */
 export class IdempotencyStore {
   private readonly entries = new Map<string, Entry>();
+  private readonly perScope = new Map<string, number>();
   private readonly max: number;
+  private readonly maxPerScope: number;
   private readonly ttlMs: number;
 
-  constructor(opts: { max?: number; ttlMs?: number } = {}) {
+  constructor(opts: { max?: number; maxPerScope?: number; ttlMs?: number } = {}) {
     this.max = opts.max ?? IDEMPOTENCY_MAX_ENTRIES;
+    this.maxPerScope = opts.maxPerScope ?? IDEMPOTENCY_MAX_PER_CREDENTIAL;
     this.ttlMs = opts.ttlMs ?? IDEMPOTENCY_TTL_MS;
   }
 
@@ -59,9 +67,42 @@ export class IdempotencyStore {
     return this.entries.size;
   }
 
-  /** Build the cache key for a workspace + tool + caller-supplied key. */
-  static key(orgId: string, tool: string, idempotencyKey: string): string {
-    return `${orgId}:${tool}:${idempotencyKey}`;
+  /** How many entries one credential (or, without one, one workspace) holds. */
+  sizeFor(orgId: string, credentialId?: string): number {
+    return this.perScope.get(IdempotencyStore.scope(orgId, credentialId)) ?? 0;
+  }
+
+  /** The part of a key that names whose cache it is. */
+  static scope(orgId: string, credentialId?: string): string {
+    return `${orgId}:${credentialId ?? "-"}`;
+  }
+
+  /**
+   * Build the cache key for a workspace + credential + tool + caller-supplied key. The credential
+   * is optional only for callers that have none to give; every tool passes `whoami().credentialId`.
+   */
+  static key(orgId: string, tool: string, idempotencyKey: string, credentialId?: string): string {
+    return `${IdempotencyStore.scope(orgId, credentialId)}:${tool}:${idempotencyKey}`;
+  }
+
+  /** The scope a full key belongs to: everything before the tool name. */
+  private static scopeOf(key: string): string {
+    const parts = key.split(":");
+    return `${parts[0]}:${parts[1] ?? "-"}`;
+  }
+
+  private setEntry(key: string, entry: Entry): void {
+    if (!this.entries.has(key)) this.perScope.set(entry.scope, (this.perScope.get(entry.scope) ?? 0) + 1);
+    this.entries.set(key, entry);
+  }
+
+  private deleteEntry(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    const n = (this.perScope.get(entry.scope) ?? 1) - 1;
+    if (n <= 0) this.perScope.delete(entry.scope);
+    else this.perScope.set(entry.scope, n);
   }
 
   /**
@@ -119,23 +160,24 @@ export class IdempotencyStore {
           // second live share link neither caller mentions because each one only sees its own id.
           // A caller that loses the check leaves the winner's entry alone and recurses into it,
           // so it joins the fresh run and gets one document back, marked as the replay it is.
-          if (this.entries.get(key) === existing) this.entries.delete(key);
+          if (this.entries.get(key) === existing) this.deleteEntry(key);
           return this.run(key, fn, opts);
         }
       }
       return { value: cached, replayed: true };
     }
-    if (existing) this.entries.delete(key);
+    if (existing) this.deleteEntry(key);
 
     const promise = fn();
-    this.entries.set(key, { promise, expiresAt: now + this.ttlMs, fingerprint: opts.fingerprint });
-    this.trim();
+    const scope = IdempotencyStore.scopeOf(key);
+    this.setEntry(key, { promise, expiresAt: now + this.ttlMs, fingerprint: opts.fingerprint, scope });
+    this.trim(scope);
     try {
       const value = await promise;
       return { value, replayed: false };
     } catch (err) {
       // A failed write must not be "remembered": the next attempt with the same key runs again.
-      if (this.entries.get(key)?.promise === promise) this.entries.delete(key);
+      if (this.entries.get(key)?.promise === promise) this.deleteEntry(key);
       throw err;
     }
   }
@@ -144,15 +186,30 @@ export class IdempotencyStore {
   sweep(): void {
     const now = Date.now();
     for (const [key, entry] of this.entries) {
-      if (entry.expiresAt <= now) this.entries.delete(key);
+      if (entry.expiresAt <= now) this.deleteEntry(key);
     }
   }
 
-  private trim(): void {
+  /**
+   * Keep one credential within its cap by dropping its own oldest entries, then keep the whole
+   * store within the global ceiling by dropping the oldest of anyone's. Insertion order is age.
+   */
+  private trim(scope: string): void {
+    while ((this.perScope.get(scope) ?? 0) > this.maxPerScope) {
+      let oldest: string | undefined;
+      for (const [key, entry] of this.entries) {
+        if (entry.scope === scope) {
+          oldest = key;
+          break;
+        }
+      }
+      if (oldest === undefined) break;
+      this.deleteEntry(oldest);
+    }
     while (this.entries.size > this.max) {
       const oldest = this.entries.keys().next().value;
       if (oldest === undefined) break;
-      this.entries.delete(oldest);
+      this.deleteEntry(oldest);
     }
   }
 }

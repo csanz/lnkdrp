@@ -31,7 +31,7 @@
  */
 import { notFound } from "next/navigation";
 
-import { resolveProjectLink } from "@/lib/share/projectLinks";
+import { resolveProjectLinkForPage } from "@/lib/share/projectLinks";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +45,7 @@ export default async function ProjectShareLayout(props: {
   // `PROJECT_SHARE_FIELDS`, and an unselected field reads as `undefined`, which would pass the
   // check below while meaning nothing. A request repo has no public room at all — see the long note
   // in `page.tsx` — so it is refused here too rather than trusted to the page.
-  const resolved = await resolveProjectLink(shareId, { select: { isRequest: 1 } });
+  const resolved = await resolveProjectLinkForPage(shareId);
   if (!resolved || resolved.refusal || resolved.project.isRequest) notFound();
   return props.children;
 }

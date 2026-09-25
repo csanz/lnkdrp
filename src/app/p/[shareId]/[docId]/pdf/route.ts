@@ -30,6 +30,7 @@ import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { findProjectDocument, projectLinkPasswordEnabled, projectViewerKey } from "@/lib/share/projectPublic";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
 import { clientIpFromRequest, rateLimit } from "@/lib/http/rateLimit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { blobFetchUrl, fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
@@ -215,7 +216,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   if (projectLinkPasswordEnabled(link)) {
     const cookie = getCookie(request, shareAuthCookieName(shareId)) ?? "";
     const expected = shareAuthCookieValue({ shareId, sharePasswordHash: link.passwordHash as string });
-    if (!cookie || cookie !== expected) return new Response("Unauthorized", { status: 401 });
+    if (!shareAuthCookieMatches(cookie, expected)) return new Response("Unauthorized", { status: 401 });
   }
 
   // Membership is re-proved here, not trusted from the URL: this route hands out bytes. The only

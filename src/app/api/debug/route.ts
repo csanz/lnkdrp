@@ -1,26 +1,10 @@
 import { NextResponse } from "next/server";
-import { Types } from "mongoose";
 import { debugEnabled } from "@/lib/debug";
-import { connectMongo } from "@/lib/mongodb";
-import { UserModel } from "@/lib/models/User";
-import { tryResolveAuthUserId } from "@/lib/gating/actor";
+import { requireAdmin } from "@/lib/gating/requireAdmin";
 import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/**
- * Return whether the caller is a signed-in admin (same check as `src/app/api/admin/*`).
- *
- * Reads the NextAuth JWT only (no temp-user minting) and then the user's `role`.
- */
-async function isAdminRequest(request: Request): Promise<boolean> {
-  const session = await tryResolveAuthUserId(request);
-  if (!session?.userId || !Types.ObjectId.isValid(session.userId)) return false;
-  await connectMongo();
-  const u = await UserModel.findOne({ _id: new Types.ObjectId(session.userId) }).select({ role: 1 }).lean();
-  return (u as { role?: unknown } | null)?.role === "admin";
-}
 
 /**
  * Debug endpoint to confirm server-side env wiring.
@@ -29,13 +13,17 @@ async function isAdminRequest(request: Request): Promise<boolean> {
  * - `debug.enabled` is true when `DEBUG_LEVEL=1`
  * - `env.DEBUG_LEVEL` matches what you expect
  *
- * Production: hidden (404) unless the caller is an admin, so env presence flags are never public.
+ * Admin only, through the same gate as `/api/admin/*` (which allows localhost outside production),
+ * rather than a `NODE_ENV` check of its own: a preview or staging host that is not "production"
+ * used to answer anyone. In production a non-admin gets 404, so the route does not exist for them.
  * NOTE: We intentionally do NOT return secrets, only presence flags.
  */
 export async function GET(request: Request) {
   try {
-    if (process.env.NODE_ENV === "production" && !(await isAdminRequest(request))) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const gate = await requireAdmin(request);
+    if (!gate.ok) {
+      if (process.env.NODE_ENV === "production") return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return NextResponse.json({ error: gate.error }, { status: gate.status });
     }
 
     const rawDebugLevel = process.env.DEBUG_LEVEL ?? null;

@@ -22,12 +22,15 @@
  * No analytics. A thumbnail is not a read: the room's grid fetches one of these per document on
  * every load, and counting them would invent viewers and downloads that never happened.
  */
+import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
+import { pinnedImageMime } from "@/lib/share/pinnedImageMime";
 import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { findProjectDocument, projectLinkPasswordEnabled } from "@/lib/share/projectPublic";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
 
 export const runtime = "nodejs";
 
@@ -45,21 +48,6 @@ function getCookie(request: Request, name: string): string | null {
   return null;
 }
 
-/**
- * The content type, decided by the bytes — never echoed from upstream.
- *
- * The PDF proxy learned this one the hard way: with the type copied from the store and no
- * `script-src` in the app's CSP, an upstream that answered `text/html` made this origin serve
- * markup. The pipeline writes PNG (`renderPdfFirstPagePngBestEffort`); JPEG is tolerated for older
- * rows. Anything else is not an image we are willing to serve from our own origin.
- */
-function pinnedImageMime(bytes: Buffer): string | null {
-  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
-    return "image/png";
-  }
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-  return null;
-}
 
 export async function GET(request: Request, ctx: { params: Promise<{ shareId: string; docId: string }> }) {
   const { shareId, docId } = await ctx.params;
@@ -76,7 +64,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   if (projectLinkPasswordEnabled(link)) {
     const cookie = getCookie(request, shareAuthCookieName(shareId)) ?? "";
     const expected = shareAuthCookieValue({ shareId, sharePasswordHash: link.passwordHash as string });
-    if (!cookie || cookie !== expected) return new Response("Unauthorized", { status: 401 });
+    if (!shareAuthCookieMatches(cookie, expected)) return new Response("Unauthorized", { status: 401 });
   }
 
   // Membership after the gate, exactly as on the page and the PDF proxy: while the password is up,
@@ -89,6 +77,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     (typeof doc.firstPagePngUrl === "string" && doc.firstPagePngUrl.trim()) ||
     "";
   if (!candidate) return NextResponse.json({ error: "No preview" }, { status: 404 });
+
+  /**
+   * A room grid asks for every document's thumbnail on every render, and each answer was a
+   * buffered blob fetch. The stored pointer names the bytes (a new upload writes a new URL), so a
+   * digest of it is the entity tag: a browser that already holds this thumbnail revalidates with
+   * `If-None-Match` and is answered 304 before the blob is fetched. The link's own checks above
+   * still run on every request, so a revoked link stops answering 304 as surely as 200.
+   */
+  const etag = `"${crypto.createHash("sha256").update(candidate).digest("hex").slice(0, 32)}"`;
+  const ifNoneMatch = (request.headers.get("if-none-match") ?? "").split(",").map((t) => t.trim());
+  if (ifNoneMatch.includes(etag)) {
+    return new Response(null, { status: 304, headers: { etag, "cache-control": "private, max-age=300" } });
+  }
 
   /**
    * Which stored pointer this route is willing to go and *dereference*, decided by
@@ -138,6 +139,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
    * browser that already has them.
    */
   headers.set("cache-control", "private, max-age=300");
+  headers.set("etag", etag);
 
   return new Response(bytes, { status: 200, headers });
 }

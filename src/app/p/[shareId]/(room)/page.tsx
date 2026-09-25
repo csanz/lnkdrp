@@ -28,7 +28,8 @@ import IntroduceYourself from "../IntroduceYourself";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
-import { resolveProjectLink } from "@/lib/share/projectLinks";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
+import { resolveProjectLinkForPage } from "@/lib/share/projectLinks";
 import { listProjectDocuments, projectLinkPasswordEnabled, type PublicProjectDoc } from "@/lib/share/projectPublic";
 import { buildShareMetadata } from "@/lib/share/shareMetadata";
 
@@ -98,7 +99,7 @@ export async function generateMetadata(props: { params: Promise<{ shareId: strin
   const { shareId } = await props.params;
   if (!shareId) return buildShareMetadata({ title: "Shared documents", description: "" });
 
-  const resolved = await resolveProjectLink(shareId, { select: { description: 1, isRequest: 1 } });
+  const resolved = await resolveProjectLinkForPage(shareId);
   if (!resolved || resolved.refusal || Boolean(resolved.project.isRequest) || projectLinkPasswordEnabled(resolved.link)) {
     return buildShareMetadata({ title: "Shared documents", description: "" });
   }
@@ -114,7 +115,7 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
 
   // `isRequest` is selected for the rule below; `PROJECT_SHARE_FIELDS` does not carry it, and an
   // unselected field reads as `undefined`, which would pass the check while meaning nothing.
-  const resolved = await resolveProjectLink(shareId, { select: { description: 1, isRequest: 1 } });
+  const resolved = await resolveProjectLinkForPage(shareId);
   // An unknown slug, a document link's slug, or a deleted project: indistinguishable, on purpose.
   if (!resolved || resolved.refusal === "project_gone") notFound();
   /**
@@ -154,7 +155,7 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
     const c = await cookies();
     const cookie = c.get(shareAuthCookieName(shareId))?.value ?? "";
     const expected = shareAuthCookieValue({ shareId, sharePasswordHash: link.passwordHash as string });
-    if (!cookie || cookie !== expected) {
+    if (!shareAuthCookieMatches(cookie, expected)) {
       // Nothing before the password — not the project's name, not how many documents are in it.
       // Same rule as the document gate: the sender chose a password because the URL is not the
       // secret, and "Acme — Series A data room · 11 documents" gives away most of the answer.

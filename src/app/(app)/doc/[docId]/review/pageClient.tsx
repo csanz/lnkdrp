@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+
+/** 20 quick polls (30 s) plus 114 slow ones (9.5 min): about ten minutes, then the page stops asking. */
+const REVIEW_POLL_MAX_TRIES = 134;
 import Link from "next/link";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import Markdown from "@/components/Markdown";
@@ -74,7 +77,9 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
     setError(null);
     try {
       const [docRes, reviewRes] = await Promise.all([
-        fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, { cache: "no-store" }),
+        // `lite=1`: the page needs the current upload's id and version, not the extracted text of
+        // the whole document, and this request repeats while a review is running.
+        fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?lite=1`, { cache: "no-store" }),
         fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/reviews?latest=1`, { cache: "no-store" }),
       ]);
 
@@ -117,8 +122,23 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
 
   useEffect(() => {
     if (!shouldPoll) return;
-    const id = window.setInterval(() => void refresh(), 1500);
-    return () => window.clearInterval(id);
+    // Quick at first, then every few seconds, and not forever: a review that has not finished in
+    // ten minutes is not going to be caught by this page; a reload asks again.
+    let cancelled = false;
+    let tries = 0;
+    let timer: number | null = null;
+    const tick = async () => {
+      if (cancelled) return;
+      tries += 1;
+      await refresh();
+      if (cancelled || tries >= REVIEW_POLL_MAX_TRIES) return;
+      timer = window.setTimeout(tick, tries < 20 ? 1500 : 5000);
+    };
+    timer = window.setTimeout(tick, 1500);
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldPoll]);
 

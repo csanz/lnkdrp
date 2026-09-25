@@ -12,6 +12,7 @@ import { debugError } from "@/lib/debug";
 import { resolveShareLink } from "@/lib/share/links";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { ownerCanShowVersionHistory } from "@/lib/share/ownerPlan";
 import { Types } from "mongoose";
@@ -138,7 +139,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         const cookieName = shareAuthCookieName(shareId);
         const cookie = getCookie(request, cookieName) ?? "";
         const expected = shareAuthCookieValue({ shareId, sharePasswordHash: sharePasswordHash as string });
-        if (!cookie || cookie !== expected) {
+        if (!shareAuthCookieMatches(cookie, expected)) {
           return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
       }

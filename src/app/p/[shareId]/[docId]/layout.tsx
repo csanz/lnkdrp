@@ -42,7 +42,8 @@ import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
-import { resolveProjectLink } from "@/lib/share/projectLinks";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
+import { resolveProjectLinkForPage } from "@/lib/share/projectLinks";
 import { findProjectDocument, projectLinkPasswordEnabled } from "@/lib/share/projectPublic";
 
 export const dynamic = "force-dynamic";
@@ -57,7 +58,7 @@ export default async function ProjectShareDocumentLayout(props: {
   // `isRequest` is selected explicitly for the reason the layout above gives: it is not in
   // `PROJECT_SHARE_FIELDS`, and an unselected field reads as `undefined`, which would pass a check
   // while meaning nothing.
-  const resolved = await resolveProjectLink(shareId, { select: { isRequest: 1 } });
+  const resolved = await resolveProjectLinkForPage(shareId);
 
   // Everything link-level is `../layout.tsx`'s to answer, and it already has, above this file: an
   // unknown slug, a request repo, a deleted project and every disabled/expired/archived link 404
@@ -72,7 +73,7 @@ export default async function ProjectShareDocumentLayout(props: {
     const expected = shareAuthCookieValue({ shareId, sharePasswordHash: resolved.link.passwordHash as string });
     // Locked, and no key: stop here without touching the room, so the page renders its password
     // gate identically for every id anyone cares to try.
-    if (!cookie || cookie !== expected) return props.children;
+    if (!shareAuthCookieMatches(cookie, expected)) return props.children;
   }
 
   const doc = await findProjectDocument(resolved.project, docId);

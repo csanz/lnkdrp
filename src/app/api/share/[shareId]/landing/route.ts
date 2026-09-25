@@ -32,6 +32,7 @@ import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { findProjectDocument, projectLinkPasswordEnabled } from "@/lib/share/projectPublic";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -119,7 +120,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
         const jar = await cookies();
         const presented = jar.get(shareAuthCookieName(shareId))?.value ?? "";
         const expected = shareAuthCookieValue({ shareId, sharePasswordHash: String(link.passwordHash ?? "") });
-        if (!presented || presented !== expected) {
+        if (!shareAuthCookieMatches(presented, expected)) {
           return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
         }
       }

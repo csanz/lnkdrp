@@ -137,6 +137,7 @@ Every one of these answers a question you would otherwise answer by hand, wrongl
 | Helper | Question |
 |---|---|
 | `buildDocMatch` `docs/docMatch.ts:18-36` | Which document may this actor act on? Always excludes `isDeleted`. |
+| | Since 2026-09-25 every per-document route under `/api/docs/:docId/**` and `/api/uploads/**` uses it rather than an inline copy of the legacy `$or`; the copies that remain elsewhere are listed in the code review's docs/uploads Low follow-up. Stored `blobUrl`s are checked with `isBlobStoreUrl` before a redirect or a copy. |
 | `liveProjectByIdMatch` `projects/scope.ts:49-65` | The same, for one project by id. |
 | `liveProjectFilter` `projects/scope.ts:15-24` | Which projects count for this workspace? Shared by the list and the plan cap so they cannot drift. |
 
@@ -306,7 +307,8 @@ which is precisely what the password withholds.
 lookup must not even run.
 The fourth door was `POST /api/share/:shareId/download-requests`, which resolved link and document
 together and answered 404 or 401 by membership (code review 2026-09-23, M8; closed 2026-09-25: the
-link is resolved alone, gated, and only then is the document looked up).
+link is resolved alone, gated, and only then is the document looked up). The stats route had the
+same order on a room slug and was fixed the same way the same day (Low, public share).
 
 **9. Trusting a caller-supplied dedupe key.** `visitId` came off the request body and was the only
 thing deduplicating visit counts.

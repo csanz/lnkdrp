@@ -8,13 +8,13 @@
  * archived (400) because disabling it is the intended action.
  */
 import { NextResponse } from "next/server";
+import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { Types } from "mongoose";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
 import {
   archiveShareLink,
-  listShareLinks,
   setDefaultShareLink,
   shareLinkStatsByShareId,
   toShareLinkDTO,
@@ -34,8 +34,8 @@ export const dynamic = "force-dynamic";
  * link through any `docId` they can reach.
  */
 async function assertLinkOnDoc(orgId: Types.ObjectId, docId: Types.ObjectId, linkId: string): Promise<void> {
-  const links = await listShareLinks({ orgId, docId, includeArchived: true });
-  if (!links.some((l) => String(l._id) === linkId)) throw new ShareLinkError("not_found", "Link not found.");
+  const found = await ShareLinkModel.exists({ _id: new Types.ObjectId(linkId), docId, orgId });
+  if (!found) throw new ShareLinkError("not_found", "Link not found.");
 }
 
 /** Settings a PATCH may carry; anything absent is left untouched. */
@@ -89,7 +89,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
       Object.keys(settings).length > 0
         ? await updateShareLink({ orgId, linkId, settings })
         : {
-            link: (await listShareLinks({ orgId, docId: docObjectId })).find((l) => String(l._id) === String(linkId))!,
+            link: (await ShareLinkModel.findOne({ _id: new Types.ObjectId(linkId), docId: docObjectId, orgId, archivedAt: null }).lean<ShareLink>())!,
             limit: null,
             restored: undefined,
           };

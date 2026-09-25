@@ -18,7 +18,7 @@
  */
 import { notFound } from "next/navigation";
 
-import { resolveShareLink } from "@/lib/share/links";
+import { resolveShareLinkForPage } from "@/lib/share/links";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +28,7 @@ export default async function ShareLayout(props: {
 }) {
   const { shareId } = await props.params;
   if (!shareId) notFound();
-  const resolved = await resolveShareLink(shareId);
+  const resolved = await resolveShareLinkForPage(shareId);
   if (!resolved || resolved.refusal) notFound();
   return props.children;
 }

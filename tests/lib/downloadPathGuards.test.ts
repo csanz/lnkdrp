@@ -150,7 +150,12 @@ vi.mock("@/lib/email/templates", () => ({
   downloadRequestOwnerEmail: () => ({ subject: "owner", text: "owner" }),
   downloadRequestReceivedEmail: () => ({ subject: "receipt", text: "receipt" }),
 }));
-vi.mock("@/lib/urls", () => ({ getPublicSiteBase: () => "https://app.example" }));
+vi.mock("@/lib/urls", () => ({
+  getPublicSiteBase: () => "https://app.example",
+  // The request page in the owner's email: a document link's page, or the room's document page.
+  buildPublicShareUrl: (shareId: string) => `https://app.example/s/${shareId}`,
+  buildPublicProjectUrl: (shareId: string) => `https://app.example/p/${shareId}`,
+}));
 vi.mock("@/lib/debug", () => ({ debugLog: vi.fn(), debugWarn: vi.fn(), debugError: vi.fn() }));
 vi.mock("@/lib/http/rateLimit", () => ({
   clientIpFromRequest: () => "203.0.113.9",

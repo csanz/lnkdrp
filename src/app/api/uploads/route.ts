@@ -273,12 +273,16 @@ export async function POST(request: Request) {
           throw e;
         }
       }
-      // refresh instance so later responses (if any) see latest
-      doc = await DocModel.findOne({
-        _id: new Types.ObjectId(body.docId),
-        userId: new Types.ObjectId(actor.userId),
-        isDeleted: { $ne: true },
-      });
+      // Refresh so later responses see the slug. The same workspace match as above: by owner id
+      // this came back null for a teammate, and the upload row was then stamped `orgId: null`.
+      doc = await DocModel.findOne(
+        buildDocMatch(
+          new Types.ObjectId(body.docId),
+          new Types.ObjectId(actor.orgId),
+          new Types.ObjectId(actor.userId),
+          actor.orgId === actor.personalOrgId,
+        ),
+      );
     }
 
     // Temp-user gating only (the version number itself is allocated atomically below).

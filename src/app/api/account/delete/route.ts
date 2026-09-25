@@ -28,6 +28,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { isOpenStatus } from "@/lib/billing/subscriptionState";
 import { scheduleStripeCancelAtPeriodEnd } from "@/lib/billing/stripeSubscriptionCancel";
+import { countOtherMembersByOrg } from "@/lib/accounts/purge";
 import { logErrorEvent } from "@/lib/errors/logger";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { recordActivity } from "@/lib/activity/log";
@@ -73,17 +74,12 @@ export async function POST(request: Request) {
     // Owned with another owner/admin present: billing stays with the workspace, but the card on
     // the Stripe customer is the leaver's, so the people who remain are told to replace it.
     const otherAdminsByOrg = new Map<string, number>();
-    for (const m of memberships) {
-      if (m.role !== "owner") continue;
-      const [others, otherAdmins] = await Promise.all([
-        OrgMembershipModel.countDocuments({ orgId: m.orgId, userId: { $ne: userId }, isDeleted: { $ne: true } }),
-        OrgMembershipModel.countDocuments({
-          orgId: m.orgId,
-          userId: { $ne: userId },
-          role: { $in: ["owner", "admin"] },
-          isDeleted: { $ne: true },
-        }),
-      ]);
+    const ownedMemberships = memberships.filter((m) => m.role === "owner");
+    const otherMembers = await countOtherMembersByOrg(userId, ownedMemberships.map((m) => m.orgId));
+    for (const m of ownedMemberships) {
+      const counts = otherMembers.get(String(m.orgId)) ?? { others: 0, admins: 0 };
+      const others = counts.others;
+      const otherAdmins = counts.admins;
       if (others === 0) ownedOrgIds.push(m.orgId);
       else if (otherAdmins === 0) billingOrphanOrgIds.push(m.orgId);
       else otherAdminsByOrg.set(String(m.orgId), otherAdmins);

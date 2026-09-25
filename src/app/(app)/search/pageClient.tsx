@@ -128,6 +128,13 @@ export default function SearchPageClient() {
 
   // Documents: server-side search, page-based.
   useEffect(() => {
+    if (scope === "projects") {
+      // Nothing on this page reads documents in the Projects scope, yet every keystroke still
+      // asked `/api/docs` for them (code review 2026-09-23, Low). Settle the loading flags and skip.
+      setLoading(false);
+      setDocsPending(false);
+      return;
+    }
     const id = ++docsReqRef.current;
     const ctrl = new AbortController();
     const wasLeaving = leavingRef.current;
@@ -180,7 +187,7 @@ export default function SearchPageClient() {
       }
     })();
     return () => ctrl.abort();
-  }, [q, page]);
+  }, [q, page, scope]);
 
   // Projects: only when the scope includes them and there is something to search (or scope is Projects).
   const showProjects = (scope === "all" && Boolean(q)) || scope === "projects";

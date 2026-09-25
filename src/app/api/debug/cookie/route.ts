@@ -8,16 +8,15 @@
  * (repo root) so running `npm run tests:benchmark -- --dashboard` works without extra env/flags.
  *
  * Safety:
- * - Requires a signed-in user (NextAuth JWT). Never mints temp users.
+ * - Admin only, through the same gate as `/api/admin/*` (localhost is allowed outside production).
+ *   It used to accept any signed-in user outside production, which on a preview host handed a
+ *   session cookie back to whoever asked for it.
  * - Production: hidden (404) unless the caller is an admin, and never touches the filesystem there.
  */
 import { NextResponse } from "next/server";
-import { Types } from "mongoose";
 import fs from "node:fs";
 import path from "node:path";
-import { connectMongo } from "@/lib/mongodb";
-import { UserModel } from "@/lib/models/User";
-import { tryResolveAuthUserId } from "@/lib/gating/actor";
+import { requireAdmin } from "@/lib/gating/requireAdmin";
 import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
@@ -37,27 +36,15 @@ function tryWriteCookieFile(cookie: string): CookieFileResult {
   }
 }
 
-/** Return the caller's `role` when signed in (JWT only, no temp-user minting), else `null`. */
-async function resolveCallerRole(request: Request): Promise<{ userId: string; role: string | null } | null> {
-  const session = await tryResolveAuthUserId(request);
-  if (!session?.userId || !Types.ObjectId.isValid(session.userId)) return null;
-  await connectMongo();
-  const u = await UserModel.findOne({ _id: new Types.ObjectId(session.userId) }).select({ role: 1 }).lean();
-  const role = (u as { role?: unknown } | null)?.role;
-  return { userId: session.userId, role: typeof role === "string" ? role : null };
-}
-
+/** Echo the caller's cookie header back (admins only). */
 export async function GET(request: Request) {
   try {
     const isProd = process.env.NODE_ENV === "production";
-    const caller = await resolveCallerRole(request);
-
-    // Production: indistinguishable from a missing route unless the caller is an admin.
-    if (isProd && caller?.role !== "admin") {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-    if (!caller) {
-      return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+    const gate = await requireAdmin(request);
+    if (!gate.ok) {
+      // Production: indistinguishable from a missing route unless the caller is an admin.
+      if (isProd) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return NextResponse.json({ error: gate.error }, { status: gate.status });
     }
 
     const cookieHeader = request.headers.get("cookie") ?? "";

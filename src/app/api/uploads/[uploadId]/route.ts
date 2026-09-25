@@ -6,6 +6,7 @@ import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import {
   isBlobPathnameForUpload,
   isBlobUrlForUpload,
@@ -141,12 +142,17 @@ export async function GET(
     const upload = await UploadModel.findOne(buildUploadMatch(uploadId, actor)).lean();
     if (!upload) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+    // By workspace, not by owner: a teammate polling a colleague's upload got `doc.status: null`
+    // and a page that never said "ready".
     const doc = upload.docId
-      ? await DocModel.findOne({
-          _id: upload.docId,
-          userId: new Types.ObjectId(actor.userId),
-          isDeleted: { $ne: true },
-        })
+      ? await DocModel.findOne(
+          buildDocMatch(
+            new Types.ObjectId(String(upload.docId)),
+            new Types.ObjectId(actor.orgId),
+            new Types.ObjectId(actor.userId),
+            actor.orgId === actor.personalOrgId,
+          ),
+        )
           .select({ status: 1 })
           .lean()
       : null;

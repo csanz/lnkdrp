@@ -44,6 +44,8 @@ vi.mock("next/navigation", () => ({
 const resolveProjectLink = vi.fn();
 vi.mock("@/lib/share/projectLinks", () => ({
   resolveProjectLink: (...a: any[]) => (resolveProjectLink as any)(...a),
+  // The page-render wrapper (React.cache over resolveProjectLink) resolves through the same mock.
+  resolveProjectLinkForPage: (shareId: string) => (resolveProjectLink as any)(shareId, { select: { description: 1, isRequest: 1 } }),
 }));
 
 const findProjectDocument = vi.fn();

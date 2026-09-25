@@ -26,7 +26,7 @@ const { resolveShareLink, checkLimit, ensurePersonalOrgForUserId, workspaceBrand
   cookies: vi.fn(),
 }));
 
-vi.mock("@/lib/share/links", () => ({ resolveShareLink }));
+vi.mock("@/lib/share/links", () => ({ resolveShareLink, resolveShareLinkForPage: resolveShareLink }));
 vi.mock("@/lib/billing/planLimits", () => ({ checkLimit }));
 vi.mock("@/lib/models/Org", () => ({ ensurePersonalOrgForUserId }));
 vi.mock("@/lib/share/shareBrand", () => ({ workspaceBrandForOrg }));

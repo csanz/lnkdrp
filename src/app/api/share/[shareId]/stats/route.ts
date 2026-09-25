@@ -105,31 +105,6 @@ const NEW_VIEWER_FANOUT_PER_LINK_PER_DAY = 200;
  */
 const VERIFY_MAIL_PER_LINK_PER_DAY = 50;
 
-/**
- * A locked data room must answer the same thing about every document id, member or not.
- *
- * `resolveProjectStatsTarget` resolves the link *and* the document together, so a slug the caller
- * has no password for still answered 404 for an id that is not in the room and fell through to a
- * 200 for one that is. That sorts guessed ids into "inside" and "outside" — an inventory of the
- * room, handed out to someone who has not given the password, which is the one thing the password
- * is there to withhold. The page and the PDF proxy were reordered to close exactly this; the
- * ingest was the third door.
- *
- * Reordering here would mean resolving the link twice on the hot path for every ordinary view, so
- * instead this runs only on the branch that was about to 404: if the slug is a real project link
- * and it is locked, answer whatever the locked case answers, so both outcomes look identical.
- */
-async function lockedProjectLink(request: Request, shareId: string): Promise<boolean> {
-  try {
-    const linkOnly = await resolveProjectLink(shareId);
-    if (!linkOnly || linkOnly.refusal) return false;
-    return !shareLinkUnlocked(request, shareId, linkOnly.link as PasswordProtectedLink);
-  } catch {
-    // A lookup that fails must not turn into a different answer either.
-    return false;
-  }
-}
-
 const STATS_POST_WINDOW_MS = 60 * 1000;
 export const dynamic = "force-dynamic";
 /**
@@ -265,14 +240,27 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       // A project link's slug resolves to no document (`resolveShareLink` refuses it by design), so
       // the overlay has to name the document being read. Scoping the counts by it matters: without
       // the `docId` clause every document in a data room would report the whole link's traffic.
+      /**
+       * A locked data room answers the same thing about every document id, member or not.
+       *
+       * `resolveProjectStatsTarget` resolves the link and the document together, so on a room the
+       * caller had no password for, a guessed id was sorted into "inside" (the locked answer) and
+       * "outside" (404) before the gate: an inventory of the room, handed out by the one thing the
+       * password withholds (docs/SECURITY.md 7.8). So the link is resolved on its own first, the
+       * gate runs on it, and only then is the document looked up. The membership lookup does not
+       * run for a locked room at all, so it cannot be timed either.
+       */
+      if (!resolved) {
+        const roomLink = await resolveProjectLink(shareId);
+        if (!roomLink || roomLink.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+        if (!shareLinkUnlocked(request, shareId, roomLink.link as PasswordProtectedLink)) {
+          return NextResponse.json({ isOwner: false }, { headers: { "cache-control": "no-store" } });
+        }
+      }
       const projectTarget = resolved
         ? null
         : await resolveProjectStatsTarget({ shareId, request, select: { userId: 1, orgId: 1 } as Record<string, 1> });
       if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
-        // Same answer as the locked case below, so a guessed id learns nothing. See `lockedProjectLink`.
-        if (!resolved && (await lockedProjectLink(request, shareId))) {
-          return NextResponse.json({ isOwner: false }, { headers: { "cache-control": "no-store" } });
-        }
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
       const link = resolved ? resolved.link : projectTarget!.link;
@@ -325,8 +313,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         { headers: { "cache-control": "no-store" } },
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 400 });
+      // A fixed message to an anonymous caller; the real one goes to the log.
+      return errorJson(err, { status: 500, publicMessage: "Something went wrong", context: "[api/share/:shareId/stats] GET failed" });
     }
   });
 }
@@ -424,15 +412,19 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
        * Everything below this point is the same code the document path runs; that is the whole
        * bargain of decision 5 — reading time, sessions and page sequences with no new timing code.
        */
+      // The room's link first, then its gate, then the document: see the note on the GET above.
+      // A locked room answers the same quiet 200 as the locked write below, for every id.
+      if (!resolved) {
+        const roomLink = await resolveProjectLink(shareId);
+        if (!roomLink || roomLink.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+        if (!shareLinkUnlocked(request, shareId, roomLink.link as PasswordProtectedLink)) {
+          return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
+        }
+      }
       const projectTarget = resolved
         ? null
         : await resolveProjectStatsTarget({ shareId, request, bodyDocId: (body as { docId?: unknown })?.docId, select: { title: 1, userId: 1, orgId: 1 } as Record<string, 1> });
       if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
-        // Same quiet 200 the locked case answers below, so a guessed id learns nothing about what
-        // the room holds. See `lockedProjectLink`.
-        if (!resolved && (await lockedProjectLink(request, shareId))) {
-          return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
-        }
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
       const link = resolved ? resolved.link : projectTarget!.link;

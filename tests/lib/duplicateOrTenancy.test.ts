@@ -74,7 +74,7 @@ vi.mock("@/lib/models/Doc", () => ({
     findOne: () => chain({ _id: DOC, orgId: ORG }),
   },
 }));
-vi.mock("@/lib/debug", () => ({ debugError: vi.fn(), debugLog: vi.fn() }));
+vi.mock("@/lib/debug", () => ({ debugError: vi.fn(), debugLog: vi.fn(), debugEnabled: () => false }));
 vi.mock("@/lib/activity/log", () => ({ recordActivity: vi.fn() }));
 
 import { activeOrgCandidateOrder } from "@/lib/gating/actor";

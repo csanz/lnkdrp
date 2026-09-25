@@ -23,7 +23,14 @@ export const API_TIMEOUT_MS = 20_000;
 
 /** Idempotency replay window and cache bound (per process). */
 export const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000;
-export const IDEMPOTENCY_MAX_ENTRIES = 1000;
+/** Global ceiling on cached idempotency entries across every credential. */
+export const IDEMPOTENCY_MAX_ENTRIES = 5000;
+/**
+ * Entries one credential may hold. The cache used to be one process-wide list of 1000 that any
+ * key could fill, so a busy (or hostile) credential evicted everyone else's replays and a retry
+ * that should have been a replay ran the write again (review, Low: MCP/AI).
+ */
+export const IDEMPOTENCY_MAX_PER_CREDENTIAL = 200;
 
 /** Sessions with no request for this long are closed by the sweeper. */
 export const SESSION_IDLE_MS = 60 * 60 * 1000;

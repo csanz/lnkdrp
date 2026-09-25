@@ -19,6 +19,8 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
+import { errorJson } from "@/lib/http/errorResponse";
+import { botIdHashPrefixFilter } from "@/lib/projects/requestSettings";
 import { connectMongo } from "@/lib/mongodb";
 import { analyticsTierForPlan, getWorkspacePlan } from "@/lib/billing/planLimits";
 import { DocModel } from "@/lib/models/Doc";
@@ -58,6 +60,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
     if (kind === "anon" && !botIdHashRaw) {
       return applyTempUserHeaders(NextResponse.json({ error: "Missing botIdHash" }, { status: 400 }), actor);
     }
+    // A hex digest or nothing: the old code stripped non-hex characters and built the prefix regex
+    // from what was left, so a value like "not-a-hash" matched every anonymous visit in the room.
+    const anonScope = kind === "anon" ? botIdHashPrefixFilter(botIdHashRaw) : null;
+    if (kind === "anon" && !anonScope) {
+      return applyTempUserHeaders(NextResponse.json({ error: "Invalid botIdHash" }, { status: 400 }), actor);
+    }
 
     await connectMongo();
 
@@ -80,10 +88,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
      * only way to reach the whole person; a signed-in one is keyed by user id and needs no such
      * trick. The prefix is anchored and the digest is hex, so it cannot match a different reader.
      */
-    const viewerScope =
-      kind === "authed"
-        ? { viewerUserId: new Types.ObjectId(userIdRaw) }
-        : { botIdHash: { $regex: `^${botIdHashRaw.replace(/[^a-f0-9]/gi, "")}` } };
+    const viewerScope = kind === "authed" ? { viewerUserId: new Types.ObjectId(userIdRaw) } : (anonScope ?? {});
 
     const rows = (await ShareVisitModel.find({ ...shareScope, ...viewerScope, ...RECIPIENT_ONLY_MATCH })
       .sort({ lastEventAt: -1 })
@@ -196,7 +201,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
       actor,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+    return applyTempUserHeaders(
+      errorJson(err, { status: 500, publicMessage: "Could not load visits", context: "[api/projects/:slug/shareviews/visits] GET failed" }),
+      actor,
+    );
   }
 }

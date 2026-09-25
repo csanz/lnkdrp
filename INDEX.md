@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 959 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 969 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -328,7 +328,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/(app)/tag/[slug]/pageClient.tsx` · default
 - `src/app/(app)/tags/pageClient.tsx` · default
 - `src/app/(app)/upload/pageClient.tsx` · default
-- `src/app/HomeAuthedClient.tsx` · default, UploadHome, UploadProjectOption, UploadProjectPicker, UploadProjectPickerState, useUploadProjectPicker
+- `src/app/HomeAuthedClient.tsx` · default, UploadHome
 - `src/app/HomeUnauthedClient.tsx` · default
 - `src/app/accept/AcceptClient.tsx` · default
 - `src/app/api/docs/[docId]/links/shared.ts` · accessDocForLinks, DocAccess, DocAccessResult, linkErrorResponse, PlanWarning, planWarningOf
@@ -361,6 +361,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/p/[shareId]/[docId]/loading.tsx` · default
 - `src/app/p/[shareId]/shareTheme.ts` · PROJECT_SHARE_THEME
 - `src/app/p/not-found.tsx` · default
+- `src/app/preferences/tabs.ts` · dashboardTabFor
 - `src/app/pricing/BillingInterval.tsx` · BillingInterval, BillingIntervalProvider, BillingIntervalToggle, BillingStatus, BillingStatusPlan, loadBillingStatus, ProPriceBlock, useBillingInterval
 - `src/app/pricing/PricingCta.tsx` · default
 - `src/app/providers.tsx` · default, useAuthEnabled, useNavigationLocked, useNavigationLockWhile
@@ -811,16 +812,21 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/pendingUpload.tsx`
 - `src/lib/people/contributors.ts` · Authorship, Contributor, loadAuthorship
 - `src/lib/preflight/env.ts` · Group, Result, runEnvPreflight, Status, summarise
+- `src/lib/projects/docCountFilter.ts` · projectDocCountFilter
+- `src/lib/projects/requestSettings.ts` · botIdHashPrefixFilter, requestUploadPathFor
 - `src/lib/projects/scope.ts` · liveProjectByIdMatch, liveProjectFilter
 - `src/lib/realtime/ticket.ts` · REALTIME_TICKET_TTL_SECONDS, realtimeSecret, RealtimeTicket, signRealtimeTicket, verifyRealtimeTicket
 - `src/lib/share/anonymousNoticeAudience.ts` · AlreadyToldLookup, AlreadyToldQuery, cursorBackedAlreadyTold, queueBackedAlreadyTold
 - `src/lib/share/brand.ts` · brandInitials, ShareWorkspaceBrand
 - `src/lib/share/claimLink.ts` · resolveClaimLink, ResolvedClaimLink
+- `src/lib/share/cookieCompare.ts` · shareAuthCookieMatches
 - `src/lib/share/createdVia.ts` · createdViaFor
+- `src/lib/share/downloadRequestDedupe.ts` · pendingDuplicateFilter
 - `src/lib/share/links.ts` · archiveShareLink, createShareLink, CreateShareLinkResult, DEFAULT_LINK_LABEL, ensureDefaultLink, isExpired, isLinkActive, listShareLinks, …
 - `src/lib/share/ownerPlan.ts` · ownerCanShowVersionHistory
 - `src/lib/share/ownerSide.ts` · isOwnerSideViewer, OwnedDocLike
 - `src/lib/share/passwordPolicy.ts` · SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, SHARE_PASSWORD_RANGE_TEXT
+- `src/lib/share/pinnedImageMime.ts` · MAX_PREVIEW_BYTES, pinnedImageMime
 - `src/lib/share/projectLinks.ts` · archiveProjectLink, createProjectLink, CreateProjectLinkResult, ensureDefaultProjectLink, listProjectLinks, listProjectLinksPage, ProjectLike, ProjectLinkDTO, …
 - `src/lib/share/projectPublic.ts` · findProjectDocument, isExpired, listProjectDocuments, PROJECT_DOC_LIST_FIELDS, PROJECT_VIEW_KEY_SEP, projectDocIdFromReferer, projectLinkPasswordEnabled, projectViewerKey, …
 - `src/lib/share/readerIdentity.ts` · loadShareViewIdentities, pickReaderIdentity, ReaderIdentity, resolveReaderIdentity, ShareViewIdentity
@@ -849,7 +855,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/support/plain/chat.ts` · plainChatAppId, plainChatCustomer, PlainChatCustomer, plainChatEmailHash
 - `src/lib/support/plain/signature.ts` · configuredPlainSigningSecret, PLAIN_SIGNATURE_HEADER, signPlainBody, verifyPlainSignature
 - `src/lib/tags/palette.ts` · asTagColorKey, DEFAULT_TAG_COLOR, nextTagColor, TAG_COLOR_KEYS, TAG_COLORS, TagColorKey
-- `src/lib/tags/service.ts` · attachTag, deleteTag, detachTag, findOrCreateTag, listTags, listTagsPage, liveAssignmentCountPipeline, mergeTags, …
+- `src/lib/tags/service.ts` · attachTag, deleteTag, detachTag, findOrCreateTag, listTags, listTagsPage, mergeTags, removeAllTagsFromTarget, …
 - `src/lib/tags/slug.ts` · isUsableTagName, normalizeTagName, TAG_NAME_MAX, tagSlug
 - `src/lib/uploads/abandonUpload.ts` · abandonUpload, abandonUploadIfImportFailed
 - `src/lib/uploads/inFlight.ts` · InFlightUpload, markDocFinished, mergeInFlightSnapshot, mergeUploadFrame, pruneUploads, UPLOAD_SETTLE_MS, UploadFramePayload
@@ -887,6 +893,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `mcp/src/errors.ts` · handleTool, initializeFailureResponse, isToolError, LINK_NOT_FOUND_ON_DOC, LINK_NOT_FOUND_ON_PROJECT, mapApiError, ToolError, ToolErrorCode, …
 - `mcp/src/idempotency.ts` · fingerprintArgs, IdempotencyStore
 - `mcp/src/inlineLimits.ts` · decodedBytesFromBase64Length, INLINE_BASE64_SCHEMA_MAX_CHARS, INLINE_SEND_MAX_BYTES, INLINE_SEND_MAX_LABEL, INLINE_UPLOAD_MAX_BASE64_CHARS, INLINE_UPLOAD_MAX_BYTES, INLINE_UPLOAD_MAX_LABEL, inlineSendMaxBytes, …
+- `mcp/src/localApi.ts` · isLocalApiUrl
 - `mcp/src/main.ts`
 - `mcp/src/optimize.ts` · decideOptimizedBytes, findGhostscript, ghostscriptArgs, ghostscriptCandidates, looksLikePdf, OPTIMIZE_CONCURRENCY_DEFAULT, OPTIMIZE_IMAGE_DPI, OPTIMIZE_MIN_BYTES, …
 - `mcp/src/realtime.ts` · DOC_POLL_MS, isTerminalDocStatus, WaitForDocInput, waitForDocStatus
@@ -1004,4 +1011,7 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `db/migration/20260917_0001_shareviews_workspace_window_index.mjs` · up
 - `db/migration/20260925_0001_orgmemberships_plain_indexes.mjs` · up
 - `db/migration/20260925_0002_analytics_activity_indexes.mjs` · up
+- `db/migration/20260925_0003_projects_live_unique_names.mjs` · up
+- `db/migration/20260925_0004_airuns_ttl.mjs` · up
+- `db/migration/20260925_0005_request_repos_is_request.mjs` · up
 - `db/migration/run.mjs`

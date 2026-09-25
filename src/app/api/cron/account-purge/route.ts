@@ -58,8 +58,8 @@ async function handle(request: Request) {
     let due: string[];
     if (onlyUserId) {
       if (!Types.ObjectId.isValid(onlyUserId)) return NextResponse.json({ error: "Invalid userId" }, { status: 400 });
-      const all = await findAccountsDueForPurge(startedAt, 1000);
-      due = all.filter((id) => id === onlyUserId);
+      // Asked for directly: the old "first thousand due, then filter" missed anyone past that.
+      due = await findAccountsDueForPurge(startedAt, 1, onlyUserId);
     } else {
       due = await findAccountsDueForPurge(startedAt, limit);
     }

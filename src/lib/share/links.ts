@@ -15,6 +15,7 @@
  *   default link's settings are mirrored onto the legacy Doc fields for one release, so older
  *   readers and the rollback build keep working.
  */
+import { cache } from "react";
 import { Types, type ProjectionType } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
@@ -26,6 +27,7 @@ import { newShareId } from "@/lib/crypto/randomBase62";
 import { encryptSharePassword, hashSharePassword, shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { checkLimit, type LimitCheck } from "@/lib/billing/planLimits";
 import { SHARE_PASSWORD_MIN, SHARE_PASSWORD_MAX } from "./passwordPolicy";
+import { shareAuthCookieMatches } from "./cookieCompare";
 
 export const SHARE_LINK_LABEL_MAX = 80;
 export const SHARE_LINK_AUDIENCE_MAX = 120;
@@ -159,8 +161,7 @@ function readCookie(request: Request, name: string): string {
 export function shareLinkUnlocked(request: Request, shareId: string, link: PasswordProtectedLink): boolean {
   if (!shareLinkPasswordEnabled(link)) return true;
   const cookie = readCookie(request, shareAuthCookieName(shareId));
-  if (!cookie) return false;
-  return cookie === shareAuthCookieValue({ shareId, sharePasswordHash: String(link.passwordHash) });
+  return shareAuthCookieMatches(cookie, shareAuthCookieValue({ shareId, sharePasswordHash: String(link.passwordHash) }));
 }
 
 /**
@@ -369,6 +370,10 @@ export async function resolveShareLink(shareId: string, opts: { select?: Record<
       .select({ ...DOC_SHARE_FIELDS, ...(opts.select ?? {}) })
       .lean()) as (DocLike & Record<string, unknown>) | null;
     if (!doc) return null;
+    // A deleted legacy document is a miss, not a reason to materialise a link for it. This is an
+    // anonymous GET, and it used to adopt the row into a workspace, create its default link and
+    // write `Doc.shareId` back before noticing the document was gone.
+    if (doc.isDeleted) return null;
     link = await ensureDefaultLinkOrNull(doc);
     // No link could be materialised (a document with neither workspace nor owner). The slug is
     // real but there is nothing to serve it with, so this is a 404, never a 500 — the same answer
@@ -387,6 +392,48 @@ export async function resolveShareLink(shareId: string, opts: { select?: Record<
           : null;
   return { link, doc, refusal };
 }
+
+/**
+ * The fields the `/s/:shareId` page tree needs, as one projection: the layout's refusal check, the
+ * metadata's title and description, the page's viewer and AI snapshot fields.
+ */
+export const SHARE_PAGE_SELECT: Record<string, 1> = {
+  title: 1,
+  blobUrl: 1,
+  orgId: 1,
+  "aiOutput.meta_title": 1,
+  "aiOutput.meta_description": 1,
+  "aiOutput.openGraph.title": 1,
+  "aiOutput.openGraph.description": 1,
+  "aiOutput.one_liner": 1,
+  "aiOutput.core_problem_or_need": 1,
+  "aiOutput.primary_capabilities_or_scope": 1,
+  "aiOutput.intended_use_or_context": 1,
+  "aiOutput.outcomes_or_value": 1,
+  "aiOutput.maturity_or_status": 1,
+  "aiOutput.summary": 1,
+  "aiOutput.company_or_project_name": 1,
+  "aiOutput.category": 1,
+  "aiOutput.tags": 1,
+  "aiOutput.key_metrics": 1,
+  "aiOutput.ask": 1,
+  receiverRelevanceChecklist: 1,
+  previewImageUrl: 1,
+  firstPagePngUrl: 1,
+};
+
+/**
+ * {@link resolveShareLink} for the `/s/:shareId` page tree, memoised per request.
+ *
+ * The layout, `generateMetadata` and the page each resolved the same slug with their own
+ * projection, so one public page render read the link and the document three times (and once
+ * more in the metadata). `React.cache` keys on the argument, so all three now share one read as
+ * long as they ask for the same thing; `SHARE_PAGE_SELECT` is the union of what they asked for.
+ * Routes (`/pdf`, `/preview`, ...) keep calling the uncached function with their own projection.
+ */
+export const resolveShareLinkForPage = cache(
+  (shareId: string): Promise<ResolvedShareLink | null> => resolveShareLink(shareId, { select: SHARE_PAGE_SELECT }),
+);
 
 /** Links of one document, default first then newest first. Archived links are excluded unless asked. */
 export async function listShareLinks(input: { orgId: string | Types.ObjectId; docId: string | Types.ObjectId; includeArchived?: boolean }): Promise<ShareLink[]> {
