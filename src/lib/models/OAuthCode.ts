@@ -25,7 +25,9 @@ const oauthCodeSchema = new Schema(
     codeChallenge: { type: String, required: true },
     /** The MCP server URL the client named (RFC 8707), or null when it named none. */
     resource: { type: String, default: null },
-    expiresAt: { type: Date, required: true, index: true },
+    // Indexed by the TTL declaration below; a second plain index here made Mongoose warn on every
+    // build and every boot about the duplicate.
+    expiresAt: { type: Date, required: true },
     usedAt: { type: Date, default: null },
     /** The grant this code became, so a replay can revoke it. */
     grantId: { type: Schema.Types.ObjectId, ref: "OAuthGrant", default: null },
