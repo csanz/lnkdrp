@@ -1,9 +1,10 @@
 /**
  * Page for `/tag/:slug` — everything carrying one tag.
  *
- * A tag is one idea that lands on two kinds of thing, so the page shows both: the projects first,
- * because a project is a container and a reader scanning "fundraising" wants the data room before
- * the loose documents, then the documents.
+ * A tag is one idea that lands on three kinds of thing, so the page shows all of them: the projects
+ * first, because a project is a container and a reader scanning "fundraising" wants the data room
+ * before the loose documents, then the documents, then the contacts carrying the tag (the people
+ * side of the same idea: "investor", "passed", "warm").
  */
 import type { Metadata } from "next";
 

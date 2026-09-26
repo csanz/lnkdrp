@@ -22,6 +22,7 @@ import { errorJson } from "@/lib/http/errorResponse";
 import { pendingDuplicateFilter } from "@/lib/share/downloadRequestDedupe";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { recordActivity } from "@/lib/activity/log";
+import { upsertContact } from "@/lib/contacts/service";
 
 export const runtime = "nodejs";
 
@@ -240,6 +241,18 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           isDefaultLink: Boolean(resolved.link.isDefault),
         },
         request,
+      });
+      // The address they typed is a contact (docs/prds/lnkdrp-contacts.md decision 2), stored in
+      // full whatever the plan: storage is not display, and the list redacts per plan on the way
+      // out. Not a visit; nothing was read. Fire and forget: the service catches everything, and
+      // the requester is waiting on the mail below, not on this.
+      void upsertContact({
+        orgId: activityOrgId,
+        email,
+        source: "download_request",
+        shareId,
+        docId: String(docId),
+        at: new Date(),
       });
     }
 

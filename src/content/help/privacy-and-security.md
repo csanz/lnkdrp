@@ -24,6 +24,7 @@ When someone opens a share link, lnkdrp records:
 - Whether they downloaded the PDF, if you allowed downloads.
 - Their IP address, kept for security and abuse prevention. It is not shown to you.
 - Their name and email, only if they chose to enter them in the viewer. A signed-in viewer's account identity is used instead.
+- An address they give, in the workspace's [contacts](/help/contacts): one row per person per workspace, with the documents they read and the dates. Contacts are never shared between workspaces and are never mailed anything.
 
 To tell repeat visits apart, a random identifier is stored in the viewer's browser. It is not linked across different owners' documents. Clearing browser storage removes it.
 
@@ -43,7 +44,7 @@ Workspace members are emailed when recipients open or finish reading a link, on 
 
 ## Deleting documents and workspaces
 
-Deleting a document, project or workspace removes it from view and disables its share links immediately. The records and files are marked deleted rather than erased at once and may remain in backups until purged. Contact support if you need a document permanently erased. Viewer activity is kept as long as the related document exists.
+Deleting a workspace removes its contacts with it. Deleting a document, project or workspace removes it from view and disables its share links immediately. The records and files are marked deleted rather than erased at once and may remain in backups until purged. Contact support if you need a document permanently erased. Viewer activity is kept as long as the related document exists.
 
 ## Deleting your account
 

@@ -42,6 +42,8 @@ Viewer identities are recorded on Free too; they are only withheld. Upgrading re
 
 Recipients can optionally give a name and email in the viewer, or in the header of a data room. When they do, their activity is labelled with it on your side, and this is shown on Free as well as Pro, because they volunteered it to you. A signed-in viewer's account identity is used instead. Recipients can decline.
 
+Everyone who gives you an address this way also becomes a [contact](/help/contacts), so you have one list of the people behind the views rather than a name per document.
+
 ## What is not tracked
 
 - Viewers' IP addresses are kept for security and abuse prevention only. They are never shown to you.
@@ -61,4 +63,4 @@ Share pages carry a no-index instruction, and lnkdrp's robots rules tell crawler
 - Archiving a document keeps its analytics; they are back when you unarchive it.
 - Replacing the PDF keeps the history under the same document.
 
-Related: [Share links](/help/share-links) and [Notifications and visit briefs](/help/notifications-and-visit-briefs).
+Related: [Share links](/help/share-links), [Contacts](/help/contacts) and [Notifications and visit briefs](/help/notifications-and-visit-briefs).

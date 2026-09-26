@@ -17,7 +17,8 @@
  * Env:
  *   MONGODB_URI              from .env.local; used only to create and revoke the temporary key
  *   MCP_URL                  MCP endpoint (default http://localhost:8787/mcp)
- *   E2E_ORG_ID, E2E_USER_ID  workspace the key is minted for (default: the local dev workspace)
+ *   E2E_ORG_ID, E2E_USER_ID  workspace the key is minted for. Both optional: an unset or unusable pair
+ *                            is replaced by a workspace discovered in the database (printed at step 1)
  *   E2E_PDF_URL              public PDF to import (default: the W3C dummy.pdf)
  *   E2E_TIMEOUT_SECONDS      share_pdf waitForReady timeout, 5..120 (default 90)
  *   E2E_CLIENT_NAME/_VERSION MCP client identity sent at initialize (default lnkdrp-e2e / 1.0)
@@ -45,6 +46,9 @@ import { connectMongo } from "@/lib/mongodb";
 import { apiKeyPrefix, createApiKey, revokeApiKey } from "@/lib/agents/apiKeys";
 import { creditsForRun } from "@/lib/credits/schedule";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
+import { DocModel } from "@/lib/models/Doc";
+import { OrgModel } from "@/lib/models/Org";
+import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UploadModel } from "@/lib/models/Upload";
 import { TagModel } from "@/lib/models/Tag";
 import { TagAssignmentModel } from "@/lib/models/TagAssignment";
@@ -57,11 +61,17 @@ const MCP_URL = process.env.MCP_URL ?? "http://localhost:8787/mcp";
 /**
  * Local dev workspace (org + the member who owns the key). Override with E2E_ORG_ID / E2E_USER_ID.
  *
- * The "Personal" workspace of the dev account (Pro). The previous default pointed at a workspace
- * its owner had since left, so `initialize` answered `owner_removed` on every run with no override.
+ * A starting point, not the answer: `resolveWorkspace()` checks the pair against the database before
+ * the key is minted and discovers a usable one when it is not there. Hardcoded ids are per-database
+ * facts, so this default has been wrong twice - once pointing at a workspace its owner had left, and
+ * again on every machine whose dev database was seeded separately. Both failed the same way, at
+ * `initialize` with `owner_removed`, which reads as a broken server rather than a stale constant.
+ *
+ * Reassigned there, which is why these are `let`: every later step asserts against the workspace the
+ * key actually belongs to.
  */
-const ORG_ID = process.env.E2E_ORG_ID ?? "6ab2d81f33802709c6aaa173";
-const USER_ID = process.env.E2E_USER_ID ?? "6ab2d81f55068178c044f084";
+let ORG_ID = process.env.E2E_ORG_ID ?? "6ab2d81f33802709c6aaa173";
+let USER_ID = process.env.E2E_USER_ID ?? "6ab2d81f55068178c044f084";
 const PDF_URL = process.env.E2E_PDF_URL ?? "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
 const TIMEOUT_SECONDS = clamp(Number(process.env.E2E_TIMEOUT_SECONDS ?? 90), 5, 120);
 /** MCP client identity sent at `initialize`; the server records it as the activity agent. Override
@@ -109,6 +119,9 @@ const EXPECTED_TOOLS = [
   "lnkdrp_list_tags",
   "lnkdrp_tag",
   "lnkdrp_untag",
+  // Contacts: who the workspace has heard from, read-only (2026-09-25).
+  "lnkdrp_list_contacts",
+  "lnkdrp_get_contact",
   // Revisions: what changed, when, by whom, and the diff (2026-09-24).
   "lnkdrp_list_revisions",
   "lnkdrp_get_revision",
@@ -348,6 +361,68 @@ async function closeQuietly(client: Client, transport: StreamableHTTPClientTrans
 }
 
 // ---------------------------------------------------------------------------------------------
+// The workspace the key is minted for
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The workspace this run will act in, checked against the database rather than assumed.
+ *
+ * `createApiKey` writes a row for any pair of ids, valid or not, so a key minted for a workspace
+ * nobody is a member of looks fine here and fails three steps later at `initialize` with
+ * `owner_removed` - the one error whose remedy ("mint a new key") cannot help. The pair is therefore
+ * verified the same way `verifyBearer` will verify it (`isActiveMember`: a membership row that is not
+ * `isDeleted`), and a pair that does not hold is replaced instead of being minted anyway.
+ *
+ * The configured pair always wins when it is real, so `E2E_ORG_ID`/`E2E_USER_ID` still mean what they
+ * say. Otherwise an owner membership is discovered: the configured *org* first, in case only the user
+ * half is stale, then the workspace holding the most live documents, because a database seeded on a
+ * developer's machine holds dozens of empty "Personal" workspaces beside the one somebody actually
+ * uses, and the run needs a workspace with room for a document rather than the first row Mongo returns.
+ */
+async function resolveWorkspace(): Promise<{ orgId: string; userId: string; orgName: string | null; discovered: boolean }> {
+  const orgName = async (orgId: string): Promise<string | null> => {
+    const org = (await OrgModel.findById(orgId).select({ name: 1 }).lean()) as { name?: unknown } | null;
+    return typeof org?.name === "string" ? org.name : null;
+  };
+
+  const configuredPairIsReal =
+    Types.ObjectId.isValid(ORG_ID) &&
+    Types.ObjectId.isValid(USER_ID) &&
+    Boolean(
+      await OrgMembershipModel.exists({
+        orgId: new Types.ObjectId(ORG_ID),
+        userId: new Types.ObjectId(USER_ID),
+        isDeleted: { $ne: true },
+      }),
+    );
+  if (configuredPairIsReal) return { orgId: ORG_ID, userId: USER_ID, orgName: await orgName(ORG_ID), discovered: false };
+
+  const owners = (await OrgMembershipModel.find({ role: "owner", isDeleted: { $ne: true } })
+    .select({ orgId: 1, userId: 1 })
+    .lean()) as Array<{ orgId: Types.ObjectId; userId: Types.ObjectId }>;
+  // A membership can outlive its workspace, and a deleted workspace is not one to test in.
+  const liveOrgs = (await OrgModel.find({ _id: { $in: owners.map((o) => o.orgId) }, isDeleted: { $ne: true } })
+    .select({ _id: 1, name: 1 })
+    .lean()) as Array<{ _id: Types.ObjectId; name?: unknown }>;
+  const nameById = new Map(liveOrgs.map((o) => [String(o._id), typeof o.name === "string" ? o.name : null]));
+  const candidates = owners.filter((o) => nameById.has(String(o.orgId)));
+  assert(
+    candidates.length > 0,
+    "no workspace in this database has an active owner membership, so no key can be minted. Seed one, or point E2E_ORG_ID / E2E_USER_ID at a workspace that exists.",
+  );
+
+  const counts = await DocModel.aggregate<{ _id: Types.ObjectId; docs: number }>([
+    { $match: { orgId: { $in: candidates.map((c) => c.orgId) }, isDeleted: { $ne: true } } },
+    { $group: { _id: "$orgId", docs: { $sum: 1 } } },
+  ]);
+  const docsByOrg = new Map(counts.map((c) => [String(c._id), c.docs]));
+  const configuredOrg = candidates.find((c) => String(c.orgId) === ORG_ID);
+  const busiest = [...candidates].sort((a, b) => (docsByOrg.get(String(b.orgId)) ?? 0) - (docsByOrg.get(String(a.orgId)) ?? 0))[0];
+  const pick = configuredOrg ?? busiest;
+  return { orgId: String(pick.orgId), userId: String(pick.userId), orgName: nameById.get(String(pick.orgId)) ?? null, discovered: true };
+}
+
+// ---------------------------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------------------------
 
@@ -355,7 +430,7 @@ async function closeQuietly(client: Client, transport: StreamableHTTPClientTrans
 async function main(): Promise<void> {
   const t0 = performance.now();
   console.log(
-    `lnkdrp MCP e2e -> ${MCP_URL} (org ${ORG_ID}, client ${CLIENT_INFO.name}/${CLIENT_INFO.version}) · ${describePacing(PACING)}`,
+    `lnkdrp MCP e2e -> ${MCP_URL} (configured org ${ORG_ID}, client ${CLIENT_INFO.name}/${CLIENT_INFO.version}) · ${describePacing(PACING)}`,
   );
 
   let keyId: string | null = null;
@@ -402,6 +477,17 @@ async function main(): Promise<void> {
     // 1. Temporary key straight from the service layer (never printed).
     plaintext = await step("connect to Mongo and mint a temporary API key", async () => {
       await connectMongo();
+      // Which workspace, decided against the database before anything is written for it. Printed
+      // because the answer can differ from the header line above: that one names what was configured,
+      // this one names what the run is actually acting in.
+      const workspace = await resolveWorkspace();
+      ORG_ID = workspace.orgId;
+      USER_ID = workspace.userId;
+      info(
+        "workspace",
+        `${workspace.orgName ?? "(unnamed)"} · org ${ORG_ID} · owner ${USER_ID}` +
+          (workspace.discovered ? " (discovered: the configured ids are not an active membership in this database)" : ""),
+      );
       const created = await createApiKey({ orgId: ORG_ID, userId: USER_ID, name: `e2e ${new Date().toISOString()}`, scopes: ["read", "write"] });
       keyId = created.key.id;
       info("key", `${created.key.prefix}… (id ${created.key.id})`);

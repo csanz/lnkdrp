@@ -47,6 +47,7 @@ const {
   tryResolveAuthUserId,
   isOwnerSideViewer,
   viewerIdentityNews,
+  upsertContact,
 } = vi.hoisted(() => ({
   afterCallbacks: [] as Array<() => unknown>,
   resolveShareLink: vi.fn(),
@@ -62,6 +63,7 @@ const {
   tryResolveAuthUserId: vi.fn(async () => null as { userId?: string } | null),
   isOwnerSideViewer: vi.fn(async () => false),
   viewerIdentityNews: vi.fn(async () => ({ isNew: true, changed: false })),
+  upsertContact: vi.fn(async (_input?: Record<string, unknown>) => undefined),
 }));
 
 // `after()` is where every analytics write in this route lives, so the tests have to be able to run
@@ -125,6 +127,9 @@ const exhaustedBuckets: string[] = [];
 // Wiring the viewer-verification control gave the introduction path two more DB-backed calls.
 // Unstubbed they hang against no Mongo, which reads as a five-second timeout rather than a failure.
 vi.mock("@/lib/share/viewerEmailVerification", () => ({ isViewerEmailVerified: vi.fn(async () => false) }));
+// The contacts capture is one more DB-backed call on the same path (docs/prds/lnkdrp-contacts.md);
+// unmocked it buffers against no database and reads as a timeout. The spy proves it still fires.
+vi.mock("@/lib/contacts/service", () => ({ upsertContact }));
 vi.mock("@/lib/share/viewerIntroductionEmails", () => ({
   sendViewerIntroductionEmails: vi.fn(async () => ({ verifySent: false, ownerEmailsSent: 0 })),
   viewerIntroductionAppUrl: () => "https://lnkdrp.test",
@@ -276,6 +281,26 @@ describe("POST on a password-protected document link", () => {
     await drainAfter();
 
     expect(shareViewUpdateOne).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A contact is one of the writes the gate holds back (docs/prds/lnkdrp-contacts.md decision 2):
+   * a stranger who types a name and an address into a locked link has not read anything, and must
+   * not land in the workspace's contacts. Past the gate, the same introduction captures one.
+   */
+  test("the gate holds the contact back, and the unlocked reader becomes one", async () => {
+    resolveShareLink.mockResolvedValue({ link: link(PROTECTED), doc: doc(), refusal: null });
+
+    await post(introduction);
+    await drainAfter();
+    expect(upsertContact).not.toHaveBeenCalled();
+
+    await post(introduction, { cookie: unlockCookie() });
+    await drainAfter();
+    const captured = upsertContact.mock.calls[0]?.[0] as Record<string, any>;
+    expect(captured.email).toBe("jane@sequoiacap.com");
+    expect(captured.source).toBe("introduced");
+    expect(String(captured.orgId)).toBe(String(ORG));
   });
 
   test("the recipient who did enter the password is recorded as before", async () => {

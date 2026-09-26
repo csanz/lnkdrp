@@ -49,7 +49,7 @@ export const WHOAMI_PATH = "/api/agent/whoami";
 export const WHOAMI_URL = `${SITE_ORIGIN}${WHOAMI_PATH}`;
 export const KEY_PLACEHOLDER = "lnk_your_key_here";
 /** Shown on the public guides as "Last updated". Bump when a client's steps change. */
-export const GUIDES_LAST_UPDATED = "September 24, 2026";
+export const GUIDES_LAST_UPDATED = "September 25, 2026";
 
 export type ClientKey = "claude" | "cowork" | "cursor" | "codex" | "gemini" | "grok" | "json";
 export type ClientSetupKind = "cli" | "ui" | "json";
@@ -944,6 +944,34 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
       output: "What was removed, what was not on the item (notTagged), and the tags left.",
       errors: ["validation: both or neither of docId and projectId", "not_found: no such document or project in this workspace"],
       note: "The tag itself survives on everything else that carries it; only this item loses it.",
+    },
+  },
+  {
+    name: "lnkdrp_list_contacts",
+    purpose: "The people the workspace has heard from, with what they read and the team's tags.",
+    access: "read",
+    detail: {
+      inputs: [
+        "query (optional): match name, address or domain",
+        "tagSlug (optional): only contacts carrying that tag",
+        "docId or projectId (optional): only contacts who touched it",
+        "since (optional): only contacts last seen on or after a date",
+        "sort, dir, page, limit (optional)",
+      ],
+      output: "Each contact's id, name, address, domain, first and last seen, documents read, visits and tags, with the total.",
+      errors: ["not_found: no tag by that slug", "validation: a date since cannot read"],
+      note: "Read-only. On Free, names and addresses are null for anyone who did not introduce themselves; the domain and dates stay.",
+    },
+  },
+  {
+    name: "lnkdrp_get_contact",
+    purpose: "One contact: identity, sources, everything they touched, and the note.",
+    access: "read",
+    detail: {
+      inputs: ["contactId: from lnkdrp_list_contacts"],
+      output: "The contact with every source, document and project they touched, their tags, and the team's note with who wrote it.",
+      errors: ["not_found: no such contact in this workspace"],
+      note: "Names, addresses, titles and the note come wrapped as untrusted content; nothing here writes a contact.",
     },
   },
   {

@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 973 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 988 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -13,6 +13,8 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 
 - `src/app/(app)/activity/page.tsx` — `/activity` · default
 - `src/app/(app)/connect/page.tsx` — `/connect` · default
+- `src/app/(app)/contacts/[contactId]/page.tsx` — `/contacts/:contactId` · default, dynamic, metadata, runtime
+- `src/app/(app)/contacts/page.tsx` — `/contacts` · default, dynamic, metadata, runtime
 - `src/app/(app)/doc/[docId]/history/page.tsx` — `/doc/:docId/history` · default
 - `src/app/(app)/doc/[docId]/links/page.tsx` — `/doc/:docId/links` · default
 - `src/app/(app)/doc/[docId]/metrics/page.tsx` — `/doc/:docId/metrics` · default
@@ -164,6 +166,9 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/billing/usage/route.ts` — `/api/billing/usage` · dynamic, GET, runtime
 - `src/app/api/blob/upload/route.ts` — `/api/blob/upload` · POST, runtime
 - `src/app/api/changes/route.ts` — `/api/changes` · dynamic, GET, runtime
+- `src/app/api/contacts/[contactId]/route.ts` — `/api/contacts/:contactId` · dynamic, GET, PATCH, runtime
+- `src/app/api/contacts/export/route.ts` — `/api/contacts/export` · dynamic, GET, runtime
+- `src/app/api/contacts/route.ts` — `/api/contacts` · dynamic, GET, runtime
 - `src/app/api/credits/purchase/route.ts` — `/api/credits/purchase` · GET, POST, runtime
 - `src/app/api/credits/quality-defaults/route.ts` — `/api/credits/quality-defaults` · dynamic, GET, POST, runtime
 - `src/app/api/credits/snapshot/route.ts` — `/api/credits/snapshot` · dynamic, GET, runtime
@@ -306,6 +311,8 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/app/(app)/activity/StatsHeader.tsx` · default
 - `src/app/(app)/activity/pageClient.tsx` · default
 - `src/app/(app)/connect/pageClient.tsx` · default
+- `src/app/(app)/contacts/[contactId]/pageClient.tsx` · default
+- `src/app/(app)/contacts/pageClient.tsx` · default
 - `src/app/(app)/doc/[docId]/history/pageClient.tsx` · default
 - `src/app/(app)/doc/[docId]/links/pageClient.tsx` · default
 - `src/app/(app)/doc/[docId]/metrics/pageClient.tsx` · default, MetricsHeaderPlaceholder
@@ -457,6 +464,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/connect/VerifyPanel.tsx` · default
 - `src/components/connect/format.ts` · formatDate, formatRelative
 - `src/components/connect/publicTokens.ts` · PUBLIC_DARK_TOKENS
+- `src/components/contacts/ContactTags.tsx` · default
 - `src/components/doc/DocHeaderActions.tsx` · default, DocHeaderPage
 - `src/components/doc/DocIdentityRow.tsx` · default
 - `src/components/doc/DocReplaceFileButton.tsx` · default
@@ -507,9 +515,9 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/support/SupportOpener.tsx` · default
 - `src/components/tags/TagDot.tsx` · default, TAG_COLOR_HEX
 - `src/components/tags/TagDots.tsx` · default
-- `src/components/tags/TagPickerModal.tsx` · default, TagTargetKind
+- `src/components/tags/TagPickerModal.tsx` · default
 - `src/components/tags/TagsManager.tsx` · default, readCreateResult
-- `src/components/tags/TagsRow.tsx` · default, TagTargetKind
+- `src/components/tags/TagsRow.tsx` · default
 - `src/components/ui/Alert.tsx` · default
 - `src/components/ui/Button.tsx` · default, ButtonProps
 - `src/components/ui/CopyTextButton.tsx` · default
@@ -643,10 +651,13 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/client/sessionMemory.ts` · forgetSignedIn, hadSession, rememberSignedIn
 - `src/lib/client/upsellCopy.ts` · PRO_PRICE_FALLBACK, UPSELL_COPY, UpsellCopy, UpsellKey, upsellKeyForLimit
 - `src/lib/client/useAgentStatus.ts` · AGENT_STATUS_CHANGED_EVENT, AgentClient, AgentKeyRow, AgentStatus, peekAgentStatus, refreshAgentStatus, useAgentStatus
+- `src/lib/client/useContacts.ts` · CONTACT_SORTS, CONTACT_SOURCE_KINDS, CONTACT_SOURCE_LABELS, ContactListPage, ContactListQuery, CONTACTS_PAGE_SIZE, contactsExportHref, contactsQueryFromSearch, …
 - `src/lib/client/usePlan.ts` · peekPlan, PLAN_CHANGED_EVENT, PlanSnapshot, refreshPlan, usePlan
 - `src/lib/client/useSkeletonDelay.ts` · DEFAULT_SKELETON_DELAY_MS, useSkeletonDelay
 - `src/lib/client/useTargetTags.ts` · RowTag, useTargetTags
 - `src/lib/cn.ts` · cn
+- `src/lib/contacts/csv.ts` · contactCsvCells, CONTACTS_CSV_COLUMNS, contactsToCsv, csvField
+- `src/lib/contacts/service.ts` · CONTACT_SORTS, CONTACT_TAG_TARGET_KIND, ContactDetail, ContactFilters, contactIdentityAllowed, ContactRow, CONTACTS_CSV_MAX_ROWS, contactsCsv, …
 - `src/lib/credits/adminMutations.ts` · AdminCreditMutationAction, adminMutateCredits, adminSimulateNewBillingCycle
 - `src/lib/credits/aiAutomation.ts` · AI_AUTOMATION_DEFAULT, AiAutomation, getAiAutomation, isAutomationOn, parseAutomationFlag, resolveAiAutomation
 - `src/lib/credits/costCatalog.ts` · COST_CATALOG, costAnchorId, CostCatalogEntry, costEntryForAction, FREE_ACTIONS, QUALITY_BLURBS, QUALITY_LABELS, QUALITY_TIERS
@@ -750,6 +761,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/models/AiRun.ts` · AI_RUN_RETENTION_DAYS, AiRun, AiRunModel
 - `src/lib/models/ApiKey.ts` · API_KEY_SCOPES, ApiKey, ApiKeyModel, ApiKeyScope
 - `src/lib/models/BillingConfig.ts` · BillingConfig, BillingConfigModel
+- `src/lib/models/Contact.ts` · Contact, CONTACT_DOC_IDS_KEPT, CONTACT_NOTE_MAX_CHARS, CONTACT_SOURCE_KINDS, CONTACT_SOURCES_KEPT, ContactModel, ContactSourceKind
 - `src/lib/models/CreditLedger.ts` · CreditLedger, CreditLedgerModel
 - `src/lib/models/CreditPurchase.ts` · CreditPurchase, CreditPurchaseModel
 - `src/lib/models/CronHealth.ts` · CronHealth, CronHealthModel
@@ -829,6 +841,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/share/ownerPlan.ts` · ownerCanShowVersionHistory
 - `src/lib/share/ownerSide.ts` · isOwnerSideViewer, OwnedDocLike
 - `src/lib/share/passwordPolicy.ts` · SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN, SHARE_PASSWORD_RANGE_TEXT
+- `src/lib/share/passwordSelect.ts` · DOC_PASSWORD_FIELDS, SHARE_LINK_PASSWORD_FIELDS, WITH_DOC_PASSWORD, WITH_DOC_PASSWORD_HASH, WITH_LINK_PASSWORD, WITH_LINK_PASSWORD_PROJECTION
 - `src/lib/share/pinnedImageMime.ts` · MAX_PREVIEW_BYTES, pinnedImageMime
 - `src/lib/share/projectLinks.ts` · archiveProjectLink, createProjectLink, CreateProjectLinkResult, ensureDefaultProjectLink, listProjectLinks, listProjectLinksPage, ProjectLike, ProjectLinkDTO, …
 - `src/lib/share/projectPublic.ts` · findProjectDocument, isExpired, listProjectDocuments, PROJECT_DOC_LIST_FIELDS, PROJECT_VIEW_KEY_SEP, projectDocIdFromReferer, projectLinkPasswordEnabled, projectViewerKey, …
@@ -889,7 +902,7 @@ Clients, helpers and components that live beside the page that uses them.
 ## MCP server
 
 - `mcp/src/agent.ts` · agentHeaderFrom, normalizeClientName, normalizeClientVersion
-- `mcp/src/api.ts` · ApiActivityItem, ApiActivityPage, ApiChangedPage, ApiClient, ApiClientOptions, ApiDoc, ApiDocChange, ApiDocListItem, …
+- `mcp/src/api.ts` · ApiActivityItem, ApiActivityPage, ApiChangedPage, ApiClient, ApiClientOptions, ApiContact, ApiContactDetail, ApiContactSourceKind, …
 - `mcp/src/config.ts` · API_TIMEOUT_MS, Config, DEFAULT_AGENT_HEADER, IDEMPOTENCY_MAX_ENTRIES, IDEMPOTENCY_MAX_PER_CREDENTIAL, IDEMPOTENCY_TTL_MS, loadConfig, log, …
 - `mcp/src/confirm.ts` · clientSupportsElicitation, CONFIRM_FOLLOW_UP_WINDOW_MS, confirmationsEnforced, confirmationsSkipRequestedButUnsafe, DestructivePreview, requireHumanConfirmation, sanitizePreview, setConfirmationWorkspace, …
 - `mcp/src/context.ts` · ToolContext
@@ -904,6 +917,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `mcp/src/server.ts` · createMcpServer, SERVER_INSTRUCTIONS, withWorkspace, workspaceInstructions, workspaceLabel
 - `mcp/src/sessionCaps.ts` · admitSession, DEFAULT_SESSION_CAPS, SessionAdmission, SessionCaps, sessionCapsFromEnv, SessionSummary
 - `mcp/src/tools/aiWarnings.ts` · readAiOutcome, warningsFromAi
+- `mcp/src/tools/contacts.ts` · applySince, CONTACT_SORTS, contactDetailView, contactView, IDENTITY_WITHHELD_NOTE, registerGetContactTool, registerListContactsTool
 - `mcp/src/tools/discover.ts` · registerGetActivityTool, registerListDocsTool
 - `mcp/src/tools/docLifecycle.ts` · registerArchiveDocTool, registerDeleteDocTool
 - `mcp/src/tools/docVisibility.ts` · registerSetDocVisibilityTool, setDocVisibilityInputShape
@@ -1018,4 +1032,5 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `db/migration/20260925_0003_projects_live_unique_names.mjs` · up
 - `db/migration/20260925_0004_airuns_ttl.mjs` · up
 - `db/migration/20260925_0005_request_repos_is_request.mjs` · up
+- `db/migration/20260925_0006_contacts_backfill.mjs` · up
 - `db/migration/run.mjs`

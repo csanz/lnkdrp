@@ -39,6 +39,9 @@ export const ACTIVITY_FILTERS = [
   // drown the rows about the documents themselves, and "show me what got filed" is its own
   // question.
   { id: "tags", label: "Tags", types: ["tag.applied", "tag.removed"] },
+  // What the team wrote about the people who read: a note on a contact. Member work about a
+  // reader, not a recipient action, so it is not filed under Views and it counts in the donut.
+  { id: "contacts", label: "Contacts", types: ["contact.note_updated"] },
   // Where the workspace's activity goes besides email: a Slack channel wired up or removed.
   { id: "integrations", label: "Integrations", types: ["integration.slack_connected", "integration.slack_disconnected"] },
   // What *recipients* did, which is also what keeps them out of the workspace donut: its
@@ -210,14 +213,30 @@ function tagNameLabel(item: ActivityItem): string {
 }
 
 /**
- * What was filed: the document, or the project when the row is about one.
+ * What was filed: the document, the project, or the contact when the row is about one.
  *
- * A tag lands on either, and the two rows read differently — "tagged the Series A deck" against
- * "tagged the data room" — so the sentence asks the event which it was rather than assuming a
- * document and printing "Untitled document" for every project.
+ * A tag lands on any of the three, and the rows read differently — "tagged the Series A deck"
+ * against "tagged the data room" against "tagged Priya Nair" — so the sentence asks the event
+ * which it was rather than assuming a document and printing "Untitled document" for every project.
  */
 function tagTargetLabel(item: ActivityItem, docTitle: string): string {
-  return metaString(item.meta, "targetKind") === "project" ? projectLabel(item) : docTitle;
+  const kind = metaString(item.meta, "targetKind");
+  if (kind === "project") return projectLabel(item);
+  if (kind === "contact") return contactLabel(item);
+  return docTitle;
+}
+
+/**
+ * The person a contact row is about, as the plan let the route record them: name, else address,
+ * else the domain the product shows on Free ("someone at sequoiacap.com"), else "a contact". The
+ * route that wrote the row decided what to copy in (docs/prds/lnkdrp-contacts.md, decision 4), so
+ * this never has to know the plan.
+ */
+function contactLabel(item: ActivityItem): string {
+  const name = metaString(item.meta, "contactName") || metaString(item.meta, "contactEmail");
+  if (name) return name;
+  const domain = metaString(item.meta, "contactDomain");
+  return domain ? `someone at ${domain}` : "a contact";
 }
 
 /** A project's name for a sentence: the live name, else the name recorded when the event was logged (deleted projects). */
@@ -338,6 +357,15 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "tagged", object: tagTargetLabel(item, docTitle), suffix: `as ${tagNameLabel(item)}` };
     case "tag.removed":
       return { subject, verb: "untagged", object: tagTargetLabel(item, docTitle), suffix: `(${tagNameLabel(item)})` };
+    // The team's own words about a reader. `meta.cleared` is the note being emptied; the text
+    // itself is never in the row, the contact page has it.
+    case "contact.note_updated":
+      return {
+        subject,
+        verb: item.meta?.cleared === true ? "cleared the note on" : "updated the note on",
+        object: contactLabel(item),
+        suffix: null,
+      };
     case "request_repo.created":
       return { subject, verb: "created request inbox", object: item.project?.name?.trim() || docTitle, suffix: null };
     case "request.upload_received":

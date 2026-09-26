@@ -1,6 +1,6 @@
 # PRD — Contacts
 
-**Status:** Draft 2026-09-25, decisions proposed, not started
+**Status:** Built 2026-09-25 (M1-M4 except links from reader pages/briefs/Slack posts, deferred); CSV export added at the owner's request
 **Owner:** chrissanz
 **Last updated:** 2026-09-25
 **Project:** lnkdrp

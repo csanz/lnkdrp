@@ -26,6 +26,7 @@ import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerI
 import { sendViewerIntroductionEmails, viewerIntroductionAppUrl } from "@/lib/share/viewerIntroductionEmails";
 import { isViewerEmailVerified } from "@/lib/share/viewerEmailVerification";
 import { normalizeShareViewerEmail, normalizeShareViewerName } from "@/lib/share/viewerProfile";
+import { upsertContact } from "@/lib/contacts/service";
 import { UserModel } from "@/lib/models/User";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
@@ -179,6 +180,23 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             } catch {
               // ignore
             }
+            // A signed-in arrival is a contact (docs/prds/lnkdrp-contacts.md decision 2): the
+            // account's address is their identity. Never the owner previewing their own room, or
+            // every workspace's first contact would be its founder. Awaited: `after()` keeps the
+            // lambda alive only for awaited work, and the service never throws.
+            if (!ownerPreview && project.orgId && typeof set.viewerEmailSnapshot === "string") {
+              await upsertContact({
+                orgId: String(project.orgId),
+                email: set.viewerEmailSnapshot,
+                name: typeof set.viewerName === "string" ? set.viewerName : null,
+                source: "signed_in",
+                shareId,
+                projectId: String(project._id),
+                viewerUserId,
+                at: now,
+                countsAsVisit: true,
+              });
+            }
           }
 
           /**
@@ -268,6 +286,21 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               });
             } catch {
               // best-effort: the arrival row above already carries the new identity.
+            }
+            // The introduction is the first of the four moments that make a contact. An address is
+            // required: a name alone stays on the arrival row, as the PRD says. Same owner guard as
+            // the mail below, for the same reason.
+            if (introEmail && !ownerPreview && project.orgId) {
+              await upsertContact({
+                orgId: String(project.orgId),
+                email: introEmail,
+                name: introName,
+                source: "introduced",
+                shareId,
+                projectId: String(project._id),
+                at: now,
+                countsAsVisit: true,
+              });
             }
 
             /**

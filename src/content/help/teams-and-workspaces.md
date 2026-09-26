@@ -25,6 +25,8 @@ The current workspace is shown at the top left of the app. Click it to switch, o
 - **Member**: can upload, share, replace and manage links and projects.
 - **Viewer**: read-only. Sees every document and all the analytics, but cannot change anything.
 
+Members, admins and owners can also tag a [contact](/help/contacts) and write the note on one. Viewers read the contacts and change nothing.
+
 ## Who takes a seat
 
 Free workspaces are single-user: the owner is the only person who can upload and share.

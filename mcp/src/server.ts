@@ -1,5 +1,5 @@
 /**
- * Build one `McpServer` for a session: every tool (discovery, share, links, stats, lifecycle, projects — the
+ * Build one `McpServer` for a session: every tool (discovery, share, links, stats, lifecycle, projects, tags, contacts — the
  * list is `registerX` calls below and `TOOL_CATALOG` in `src/lib/mcp/clientSetups.ts` is its public
  * mirror), the `lnkdrp://workspace` resource and the `share-and-report` prompt, all bound to the
  * session's `ToolContext`.
@@ -45,6 +45,7 @@ import {
 } from "./tools/projects";
 import { registerSharePdfTool } from "./tools/sharePdf";
 import { registerListTagsTool, registerTagTool, registerUntagTool } from "./tools/tags";
+import { registerGetContactTool, registerListContactsTool } from "./tools/contacts";
 import { registerListStarredTool, registerStarDocsTool } from "./tools/starred";
 import { registerGetRevisionTool, registerListRevisionsTool, registerRevisionContributorsTool } from "./tools/revisions";
 import { buildWhoamiPayload, registerWhoamiTool } from "./tools/whoami";
@@ -217,6 +218,8 @@ export function createMcpServer(ctx: ToolContext): McpServer {
   registerListTagsTool(server, ctx);
   registerTagTool(server, ctx);
   registerUntagTool(server, ctx);
+  registerListContactsTool(server, ctx);
+  registerGetContactTool(server, ctx);
   registerStarDocsTool(server, ctx);
   registerListStarredTool(server, ctx);
   registerListRevisionsTool(server, ctx);

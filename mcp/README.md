@@ -145,7 +145,7 @@ the last client that used it. Until the client is known the header is `mcp-clien
 
 ## Tools
 
-Thirty-three of them, registered in `src/server.ts`. `TOOL_CATALOG` in `src/lib/mcp/clientSetups.ts`
+Thirty-nine of them, registered in `src/server.ts`. `TOOL_CATALOG` in `src/lib/mcp/clientSetups.ts`
 is the app-side mirror of that list — it is what `/connect` and `/mcp` show a human — so a tool added
 here without a catalog entry exists and is undocumented everywhere a person would look.
 
@@ -668,6 +668,24 @@ undoes it). Tag DTO: `{ tagId, name, slug, color, taggedItems? }`.
   declines to do the one thing it was asked is worse than one that refuses. `removed` gives the names as displayed,
   `notTagged` the folded forms it looked for. The tag itself stays in the workspace and on everything else carrying
   it; only this item loses it. A tag that was not there is reported, not an error.
+
+### Contacts (`src/tools/contacts.ts`)
+The people the workspace has heard from: one per address per workspace, gathered from an introduction on a link, a
+signed-in read, a download request or a request-inbox upload, never typed in (`docs/prds/lnkdrp-contacts.md`). Both
+tools are read-only on purpose: a note is a person's judgement and a tag on a person is a claim about them, so nothing
+here writes either, and `tag` does not take a contact. Identity follows the plan and the API decides it: on Free the
+page says `identity: false` and a contact who never introduced themselves arrives with `name` and `email` null; the
+tools pass the rows through and add `identityNote` in words. Name, address, domain and the note are wrapped as
+`viewer` text. Contact DTO: `{ contactId, name*, email*, domain*, verified, introduced, firstSeenAt, lastSeenAt,
+documentsRead, projectsCount, visits, tags, lastSource, appUrl }`.
+
+- list_contacts — In `{ query?, tagSlug?, docId?, projectId?, since?, sort?, dir?, page?, limit? }` → `GET /api/contacts`
+  (a `tagSlug` is resolved through `GET /api/tags` first) → `{ total, page, limit, hasMore, identity, identityNote?,
+  since?, sinceNote?, contacts }`. `since` is applied to each page after the API answers, because the route has no
+  date filter; in the default order (last seen, newest first) `hasMore` goes false once a page runs past the date.
+- get_contact — In `{ contactId }` → `GET /api/contacts/:id` → `{ identity, identityNote?, contact }` where the
+  contact also carries `sources`, `docs` (titles wrapped as `document`), `projects` and `note` (`text*`, `byUserId`,
+  `byName*`, `at`; wrapped at its own 2,000-character cap). `not_found` is re-worded to say contact, not document.
 
 ### Starred (`src/tools/starred.ts`)
 A star belongs to a person, not the workspace: it is the shortlist at the top of the key creator's own sidebar.

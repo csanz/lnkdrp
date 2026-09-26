@@ -1,5 +1,5 @@
 /**
- * Picking tags for one document or project.
+ * Picking tags for one document, project or contact.
  *
  * The inline box this replaces was fine for a workspace with six tags and wrong for one with a
  * hundred: it showed a handful of suggestions under a text field and gave no way to see the rest.
@@ -23,10 +23,14 @@ import AgentHintNotice from "@/components/AgentHintNotice";
 import Modal from "@/components/modals/Modal";
 import TagDot from "@/components/tags/TagDot";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import type { TagTargetKind } from "@/lib/models/TagAssignment";
 import type { TagColorKey } from "@/lib/tags/palette";
 
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
-export type TagTargetKind = "doc" | "project";
+export type { TagTargetKind };
+
+/** What the modal calls the thing being tagged. A map, not a ternary: a third kind must not read as the second. */
+const TARGET_NOUN: Record<TagTargetKind, string> = { doc: "document", project: "project", contact: "contact" };
 
 const NAME_MAX = 60;
 
@@ -160,7 +164,7 @@ export default function TagPickerModal({
   return (
     <Modal open={open} onClose={onClose} ariaLabel="Add tags" panelClassName="w-[min(520px,calc(100vw-32px))]">
       <div className="text-base font-semibold text-[var(--fg)]">
-        Tags for this {targetKind === "doc" ? "document" : "project"}
+        Tags for this {TARGET_NOUN[targetKind]}
       </div>
       <div className="mt-1 text-[13px] text-[var(--muted)]">
         Tick the ones that apply, or type a new one. Tags are private to this workspace. Recipients never see them.
@@ -249,7 +253,7 @@ export default function TagPickerModal({
 
       <div className="mt-4 flex items-center justify-between gap-3">
         <span className="text-[12px] text-[var(--muted-2)]">
-          {current.length} on this {targetKind === "doc" ? "document" : "project"}
+          {current.length} on this {TARGET_NOUN[targetKind]}
           {" · "}
           {/* The moment you are picking tags is the moment you notice one needs renaming. */}
           <Link

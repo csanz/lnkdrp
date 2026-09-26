@@ -49,6 +49,7 @@ import { ProjectViewModel } from "@/lib/models/ProjectView";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { ShareViewerEmailModel } from "@/lib/models/ShareViewerEmail";
+import { ContactModel } from "@/lib/models/Contact";
 import { StarredDocModel } from "@/lib/models/StarredDoc";
 import { TagModel } from "@/lib/models/Tag";
 import { TagAssignmentModel } from "@/lib/models/TagAssignment";
@@ -409,6 +410,10 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
         ProjectModel.deleteMany(orgFilter),
         ProjectLinkViewModel.deleteMany(orgFilter),
         ShareViewerEmailModel.deleteMany(orgFilter),
+        // The people this workspace heard from: someone else's personal data, held per workspace
+        // (docs/prds/lnkdrp-contacts.md decision 9). A second workspace that heard from the same
+        // address keeps its own row.
+        ContactModel.deleteMany(orgFilter),
         StarredDocModel.deleteMany(orgFilter),
         TagModel.deleteMany(orgFilter),
         TagAssignmentModel.deleteMany(orgFilter),

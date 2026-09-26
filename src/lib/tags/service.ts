@@ -6,6 +6,11 @@
  * assignments and drops the duplicates it would have created, and every read is bounded by
  * `orgId` so a tag can never be seen or attached across workspaces.
  *
+ * A tag lands on a document, a project or a contact (`TAG_TARGET_KINDS`). The attach, detach and
+ * read functions are kind-agnostic and pass the kind through; the two places that must know every
+ * kind by name are the live count (a target that no longer exists must not be counted) and
+ * `targetsForTag` (the tag page wants the ids split by kind).
+ *
  * Pure helpers (folding, palette) are in `./slug` and `./palette`, which import nothing, so the
  * client-side input and this module agree on what makes two tags the same tag.
  */
@@ -15,6 +20,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { ProjectModel } from "@/lib/models/Project";
+import { ContactModel } from "@/lib/models/Contact";
 import { TagModel, type Tag } from "@/lib/models/Tag";
 import { TagAssignmentModel, type TagTargetKind } from "@/lib/models/TagAssignment";
 import { asTagColorKey, nextTagColor, type TagColorKey, TAG_COLOR_KEYS } from "./palette";
@@ -188,8 +194,8 @@ export async function listTagsPage(params: {
  * so the count has to ask whether the target is still there.
  *
  * Three bounded reads, not a per-tag query: the workspace's assignments, then the live ids among
- * the documents and projects they point at. Deleting the orphaned rows is handled where the
- * document or project is deleted; this stays correct even when that misses one.
+ * the documents, projects and contacts they point at. Deleting the orphaned rows is handled where
+ * the document or project is deleted; this stays correct even when that misses one.
  */
 async function countLiveAssignments(params: {
   orgId: Types.ObjectId;
@@ -217,11 +223,12 @@ async function countLiveAssignments(params: {
  * pointed at, on every `GET /api/tags`. The joins run in the database now, on the target's `_id`,
  * and only the per-tag totals come back. Archived documents still count: they are still in the
  * workspace, still on the tag's page, and unarchiving is one click. Deleted ones do not exist as
- * far as anything else is concerned.
+ * far as anything else is concerned. A contact counts while its row is live: contacts are never
+ * archived, only soft-deleted (`isDeleted`) when a person is forgotten.
  */
 export function liveAssignmentCountPipeline(params: { orgId: Types.ObjectId; tagIds: Types.ObjectId[] }): PipelineStage[] {
   const { orgId, tagIds } = params;
-  const liveTarget = (kind: "doc" | "project", from: string, as: string): PipelineStage => ({
+  const liveTarget = (kind: TagTargetKind, from: string, as: string): PipelineStage => ({
     $lookup: {
       from,
       let: { target: "$targetId", kind: "$targetKind" },
@@ -249,7 +256,12 @@ export function liveAssignmentCountPipeline(params: { orgId: Types.ObjectId; tag
     { $match: { orgId, tagId: { $in: tagIds } } },
     liveTarget("doc", DocModel.collection.name, "liveDoc"),
     liveTarget("project", ProjectModel.collection.name, "liveProject"),
-    { $match: { $or: [{ "liveDoc.0": { $exists: true } }, { "liveProject.0": { $exists: true } }] } },
+    liveTarget("contact", ContactModel.collection.name, "liveContact"),
+    {
+      $match: {
+        $or: [{ "liveDoc.0": { $exists: true } }, { "liveProject.0": { $exists: true } }, { "liveContact.0": { $exists: true } }],
+      },
+    },
     { $group: { _id: "$tagId", n: { $sum: 1 } } },
   ];
 }
@@ -273,7 +285,7 @@ export async function removeAllTagsFromTarget(params: {
   await TagAssignmentModel.deleteMany({ orgId, targetKind: params.targetKind, targetId });
 }
 
-/** The tags on one document or project, in the order a chip row should print them. */
+/** The tags on one document, project or contact, in the order a chip row should print them. */
 export async function tagsForTarget(params: {
   orgId: string | Types.ObjectId;
   targetKind: TagTargetKind;
@@ -321,7 +333,7 @@ export async function tagsForTargets(params: {
   return out;
 }
 
-/** Put a tag on a document or project. Idempotent: tagging twice is the same fact, not two rows. */
+/** Put a tag on a document, project or contact. Idempotent: tagging twice is the same fact, not two rows. */
 export async function attachTag(params: {
   orgId: string | Types.ObjectId;
   tagId: string | Types.ObjectId;
@@ -351,7 +363,7 @@ export async function attachTag(params: {
   );
 }
 
-/** Take a tag off a document or project. Removing one that is not there is not an error. */
+/** Take a tag off a document, project or contact. Removing one that is not there is not an error. */
 export async function detachTag(params: {
   orgId: string | Types.ObjectId;
   tagId: string | Types.ObjectId;
@@ -439,7 +451,7 @@ export async function mergeTags(params: {
   return { moved: moved.modifiedCount ?? 0, collapsed: duplicateIds.length };
 }
 
-/** Delete a tag and every assignment of it. The documents and projects themselves are untouched. */
+/** Delete a tag and every assignment of it. The documents, projects and contacts themselves are untouched. */
 export async function deleteTag(params: { orgId: string | Types.ObjectId; tagId: string | Types.ObjectId }): Promise<void> {
   await connectMongo();
   const orgId = orgObjectId(params.orgId);
@@ -452,7 +464,7 @@ export async function deleteTag(params: { orgId: string | Types.ObjectId; tagId:
 export async function targetsForTag(params: {
   orgId: string | Types.ObjectId;
   tagId: string | Types.ObjectId;
-}): Promise<{ docIds: string[]; projectIds: string[] }> {
+}): Promise<{ docIds: string[]; projectIds: string[]; contactIds: string[] }> {
   await connectMongo();
   const orgId = orgObjectId(params.orgId);
   const tagId = typeof params.tagId === "string" ? new Types.ObjectId(params.tagId) : params.tagId;
@@ -461,10 +473,12 @@ export async function targetsForTag(params: {
     .lean()) as Array<{ targetKind?: string; targetId?: Types.ObjectId }>;
   const docIds: string[] = [];
   const projectIds: string[] = [];
+  const contactIds: string[] = [];
   for (const row of rows) {
     if (!row?.targetId) continue;
     if (row.targetKind === "doc") docIds.push(String(row.targetId));
     else if (row.targetKind === "project") projectIds.push(String(row.targetId));
+    else if (row.targetKind === "contact") contactIds.push(String(row.targetId));
   }
-  return { docIds, projectIds };
+  return { docIds, projectIds, contactIds };
 }

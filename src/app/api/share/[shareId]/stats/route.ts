@@ -20,6 +20,7 @@ import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerIdentity";
 import { sendViewerIntroductionEmails, viewerIntroductionAppUrl } from "@/lib/share/viewerIntroductionEmails";
 import { isViewerEmailVerified } from "@/lib/share/viewerEmailVerification";
+import { upsertContact } from "@/lib/contacts/service";
 import { enqueueNotifications, notificationDedupeKey } from "@/lib/notifications/queue";
 import { enqueueSlackPosts } from "@/lib/slack/outbox";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
@@ -713,6 +714,25 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             } catch {
               // best-effort: the row this heartbeat wrote already carries the new identity.
             }
+            // The introduction is the first of the four moments that make a contact
+            // (docs/prds/lnkdrp-contacts.md decision 2). An address is required: a name alone
+            // stays on the view row. Gated on the same `identityNews` answer as the fan-out, so a
+            // heartbeat replaying a stored profile never re-pushes a source. Owner-side opens
+            // record no contact, or the founder would be their own first one. Awaited: `after()`
+            // keeps the lambda alive only for awaited work, and the service never throws.
+            if (viewerEmail && !ownerPreview && shareOrgId) {
+              await upsertContact({
+                orgId: shareOrgId,
+                email: viewerEmail,
+                name: viewerNameIntro,
+                source: "introduced",
+                shareId,
+                docId: String(docId),
+                projectId: projectTarget ? String(projectTarget.project._id) : null,
+                at: viewedAt,
+                countsAsVisit: true,
+              });
+            }
 
             /**
              * And now actually send the mail an introduction owes.
@@ -995,6 +1015,37 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                   },
                   { $set: { ...(viewerName ? { viewerName } : {}), ...(viewerEmailSnapshot ? { viewerEmailSnapshot } : {}) } },
                 );
+              }
+              // A signed-in read is a contact (docs/prds/lnkdrp-contacts.md decision 2): the
+              // account's address is their identity, and its name wins over anything typed.
+              // Once per sitting, not per heartbeat: the row's creation covers the first read, and
+              // a returning reader is caught on the first heartbeat of each tab session (the same
+              // `limit: 1` dedupe `firstSightingToday` uses), so one read is one visit rather than
+              // one per thirty seconds. `!ownerPreview` is new to this block on purpose: an owner
+              // reading their own link must not become their own contact.
+              const newSitting =
+                !created && visitIdHash && !ownerPreview && shareOrgId && viewerEmailSnapshot
+                  ? (
+                      await rateLimit({
+                        key: `contactseen:${shareId}:${visitIdHash}`,
+                        limit: 1,
+                        windowMs: 24 * 60 * 60 * 1000,
+                      })
+                    ).ok
+                  : false;
+              if ((created || newSitting) && !ownerPreview && shareOrgId && viewerEmailSnapshot) {
+                await upsertContact({
+                  orgId: shareOrgId,
+                  email: viewerEmailSnapshot,
+                  name: viewerName,
+                  source: "signed_in",
+                  shareId,
+                  docId: String(docId),
+                  projectId: projectTarget ? String(projectTarget.project._id) : null,
+                  viewerUserId,
+                  at: viewedAt,
+                  countsAsVisit: true,
+                });
               }
             } catch {
               // ignore

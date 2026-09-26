@@ -24,6 +24,7 @@ import {
   MinusIcon,
   SparklesIcon,
   Square2StackIcon,
+  UsersIcon,
 } from "@heroicons/react/24/outline";
 import DeleteProjectModal from "@/components/modals/DeleteProjectModal";
 import DeleteRequestRepoModal, { type RequestRepoDeleteMode } from "@/components/modals/DeleteRequestRepoModal";
@@ -2128,6 +2129,33 @@ export default function LeftSidebar({
               <div className="flex items-center gap-2">
                 <ClockIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
                 <span>Activity</span>
+              </div>
+            </button>
+
+            {/* Contacts: everyone the workspace has heard from, under Activity because the feed is
+                where those people first show up (docs/prds/lnkdrp-contacts.md, decision 5). */}
+            <button
+              type="button"
+              disabled={navLocked}
+              className={[
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                navLocked
+                  ? "cursor-not-allowed opacity-50"
+                  : pathname.startsWith("/contacts")
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
+                    : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
+              ].join(" ")}
+              onClick={() => {
+                if (navLocked) return;
+                router.push("/contacts");
+              }}
+              aria-label="Contacts"
+              aria-current={pathname.startsWith("/contacts") ? "page" : undefined}
+              title={navLocked ? "Disabled while uploading" : "Contacts"}
+            >
+              <div className="flex items-center gap-2">
+                <UsersIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
+                <span>Contacts</span>
               </div>
             </button>
 

@@ -9,7 +9,9 @@
  * - `GET  /api/agent/whoami`                   -> `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client, integrations }`
  * - `POST /api/docs` `{ title }`               -> 201 `{ doc: { id, shareId, title, status, shareEnabled, … }, planWarning? }`; 402 `{ code: "plan_limit", … }` at the Free shared-document cap
  * - `GET  /api/docs?q=&ids=&page=&limit=`     -> `{ total, page, limit, docs: [{ id, shareId, title, status, version, one_liner, … }] }` (`q` matches a title or any link slug; `ids` is a direct lookup)
- * - `GET  /api/activity?limit=&cursor=&type=&docId=&who=` -> `{ items: [{ id, type, createdDate, actor, agent, doc, project, meta }], nextCursor }` (`who=agents` = anything an MCP/API client did)
+ * - `GET  /api/activity?limit=&cursor=&type=&docId=&projectId=&who=` -> `{ items: [{ id, type, createdDate, actor, agent, doc, project, meta }], nextCursor }`
+ *                                                  (`who=agents` = anything an MCP/API client did; `projectId` is one data room's
+ *                                                  own feed, the only view that carries the rows of documents kept inside it)
  * - `GET  /api/docs/:id?lite=1`                -> `{ doc: { id, shareId, title, status, shareEnabled, shareAllowPdfDownload,
  *                                                  shareAllowRevisionHistory, sharePasswordEnabled, previewImageUrl,
  *                                                  currentUploadId, aiOutput, isArchived, … } }`
@@ -36,6 +38,8 @@
  * Projects, verified against the route handlers on 2026-09-17:
  * - `GET  /api/projects?q=&page=&limit=`       -> `{ total, page, limit, projects: [{ id, shareId, name, slug, description, docCount, autoAddFiles, createdDate, updatedDate }] }`
  *                                                  (non-request projects only; `q` matches name/description, not slug; always pass `limit` — the route reads a missing one as 1)
+ * - `GET  /api/projects/:idOrSlug`                -> `{ project: { id, shareId, name, slug, description, isRequest, docCount, autoAddFiles, createdDate, updatedDate } }` (the list DTO;
+ *                                                  404 `{ error, reason?: "slug_backfill_pending" }` when the slug matched nothing but a legacy slug-less project may still be waiting for `GET /api/projects` to backfill one)
  * - `POST /api/projects` `{ name, description? }` -> 201 `{ project: { id, shareId, name, slug, description, docCount, autoAddFiles }, planWarning? }`;
  *                                                  402 `{ code: "plan_limit", limit: "projects" }`; 409 duplicate name
  * - `GET  /api/projects/:id/docs?q=&page=&limit=` -> `{ project: { id, shareId, name, slug, description, autoAddFiles, shareEnabled, isRequest, request }, total, page, limit,
@@ -55,6 +59,12 @@
  * - `DELETE /api/projects/:id/links/:linkId`   -> 204 (soft archive; 400 on the project's default link)
  *   Writes are owner/admin; reads are open to any member. A `ProjectLinkDTO` has no `docId` and no
  *   `allowRevisionHistory`, and its `shareId` resolves at `/p/:shareId`, not `/s/:shareId`.
+ *
+ * Contacts, per the contract in docs/prds/lnkdrp-contacts.md (2026-09-25); read-only from here:
+ * - `GET  /api/contacts?q=&tagId=&docId=&projectId=&shareId=&domain=&source=&sort=&dir=&page=&limit=`
+ *                                              -> `{ items: ContactRow[], total, page, limit, identity }`. `identity: false` is Free:
+ *                                                  a contact without an "introduced" source comes back with `name` and `email` null.
+ * - `GET  /api/contacts/:id`                   -> `{ contact: ContactDetail, identity }` (the row plus `sources`, `docs`, `projects`, `note`)
  */
 import { API_TIMEOUT_MS } from "./config";
 import { isToolError, mapApiError, ToolError } from "./errors";
@@ -432,6 +442,39 @@ export type ApiTag = { id: string; name: string; slug: string; color: string; co
 /** One starred document, as `GET /api/starred` lists it. */
 export type ApiStarredDoc = { id: string; title: string | null; starredAt: string | null };
 
+/** How a contact reached the workspace; the four moments the product records a person. */
+export type ApiContactSourceKind = "introduced" | "signed_in" | "download_request" | "request_upload";
+
+/**
+ * One contact as `GET /api/contacts` lists it. `name` and `email` are null on Free for anyone who
+ * did not introduce themselves; the route decides, this only carries it.
+ */
+export type ApiContact = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  domain: string | null;
+  verified: boolean;
+  introduced: boolean;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  documentsRead: number;
+  projectsCount: number;
+  visits: number;
+  tags: ApiTag[];
+  lastSource: { kind: string; at: string | null } | null;
+};
+
+/** `GET /api/contacts/:id`: the row plus everything the contact page shows. */
+export type ApiContactDetail = ApiContact & {
+  sources: Array<{ kind: string; shareId: string | null; docId: string | null; projectId: string | null; at: string | null }>;
+  docs: Array<{ docId: string; title: string | null; shareId: string | null; lastSeenAt: string | null }>;
+  projects: Array<{ projectId: string; name: string | null; slug: string | null }>;
+  note: { text: string; byUserId: string | null; byName: string | null; at: string | null } | null;
+};
+
+export type ApiContactsPage = { total: number; page: number; limit: number; identity: boolean; contacts: ApiContact[] };
+
 export type ApiProject = {
   id: string;
   shareId: string | null;
@@ -611,6 +654,55 @@ function asDoc(raw: unknown): ApiDoc {
       : [],
     primaryProjectId: strOrNull(d.primaryProjectId),
     visibility: asVisibility(d.visibility),
+  };
+}
+
+/** Normalise one contact row from `GET /api/contacts` or the `contact` of `GET /api/contacts/:id`. */
+function asContact(raw: unknown): ApiContact {
+  const c = rec(raw);
+  const id = strOrNull(c.id);
+  if (!id) throw new ToolError("upstream", "lnkdrp API returned a contact without an id.");
+  const last = c.lastSource ? rec(c.lastSource) : null;
+  return {
+    id,
+    name: strOrNull(c.name),
+    email: strOrNull(c.email),
+    domain: strOrNull(c.domain),
+    verified: c.verified === true,
+    introduced: c.introduced === true,
+    firstSeenAt: strOrNull(c.firstSeenAt),
+    lastSeenAt: strOrNull(c.lastSeenAt),
+    documentsRead: num(c.documentsRead),
+    projectsCount: num(c.projectsCount),
+    visits: num(c.visits),
+    tags: (Array.isArray(c.tags) ? c.tags : []).map(asTag),
+    lastSource: last && strOrNull(last.kind) ? { kind: strOrNull(last.kind) ?? "", at: strOrNull(last.at) } : null,
+  };
+}
+
+/** The detail shape: the row plus its history and note. */
+function asContactDetail(raw: unknown): ApiContactDetail {
+  const c = rec(raw);
+  const note = c.note ? rec(c.note) : null;
+  return {
+    ...asContact(raw),
+    sources: (Array.isArray(c.sources) ? c.sources : []).map((s) => {
+      const r = rec(s);
+      return { kind: strOrNull(r.kind) ?? "", shareId: strOrNull(r.shareId), docId: strOrNull(r.docId), projectId: strOrNull(r.projectId), at: strOrNull(r.at) };
+    }),
+    docs: (Array.isArray(c.docs) ? c.docs : [])
+      .map((d) => {
+        const r = rec(d);
+        return { docId: strOrNull(r.docId) ?? "", title: strOrNull(r.title), shareId: strOrNull(r.shareId), lastSeenAt: strOrNull(r.lastSeenAt) };
+      })
+      .filter((d) => d.docId),
+    projects: (Array.isArray(c.projects) ? c.projects : [])
+      .map((p) => {
+        const r = rec(p);
+        return { projectId: strOrNull(r.projectId) ?? "", name: strOrNull(r.name), slug: strOrNull(r.slug) };
+      })
+      .filter((p) => p.projectId),
+    note: note && typeof note.text === "string" ? { text: note.text, byUserId: strOrNull(note.byUserId), byName: strOrNull(note.byName), at: strOrNull(note.at) } : null,
   };
 }
 
@@ -874,6 +966,11 @@ export class ApiClient {
   /** The project's page inside the app, for the workspace's members. */
   projectAppUrl(projectId: string): string {
     return `${this.baseUrl}/project/${encodeURIComponent(projectId)}`;
+  }
+
+  /** A contact's page inside the app: identity, note, tags and everything they read. */
+  contactAppUrl(contactId: string): string {
+    return `${this.baseUrl}/contacts/${encodeURIComponent(contactId)}`;
   }
 
   /** Low-level request; throws `ToolError` on non-2xx, timeout or network failure. */
@@ -1175,12 +1272,17 @@ export class ApiClient {
    * the key". It had been implemented and unused by every tool; it is exactly what an agent needs
    * to answer "what did I (or another agent) do here". Viewer identity on `share.viewed` /
    * `share.downloaded` rows is stripped server-side on Free, so the tool inherits the plan gate.
+   *
+   * `projectId` asks for one data room's own feed. Without it the route excludes the rows of every
+   * document kept inside a room (docs/prds/lnkdrp-project-home.md, decision 5), so it is not a
+   * narrowing of what the workspace feed already returns: it is the only way those rows are reachable.
    */
   async listActivity(input: {
     limit?: number | undefined;
     cursor?: string | undefined;
     types?: string[] | undefined;
     docId?: string | undefined;
+    projectId?: string | undefined;
     who?: "me" | "team" | "agents" | undefined;
   }): Promise<ApiActivityPage> {
     const body = rec(
@@ -1190,6 +1292,7 @@ export class ApiClient {
           cursor: input.cursor,
           type: input.types?.length ? input.types.join(",") : undefined,
           docId: input.docId,
+          projectId: input.projectId,
           who: input.who,
         },
       }),
@@ -1372,6 +1475,52 @@ export class ApiClient {
     return (Array.isArray(body.tags) ? body.tags : []).map(asTag);
   }
 
+  /**
+   * `GET /api/contacts` — the people the workspace has heard from, page-based, with the route's
+   * own redaction: on Free (`identity: false`) a contact who never introduced themselves arrives
+   * with `name` and `email` already null, and this client passes that through untouched rather
+   * than re-deciding it.
+   */
+  async listContacts(input: {
+    q?: string | undefined;
+    tagId?: string | undefined;
+    docId?: string | undefined;
+    projectId?: string | undefined;
+    sort?: string | undefined;
+    dir?: string | undefined;
+    page?: number | undefined;
+    limit: number;
+  }): Promise<ApiContactsPage> {
+    const body = rec(
+      await this.request("GET", "/api/contacts", {
+        query: {
+          q: input.q || undefined,
+          tagId: input.tagId || undefined,
+          docId: input.docId || undefined,
+          projectId: input.projectId || undefined,
+          sort: input.sort || undefined,
+          dir: input.dir || undefined,
+          page: input.page,
+          limit: input.limit,
+        },
+      }),
+    );
+    const rows = Array.isArray(body.items) ? body.items : [];
+    return {
+      total: num(body.total),
+      page: num(body.page, 1),
+      limit: num(body.limit, input.limit),
+      identity: body.identity === true,
+      contacts: rows.map(asContact),
+    };
+  }
+
+  /** `GET /api/contacts/:id` — one contact with its history and note; `not_found` outside the workspace. */
+  async getContact(contactId: string): Promise<{ contact: ApiContactDetail; identity: boolean }> {
+    const body = rec(await this.request("GET", `/api/contacts/${encodeURIComponent(contactId)}`));
+    return { contact: asContactDetail(body.contact), identity: body.identity === true };
+  }
+
   /** `GET /api/projects` — non-request projects, most recently updated first, page-based. */
   async listProjects(input: { q?: string | undefined; page?: number | undefined; limit: number }): Promise<ApiProjectsPage> {
     const body = rec(
@@ -1379,6 +1528,21 @@ export class ApiClient {
     );
     const rows = Array.isArray(body.projects) ? body.projects : [];
     return { total: num(body.total), page: num(body.page, 1), limit: num(body.limit, input.limit), projects: rows.map(asProject) };
+  }
+
+  /**
+   * `GET /api/projects/:slug` — one project by its workspace-unique slug, through the same
+   * tenancy bound as the by-id routes. Replaces the name search plus page scan the MCP used to do:
+   * one request against the `{ orgId, slug }` index instead of up to fifty list pages.
+   *
+   * Throws `not_found` when nothing has that slug. When the route can see that the workspace still
+   * holds live projects with no stored slug (created before slugs existed; the list route
+   * backfills one lazily), the error carries `details.reason === "slug_backfill_pending"`, which
+   * is the one case a caller should fall back to listing (see `projectIdForSlug`).
+   */
+  async getProjectBySlug(slug: string): Promise<ApiProject> {
+    const body = rec(await this.request("GET", `/api/projects/${encodeURIComponent(slug)}`));
+    return asProject(body.project);
   }
 
   /** `POST /api/projects` — 402 `plan_limit` at the Free project cap, 409 on a duplicate name. */

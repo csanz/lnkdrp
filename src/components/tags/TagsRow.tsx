@@ -1,5 +1,5 @@
 /**
- * The tags on one document or project.
+ * The tags on one document, project or contact.
  *
  * The chips themselves, with an × on hover to take one off, and a button that opens the picker
  * (`TagPickerModal`) for everything else. The inline suggestion box this used to carry worked for
@@ -26,10 +26,11 @@ import { PlusIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import TagDot from "@/components/tags/TagDot";
 import TagPickerModal from "@/components/tags/TagPickerModal";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import type { TagTargetKind } from "@/lib/models/TagAssignment";
 import type { TagColorKey } from "@/lib/tags/palette";
 
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
-export type TagTargetKind = "doc" | "project";
+export type { TagTargetKind };
 
 /** How many chips a header shows before the rest become "+N". */
 const HEADER_VISIBLE = 2;

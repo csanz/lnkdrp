@@ -3,12 +3,16 @@
  *
  * The same header band as every other top-level page, with the tag's own dot where the page icon
  * goes — so a tag page reads as a place in the app rather than a filtered list that happened.
+ *
+ * Contacts come from `/api/contacts?tagId=` rather than from the items route, because that route
+ * applies the plan's identity rule (a contact who never introduced themselves is a domain and a
+ * date on Free), and the tag page must not become the one place that rule is skipped.
  */
 "use client";
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Cog6ToothIcon, DocumentTextIcon, FolderIcon, TagIcon } from "@heroicons/react/24/outline";
+import { Cog6ToothIcon, DocumentTextIcon, FolderIcon, TagIcon, UserIcon } from "@heroicons/react/24/outline";
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import TagDot from "@/components/tags/TagDot";
@@ -19,11 +23,17 @@ import type { TagColorKey } from "@/lib/tags/palette";
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
 type DocRow = { id: string; title: string; version: number | null; isArchived: boolean; updatedDate: string | null };
 type ProjectRow = { id: string; name: string; slug: string; description: string; docCount: number | null };
+/** The slice of a `/api/contacts` row this page prints; `name` and `email` are null when the plan withholds them. */
+type ContactRow = { id: string; name: string | null; email: string | null; domain: string | null; lastSeenAt: string; documentsRead: number };
+
+/** The tag page lists everything; this is only the route's ceiling, not a page size. */
+const CONTACTS_LIMIT = 200;
 
 export default function TagPageClient({ slug }: { slug: string }) {
   const [tag, setTag] = useState<Tag | null>(null);
   const [docs, setDocs] = useState<DocRow[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [contacts, setContacts] = useState<ContactRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
 
@@ -47,6 +57,16 @@ export default function TagPageClient({ slug }: { slug: string }) {
       rememberEntityTitles("doc", nextDocs);
       rememberEntityTitles("project", nextProjects);
       setNotFound(false);
+
+      // The people carrying the tag, through the contacts route so the plan's identity rule applies.
+      if (json.tag?.id) {
+        const qs = new URLSearchParams({ tagId: json.tag.id, limit: String(CONTACTS_LIMIT), sort: "lastSeen", dir: "desc" });
+        const people = await fetchWithTempUser(`/api/contacts?${qs.toString()}`, { cache: "no-store" });
+        if (people.ok) {
+          const body = (await people.json().catch(() => null)) as { items?: ContactRow[] } | null;
+          setContacts(Array.isArray(body?.items) ? body!.items! : []);
+        }
+      }
     } catch {
       // Leaves the empty state below, which says the same thing without an alarm.
     } finally {
@@ -58,7 +78,8 @@ export default function TagPageClient({ slug }: { slug: string }) {
     void load();
   }, [load]);
 
-  const total = docs.length + projects.length;
+  const total = docs.length + projects.length + contacts.length;
+  const countOf = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
   return (
     <div className="flex h-full flex-col">
@@ -97,8 +118,8 @@ export default function TagPageClient({ slug }: { slug: string }) {
             : loading
               ? "Everything carrying this tag."
               : total === 0
-                ? "Nothing carries this tag yet. Add it from any document or project."
-                : `${total} ${total === 1 ? "item" : "items"}: ${projects.length} ${projects.length === 1 ? "project" : "projects"}, ${docs.length} ${docs.length === 1 ? "document" : "documents"}.`
+                ? "Nothing carries this tag yet. Add it from any document, project or contact."
+                : `${countOf(total, "item", "items")}: ${countOf(projects.length, "project", "projects")}, ${countOf(docs.length, "document", "documents")}, ${countOf(contacts.length, "contact", "contacts")}.`
         }
       />
 
@@ -164,9 +185,45 @@ export default function TagPageClient({ slug }: { slug: string }) {
             </section>
           ) : null}
 
+          {contacts.length ? (
+            <section className={docs.length || projects.length ? "mt-8" : ""}>
+              <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
+                Contacts
+              </h2>
+              <ul className="grid gap-2">
+                {contacts.map((c) => {
+                  // Free withholds the name and address of anyone who did not introduce themselves;
+                  // the row then reads as the product does everywhere else: someone, at a domain.
+                  const label = c.name?.trim() || c.email?.trim() || "Someone";
+                  return (
+                    <li key={c.id}>
+                      <Link
+                        href={`/contacts/${encodeURIComponent(c.id)}`}
+                        className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 transition-colors hover:bg-[var(--panel-hover)]"
+                      >
+                        <UserIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium text-[var(--fg)]">{label}</span>
+                          {c.domain && c.domain !== label ? (
+                            <span className="block truncate text-[12px] text-[var(--muted)]">{c.domain}</span>
+                          ) : null}
+                        </span>
+                        {typeof c.documentsRead === "number" ? (
+                          <span className="shrink-0 text-xs text-[var(--muted-2)]">
+                            {c.documentsRead} {c.documentsRead === 1 ? "doc" : "docs"}
+                          </span>
+                        ) : null}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ) : null}
+
           {!loading && !notFound && total === 0 ? (
             <div className="rounded-2xl border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted)]">
-              Nothing carries this tag yet. Open a document or a project and add it from the Tags row.
+              Nothing carries this tag yet. Open a document, a project or a contact and add it from the Tags row.
             </div>
           ) : null}
         </div>

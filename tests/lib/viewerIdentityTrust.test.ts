@@ -47,6 +47,7 @@ const {
   tryResolveAuthUserId,
   recordActivity,
   rateLimit,
+  upsertContact,
 } = vi.hoisted(() => ({
   afterCallbacks: [] as Array<() => unknown>,
   shareViewUpdateMany: vi.fn(async (_filter?: Record<string, any>, _update?: Record<string, any>) => ({ modifiedCount: 1 })),
@@ -63,6 +64,7 @@ const {
   tryResolveAuthUserId: vi.fn(async () => null as { userId?: string } | null),
   recordActivity: vi.fn(async () => undefined),
   rateLimit: vi.fn(async (_input: { key: string }) => ({ ok: true, remaining: 1, retryAfterSec: 0 })),
+  upsertContact: vi.fn(async (_input?: Record<string, unknown>) => undefined),
 }));
 
 // `after()` is where every write on the landing route lives, so the tests have to be able to run
@@ -103,6 +105,9 @@ vi.mock("@/lib/models/User", () => ({
 // The verification record. `propagateViewerIdentity` asks it one question — "has this workspace
 // had a confirmed click for this address" — and that answer is the whole fan-out decision.
 vi.mock("@/lib/share/viewerEmailVerification", () => ({ isViewerEmailVerified }));
+// The contacts capture is one more DB-backed call on the same path (docs/prds/lnkdrp-contacts.md);
+// unmocked it buffers against no database and reads as a timeout. The spy proves it still fires.
+vi.mock("@/lib/contacts/service", () => ({ upsertContact }));
 vi.mock("@/lib/share/viewerIntroductionEmails", () => ({
   sendViewerIntroductionEmails,
   viewerIntroductionAppUrl: () => "https://lnkdrp.test",
@@ -285,6 +290,36 @@ describe("the landing route mints the confirmation that makes a claim provable",
     await drainAfter();
 
     expect(sendViewerIntroductionEmails).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The same introduction is the first of the four moments that make a contact
+   * (docs/prds/lnkdrp-contacts.md decision 2). Capture is wired here, next to the mail, and carries
+   * the same owner guard: a founder previewing their own room is not their own first contact.
+   */
+  test("an introduction becomes a contact, and the owner's preview does not", async () => {
+    await post({ botId: "constant-bot", viewerName: "Dana Whitfield", viewerEmail: "dana@sequoiacap.com" });
+    await drainAfter();
+
+    expect(upsertContact).toHaveBeenCalledTimes(1);
+    const captured = upsertContact.mock.calls[0]?.[0] as Record<string, any>;
+    expect(captured.email).toBe("dana@sequoiacap.com");
+    expect(captured.name).toBe("Dana Whitfield");
+    expect(captured.source).toBe("introduced");
+    expect(String(captured.orgId)).toBe(String(ORG));
+
+    upsertContact.mockClear();
+    isOwnerSideViewer.mockResolvedValue(true);
+    await post({ botId: "constant-bot", viewerName: "Dana Whitfield", viewerEmail: "dana@sequoiacap.com" });
+    await drainAfter();
+    expect(upsertContact).not.toHaveBeenCalled();
+  });
+
+  test("an arrival with a name and no address makes no contact", async () => {
+    await post({ botId: "constant-bot", viewerName: "Dana Whitfield" });
+    await drainAfter();
+
+    expect(upsertContact).not.toHaveBeenCalled();
   });
 
   test("an arrival with no introduction mails nobody", async () => {

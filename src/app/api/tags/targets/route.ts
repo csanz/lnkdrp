@@ -2,7 +2,8 @@
  * API route for `/api/tags/targets` — the tags on many things at once.
  *
  * The sidebar prints a dot per tag on every project row, and one request per row would be dozens.
- * `GET ?targetKind=project&ids=a,b,c` answers for the whole list in one read.
+ * `GET ?targetKind=project&ids=a,b,c` answers for the whole list in one read. Any kind in
+ * `TAG_TARGET_KINDS` works the same way (`contact` is how the Contacts table prints its Tags column).
  *
  * Ids are the caller's own workspace's or they simply do not appear: the assignment rows are
  * scoped by `orgId`, so an id from elsewhere returns nothing rather than an error, which is the

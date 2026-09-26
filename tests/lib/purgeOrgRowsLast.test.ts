@@ -117,6 +117,8 @@ vi.mock("@/lib/models/ShareViewerEmail", () => ({ ShareViewerEmailModel: stub("S
 vi.mock("@/lib/models/StarredDoc", () => ({ StarredDocModel: stub("StarredDoc") }));
 vi.mock("@/lib/models/Tag", () => ({ TagModel: stub("Tag") }));
 vi.mock("@/lib/models/TagAssignment", () => ({ TagAssignmentModel: stub("TagAssignment") }));
+// Contacts joined the purge with the contacts work; unmocked the model buffers against no database.
+vi.mock("@/lib/models/Contact", async (importOriginal) => ({ ...(await importOriginal<object>()), ContactModel: stub("Contact") }));
 vi.mock("@/lib/models/UsageAggCycle", () => ({ UsageAggCycleModel: stub("UsageAggCycle") }));
 vi.mock("@/lib/models/UsageAggDaily", () => ({ UsageAggDailyModel: stub("UsageAggDaily") }));
 

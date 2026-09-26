@@ -44,6 +44,11 @@ export type ActivityType =
   // so a renamed or deleted tag leaves the history readable.
   | "tag.applied"
   | "tag.removed"
+  // A member wrote, changed or cleared the note on a contact (docs/prds/lnkdrp-contacts.md). The
+  // only contact event: contacts themselves are gathered from views and introductions that already
+  // have rows, and tagging one is `tag.applied` with `meta.targetKind: "contact"`. `meta.contactId`
+  // always; `meta.contactName` / `contactEmail` only when the plan would show them.
+  | "contact.note_updated"
   | "request_repo.created"
   | "request.upload_received"
   | "download_request.created"
