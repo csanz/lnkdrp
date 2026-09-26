@@ -161,13 +161,12 @@ async function buildSummaryPayload(orgId: Types.ObjectId, debug: boolean): Promi
   // - Fall back to the full ledger aggregate only when UsageAggCycle isn't available
   //
   // Dollars are credits x USD_CENTS_PER_CREDIT, not a stored cost. This used to net
-  // `costUsdActual` (charged minus refunded) from the cycle agg and the ledger, but nothing in
-  // the codebase writes that field: the ledger row is created with `costUsdActual: null` and
-  // the charge path only fills provider/token telemetry, so the agg only ever gets $inc'd by 0.
-  // The billing header therefore read $0.00 for a cycle Stripe had really metered. On-demand
-  // has a single price, USD_CENTS_PER_CREDIT a credit, which is exactly how /api/billing/spend
-  // computes the same figure for the Limits tab; the two tabs disagreed only because this one
-  // asked a field that is always empty.
+  // `costUsdActual` (charged minus refunded) from the cycle agg and the ledger. Nothing wrote that
+  // field then, so the agg only ever got $inc'd by 0 and the billing header read $0.00 for a cycle
+  // Stripe had really metered. Since 2026-09-26 the field is written, and reading it here would be
+  // worse than the zero was: it is what the run cost *us* at the provider, not what the customer
+  // owes. On-demand has a single price, USD_CENTS_PER_CREDIT a credit, which is exactly how
+  // /api/billing/spend computes the same figure for the Limits tab and what Stripe meters.
   let usedCentsThisCycle = 0;
   let onDemandUsedCreditsThisCycle = 0;
   let ledgerPipelineForDebug: unknown = null;

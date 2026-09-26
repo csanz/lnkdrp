@@ -63,7 +63,7 @@ import {
 } from "@/lib/admin/ui";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { formatRatioPct, formatUsdCost } from "@/lib/format/money";
-import type { MarginRow, UnbilledSpend } from "@/lib/credits/marginReport";
+import type { AllAiRunSpend, MarginRow } from "@/lib/credits/marginReport";
 
 type CreditRules = {
   starterGrant: number;
@@ -127,7 +127,8 @@ type MarginResponse = {
   byAction: MarginRow[];
   byModel: MarginRow[];
   total: MarginRow;
-  unbilled: UnbilledSpend;
+  /** Total AI-run spend, fleet-wide. Overlaps `total.costUsd`, so it is never added to it. */
+  aiRunSpend: AllAiRunSpend;
 };
 
 type PurchaseRow = {
@@ -1177,14 +1178,16 @@ export default function AdminCreditsPage() {
               </Fact>
               <Fact label="Priced models">{margin.pricedModels.join(", ") || ADMIN_DASH}</Fact>
               <Fact label="List rate">{formatUsdCost(margin.listRateUsdPerCredit)}/credit</Fact>
-              {/* Runs nobody was charged for still cost money: a failed run is refunded, and a
-                  recipient's upload is free by design. The ledger cannot show this, so the AiRun
-                  log is read for it. Fleet-wide: an AiRun row carries no workspace. */}
-              <Fact label="Unbilled runs (all workspaces)">
-                {margin.unbilled.runs.toLocaleString()} for {formatUsdCost(margin.unbilled.costUsd)}
+              {/* Total AiRun spend, not a remainder: the runs the table above bills for are in
+                  this number too, so it is never added to the table's cost. It exists because the
+                  ledger cannot see a refunded failure, a recipient's upload or an agent's own
+                  summary, and nothing links an AiRun row to a ledger row to separate them.
+                  Fleet-wide: an AiRun row carries no workspace. */}
+              <Fact label="All AI runs (all workspaces)">
+                {margin.aiRunSpend.runs.toLocaleString()} for {formatUsdCost(margin.aiRunSpend.costUsd)}
               </Fact>
               <Fact label="Failed runs (all workspaces)">
-                {margin.unbilled.failedRuns.toLocaleString()} for {formatUsdCost(margin.unbilled.failedCostUsd)}
+                {margin.aiRunSpend.failedRuns.toLocaleString()} for {formatUsdCost(margin.aiRunSpend.failedCostUsd)}
               </Fact>
             </dl>
             <p className={`mt-2 ${ADMIN_NOTE}`}>
@@ -1194,7 +1197,10 @@ export default function AdminCreditsPage() {
               rates and counted under Priced at read time, and where they recorded neither they are counted under Not
               priced rather than treated as free. Nothing is written back. At list rate is the on-demand ceiling of{" "}
               {formatUsdCost(margin.listRateUsdPerCredit)} a credit; most credits are spent out of a Pro allowance or a
-              starter grant and earn less than that.
+              starter grant and earn less than that. All AI runs is total spend across every AI run in the window,
+              billed and unbilled alike, and it overlaps the Cost column above rather than adding to it: nothing links
+              an AI run to the ledger row that charged for it, so the two cannot be separated here. Failed runs is the
+              part that really is unbilled, filtered on the run status.
             </p>
           </div>
         ) : null}

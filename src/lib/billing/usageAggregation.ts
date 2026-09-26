@@ -3,6 +3,13 @@
  *
  * These helpers intentionally operate on a minimal, billing-safe subset of ledger fields.
  * They must not require or expose provider/model token telemetry.
+ *
+ * In particular they never read `costUsdActual`. Since 2026-09-26 that field is written, by
+ * `markLedgerCharged`, and it holds what the run cost *us* at the provider. It is not what the
+ * customer is charged: on-demand has a single price, `USD_CENTS_PER_CREDIT` a credit, and that is
+ * what `/api/billing/spend` reports and what Stripe meters. Pricing an invoice line from our
+ * provider cost would bill a different number on every row and would drag allowance-funded runs,
+ * which cost us money and charge the customer nothing extra, onto the on-demand table.
  */
 import { USD_CENTS_PER_CREDIT } from "./pricing";
 
@@ -23,7 +30,14 @@ export type BillingLedgerRow = {
   creditsFromSubscription: number;
   creditsFromPurchased: number;
   creditsFromOnDemand: number;
-  costUsdActual: number | null;
+  /**
+   * Our provider cost, if the caller happens to carry it. **Read by nothing in this file.**
+   *
+   * Declared, rather than omitted, so that the ban is stated where a future reader will look
+   * instead of being an absence they have to notice. `/api/billing/usage` does not project it; a
+   * caller that passes it anyway is ignored, and `billingUsageAggregation.test.ts` pins that.
+   */
+  costUsdActual?: number | null;
 };
 
 export type BillingIncludedRow = { label: string; credits: number; costCents: number; costLabel: string };
@@ -33,11 +47,6 @@ function clampNonNegInt(n: unknown): number {
   const v = typeof n === "number" ? n : typeof n === "string" ? Number(n) : NaN;
   if (!Number.isFinite(v)) return 0;
   return Math.max(0, Math.floor(v));
-}
-
-function centsFromUsd(usd: number): number {
-  if (!Number.isFinite(usd)) return 0;
-  return Math.round(Math.max(0, usd) * 100);
 }
 
 function actionLabel(a: BillingLedgerRow["actionType"]): string {
@@ -62,34 +71,33 @@ function includedCredits(l: BillingLedgerRow): number {
   );
 }
 
+/**
+ * On-demand credits for a row: the `creditsFromOnDemand` bucket, and nothing else.
+ *
+ * This used to fall back to `creditsCharged` when the row carried a `costUsdActual`, on the
+ * reasoning that a cost implied on-demand. That was safe only while nothing wrote the field. Now
+ * that every settled run records one, the fallback would read an allowance-funded run - a Pro
+ * customer spending credits they already paid for in their subscription - as on-demand overage and
+ * invoice it a second time. The bucket split is the only thing that says who funded a credit.
+ */
 function inferOnDemandCredits(l: BillingLedgerRow): number {
-  const direct = clampNonNegInt(l.creditsFromOnDemand);
-  if (direct > 0) return direct;
-  // Best-effort: some legacy rows may have cost but not a populated on-demand bucket.
-  if (typeof l.costUsdActual === "number" && Number.isFinite(l.costUsdActual) && l.costUsdActual > 0) {
-    return clampNonNegInt(l.creditsCharged);
-  }
-  return 0;
+  return clampNonNegInt(l.creditsFromOnDemand);
 }
 
 /**
- * Returns the on-demand cost (in cents) for a billing ledger row, or null when unknown.
- *
- * This used to expose a cost only when the row carried USD in `costUsdActual`, to avoid inventing
- * invoice dollars. Nothing ever writes that field - the ledger is created with `costUsdActual:
- * null` and the charge path only fills provider/token telemetry - so it returned null for every
- * row, and the billing table printed "Not available" in the Cost and Total column of on-demand
- * usage the customer was really invoiced for.
+ * Returns the on-demand cost (in cents) for a billing ledger row, or null when there is none.
  *
  * On-demand is not priced per token: it is billed at a flat USD_CENTS_PER_CREDIT per credit, the
- * same arithmetic `/api/billing/spend` uses for the Limits tab. Credits are therefore an exact
- * answer here, not a fabricated one. Null now means only what it says: a row with neither a stored
- * cost nor any on-demand credits.
+ * same arithmetic `/api/billing/spend` uses for the Limits tab and the same figure Stripe meters.
+ * Credits are therefore an exact answer here, not a fabricated one.
+ *
+ * It once returned a cost only for a row carrying USD in `costUsdActual`. Nothing wrote that field
+ * then, so it returned null for every row and the billing table printed "Not available" against
+ * usage the customer was really invoiced for. The field is written now, but it is our provider
+ * cost, so reading it would swap an exact invoice line for a number the customer was never quoted.
+ * Null means what it says: a row with no on-demand credits.
  */
 export function onDemandCostCentsOrNull(l: BillingLedgerRow): number | null {
-  if (typeof l.costUsdActual === "number" && Number.isFinite(l.costUsdActual) && l.costUsdActual !== null) {
-    return centsFromUsd(l.costUsdActual);
-  }
   const credits = inferOnDemandCredits(l);
   if (credits > 0) return credits * USD_CENTS_PER_CREDIT;
   return null;
@@ -117,7 +125,7 @@ export function aggregateBillingUsage(params: {
   const limitCents = clampNonNegInt(params.onDemandLimitCents);
 
   const includedMap = new Map<string, { label: string; credits: number }>();
-  const onDemandMap = new Map<string, { label: string; credits: number; totalCents: number; qty: number; unknownCost: boolean }>();
+  const onDemandMap = new Map<string, { label: string; credits: number; totalCents: number; qty: number }>();
   let refundCents = 0;
 
   for (const raw of params.ledgers) {
@@ -139,8 +147,9 @@ export function aggregateBillingUsage(params: {
     // On-demand usage: charged rows become line items; refunded rows become adjustments.
     const onDemandCredits = inferOnDemandCredits(raw);
     const cents = onDemandCostCentsOrNull(raw);
-    const relevant = onDemandCredits > 0 || (typeof raw.costUsdActual === "number" && raw.costUsdActual !== null);
-    if (!relevant) continue;
+    // On-demand credits are the only thing that puts a row on this table. A stored `costUsdActual`
+    // used to qualify a row too, which now lets every allowance-funded run in.
+    if (onDemandCredits <= 0) continue;
 
     if (status === "refunded") {
       if (cents !== null) refundCents += cents;
@@ -151,10 +160,11 @@ export function aggregateBillingUsage(params: {
     const label = (raw.modelRoute ?? "").trim()
       ? String(raw.modelRoute).trim()
       : `${actionLabel(raw.actionType)} (${qualityLabel(raw.qualityTier)})`;
-    const bucket = onDemandMap.get(key) ?? { label, credits: 0, totalCents: 0, qty: 0, unknownCost: false };
+    const bucket = onDemandMap.get(key) ?? { label, credits: 0, totalCents: 0, qty: 0 };
     bucket.credits += onDemandCredits;
-    if (cents === null) bucket.unknownCost = true;
-    else bucket.totalCents += cents;
+    // `cents` is non-null for every row that got this far: it is priced from the same credits the
+    // guard above required. The check is the type's, not a real branch.
+    if (cents !== null) bucket.totalCents += cents;
     bucket.qty += qty;
     onDemandMap.set(key, bucket);
   }
@@ -169,9 +179,8 @@ export function aggregateBillingUsage(params: {
     .sort((a, b) => b.totalCents - a.totalCents)
     .map((r) => {
       const credits = clampNonNegInt(r.credits);
-      const knownTotalCents = clampNonNegInt(r.totalCents);
-      const totalCents = r.unknownCost ? null : knownTotalCents;
-      const unit = totalCents !== null && credits > 0 ? Math.floor(knownTotalCents / credits) : null;
+      const totalCents = clampNonNegInt(r.totalCents);
+      const unit = credits > 0 ? Math.floor(totalCents / credits) : null;
       return { label: r.label, credits, costCents: unit, qty: clampNonNegInt(r.qty), totalCents };
     });
 

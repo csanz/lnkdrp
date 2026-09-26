@@ -28,7 +28,7 @@ import {
   marginRow,
   marginTotal,
   type MarginBucketSums,
-  type UnbilledSpend,
+  type AllAiRunSpend,
 } from "@/lib/credits/marginReport";
 
 export const runtime = "nodejs";
@@ -139,13 +139,22 @@ function foldBuckets(buckets: readonly Bucket[], keyOf: (b: Bucket) => string): 
 }
 
 /**
- * Runs that cost money and charged nobody, read from the AiRun log rather than the ledger.
+ * Every AI run in the window and what it cost, read from the AiRun log rather than the ledger.
  *
- * A failed run's ledger row was refunded and never received telemetry, so this spend is invisible
- * in the margin table above. `AiRun` keeps it. Note that compares are absent from this log
- * entirely (`runDocChangeDiff` records no AiRun), so this is a floor on unbilled spend.
+ * The `$match` is the window and nothing else, so this is *total* AI-run spend: the runs the
+ * margin table already bills for are in it too. It is not an unbilled figure and must not be added
+ * to the table's cost, which would count the same dollars twice. Telling the two apart would need
+ * a link between the collections and there is none - no `aiRunId` on `CreditLedger`, no
+ * `creditLedgerId` on `AiRun` - so this reports the total and lets the reader compare.
+ *
+ * Read it as a second measure of the same spend: a total materially above the table's cost is the
+ * unbilled remainder (a refunded failure, a recipient upload, an agent's own summary), and a total
+ * materially below it means runs are being charged for that the AiRun log never saw. Compares are
+ * the known case of the latter: `runDocChangeDiff` records no AiRun at all.
+ *
+ * `failedRuns` and `failedCostUsd` are filtered on `status` and are genuinely unbilled.
  */
-async function unbilledSpend(since: Date): Promise<UnbilledSpend> {
+async function allAiRunSpend(since: Date): Promise<AllAiRunSpend> {
   const rows = await AiRunModel.aggregate<{
     _id: null;
     runs: number;
@@ -204,7 +213,7 @@ export async function GET(request: Request) {
   };
   if (workspaceIdRaw) match.workspaceId = new Types.ObjectId(workspaceIdRaw);
 
-  const [buckets, unbilled] = await Promise.all([
+  const [buckets, aiRunSpend] = await Promise.all([
     CreditLedgerModel.aggregate<Bucket>([
       { $match: match },
       {
@@ -220,9 +229,10 @@ export async function GET(request: Request) {
         },
       },
     ]),
-    // Unbilled spend is fleet-wide: an AiRun row carries no workspace id, only a user id, so it
-    // cannot be scoped the way the ledger can. Reported as such rather than filtered wrongly.
-    unbilledSpend(since),
+    // Fleet-wide, and unscoped in a second way too: an AiRun row carries no workspace id, only a
+    // user id, so `workspaceId` cannot narrow it the way it narrows the ledger. Reported as such
+    // rather than filtered wrongly.
+    allAiRunSpend(since),
   ]);
 
   const byAction = foldBuckets(buckets, (b) => b._id.action ?? "unknown");
@@ -240,6 +250,7 @@ export async function GET(request: Request) {
     byAction: byAction.map(marginRow),
     byModel: byModel.map(marginRow),
     total: marginTotal(byAction),
-    unbilled,
+    /** Total AI-run spend, fleet-wide. Overlaps `total.costUsd`; see `AllAiRunSpend`. */
+    aiRunSpend,
   });
 }

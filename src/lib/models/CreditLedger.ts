@@ -70,9 +70,14 @@ const creditLedgerSchema = new Schema(
      *
      * `costUnitsActual` is still written by nothing.
      *
-     * Read this before touching `usageAggregation.ts`: invoice dollars come from credits times the
-     * flat rate, and they must keep doing so. This field is our cost, not the customer's price; the
-     * two are different numbers and putting this one on an invoice would bill the wrong amount.
+     * **Read this before touching `usageAggregation.ts` or `/api/billing/usage`.** Invoice dollars
+     * come from credits times the flat rate, and they must keep doing so. That fallback is not
+     * redundant belt-and-braces: removing it is what made the billing header read $0.00 for a cycle
+     * Stripe had really metered. It was safe to remove back then only because this field was always
+     * null, and it is not null any more, so the same code now fails the other way: reading it would
+     * price an invoice line at our provider cost and would drag allowance-funded runs, which charge
+     * the customer no overage at all, onto the on-demand table. This field is our cost, not the
+     * customer's price. The two are different numbers and no customer-facing route may read it.
      */
     costUnitsActual: { type: Number, default: null, min: 0 },
     costUsdActual: { type: Number, default: null, min: 0 },

@@ -121,17 +121,33 @@ export function marginTotal(buckets: readonly MarginBucketSums[], key = "all"): 
 }
 
 /**
- * What we spent on runs nobody was charged for, in the same window.
+ * Total AI-run spend in the window, read from the `AiRun` log rather than the ledger.
  *
- * The ledger cannot answer this: a run that failed had its credit refunded and its ledger row never
+ * **This is every run, billed and unbilled alike, and it overlaps the margin table's `costUsd`
+ * almost entirely.** It is not an addend: adding it to a table total double counts. It is here as
+ * a second, independent measure of the same spend, and as the only place the runs the ledger
+ * cannot see show up at all - a failed run had its credit refunded and its ledger row never
  * received telemetry, and a recipient's upload or an agent's own summary is recorded at zero
- * credits by design. Those calls still cost money, so the AiRun log is read for them separately and
- * reported beside the margin rather than folded into it.
+ * credits by design.
+ *
+ * It says "every run" rather than "the unbilled ones" because it cannot say the latter. Separating
+ * them needs a link between the two collections, and there is none: `CreditLedger` carries no
+ * `aiRunId` and `AiRun` carries no `creditLedgerId`. Until one of them does, the honest number is
+ * the total, and the shortfall against the ledger's own cost is the closest thing to an unbilled
+ * figure this report can offer.
+ *
+ * `failedRuns` and `failedCostUsd` *are* filtered, on `status`, and are genuinely unbilled: those
+ * runs were refunded.
  */
-export type UnbilledSpend = {
+export type AllAiRunSpend = {
+  /** Every AiRun row in the window, whatever it charged. */
   runs: number;
+  /** How many of them carry a cost. The rest are counted, never treated as free. */
   pricedRuns: number;
+  /** Summed `costUsdActual` over every run, billed included. Overlaps the margin table's cost. */
   costUsd: number;
+  /** Runs that ended in `failed`. Their credit was refunded, so this spend really is unbilled. */
   failedRuns: number;
+  /** Summed cost of those failed runs. A subset of `costUsd`. */
   failedCostUsd: number;
 };

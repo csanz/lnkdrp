@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 998 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 1003 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -120,6 +120,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/admin/credits/anomalies/route.ts` — `/api/admin/credits/anomalies` · GET, runtime
 - `src/app/api/admin/credits/balances/route.ts` — `/api/admin/credits/balances` · GET, runtime
 - `src/app/api/admin/credits/ledger/route.ts` — `/api/admin/credits/ledger` · GET, runtime
+- `src/app/api/admin/credits/margin/route.ts` — `/api/admin/credits/margin` · dynamic, GET, runtime
 - `src/app/api/admin/credits/mutate/route.ts` — `/api/admin/credits/mutate` · POST, runtime
 - `src/app/api/admin/credits/purchases/route.ts` — `/api/admin/credits/purchases` · GET, runtime
 - `src/app/api/admin/credits/release/route.ts` — `/api/admin/credits/release` · POST, runtime
@@ -559,6 +560,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/activity/labels.ts` · ACTIVITY_FILTERS, ActivityFilterId, ActivityItem, ActivitySentence, actorDisplayName, describeActivity
 - `src/lib/activity/log.ts` · ACTIVITY_AGENT_HEADER, ActivityActorKind, ActivityAgent, ActivityType, agentFromRequest, agentLabel, recordActivity, RecordActivityInput
 - `src/lib/activity/summary.ts` · ACTIVITY_SUMMARY_BUCKETS, ACTIVITY_WORK_TYPES, ActivityDayPoint, ActivityDayRow, ActivityGroupRow, ActivitySummary, ActivitySummaryBucket, ActivitySummaryCountKey, …
+- `src/lib/admin/aiRunSpend.ts` · AI_RUN_SPEND_FIELDS, aiRunSpend, AiRunSpend
 - `src/lib/admin/creditsAdmin.ts` · AdminCreditAnomaly, AdminCreditAnomalyCode, AdminCreditAnomalySeverity, AdminCreditBuckets, AdminCreditBucketSplit, AdminCreditPlan, asNumber, balanceAnomalies, …
 - `src/lib/admin/cronHealth.ts` · CronHealthItem, CronStat, cronStatsFigures, cronTone, formatCronStatsLine
 - `src/lib/admin/cronSchedule.ts` · buildCronRows, CronRow, CronState, cronStateLabel, cronStateTone, describeSchedule, HeartbeatLike, nextRunAt, …
@@ -587,9 +589,11 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/ai/constants.ts` · CATEGORY_LABELS, CATEGORY_VALUES, CategoryValue, CONFIDENCE_VALUES, ConfidenceValue, INTENDED_AUDIENCE_LABELS, INTENDED_AUDIENCE_VALUES, IntendedAudienceValue, …
 - `src/lib/ai/docChangeDiff.ts` · DocChangeDiff, DocChangeDiffSchema, DocChangeDiffUsage, isNoChangeSummary, isUnchangedWithoutModel, NO_CHANGE_SUMMARY, normalizeForCompare, runDocChangeDiff, …
 - `src/lib/ai/docChangeSummary.ts` · isNoChangeSummary, NO_CHANGE_SUMMARY
+- `src/lib/ai/modelPricing.ts` · costUsdForLedgerTelemetry, costUsdForUsage, joinModelRoute, MODEL_PRICES_AS_OF, MODEL_ROUTE_SEPARATOR, modelRate, ModelRate, pricedModelIds, …
 - `src/lib/ai/openaiProviderOptions.ts` · OPENAI_PROVIDER_OPTIONS
 - `src/lib/ai/requestReviewInvestorFocused.ts` · RequestReviewInvestorFocusedOutput, RequestReviewInvestorFocusedSchema, runRequestReviewInvestorFocused
 - `src/lib/ai/reviewDocText.ts` · buildReviewPrompt, reviewDocText
+- `src/lib/ai/usageTotals.ts` · AiUsageAccumulator, AiUsageTotals, createAiUsageAccumulator
 - `src/lib/ai/visitBrief.ts` · buildVisitBriefUserPrompt, generateVisitBrief, GenerateVisitBriefParams, normalizeVisitBriefOutput, sanitizeRecord, trimHeadline, VISIT_BRIEF_MODEL, VisitBriefDocument, …
 - `src/lib/analytics/docAnalyticsAccess.ts` · DocAnalyticsAccess, DocAnalyticsDoc, resolveDocAnalyticsAccess
 - `src/lib/analytics/docScope.ts` · docOnlyShareIdMatch, projectLinkSlugsForDocs, projectLinkSlugsForOrg
@@ -673,6 +677,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/credits/errors.ts` · DAILY_CAP_CODE, isDailyCapError, isOutOfCreditsError, OUT_OF_CREDITS_CODE
 - `src/lib/credits/grants.ts` · buildCycleKey, creditMonthIndex, creditWindowIndex, FREE_STARTER_CREDITS, grantCycleIncludedCredits, INCLUDED_CREDITS_PER_CYCLE
 - `src/lib/credits/idempotency.ts` · generateIdempotencyKey, idempotencyKeyFromRequest
+- `src/lib/credits/marginReport.ts` · AllAiRunSpend, LIST_RATE_USD_PER_CREDIT, MarginBucketSums, marginRow, MarginRow, marginTotal
 - `src/lib/credits/mongooseStore.ts` · createMongooseCreditStore
 - `src/lib/credits/packs.ts` · CREDIT_PACK_CURRENCY, CREDIT_PACKS, CreditPack, findCreditPack, findPurchasablePack, formatPackPrice, formatPerCredit, PACK_MARKUP_OVER_PRO, …
 - `src/lib/credits/purchases.ts` · expireCreditPurchases, grantCreditPack
@@ -873,7 +878,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/slack/connections.ts` · listSlackConnections, postThroughConnection, serializeSlackConnection, SLACK_EVENT_KEYS, SlackConnectionDto, SlackEventKey, SlackState
 - `src/lib/slack/crypto.ts` · decryptSlackSecret, encryptSlackSecret, signSlackPayload, verifySlackSignature
 - `src/lib/slack/messages.ts` · mrkdwn, realLinkLabel, renderSlackEvent, SLACK_MARKS, slackBurstMessage, slackTestMessage
-- `src/lib/slack/outbox.ts` · DrainResult, drainSlackOutbox, EnqueueSlackInput, enqueueSlackPosts, SlackDocChange, SlackOutboxEvent
+- `src/lib/slack/outbox.ts` · DrainResult, drainSlackOutbox, EnqueueSlackInput, enqueueSlackPosts, recoverStaleSlackClaims, SlackDocChange, SlackOutboxEvent
 - `src/lib/slack/pageState.ts` · slackStateForPage
 - `src/lib/slack/post.ts` · postToSlackWebhook, SLACK_POST_TIMEOUT_MS, SlackMessage, slackPostBody, SlackPostOutcome
 - `src/lib/slack/routing.ts` · burstAllowance, RoutableConnection, routeSlackConnections, SLACK_BURST_PER_MINUTE, SLACK_BURST_WINDOW_MS

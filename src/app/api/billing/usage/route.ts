@@ -2,7 +2,12 @@
  * API route for `/api/billing/usage`.
  *
  * Returns Included Usage and On-Demand Usage tables for a selected billing cycle.
- * Customer-facing: never returns provider/model token telemetry fields.
+ * Customer-facing: never returns provider/model token telemetry fields, and never reads
+ * `costUsdActual`. That field holds what a run cost us at the provider, not what the customer
+ * owes; on-demand is billed at the flat `USD_CENTS_PER_CREDIT` a credit that `/api/billing/spend`
+ * and Stripe both use. This pipeline used to match and sum it, which would have priced invoice
+ * lines from our provider cost and put allowance-funded runs on the on-demand table the moment
+ * anything started writing the field.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -139,13 +144,14 @@ export async function GET(request: Request) {
 
       // Further reduce scanned docs: ignore ledger rows that can't contribute to either table.
       // (Most rows will have credits fields; this mainly protects us from odd/legacy noise.)
+      // The credit buckets are the whole contribution: a row funded by none of them owes nothing
+      // and is included in nothing, whatever it cost us to run.
       const relevantOr = {
         $or: [
           { creditsFromTrial: { $gt: 0 } },
           { creditsFromSubscription: { $gt: 0 } },
           { creditsFromPurchased: { $gt: 0 } },
           { creditsFromOnDemand: { $gt: 0 } },
-          { costUsdActual: { $ne: null } },
         ],
       } as const;
 
@@ -164,16 +170,6 @@ export async function GET(request: Request) {
             creditsFromSubscription: { $sum: "$creditsFromSubscription" },
             creditsFromPurchased: { $sum: "$creditsFromPurchased" },
             creditsFromOnDemand: { $sum: "$creditsFromOnDemand" },
-            costUsdKnownSum: {
-              $sum: {
-                $cond: [{ $ne: ["$costUsdActual", null] }, "$costUsdActual", 0],
-              },
-            },
-            costUsdUnknownCount: {
-              $sum: {
-                $cond: [{ $eq: ["$costUsdActual", null] }, 1, 0],
-              },
-            },
           },
         },
         {
@@ -189,11 +185,6 @@ export async function GET(request: Request) {
             creditsFromSubscription: 1,
             creditsFromPurchased: 1,
             creditsFromOnDemand: 1,
-            // Preserve existing semantics: if any ledger row in this bucket has unknown cost,
-            // treat the whole bucket as unknown (the UI shows "Not available").
-            costUsdActual: {
-              $cond: [{ $gt: ["$costUsdUnknownCount", 0] }, null, "$costUsdKnownSum"],
-            },
           },
         },
       ] as const;
