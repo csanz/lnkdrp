@@ -3,7 +3,7 @@
  *
  * Starts an upload for a request link (creates doc + upload) and returns an upload secret.
  */
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { errorJson } from "@/lib/http/errorResponse";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
@@ -11,12 +11,14 @@ import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
+import { UserModel } from "@/lib/models/User";
 import { debugLog } from "@/lib/debug";
 import { BOT_ID_HEADER } from "@/lib/botId";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { tryResolveUserActor } from "@/lib/gating/actor";
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { recordActivity } from "@/lib/activity/log";
+import { upsertContact } from "@/lib/contacts/service";
 import { checkRecipientUploadCap, RECIPIENT_UPLOAD_LIMIT_CODE } from "@/lib/uploads/recipientCaps";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 
@@ -324,6 +326,36 @@ export async function POST(
       currentUploadId: uploadId,
       uploadId, // backward compat
     });
+
+    // The fourth moment that makes a contact (docs/prds/lnkdrp-contacts.md decision 2): "a
+    // request-inbox upload that carries an address". Only the sign-in-required branch carries one
+    // — a public request link deliberately asks for nothing but a device id, and a stranger with
+    // no address is a visit, not a person, exactly as an anonymous reader is. `shareId` is null
+    // because an inbox is not a link slug, which the Contact model already allows for. Off the hot
+    // path like the other capture sites: the file must land whatever the contacts table thinks.
+    if (uploaderUserId) {
+      const uploaderId = uploaderUserId;
+      after(async () => {
+        try {
+          const u = (await UserModel.findById(uploaderId).select({ name: 1, email: 1 }).lean()) as
+            | { name?: string | null; email?: string | null }
+            | null;
+          const email = typeof u?.email === "string" ? u.email.trim() : "";
+          if (!email) return;
+          await upsertContact({
+            orgId: String(effectiveOrgId),
+            email,
+            name: typeof u?.name === "string" ? u.name : null,
+            source: "request_upload",
+            shareId: null,
+            projectId: String(projectId),
+            viewerUserId: uploaderId,
+          });
+        } catch {
+          // The upload is already recorded; the contact is a convenience on top of it.
+        }
+      });
+    }
 
     void recordActivity({
       orgId: effectiveOrgId,

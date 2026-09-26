@@ -1018,13 +1018,19 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               }
               // A signed-in read is a contact (docs/prds/lnkdrp-contacts.md decision 2): the
               // account's address is their identity, and its name wins over anything typed.
-              // Once per sitting, not per heartbeat: the row's creation covers the first read, and
-              // a returning reader is caught on the first heartbeat of each tab session (the same
-              // `limit: 1` dedupe `firstSightingToday` uses), so one read is one visit rather than
-              // one per thirty seconds. `!ownerPreview` is new to this block on purpose: an owner
-              // reading their own link must not become their own contact.
-              const newSitting =
-                !created && visitIdHash && !ownerPreview && shareOrgId && viewerEmailSnapshot
+              // Once per sitting, not per heartbeat: the first POST of a tab session takes the
+              // slot (the same `limit: 1` dedupe `firstSightingToday` uses) and every heartbeat
+              // after it finds the slot spent, so one read is one visit rather than one per thirty
+              // seconds. The slot is taken whether or not this POST created the ShareView row: it
+              // used to be skipped on the created path, which left it unspent for the next
+              // heartbeat to claim seconds later, so a reader's very first sitting counted two
+              // visits and pushed two `signed_in` sources. `created ||` stays in the gate below so
+              // a reader whose browser gives no `visitId` (blocked sessionStorage, and so no
+              // `visitIdHash` and no slot) is still captured on the read that created the row.
+              // `!ownerPreview` is here on purpose: an owner reading their own link must not
+              // become their own contact.
+              const sittingSlot =
+                visitIdHash && !ownerPreview && shareOrgId && viewerEmailSnapshot
                   ? (
                       await rateLimit({
                         key: `contactseen:${shareId}:${visitIdHash}`,
@@ -1033,7 +1039,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                       })
                     ).ok
                   : false;
-              if ((created || newSitting) && !ownerPreview && shareOrgId && viewerEmailSnapshot) {
+              if ((created || sittingSlot) && !ownerPreview && shareOrgId && viewerEmailSnapshot) {
                 await upsertContact({
                   orgId: shareOrgId,
                   email: viewerEmailSnapshot,

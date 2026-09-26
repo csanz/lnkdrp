@@ -44,9 +44,27 @@ let orgSlug: string | null = "acme";
 const orgFindById = vi.fn(() => ({ select: () => ({ lean: async () => (orgSlug === null ? null : { slug: orgSlug }) }) }));
 vi.mock("@/lib/models/Org", () => ({ OrgModel: { findById: orgFindById } }));
 
+// `/api/tags/assignments` is the other route that writes a contact, and the only other one an
+// API key can reach. Its own models and tag service are stubbed; the guard under test is real.
+const attachTag = vi.fn(async () => undefined);
+const detachTag = vi.fn(async () => undefined);
+const tagsForTarget = vi.fn(async () => [] as Array<{ id: string; name: string; slug: string; color: string }>);
+const findOrCreateTag = vi.fn(async () => ({ tag: { id: new Types.ObjectId().toString(), name: "passed", slug: "passed", color: "sky" }, created: true }));
+vi.mock("@/lib/tags/service", () => ({ attachTag, detachTag, tagsForTarget, findOrCreateTag }));
+const contactFindOne = vi.fn(() => ({ select: () => ({ lean: async () => ({ _id: CONTACT_ID }) }) }));
+vi.mock("@/lib/models/Contact", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/models/Contact")>()),
+  ContactModel: { findOne: contactFindOne },
+}));
+const docFindOne = vi.fn(() => ({ select: () => ({ lean: async () => ({ _id: CONTACT_ID, primaryProjectId: null }) }) }));
+vi.mock("@/lib/models/Doc", () => ({ DocModel: { findOne: docFindOne } }));
+vi.mock("@/lib/models/Project", () => ({ ProjectModel: { findOne: () => ({ select: () => ({ lean: async () => null }) }) } }));
+vi.mock("@/lib/billing/planLimits", () => ({ getWorkspacePlan: async () => "pro" }));
+
 const { GET: listGet } = await import("@/app/api/contacts/route");
 const { GET: exportGet } = await import("@/app/api/contacts/export/route");
 const { GET: detailGet, PATCH: detailPatch } = await import("@/app/api/contacts/[contactId]/route");
+const { POST: tagPost, DELETE: tagDelete } = await import("@/app/api/tags/assignments/route");
 
 const signedIn = { kind: "user", userId: USER, orgId: ORG, personalOrgId: ORG } as const;
 const viaKey = { ...signedIn, viaApiKey: { keyId: "key_1", scopes: ["read", "write"] } } as const;
@@ -303,12 +321,32 @@ describe("PATCH /api/contacts/:contactId", () => {
     expect(recordActivity).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ cleared: true }) }));
   });
 
-  test("the activity row names the contact only when they introduced themselves", async () => {
-    setContactNote.mockResolvedValue(detail({ introduced: false, name: "Priya Nair", email: "priya@sequoiacap.com" }));
+  test("the activity row names whoever the plan already un-redacted, and always carries the domain", async () => {
+    const metaOf = () => (recordActivity.mock.calls.at(-1) as unknown as [{ meta: Record<string, unknown> }])[0].meta;
+
+    // `setContactNote` hands back the DTO it has already redacted for this workspace's plan, so
+    // the row copies what is there. On Pro that is the name and address even for someone who
+    // never introduced themselves, which is what the sibling tag rows have always said.
+    setContactNote.mockResolvedValue(detail({ introduced: false }));
     await detailPatch(patchRequest({ note: "warm" }), ctx(CONTACT_ID));
-    expect(recordActivity).toHaveBeenCalledWith(
-      expect.objectContaining({ meta: expect.objectContaining({ contactName: null, contactEmail: null }) }),
-    );
+    expect(metaOf()).toEqual({
+      contactId: CONTACT_ID,
+      contactDomain: "sequoiacap.com",
+      contactName: "Priya Nair",
+      contactEmail: "priya@sequoiacap.com",
+      cleared: false,
+    });
+
+    // A redacted contact arrives with name and email already null. The row omits both and keeps
+    // the domain, so the feed reads "someone at sequoiacap.com" rather than "a contact".
+    setContactNote.mockResolvedValue(detail({ introduced: false, name: null, email: null }));
+    await detailPatch(patchRequest({ note: "warm" }), ctx(CONTACT_ID));
+    expect(metaOf()).toEqual({ contactId: CONTACT_ID, contactDomain: "sequoiacap.com", cleared: false });
+
+    // A webmail address has no domain to fall back on; the row is then the id alone.
+    setContactNote.mockResolvedValue(detail({ introduced: false, name: null, email: null, domain: null }));
+    await detailPatch(patchRequest({ note: "warm" }), ctx(CONTACT_ID));
+    expect(metaOf()).toEqual({ contactId: CONTACT_ID, cleared: false });
   });
 
   test("an unknown contact is 404 and records nothing", async () => {
@@ -316,5 +354,58 @@ describe("PATCH /api/contacts/:contactId", () => {
     const res = await detailPatch(patchRequest({ note: "warm" }), ctx(CONTACT_ID));
     expect(res.status).toBe(404);
     expect(recordActivity).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The other half of "agents read contacts, and only read" (decision 10).
+ *
+ * The note route refuses an API key and always has. Tagging a person is the same kind of claim
+ * about someone else, and the help article says an agent cannot do it, but the tag route's only
+ * gate was the workspace role, which a key passes. `lnkdrp_tag` never sends a contact target, so
+ * the rule was being kept by the tool surface instead of by the API.
+ */
+describe("tagging a contact through /api/tags/assignments", () => {
+  function tagRequest(body: unknown, method: "POST" | "DELETE" = "POST") {
+    return new Request("http://localhost/api/tags/assignments", {
+      method,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  test("an API key may not tag or untag a person, and is refused before the contact is looked up", async () => {
+    resolveActor.mockResolvedValue(viaKey);
+
+    const post = await tagPost(tagRequest({ targetKind: "contact", targetId: CONTACT_ID, name: "passed" }));
+    expect(post.status).toBe(403);
+    const posted = await post.json();
+    expect(posted.error).toBe("api_key_forbidden");
+    expect(posted.message).toContain("tag a person");
+    expect(attachTag).not.toHaveBeenCalled();
+    // Refused before the target check: a 404-versus-200 would itself say which contacts exist.
+    expect(contactFindOne).not.toHaveBeenCalled();
+    expect(recordActivity).not.toHaveBeenCalled();
+
+    const del = await tagDelete(tagRequest({ targetKind: "contact", targetId: CONTACT_ID, tagId: new Types.ObjectId().toString() }, "DELETE"));
+    expect(del.status).toBe(403);
+    expect((await del.json()).message).toContain("untag a person");
+    expect(detachTag).not.toHaveBeenCalled();
+    expect(contactFindOne).not.toHaveBeenCalled();
+  });
+
+  test("a key may still tag a document: lnkdrp_tag is a documented agent capability for those", async () => {
+    resolveActor.mockResolvedValue(viaKey);
+    const tagId = new Types.ObjectId().toString();
+    const res = await tagPost(tagRequest({ targetKind: "doc", targetId: new Types.ObjectId().toString(), tagId }));
+    expect(res.status).toBe(200);
+    expect(attachTag).toHaveBeenCalledWith(expect.objectContaining({ targetKind: "doc", tagId }));
+  });
+
+  test("a signed-in member may tag a person", async () => {
+    const tagId = new Types.ObjectId().toString();
+    const res = await tagPost(tagRequest({ targetKind: "contact", targetId: CONTACT_ID, tagId }));
+    expect(res.status).toBe(200);
+    expect(attachTag).toHaveBeenCalledWith(expect.objectContaining({ targetKind: "contact", targetId: CONTACT_ID, tagId }));
   });
 });

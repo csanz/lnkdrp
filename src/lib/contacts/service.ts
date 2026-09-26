@@ -245,6 +245,17 @@ export type ContactFilters = {
 
 export const CONTACT_SORTS: readonly ContactSort[] = ["lastSeen", "firstSeen", "name", "domain", "documentsRead", "visits"];
 
+/**
+ * The highest page number a list will honour.
+ *
+ * `limit` was clamped at both ends and `page` only at the bottom, so `?page=1e21` reached Mongo as
+ * `$skip: 5e22`, which is not a 64-bit integer: the aggregate threw and the route answered 500
+ * where a bad query parameter deserves an empty page. A million pages of 200 keeps `$skip` under
+ * 2e8, which is comfortably representable, and a stale bookmark past the end of a shrunken list
+ * still renders as empty rather than as an error.
+ */
+const CONTACTS_MAX_PAGE = 1_000_000;
+
 /** The stored row as the service reads it. Loose on purpose: `lean()` gives back what is there. */
 type ContactDoc = {
   _id: Types.ObjectId;
@@ -397,7 +408,7 @@ function pageArgs(params: { sort?: ContactSort; dir?: "asc" | "desc"; page?: num
   const sort: ContactSort = params.sort && CONTACT_SORTS.includes(params.sort) ? params.sort : "lastSeen";
   const dir: "asc" | "desc" = params.dir === "asc" || params.dir === "desc" ? params.dir : sort === "name" || sort === "domain" ? "asc" : "desc";
   const limit = Math.min(Math.max(Math.trunc(params.limit ?? 50) || 50, 1), 200);
-  const page = Math.max(Math.trunc(params.page ?? 1) || 1, 1);
+  const page = Math.min(Math.max(Math.trunc(params.page ?? 1) || 1, 1), CONTACTS_MAX_PAGE);
   return { sort, dir, limit, page };
 }
 

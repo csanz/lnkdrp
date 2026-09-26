@@ -103,8 +103,10 @@ vi.mock("@/lib/models/ProjectLinkView", () => ({ ProjectLinkViewModel: { updateO
 vi.mock("@/lib/models/OrgMembership", () => ({
   OrgMembershipModel: { find: () => ({ select: () => ({ lean: async () => [{ userId: OWNER }] }) }) },
 }));
+/** The signed-in reader's account, when a test wants one. Reset in `beforeEach`. */
+let signedInAccount: { name?: string | null; email?: string | null } | null = null;
 vi.mock("@/lib/models/User", () => ({
-  UserModel: { findById: () => ({ select: () => ({ lean: async () => null }) }) },
+  UserModel: { findById: () => ({ select: () => ({ lean: async () => signedInAccount }) }) },
 }));
 vi.mock("@/lib/models/Org", () => ({ ensurePersonalOrgForUserId: vi.fn(async () => ({ orgId: ORG })) }));
 vi.mock("@/lib/gating/actor", () => ({ tryResolveAuthUserId }));
@@ -135,14 +137,29 @@ vi.mock("@/lib/share/viewerIntroductionEmails", () => ({
   viewerIntroductionAppUrl: () => "https://lnkdrp.test",
 }));
 
+/**
+ * The `contactseen:` bucket, which is the only limiter here that has to remember anything.
+ *
+ * It *is* the once-per-sitting rule for contacts (docs/prds/lnkdrp-contacts.md decision 2): the
+ * first POST of a tab session takes the slot and every heartbeat after it finds the slot spent.
+ * A stateless "always ok" mock cannot see the case that mattered, where the first POST of a
+ * first-ever sitting skipped the limiter entirely and the next heartbeat counted a second visit.
+ * Every other bucket keeps the old behaviour.
+ */
+const contactSeenSpent = new Set<string>();
+
 vi.mock("@/lib/http/rateLimit", () => ({
   clientIpFromRequest: () => "203.0.113.7",
   // Buckets default to open; a test names the prefixes it wants exhausted.
-  rateLimit: async ({ key }: { key: string }) => ({
-    ok: !exhaustedBuckets.some((prefix) => key.startsWith(prefix)),
-    remaining: 0,
-    retryAfterSeconds: 60,
-  }),
+  rateLimit: async ({ key }: { key: string }) => {
+    if (exhaustedBuckets.some((prefix) => key.startsWith(prefix))) return { ok: false, remaining: 0, retryAfterSeconds: 60 };
+    if (key.startsWith("contactseen:")) {
+      const first = !contactSeenSpent.has(key);
+      contactSeenSpent.add(key);
+      return { ok: first, remaining: 0, retryAfterSeconds: 60 };
+    }
+    return { ok: true, remaining: 0, retryAfterSeconds: 60 };
+  },
   rateLimitedResponse: () => new Response("rate limited", { status: 429 }),
 }));
 
@@ -221,6 +238,8 @@ function pagesAdded(): unknown[] {
 
 beforeEach(() => {
   exhaustedBuckets.length = 0;
+  contactSeenSpent.clear();
+  signedInAccount = null;
   vi.clearAllMocks();
   afterCallbacks.length = 0;
   resolveShareLink.mockResolvedValue({ link: link(), doc: doc(), refusal: null });
@@ -612,5 +631,68 @@ describe("the new-reader fan-out", () => {
       expect(row.kind).toBe("share_views");
       expect(String(row.dedupeKey)).toContain("share_views");
     }
+  });
+});
+
+/**
+ * One sitting is one visit (docs/prds/lnkdrp-contacts.md decision 2).
+ *
+ * A signed-in reader's heartbeats all arrive on the same `visitId`, so the contacts capture is
+ * held to one per sitting by a `limit: 1` bucket. The bucket used to be consulted only when the
+ * POST had *not* created the `ShareView` row, which meant the very first POST of a first-ever
+ * sitting never spent the slot: the next heartbeat, seconds later, found it unspent and captured
+ * the same reader a second time. The row then said two visits and carried two `signed_in`
+ * sources for one reading, for ever, since every later sitting is correctly one.
+ */
+describe("a signed-in reader's first sitting", () => {
+  const READER = new Types.ObjectId();
+  const sitting = { botId: "bot-of-a-reader", visitId: "visit-of-a-reader", pageNumber: 1, tv: 2 };
+
+  beforeEach(() => {
+    tryResolveAuthUserId.mockResolvedValue({ userId: String(READER) });
+    signedInAccount = { name: "Priya Nair", email: "Priya@SequoiaCap.com" };
+  });
+
+  /** The POST that creates the row, then the heartbeat that finds it there. */
+  async function firstSittingTwoPosts() {
+    await post(sitting);
+    await drainAfter();
+    shareViewUpdateOne.mockImplementation(async () => ({ upsertedCount: 0, modifiedCount: 1 }));
+    await post(sitting);
+    await drainAfter();
+  }
+
+  test("counts one visit and one source, not two", async () => {
+    await firstSittingTwoPosts();
+
+    expect(upsertContact).toHaveBeenCalledTimes(1);
+    const captured = upsertContact.mock.calls[0]?.[0] as Record<string, any>;
+    expect(captured.source).toBe("signed_in");
+    expect(captured.email).toBe("priya@sequoiacap.com");
+    expect(captured.countsAsVisit).toBe(true);
+  });
+
+  test("the next sitting is captured again: the slot is per visit, not per reader", async () => {
+    await firstSittingTwoPosts();
+    await post({ ...sitting, visitId: "visit-the-next-day" });
+    await drainAfter();
+
+    expect(upsertContact).toHaveBeenCalledTimes(2);
+  });
+
+  test("a reader whose browser gives no visitId is still captured on the read that created the row", async () => {
+    // No `visitId` means no bucket key and no slot to take, so the created row is the only signal
+    // there is. Losing that would quietly stop capturing anyone with sessionStorage blocked.
+    await post({ botId: sitting.botId, pageNumber: sitting.pageNumber, tv: sitting.tv });
+    await drainAfter();
+
+    expect(upsertContact).toHaveBeenCalledTimes(1);
+  });
+
+  test("the owner reading their own link never becomes their own contact", async () => {
+    isOwnerSideViewer.mockResolvedValue(true);
+    await firstSittingTwoPosts();
+
+    expect(upsertContact).not.toHaveBeenCalled();
   });
 });

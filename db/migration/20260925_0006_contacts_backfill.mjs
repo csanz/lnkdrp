@@ -3,9 +3,11 @@
  *
  * The capture sites only see people from the moment they ship. Everyone a workspace has already
  * heard from is on a `ShareView` or `ProjectLinkView` row (an introduction, or a signed-in read),
- * a `ShareDownloadRequest` (the address they typed to ask for a file) or a `ShareViewerEmail`
- * (the confirmation flow's own record of an introduction), so the table is built from those once
- * and the page is full on day one rather than starting from the next visitor.
+ * a `ShareDownloadRequest` (the address they typed to ask for a file), a `ShareViewerEmail`
+ * (the confirmation flow's own record of an introduction) or a `request.upload_received` activity
+ * row with a signed-in uploader (the one request-inbox upload that carries an address), so the
+ * table is built from those once and the page is full on day one rather than starting from the
+ * next visitor.
  *
  * Same rules as `upsertContact` in src/lib/contacts/service.ts: the address is the identity,
  * folded; a webmail domain is not a company; owner-side rows are not contacts; a name-only reader
@@ -164,6 +166,7 @@ export async function up({ db }) {
   const downloadRequests = db.collection("sharedownloadrequests");
   const viewerEmails = db.collection("sharevieweremails");
   const sharelinks = db.collection("sharelinks");
+  const activity = db.collection("activityevents");
   const docs = db.collection("docs");
   const users = db.collection("users");
   const orgs = db.collection("orgs");
@@ -200,9 +203,20 @@ export async function up({ db }) {
     docOrgCache.set(key, id);
     return id;
   }
+  // The download requests each workspace owns, resolved once. The per-org loop below used to open
+  // an unfiltered cursor over the whole collection and throw away every row belonging to another
+  // workspace, so the walk cost workspaces x download requests; the doc ids are already being
+  // resolved here, so keeping them costs one map and turns that back into one indexed query per
+  // workspace (and none at all for the many workspaces that have no download requests).
+  const orgDownloadDocIds = new Map();
   for (const docId of await downloadRequests.distinct("docId")) {
     const id = await orgOfDoc(docId);
-    if (id) noteOrg(id);
+    if (!id) continue;
+    noteOrg(id);
+    const key = String(id);
+    const bucket = orgDownloadDocIds.get(key);
+    if (bucket) bucket.push(oid(docId));
+    else orgDownloadDocIds.set(key, [oid(docId)]);
   }
 
   // Which link is a project link, so a document read inside a data room carries the project too.
@@ -272,9 +286,11 @@ export async function up({ db }) {
       await fromView(row, { docId: null, projectId: oid(row.projectId) });
     }
 
-    for await (const row of downloadRequests.find({}, { projection: { shareId: 1, docId: 1, requesterEmail: 1, createdDate: 1 } })) {
-      const rowOrg = await orgOfDoc(row.docId);
-      if (!rowOrg || String(rowOrg) !== String(orgId)) continue;
+    const ownDownloadDocIds = orgDownloadDocIds.get(String(orgId)) ?? [];
+    const ownDownloadRequests = ownDownloadDocIds.length
+      ? downloadRequests.find({ docId: { $in: ownDownloadDocIds } }, { projection: { shareId: 1, docId: 1, requesterEmail: 1, createdDate: 1 } })
+      : [];
+    for await (const row of ownDownloadRequests) {
       totals.rows += 1;
       const email = normalizeEmail(row.requesterEmail);
       const at = asDate(row.createdDate);
@@ -299,6 +315,27 @@ export async function up({ db }) {
       const already = [...d.sources.values()].some((s) => s.kind === "introduced");
       if (!already) d.source("introduced", { shareId: row.shareId ?? null, at });
       else d.see(at);
+    }
+
+    // The fourth moment (decision 2): a request-inbox upload that carried an address. The uploads
+    // themselves are the wrong place to look — most request inboxes are public and collect no
+    // address at all — but a sign-in-required inbox writes the uploader onto its activity row, and
+    // that account's address is exactly the one the live capture site records from now on.
+    for await (const row of activity.find(
+      { orgId, type: "request.upload_received", userId: { $type: "objectId" } },
+      { projection: { userId: 1, projectId: 1, createdDate: 1 } },
+    )) {
+      totals.rows += 1;
+      const at = asDate(row.createdDate);
+      const u = await userIdentity(row.userId);
+      if (!u?.email || !at) {
+        totals.skipped += 1;
+        continue;
+      }
+      const d = draft(u.email);
+      d.named(u.name, at);
+      d.viewerUserId = oid(row.userId);
+      d.source("request_upload", { shareId: null, projectId: oid(row.projectId), at });
     }
 
     totals.contacts += drafts.size;

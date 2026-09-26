@@ -1,6 +1,10 @@
 # PRD — Contacts
 
-**Status:** Built 2026-09-25 (M1-M4 except links from reader pages/briefs/Slack posts, deferred); CSV export added at the owner's request
+**Status:** Built 2026-09-25 (M1-M4). CSV export added at the owner's request. Deferred, not
+missing: the links from reader pages, brief emails and Slack posts to a contact (decision 8); the
+list filters by document, project and source link (decision 5), where the API takes `docId`,
+`projectId` and `shareId` but no control or link in the product produces one yet; and the contacts
+count beside the sidebar entry (decision 5), where the entry is there and the count is not.
 **Owner:** chrissanz
 **Last updated:** 2026-09-25
 **Project:** lnkdrp
@@ -143,8 +147,8 @@ note.
 ## Verification
 
 1. Introduce yourself on a link from a fresh browser: a contact appears in the list within a
-   second (realtime, like the sidebar counts), named, with the link as its source and the
-   document in its history.
+   second, named, with the link as its source and the document in its history. The page refetches
+   on the realtime frames the capture already sends; the sidebar entry carries no count yet.
 2. Open a second document on another link with the same address: one contact, two documents,
    `lastSeenAt` moved, no duplicate.
 3. Request a download with a new address: a contact with no name, the request as its source.

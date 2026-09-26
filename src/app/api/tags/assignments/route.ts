@@ -13,13 +13,15 @@
  *
  * A contact target writes the person into the activity row's `meta` the way the plan allows: the
  * feed is read on Free too, and a contact who never introduced themselves is "Someone" there, as
- * everywhere else (docs/prds/lnkdrp-contacts.md, decision 4).
+ * everywhere else (docs/prds/lnkdrp-contacts.md, decision 4). A contact target is also the one
+ * kind an API key may not write: see `contactWriteRefusal`.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
@@ -82,6 +84,24 @@ async function targetIsInWorkspace(params: {
     default:
       return NOT_IN_WORKSPACE;
   }
+}
+
+/**
+ * An API key may tag a document or a project, and may not tag a person.
+ *
+ * `lnkdrp_tag` is a documented agent capability for documents and projects, and stays one. A
+ * contact is not: "an agent connected over MCP can read your contacts and one contact's history,
+ * and nothing more. It cannot create a contact, write a note or tag a person" is what the help
+ * article promises and what the note route next door already enforces with the same guard
+ * (docs/prds/lnkdrp-contacts.md, decision 10). `lnkdrp_tag` only ever sends `doc` or `project`, so
+ * the rule was being kept by the tool surface rather than by the API, and a workspace key posting
+ * `targetKind: "contact"` straight at this route went through.
+ *
+ * Refused before the target is looked up: the 404-versus-200 difference is itself an answer about
+ * which contact ids exist, and a caller that may not write should not get to ask.
+ */
+function contactWriteRefusal(actor: Actor, targetKind: TagTargetKind, what: string): NextResponse | null {
+  return targetKind === "contact" ? forbidApiKey(actor, what) : null;
 }
 
 /**
@@ -150,6 +170,8 @@ export async function POST(request: Request) {
       if (!targetKind || !targetId) {
         return applyTempUserHeaders(NextResponse.json({ error: "targetKind and targetId are required" }, { status: 400 }), actor);
       }
+      const keyRefusal = contactWriteRefusal(actor, targetKind, "tag a person");
+      if (keyRefusal) return keyRefusal;
       const target = await targetIsInWorkspace({ orgId: actor.orgId, targetKind, targetId });
       if (!target.ok) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -231,6 +253,8 @@ export async function DELETE(request: Request) {
           actor,
         );
       }
+      const keyRefusal = contactWriteRefusal(actor, targetKind, "untag a person");
+      if (keyRefusal) return keyRefusal;
       const target = await targetIsInWorkspace({ orgId: actor.orgId, targetKind, targetId });
       if (!target.ok) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);

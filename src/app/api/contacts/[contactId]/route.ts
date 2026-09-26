@@ -103,12 +103,17 @@ export async function PATCH(request: Request, ctx: Ctx) {
         userId: actor.userId,
         actorKind: "user",
         type: "contact.note_updated",
-        // The name only when the list would show it anyway: an introduced contact is visible on
-        // every plan, and the feed must not become the way round the Free redaction.
+        // The same shape the tag rows use, so one person reads the same way in both: `updated` is
+        // the DTO `setContactNote` already redacted for this workspace's plan, so copying its
+        // fields as they come is exactly "the name only when the list would show it anyway" — on
+        // Pro, or for a contact who introduced themselves. Absent fields are omitted rather than
+        // written as null, and the domain always rides along, so a redacted row reads "someone at
+        // sequoiacap.com" instead of falling through to "a contact".
         meta: {
           contactId: updated.id,
-          contactName: updated.introduced ? updated.name : null,
-          contactEmail: updated.introduced ? updated.email : null,
+          ...(updated.domain ? { contactDomain: updated.domain } : {}),
+          ...(updated.name ? { contactName: updated.name } : {}),
+          ...(updated.email ? { contactEmail: updated.email } : {}),
           cleared: text === "",
         },
         request,

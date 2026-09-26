@@ -44,7 +44,7 @@ Workspace members are emailed when recipients open or finish reading a link, on 
 
 ## Deleting documents and workspaces
 
-Deleting a workspace removes its contacts with it. Deleting a document, project or workspace removes it from view and disables its share links immediately. The records and files are marked deleted rather than erased at once and may remain in backups until purged. Contact support if you need a document permanently erased. Viewer activity is kept as long as the related document exists.
+Deleting a workspace takes its contacts out of reach with it, and deleting your account erases them. Deleting a document, project or workspace removes it from view and disables its share links immediately. The records and files are marked deleted rather than erased at once and may remain in backups until purged. Contact support if you need a document permanently erased. Viewer activity is kept as long as the related document exists.
 
 ## Deleting your account
 

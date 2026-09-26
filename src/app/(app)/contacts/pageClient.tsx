@@ -9,6 +9,9 @@
  * Identity follows the plan. On Free the API blanks name and email for anyone who did not
  * introduce themselves; those rows show the domain and a Pro hint, and a banner above the table
  * says why, so the blanks read as a plan and not as a bug.
+ *
+ * The list is live: it refetches on the realtime frames the capture moments already produce, so a
+ * person who introduces themselves on a link shows up here without anyone reloading.
  */
 "use client";
 
@@ -44,6 +47,7 @@ import {
   type ContactRow,
 } from "@/lib/client/useContacts";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { subscribeRealtime } from "@/lib/client/realtime";
 import type { TagDTO } from "@/lib/tags/service";
 
 /** How many tag chips a row shows before the rest become "+N". */
@@ -51,6 +55,9 @@ const ROW_TAGS_VISIBLE = 3;
 
 /** How long the search box waits after the last keystroke before asking the server. */
 const SEARCH_DEBOUNCE_MS = 250;
+
+/** How long a realtime nudge waits for the rest of its burst before the list refetches. */
+const REALTIME_SETTLE_MS = 400;
 
 const FIELD_CLASS =
   "h-8 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]";
@@ -174,7 +181,27 @@ export default function ContactsPageClient() {
     };
   }, []);
 
-  const { data, loading, pending, error } = useContacts(query);
+  const { data, loading, pending, error, reload } = useContacts(query);
+
+  // A contact appears while the page is open, without a reload (the PRD's first verification).
+  // No change stream on `contacts` is needed and none exists: every one of the capture moments
+  // rides on a frame the server already broadcasts — a `viewer` frame when a recipient arrives or
+  // re-answers "introduce yourself", and an `activity` frame for the rows those captures write —
+  // and `hello` covers the gap a dropped socket leaves, since the streams carry no resume token.
+  // The frames say nothing about who arrived; the rows are re-read through the gated API, which is
+  // the only place that knows the plan. Coalesced, because one arrival can produce several frames.
+  useEffect(() => {
+    let timer = 0;
+    const refresh = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(reload, REALTIME_SETTLE_MS);
+    };
+    const stops = (["viewer", "activity", "hello"] as const).map((t) => subscribeRealtime(t, refresh));
+    return () => {
+      window.clearTimeout(timer);
+      for (const stop of stops) stop();
+    };
+  }, [reload]);
   const showSkeleton = useSkeletonDelay(loading && !data);
 
   const update = (patch: Partial<ContactListQuery>) => setQuery((prev) => (prev ? { ...prev, ...patch, page: 1 } : prev));

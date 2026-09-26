@@ -17,7 +17,7 @@ Four moments create or update a contact:
 - **Introduced themselves**: they typed a name and address on a share link or in a data room.
 - **Signed in to read**: they opened your link while signed in to lnkdrp, so the account's address is theirs.
 - **Asked to download**: they requested a file and gave an address to send it to.
-- **Uploaded to a request**: they answered a request inbox with a file.
+- **Uploaded to a request**: they answered a request inbox with a file, on an inbox that asks people to sign in. A public inbox collects no address, so an upload to one is not a contact.
 
 A reader who never gives an address is not a contact. That visit is still recorded on the document, it just has nobody attached to it. Your own opens and your teammates' previews never create a contact.
 
@@ -56,13 +56,13 @@ Each contact has one note, for what the system cannot know. It keeps who wrote i
 
 ## What a contact page shows
 
-The person, then the history: every document they read, every data room they entered, and each of the moments they arrived through. Document rows link to the reader's page for that document, which is where the page-by-page detail lives.
+The person, then the history: every document they read, every data room they entered, and each of the moments they arrived through. A document row opens that document's metrics, where the readers and the page-by-page detail live.
 
 An address shows as **Verified** once the person has confirmed it by clicking the link lnkdrp sent them. Unconfirmed is normal and means only that: somebody typed it.
 
 ## Privacy and deletion
 
-A contact is another person's data, held by your workspace. Deleting the workspace, or deleting your account, removes its contacts with everything else. If a recipient asks you to remove them, write to us and it is one row per workspace rather than a scatter.
+A contact is another person's data, held by your workspace. Deleting your account erases the contacts of the workspaces that go with it. Deleting a workspace closes it and takes its contacts out of reach with it, the same as its documents and its analytics. If a recipient asks you to remove them, write to us and it is one row per workspace rather than a scatter.
 
 lnkdrp does not sell, share or cross-reference contacts between workspaces, and a contact is never used to mail that person anything.
 

@@ -7,8 +7,10 @@
  * copy of a page that already exists.
  *
  * The note is the one editable field. Anyone with the member role can write it; the button fails
- * closed while the plan snapshot loads, so nobody is shown a Save the API will refuse. Identity
- * follows the plan: a redacted contact reads as "Someone at <domain>" and the page says why.
+ * closed while the plan snapshot loads, so nobody is shown a Save the API will refuse. Saving and
+ * clearing both announce themselves in a live region, and clearing asks first, because a note is
+ * the one thing here a person wrote and the only copy of it. Identity follows the plan: a redacted
+ * contact reads as "Someone at <domain>" and the page says why.
  */
 "use client";
 
@@ -34,6 +36,16 @@ import { CONTACT_SOURCE_LABELS, fetchContact, saveContactNote, type ContactDetai
 /** The most a note may hold; the API refuses longer. */
 const NOTE_MAX = 2000;
 
+/**
+ * The look of a button that is unavailable but still focusable.
+ *
+ * `Button` styles the native `disabled` attribute, which is the wrong tool for a control that
+ * becomes unavailable under the person's own cursor: the browser blurs a focused element the
+ * moment it is disabled, so saving a note dropped a keyboard user back at the top of the page.
+ * These buttons carry `aria-disabled` instead and keep their place in the tab order.
+ */
+const SOFT_DISABLED = "aria-disabled:cursor-not-allowed aria-disabled:opacity-60";
+
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">{children}</h2>;
 }
@@ -42,11 +54,18 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
   return <div className={["rounded-2xl border border-[var(--border)] bg-[var(--panel)]", className ?? ""].join(" ")}>{children}</div>;
 }
 
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
+/**
+ * One labelled value in the identity card.
+ *
+ * Values clip by default so the six facts line up. `wrap` is the exception for the address: it is
+ * the payload of this card, it is routinely longer than the column, and a clipped address on the
+ * one screen whose job is to say who this person is cannot be read anywhere else.
+ */
+function Fact({ label, wrap, children }: { label: string; wrap?: boolean; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">{label}</dt>
-      <dd className="mt-0.5 truncate text-sm text-[var(--fg)]">{children}</dd>
+      <dd className={["mt-0.5 text-sm text-[var(--fg)]", wrap ? "break-words" : "truncate"].join(" ")}>{children}</dd>
     </div>
   );
 }
@@ -64,10 +83,16 @@ function NoteEditor({
   const [draft, setDraft] = useState(saved);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   useEffect(() => {
     setDraft(contact.note?.text ?? "");
   }, [contact.id, contact.note?.text]);
+
+  useEffect(() => {
+    setConfirmingClear(false);
+  }, [contact.id]);
 
   const dirty = draft.trim() !== saved;
 
@@ -75,8 +100,11 @@ function NoteEditor({
     if (busy) return;
     setBusy(true);
     setError(null);
+    setStatus(null);
     try {
       const next = await saveContactNote(contact.id, text);
+      setConfirmingClear(false);
+      setStatus(text ? "Note saved." : "Note cleared.");
       onSaved(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save the note.");
@@ -108,19 +136,65 @@ function NoteEditor({
           ) : null}
         </span>
         {canEdit ? (
+          // `aria-disabled`, not the `disabled` attribute: a saved note makes Save unavailable, and
+          // a native `disabled` on the element that was just clicked throws keyboard focus back to
+          // <body> with nothing said. These stay focusable and announce themselves as unavailable,
+          // and `save` refuses the click anyway.
           <div className="flex items-center gap-2">
-            {saved ? (
-              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void save("")}>
-                Clear
-              </Button>
-            ) : null}
-            <Button variant="solid" size="sm" disabled={busy || !dirty} onClick={() => void save(draft)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={SOFT_DISABLED}
+              aria-disabled={busy || !saved}
+              onClick={() => {
+                if (busy || !saved) return;
+                setConfirmingClear((v) => !v);
+              }}
+            >
+              Clear
+            </Button>
+            <Button
+              variant="solid"
+              size="sm"
+              className={SOFT_DISABLED}
+              aria-disabled={busy || !dirty || confirmingClear}
+              onClick={() => {
+                if (busy || !dirty || confirmingClear) return;
+                void save(draft);
+              }}
+            >
               {busy ? "Saving" : "Save"}
             </Button>
           </div>
         ) : null}
       </div>
-      {error ? <div className="mt-2 text-[12px] font-medium text-red-600">{error}</div> : null}
+      {confirmingClear ? (
+        // A note is team knowledge and nothing keeps a copy of it: the server writes `note: null`,
+        // the activity row deliberately records only that it was cleared, and the textarea is reset
+        // from the response, so there is nothing to undo afterwards. One question first, in place,
+        // the way every other destructive action in the app asks it.
+        <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
+          <p className="text-[13px] text-[var(--fg)]">
+            Clear this note? <span className="text-[var(--muted)]">It cannot be brought back.</span>
+          </p>
+          <div className="mt-2.5 flex items-center gap-2">
+            <Button variant="danger" size="sm" className={SOFT_DISABLED} aria-disabled={busy} onClick={() => { if (!busy) void save(""); }}>
+              {busy ? "Clearing" : "Clear"}
+            </Button>
+            <Button variant="secondary" size="sm" className={SOFT_DISABLED} aria-disabled={busy} onClick={() => { if (!busy) setConfirmingClear(false); }}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      <div role="status" aria-live="polite" className="mt-2 text-[12px] text-[var(--muted)] empty:mt-0">
+        {status && !error ? status : ""}
+      </div>
+      {error ? (
+        <div role="alert" className="mt-2 text-[12px] font-medium text-red-600">
+          {error}
+        </div>
+      ) : null}
     </Card>
   );
 }
@@ -235,10 +309,12 @@ export default function ContactPageClient({ contactId }: { contactId: string }) 
                   ) : null}
                   <dl className="grid gap-4 sm:grid-cols-2">
                     <Fact label="Name">{contact.name ?? <span className="text-[var(--muted)]">Someone</span>}</Fact>
-                    <Fact label="Email">
+                    <Fact label="Email" wrap>
                       {contact.email ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <span className="truncate">{contact.email}</span>
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
+                          <a href={`mailto:${contact.email}`} title={contact.email} className="break-all hover:underline">
+                            {contact.email}
+                          </a>
                           {contact.verified ? (
                             <span className="rounded-full border border-[var(--border)] px-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
                               verified

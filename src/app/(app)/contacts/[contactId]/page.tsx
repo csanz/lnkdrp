@@ -3,7 +3,9 @@
  *
  * The reader page (`/doc/:id/metrics/viewer/:key`) answers "what did she read here"; this page
  * answers "who is she, what has she touched, and what do we want to remember about her". It
- * links down to the reader pages rather than copying them.
+ * links down to each document's metrics rather than copying anything, and the per-reader page it
+ * would ideally link to is deferred with the rest of decision 8: a contact does not carry the
+ * reader key (`u_<userId>` / `a_<botIdHash>`) that addresses one.
  */
 import type { Metadata } from "next";
 
