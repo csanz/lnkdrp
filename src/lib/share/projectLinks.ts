@@ -46,6 +46,7 @@ import {
   type ShareLinkStats,
 } from "./links";
 import { switchMayRestore } from "@/lib/share/links";
+import { WITH_LINK_PASSWORD, WITH_LINK_PASSWORD_PROJECTION } from "@/lib/share/passwordSelect";
 
 /**
  * Runaway guard, not a plan limit — the same role `SHARE_LINKS_PER_DOC_MAX` plays for documents.
@@ -208,7 +209,10 @@ export async function ensureDefaultProjectLink(
   opts: { createdVia?: "web" | "api" | "mcp" | "default" } = {},
 ): Promise<ShareLink | null> {
   await connectMongo();
-  const existing = await ShareLinkModel.findOne({ projectId: project._id, isDefault: true }).lean<ShareLink>();
+  // Every `ShareLink` read here opts back in to the password fields (`select: false` on the schema):
+  // the rows feed `projectLinkPasswordEnabled`, `shareLinkUnlocked` and `toProjectLinkDTO`, and a
+  // row read without its hash is a locked room that answers as an open one.
+  const existing = await ShareLinkModel.findOne({ projectId: project._id, isDefault: true }, WITH_LINK_PASSWORD).lean<ShareLink>();
   if (existing) return existing;
   // `ShareLink.orgId` is `required: true`, so a project that predates workspaces — no `orgId`, only
   // a `userId` — used to make this a *throw* rather than a backfill, and the throw surfaced on the
@@ -228,7 +232,7 @@ export async function ensureDefaultProjectLink(
   // caller falls back to the legacy `Project.shareId` render instead of 500-ing.
   if (!orgId) return null;
   let shareId = (project.shareId && String(project.shareId).trim()) || newShareId();
-  const byShareId = await ShareLinkModel.findOne({ shareId }).lean<ShareLink>();
+  const byShareId = await ShareLinkModel.findOne({ shareId }, WITH_LINK_PASSWORD).lean<ShareLink>();
   // `Project.shareId` and `Doc.shareId` are unique within their own collections but nothing
   // enforces uniqueness across the two, so a project's slug can already be taken by a document
   // link. Mint a fresh one and re-point the project rather than let the unique index refuse the
@@ -259,7 +263,7 @@ export async function ensureDefaultProjectLink(
     return created.toObject() as ShareLink;
   } catch (e) {
     // Lost a race on the unique index: return whichever row won.
-    const again = await ShareLinkModel.findOne({ $or: [{ shareId }, { projectId: project._id, isDefault: true }] }).lean<ShareLink>();
+    const again = await ShareLinkModel.findOne({ $or: [{ shareId }, { projectId: project._id, isDefault: true }] }, WITH_LINK_PASSWORD).lean<ShareLink>();
     if (again) return again;
     throw e;
   }
@@ -286,7 +290,8 @@ export async function resolveProjectLink(shareId: string, opts: { select?: Recor
   const slug = (shareId || "").trim();
   if (!slug) return null;
   await connectMongo();
-  let link = await ShareLinkModel.findOne({ shareId: slug }).lean<ShareLink>();
+  // `WITH_LINK_PASSWORD` is what makes this resolver safe to gate on; see `resolveShareLink`.
+  let link = await ShareLinkModel.findOne({ shareId: slug }, WITH_LINK_PASSWORD).lean<ShareLink>();
   if (link && !link.projectId) return null;
   let project: (ProjectLike & Record<string, unknown>) | null = null;
   if (link) {
@@ -354,7 +359,7 @@ export async function listProjectLinks(input: {
   if (!project) return [];
   const filter: Record<string, unknown> = { projectId: oid(input.projectId), ...PROJECT_LINK_FILTER };
   if (!input.includeArchived) filter.archivedAt = null;
-  const rows = await ShareLinkModel.find(filter).lean<ShareLink[]>();
+  const rows = await ShareLinkModel.find(filter, WITH_LINK_PASSWORD).lean<ShareLink[]>();
   return rows.sort((a, b) => (a.isDefault === b.isDefault ? (b.createdDate?.getTime() ?? 0) - (a.createdDate?.getTime() ?? 0) : a.isDefault ? -1 : 1));
 }
 
@@ -387,7 +392,7 @@ export async function listProjectLinksPage(input: {
     Object.assign(filter, { $text: { $search: query } });
     // `score` isn't a schema field; Mongoose's projection typing has no slot for a `$meta`
     // projection, hence the cast. `.sort()` accepts `{ $meta }` natively and needs none.
-    const rows = await ShareLinkModel.find(filter, { score: { $meta: "textScore" } } as unknown as ProjectionType<ShareLink>)
+    const rows = await ShareLinkModel.find(filter, { score: { $meta: "textScore" }, ...WITH_LINK_PASSWORD_PROJECTION } as unknown as ProjectionType<ShareLink>)
       .sort({ score: { $meta: "textScore" } })
       .limit(limit)
       .lean<ShareLink[]>();
@@ -396,7 +401,7 @@ export async function listProjectLinksPage(input: {
 
   const [total, rows] = await Promise.all([
     ShareLinkModel.countDocuments(filter),
-    ShareLinkModel.find(filter)
+    ShareLinkModel.find(filter, WITH_LINK_PASSWORD)
       .sort({ isDefault: -1, createdDate: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -518,7 +523,7 @@ export async function updateProjectLink(input: {
     orgId: oid(input.orgId),
     archivedAt: null,
     ...PROJECT_LINK_FILTER,
-  }).lean<ShareLink>();
+  }, WITH_LINK_PASSWORD).lean<ShareLink>();
   if (!link) throw new ShareLinkError("not_found", "Link not found.");
 
   const set: Record<string, unknown> = {};
@@ -535,7 +540,7 @@ export async function updateProjectLink(input: {
     set.disabledByDocSwitch = !s.enabled && input.viaProjectSwitch === true;
   }
   if (Object.keys(set).length === 0) return { link };
-  const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true }).lean<ShareLink>();
+  const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true, projection: WITH_LINK_PASSWORD }).lean<ShareLink>();
 
   /**
    * Enabling one link republishes the page, so it has to restore what the page switch took down.
@@ -563,12 +568,12 @@ export async function updateProjectLink(input: {
       _id: { $ne: link._id },
       enabled: false,
       disabledByDocSwitch: true,
-    }).lean<ShareLink[]>();
+    }, WITH_LINK_PASSWORD).lean<ShareLink[]>();
     for (const sib of siblings) {
       const back = await ShareLinkModel.findOneAndUpdate(
         { _id: sib._id },
         { $set: { enabled: true, disabledByDocSwitch: false } },
-        { new: true },
+        { new: true, projection: WITH_LINK_PASSWORD },
       ).lean<ShareLink>();
       if (back) restored.push(back);
     }
@@ -600,14 +605,14 @@ export async function setDefaultProjectLink(input: {
     projectId,
     archivedAt: null,
     ...PROJECT_LINK_FILTER,
-  }).lean<ShareLink>();
+  }, WITH_LINK_PASSWORD).lean<ShareLink>();
   if (!next) throw new ShareLinkError("not_found", "Link not found.");
   if (next.isDefault) return next;
   // Scoped to this project, and explicitly to project links: an `{ isDefault: true }` filter that
   // ever lost its owner clause would clear the default on every link in the database, document
   // links included. `setDefaultShareLink` in links.ts carries the mirror-image comment.
   await ShareLinkModel.updateMany({ projectId, ...PROJECT_LINK_FILTER, isDefault: true }, { $set: { isDefault: false } });
-  const updated = await ShareLinkModel.findOneAndUpdate({ _id: next._id }, { $set: { isDefault: true } }, { new: true }).lean<ShareLink>();
+  const updated = await ShareLinkModel.findOneAndUpdate({ _id: next._id }, { $set: { isDefault: true } }, { new: true, projection: WITH_LINK_PASSWORD }).lean<ShareLink>();
   // Moves `Project.shareId` onto the new default.
   await syncProjectShareState(projectId);
   return updated ?? next;
@@ -646,10 +651,10 @@ export async function archiveProjectLink(input: { orgId: string | Types.ObjectId
     orgId: oid(input.orgId),
     archivedAt: null,
     ...PROJECT_LINK_FILTER,
-  }).lean<ShareLink>();
+  }, WITH_LINK_PASSWORD).lean<ShareLink>();
   if (!link) throw new ShareLinkError("not_found", "Link not found.");
   if (link.isDefault) throw new ShareLinkError("validation", "The default link cannot be deleted; disable it instead.");
-  const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: { archivedAt: new Date(), enabled: false } }, { new: true }).lean<ShareLink>();
+  const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: { archivedAt: new Date(), enabled: false } }, { new: true, projection: WITH_LINK_PASSWORD }).lean<ShareLink>();
   await syncProjectShareState(link.projectId as Types.ObjectId);
   return updated ?? link;
 }

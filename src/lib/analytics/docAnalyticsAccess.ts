@@ -11,6 +11,7 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast, type Actor } from "@/lib/gating/actor";
 import {
   analyticsTierForPlan,
@@ -48,22 +49,9 @@ export async function resolveDocAnalyticsAccess(request: Request, docId: string)
   await connectMongo();
   const docObjectId = new Types.ObjectId(docId);
   const orgId = new Types.ObjectId(actor.orgId);
+  const legacyUserId = new Types.ObjectId(actor.userId);
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-  const raw = await DocModel.findOne(
-    allowLegacyByUserId
-      ? {
-          $or: [
-            { _id: docObjectId, orgId, isDeleted: { $ne: true } },
-            {
-              _id: docObjectId,
-              userId: new Types.ObjectId(actor.userId),
-              isDeleted: { $ne: true },
-              $or: [{ orgId: { $exists: false } }, { orgId: null }],
-            },
-          ],
-        }
-      : { _id: docObjectId, orgId, isDeleted: { $ne: true } },
-  )
+  const raw = await DocModel.findOne(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId))
     .select({ _id: 1, orgId: 1, title: 1, slideNodes: 1, pageSlugs: 1 })
     .lean<{ _id: Types.ObjectId; orgId?: Types.ObjectId | null; title?: unknown; slideNodes?: unknown; pageSlugs?: unknown }>();
   if (!raw) return fail(404, "Not found");

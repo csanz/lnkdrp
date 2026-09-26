@@ -103,18 +103,8 @@ export async function POST(
       // ignore; request behavior should still work based on token existence
     }
 
-    const doc = await DocModel.findOne({
-      _id: new Types.ObjectId(docId),
-      ...(allowLegacyByUserId
-        ? {
-            $or: [
-              { orgId },
-              { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-            ],
-          }
-        : { orgId }),
-      isDeleted: { $ne: true },
-    })
+    // The same rule the two writes below already use: one shared match, not a third copy of it.
+    const doc = await DocModel.findOne(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId))
       .select({ _id: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Doc not found" }, { status: 404 });

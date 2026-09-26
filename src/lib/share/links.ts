@@ -27,6 +27,7 @@ import { newShareId } from "@/lib/crypto/randomBase62";
 import { encryptSharePassword, hashSharePassword, shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { checkLimit, type LimitCheck } from "@/lib/billing/planLimits";
 import { SHARE_PASSWORD_MIN, SHARE_PASSWORD_MAX } from "./passwordPolicy";
+import { WITH_LINK_PASSWORD, WITH_LINK_PASSWORD_PROJECTION } from "./passwordSelect";
 import { shareAuthCookieMatches } from "./cookieCompare";
 
 export const SHARE_LINK_LABEL_MAX = 80;
@@ -254,7 +255,10 @@ export function toShareLinkDTO(link: ShareLink, stats?: ShareLinkStats | null): 
  */
 async function ensureDefaultLinkOrNull(doc: DocLike, opts: { createdVia?: "web" | "api" | "mcp" } = {}): Promise<ShareLink | null> {
   await connectMongo();
-  const existing = await ShareLinkModel.findOne({ docId: doc._id, isDefault: true }).lean<ShareLink>();
+  // Every `ShareLink` read in this file opts back in to the password fields (`select: false` on the
+  // schema): the rows it returns feed `shareLinkUnlocked`, `toShareLinkDTO.passwordEnabled` and the
+  // `Doc` mirror, and a row without its hash reads as a link without a password.
+  const existing = await ShareLinkModel.findOne({ docId: doc._id, isDefault: true }, WITH_LINK_PASSWORD).lean<ShareLink>();
   if (existing) return existing;
   // `ShareLink.orgId` is `required: true`, so a document that predates workspaces — no `orgId`,
   // only a `userId`, which is exactly the row `buildDocMatch`'s `allowLegacyByUserId` exists to
@@ -277,7 +281,7 @@ async function ensureDefaultLinkOrNull(doc: DocLike, opts: { createdVia?: "web" 
   // treats the slug as a miss instead of 500-ing on it.
   if (!orgId) return null;
   let shareId = (doc.shareId && String(doc.shareId).trim()) || newShareId();
-  const byShareId = await ShareLinkModel.findOne({ shareId }).lean<ShareLink>();
+  const byShareId = await ShareLinkModel.findOne({ shareId }, WITH_LINK_PASSWORD).lean<ShareLink>();
   // `Doc.shareId` and `Project.shareId` are unique in their own collections but not against each
   // other, so a legacy `Doc.shareId` can collide with a project link's slug. Taking a fresh slug is
   // the only safe answer: the unique index would refuse the insert, and adopting the project's row
@@ -315,7 +319,7 @@ async function ensureDefaultLinkOrNull(doc: DocLike, opts: { createdVia?: "web" 
     return created.toObject() as ShareLink;
   } catch (e) {
     // Lost a race on the unique index: return whichever row won.
-    const again = await ShareLinkModel.findOne({ $or: [{ shareId }, { docId: doc._id, isDefault: true }] }).lean<ShareLink>();
+    const again = await ShareLinkModel.findOne({ $or: [{ shareId }, { docId: doc._id, isDefault: true }] }, WITH_LINK_PASSWORD).lean<ShareLink>();
     if (again) return again;
     throw e;
   }
@@ -353,7 +357,9 @@ export async function resolveShareLink(shareId: string, opts: { select?: Record<
   const slug = (shareId || "").trim();
   if (!slug) return null;
   await connectMongo();
-  let link = await ShareLinkModel.findOne({ shareId: slug }).lean<ShareLink>();
+  // `WITH_LINK_PASSWORD` is what makes this resolver safe to gate on: the password fields are
+  // `select: false`, and a row read without them would pass `shareLinkUnlocked` as an open link.
+  let link = await ShareLinkModel.findOne({ shareId: slug }, WITH_LINK_PASSWORD).lean<ShareLink>();
   // A project link lives in the same slug namespace but has no document: `/s/:shareId` and every
   // caller below it must refuse it outright. Without this the `DocModel.findOne({ _id: null })`
   // underneath returns nothing and the slug reports `refusal: "doc_gone"` — a 404 either way, but
@@ -444,7 +450,7 @@ export async function listShareLinks(input: { orgId: string | Types.ObjectId; do
   await ensureDefaultLink(doc);
   const filter: Record<string, unknown> = { docId };
   if (!input.includeArchived) filter.archivedAt = null;
-  const rows = await ShareLinkModel.find(filter).lean<ShareLink[]>();
+  const rows = await ShareLinkModel.find(filter, WITH_LINK_PASSWORD).lean<ShareLink[]>();
   return rows.sort((a, b) => (a.isDefault === b.isDefault ? (b.createdDate?.getTime() ?? 0) - (a.createdDate?.getTime() ?? 0) : a.isDefault ? -1 : 1));
 }
 
@@ -489,7 +495,7 @@ export async function listShareLinksPage(input: {
     // `score` isn't a schema field — Mongoose's projection typing doesn't have a slot for a
     // `$meta` projection, hence the cast on find()'s second argument; `.sort()` already accepts
     // `{ $meta }` natively and needs none.
-    const rows = await ShareLinkModel.find(filter, { score: { $meta: "textScore" } } as unknown as ProjectionType<ShareLink>)
+    const rows = await ShareLinkModel.find(filter, { score: { $meta: "textScore" }, ...WITH_LINK_PASSWORD_PROJECTION } as unknown as ProjectionType<ShareLink>)
       .sort({ score: { $meta: "textScore" } })
       .limit(limit)
       .lean<ShareLink[]>();
@@ -500,7 +506,7 @@ export async function listShareLinksPage(input: {
     ShareLinkModel.countDocuments(filter),
     // Default first, then newest — the same order `listShareLinks` sorts to in JS, done here in
     // Mongo so `skip`/`limit` land on the right rows instead of an arbitrary find() order.
-    ShareLinkModel.find(filter)
+    ShareLinkModel.find(filter, WITH_LINK_PASSWORD)
       .sort({ isDefault: -1, createdDate: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -728,7 +734,9 @@ async function isDocCurrentlyShared(docId: Types.ObjectId): Promise<boolean> {
 export async function syncDocShareState(docId: string | Types.ObjectId): Promise<void> {
   await connectMongo();
   const id = oid(docId);
-  const links = await ShareLinkModel.find({ docId: id, archivedAt: null }).lean<ShareLink[]>();
+  // Opted in: the default link's password material is mirrored onto the document below, and a
+  // read without it would wipe the mirror on every settings change.
+  const links = await ShareLinkModel.find({ docId: id, archivedAt: null }, WITH_LINK_PASSWORD).lean<ShareLink[]>();
   const anyActive = links.some((l) => isLinkActive(l));
   const def = links.find((l) => l.isDefault) ?? null;
   const set: Record<string, unknown> = { shareEnabled: anyActive };
@@ -855,7 +863,7 @@ export async function updateShareLink(input: {
   // `DOC_LINK_FILTER`: a link id addressed through a document route must be a document link, or a
   // caller holding a project link's id could patch it here — where `syncDocShareState(link.docId)`
   // below would then run with no document. Project links are patched by `updateProjectLink()`.
-  const link = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId: oid(input.orgId), archivedAt: null, ...DOC_LINK_FILTER }).lean<ShareLink>();
+  const link = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId: oid(input.orgId), archivedAt: null, ...DOC_LINK_FILTER }, WITH_LINK_PASSWORD).lean<ShareLink>();
   if (!link) throw new ShareLinkError("not_found", "Link not found.");
   const set: Record<string, unknown> = {};
   const s = input.settings;
@@ -897,7 +905,7 @@ export async function updateShareLink(input: {
     set.disabledByDocSwitch = !s.enabled && input.viaDocSwitch === true;
   }
   if (Object.keys(set).length === 0) return { link, limit };
-  const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true }).lean<ShareLink>();
+  const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true, projection: WITH_LINK_PASSWORD }).lean<ShareLink>();
 
   /**
    * Enabling one link re-shares the document, so it has to restore what the document switch took
@@ -922,12 +930,12 @@ export async function updateShareLink(input: {
       _id: { $ne: link._id },
       enabled: false,
       disabledByDocSwitch: true,
-    }).lean<ShareLink[]>();
+    }, WITH_LINK_PASSWORD).lean<ShareLink[]>();
     for (const sib of siblings) {
       const back = await ShareLinkModel.findOneAndUpdate(
         { _id: sib._id },
         { $set: { enabled: true, disabledByDocSwitch: false } },
-        { new: true },
+        { new: true, projection: WITH_LINK_PASSWORD },
       ).lean<ShareLink>();
       if (back) restored.push(back);
     }
@@ -953,14 +961,14 @@ export async function setDefaultShareLink(input: {
   await connectMongo();
   const orgId = oid(input.orgId);
   const docId = oid(input.docId);
-  const next = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId, docId, archivedAt: null, ...DOC_LINK_FILTER }).lean<ShareLink>();
+  const next = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId, docId, archivedAt: null, ...DOC_LINK_FILTER }, WITH_LINK_PASSWORD).lean<ShareLink>();
   if (!next) throw new ShareLinkError("not_found", "Link not found.");
   if (next.isDefault) return next;
   // Scoped to this document, and explicitly to document links: an `{ isDefault: true }` filter that
   // ever loses its owner clause would clear the default on every link in the database, project
   // links included. `syncProjectShareState` in projectLinks.ts carries the mirror-image comment.
   await ShareLinkModel.updateMany({ docId, ...DOC_LINK_FILTER, isDefault: true }, { $set: { isDefault: false } });
-  const updated = await ShareLinkModel.findOneAndUpdate({ _id: next._id }, { $set: { isDefault: true } }, { new: true }).lean<ShareLink>();
+  const updated = await ShareLinkModel.findOneAndUpdate({ _id: next._id }, { $set: { isDefault: true } }, { new: true, projection: WITH_LINK_PASSWORD }).lean<ShareLink>();
   // Moves `Doc.shareId` and mirrors the new default's settings onto the legacy document fields.
   await syncDocShareState(docId);
   return updated ?? next;
@@ -969,10 +977,10 @@ export async function setDefaultShareLink(input: {
 /** Soft-delete a link: it stops resolving; its analytics stay. The default link cannot be archived (disable it instead). */
 export async function archiveShareLink(input: { orgId: string | Types.ObjectId; linkId: string | Types.ObjectId }): Promise<ShareLink> {
   await connectMongo();
-  const link = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId: oid(input.orgId), archivedAt: null, ...DOC_LINK_FILTER }).lean<ShareLink>();
+  const link = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId: oid(input.orgId), archivedAt: null, ...DOC_LINK_FILTER }, WITH_LINK_PASSWORD).lean<ShareLink>();
   if (!link) throw new ShareLinkError("not_found", "Link not found.");
   if (link.isDefault) throw new ShareLinkError("validation", "The default link cannot be deleted; disable it instead.");
-  const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: { archivedAt: new Date(), enabled: false } }, { new: true }).lean<ShareLink>();
+  const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: { archivedAt: new Date(), enabled: false } }, { new: true, projection: WITH_LINK_PASSWORD }).lean<ShareLink>();
   // `DOC_LINK_FILTER` on the lookup above guarantees a document link, so `docId` is set.
   await syncDocShareState(link.docId as Types.ObjectId);
   return updated ?? link;

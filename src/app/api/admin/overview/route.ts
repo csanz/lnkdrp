@@ -139,8 +139,14 @@ export async function GET(request: Request) {
      * documents and 100 credits was one of those.
      *
      * Two numbers per limit, because they answer different questions: `hits` is how often the wall
-     * is met, `workspaces` is how many distinct people meet it. A single workspace retrying twenty
-     * times looks like demand in the first number and like one frustrated person in the second.
+     * is met, `workspaces` is how many distinct people meet it. A single workspace coming back to
+     * the same wall day after day looks like demand in the first number and like one frustrated
+     * person in the second.
+     *
+     * `hits` counts walls hit, not refusals. Since 2026-09-25 `planLimitResponse`
+     * (`src/lib/billing/planLimits.ts`) writes the row once per workspace and limit per
+     * `LIMIT_HIT_DEDUPE_MS` (10 minutes, per instance), so twenty retries inside that window are one
+     * row here. Rows written before that date are one per refusal; the two are not comparable.
      */
     ActivityEventModel.aggregate([
       { $match: { type: "plan.limit_reached", createdDate: { $gte: since } } },

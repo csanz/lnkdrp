@@ -6,6 +6,7 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 import { ensureDefaultLink, updateShareLink } from "@/lib/share/links";
 import { SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN } from "@/lib/share/passwordPolicy";
+import { WITH_DOC_PASSWORD_HASH } from "@/lib/share/passwordSelect";
 import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logger";
 import { debugError } from "@/lib/debug";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
@@ -131,7 +132,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       const updated = await DocModel.findOneAndUpdate(
         { ...docMatch },
         { $set: { sharePasswordHash: null, sharePasswordSalt: null, sharePasswordEnc: null, sharePasswordEncIv: null, sharePasswordEncTag: null } },
-        { new: true },
+        // The mirror is `select: false`; the response below reads its hash to report the state.
+        { new: true, projection: WITH_DOC_PASSWORD_HASH },
       ).lean();
       if (!updated) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -181,7 +183,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
           sharePasswordEncTag: enc.tag,
         },
       },
-      { new: true },
+      { new: true, projection: WITH_DOC_PASSWORD_HASH },
     ).lean();
     if (!updated) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);

@@ -68,11 +68,14 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
 import { PROJECT_LINK_FILTER, ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { toShareLinkDTO } from "@/lib/share/links";
+import { WITH_LINK_PASSWORD } from "@/lib/share/passwordSelect";
 import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
 import { buildAnalyticsTeaser } from "@/lib/analytics/teaser";
 import { debugError } from "@/lib/debug";
 import { ProjectModel } from "@/lib/models/Project";
+import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { projectLinkMetricsHref } from "@/lib/analytics/workspace/shape";
+import { pickReaderIdentity, type ShareViewIdentity } from "@/lib/share/readerIdentity";
 import { splitProjectViewerKey, viewerKeyMatchClause } from "@/lib/share/projectPublic";
 import {
   ACTIVITY_DAY_KEY_EXPR,
@@ -306,8 +309,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // gone". An agent asked how a revoked link performed reported no traffic, confidently. The
       // shareId-only form already refused it; this is the form the tool description recommends for
       // a non-default link, so it was the one most likely to be asked.
+      //
+      // `WITH_LINK_PASSWORD` because this row is returned as `link: toShareLinkDTO(link)`, whose
+      // `passwordEnabled` is `Boolean(passwordHash)`; the field is `select: false`, so a bare read
+      // told the metrics page "Password: none" about every locked link.
       const link = shareIdFilter
-        ? await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId, archivedAt: null }).lean<ShareLink>()
+        ? await ShareLinkModel.findOne(
+            { shareId: shareIdFilter, docId: docObjectId, archivedAt: null },
+            WITH_LINK_PASSWORD,
+          ).lean<ShareLink>()
         : null;
       if (shareIdFilter && !link) {
         // Separate the two 404s: a slug that was never on this document, and one that was deleted.
@@ -1113,6 +1123,84 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             const projectById = new Map(projects.map((p) => [String(p._id), p.name ?? null]));
             const linkBySlug = new Map(links.map((l) => [l.shareId, l]));
 
+            /** A name or an email that is actually there, so an empty string is not mistaken for one. */
+            const named = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+            /**
+             * One arrival row's two addresses: `<shareId>|u:<userId>` signed in, `<shareId>|a:<digest>`
+             * not. Per link, because the same person arriving through two data rooms introduced
+             * themselves to each of them separately and may have given two different names.
+             */
+            const identityKey = (shareId: string, viewerUserId: unknown, digest: string): string =>
+              viewerUserId ? `${shareId}|u:${String(viewerUserId)}` : digest ? `${shareId}|a:${digest}` : "";
+            /** A row's browser digest, or `""` for a signed-in reader, whose key is their account id. */
+            const rowDigest = (r: { _id: { viewer: unknown }; viewerUserId?: unknown }): string =>
+              r.viewerUserId ? "" : splitProjectViewerKey(String(r._id.viewer ?? "")).botIdHash;
+
+            /**
+             * Names for the readers the aggregate above could not name.
+             *
+             * `$first: "$viewerName"` can only report what a `ShareView` row carries, and a data
+             * room's reader introduces themselves on the *landing page*: that introduction is stored
+             * on the arrival row (`ProjectLinkView`, keyed by the bare device digest), and the timing
+             * posts for the documents they then open carry no name at all unless the browser replays
+             * the profile it saved. So a reader the activity feed, the Slack message, the visit brief
+             * and the project's own reader list all call "Elena Ruiz" arrived here as
+             * `viewerName: null` and rendered as "Anonymous" — the same person, named on four
+             * surfaces and nameless on the fifth.
+             *
+             * `loadShareViewIdentities` answers this one reader at a time, and this page renders up
+             * to 200 of them, so calling it per row would be up to 400 queries for one response.
+             * The arrival rows for every reader on the page are read in a single query instead —
+             * same collection, same fields, same `(shareId, digest)` keying — and `pickReaderIdentity`,
+             * the pure half of that helper, still decides what each row is missing. The row's own
+             * values keep winning; only the gaps are filled.
+             *
+             * Behind `includeViewers` like every other identity here: on Basic the aggregate never
+             * asked for a name, and this must not go looking for one either.
+             */
+            const arrivalsByReader = new Map<string, ShareViewIdentity[]>();
+            if (includeViewers) {
+              const digests = new Set<string>();
+              const userIds = new Set<string>();
+              for (const r of rows) {
+                if (named(r.viewerName) && (named(r.viewerEmail) || named(r.viewerEmailSnapshot))) continue;
+                if (r.viewerUserId && Types.ObjectId.isValid(String(r.viewerUserId))) userIds.add(String(r.viewerUserId));
+                else {
+                  const digest = rowDigest(r);
+                  if (digest) digests.add(digest);
+                }
+              }
+              if (digests.size || userIds.size) {
+                const arrivals = (await ProjectLinkViewModel.find({
+                  shareId: { $in: slugs },
+                  $or: [
+                    ...(digests.size ? [{ botIdHash: { $in: [...digests] } }] : []),
+                    ...(userIds.size ? [{ viewerUserId: { $in: [...userIds].map((id) => new Types.ObjectId(id)) } }] : []),
+                  ],
+                })
+                  .select({ shareId: 1, botIdHash: 1, viewerUserId: 1, viewerName: 1, viewerEmail: 1, viewerEmailSnapshot: 1, lastViewedAt: 1 })
+                  .sort({ lastViewedAt: -1 })
+                  .limit(400)
+                  .lean()) as Array<ShareViewIdentity & { shareId?: string | null; botIdHash?: string | null }>;
+                for (const a of arrivals) {
+                  const shareId = a.shareId ? String(a.shareId) : "";
+                  if (!shareId) continue;
+                  // An arrival row carries both addresses when the reader was signed in, and either
+                  // one can be how a `ShareView` row refers to them: the same browser writes rows
+                  // with a `viewerUserId` once the reader signs in and without one before that.
+                  const keys = [
+                    identityKey(shareId, a.viewerUserId, ""),
+                    identityKey(shareId, null, a.botIdHash ? splitProjectViewerKey(String(a.botIdHash)).botIdHash : ""),
+                  ].filter(Boolean);
+                  for (const key of keys) {
+                    const list = arrivalsByReader.get(key);
+                    if (list) list.push(a);
+                    else arrivalsByReader.set(key, [a]);
+                  }
+                }
+              }
+            }
+
             const groups = new Map<
               string,
               { shareId: string; label: string | null; projectId: string | null; projectName: string | null; href: string | null; views: number; viewers: number; lastViewedAt: string | null }
@@ -1153,12 +1241,22 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                * so three documents behind one link do not collide; the project's viewer page is
                * keyed on the digest alone, so the suffix comes off here.
                */
-              const viewerKey = r.viewerUserId
-                ? `u_${String(r.viewerUserId)}`
-                : (() => {
-                    const digest = splitProjectViewerKey(String(r._id.viewer ?? "")).botIdHash;
-                    return digest ? `a_${digest}` : null;
-                  })();
+              const digest = rowDigest(r);
+              const viewerKey = r.viewerUserId ? `u_${String(r.viewerUserId)}` : digest ? `a_${digest}` : null;
+              /**
+               * What the arrival row knows that this row does not: the landing-page introduction.
+               * `{}` when the row is already named, when no arrival row matches, and on Basic,
+               * where `arrivalsByReader` is left empty on purpose.
+               *
+               * Only the name and the email are taken from it. The account id it may also carry is
+               * deliberately ignored: `viewerKey` and `viewerHref` address the reader the way this
+               * aggregate grouped them, and rekeying a row from an arrival row would send the
+               * permalink to a reader page that has none of the reading this row is reporting.
+               */
+              const fromArrival = pickReaderIdentity(
+                { viewerUserId: r.viewerUserId, viewerName: r.viewerName, viewerEmail: r.viewerEmail ?? r.viewerEmailSnapshot },
+                arrivalsByReader.get(identityKey(shareId, r.viewerUserId, digest)) ?? [],
+              );
 
               viewers.push({
                 shareId,
@@ -1180,8 +1278,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                 lastViewedAt: seen,
                 ...(includeViewers
                   ? {
-                      viewerName: r.viewerName ?? null,
-                      viewerEmail: r.viewerEmail ?? r.viewerEmailSnapshot ?? null,
+                      viewerName: named(r.viewerName) ?? fromArrival.viewerName ?? null,
+                      viewerEmail: named(r.viewerEmail) ?? named(r.viewerEmailSnapshot) ?? fromArrival.viewerEmail ?? null,
                     }
                   : {}),
               });

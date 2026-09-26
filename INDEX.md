@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 971 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 973 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -146,7 +146,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/admin/funnel/route.ts` — `/api/admin/funnel` · dynamic, GET, runtime
 - `src/app/api/admin/overview/route.ts` — `/api/admin/overview` · dynamic, GET, runtime
 - `src/app/api/admin/revenue/route.ts` — `/api/admin/revenue` · dynamic, GET, runtime
-- `src/app/api/admin/shareviews/doc/[docId]/route.ts` — `/api/admin/shareviews/doc/:docId` · DEFAULT_LIMIT, GET, MAX_LIMIT, runtime
+- `src/app/api/admin/shareviews/doc/[docId]/route.ts` — `/api/admin/shareviews/doc/:docId` · GET, runtime
 - `src/app/api/admin/shareviews/recent/route.ts` — `/api/admin/shareviews/recent` · GET, runtime
 - `src/app/api/admin/users/[userId]/plan/route.ts` — `/api/admin/users/:userId/plan` · POST, runtime
 - `src/app/api/admin/waitlist/[userId]/approve/route.ts` — `/api/admin/waitlist/:userId/approve` · dynamic, POST, runtime
@@ -163,7 +163,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/billing/summary/route.ts` — `/api/billing/summary` · dynamic, GET, runtime
 - `src/app/api/billing/usage/route.ts` — `/api/billing/usage` · dynamic, GET, runtime
 - `src/app/api/blob/upload/route.ts` — `/api/blob/upload` · POST, runtime
-- `src/app/api/changes/route.ts` — `/api/changes` · dynamic, GET, parseSince, runtime
+- `src/app/api/changes/route.ts` — `/api/changes` · dynamic, GET, runtime
 - `src/app/api/credits/purchase/route.ts` — `/api/credits/purchase` · GET, POST, runtime
 - `src/app/api/credits/quality-defaults/route.ts` — `/api/credits/quality-defaults` · dynamic, GET, POST, runtime
 - `src/app/api/credits/snapshot/route.ts` — `/api/credits/snapshot` · dynamic, GET, runtime
@@ -210,7 +210,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/download/[token]/pdf/route.ts` — `/api/download/:token/pdf` · GET, runtime
 - `src/app/api/download/[token]/route.ts` — `/api/download/:token` · GET, runtime
 - `src/app/api/download/[token]/save/route.ts` — `/api/download/:token/save` · POST, runtime
-- `src/app/api/funnel/route.ts` — `/api/funnel` · dynamic, FUNNEL_CTAS, FUNNEL_EVENTS, FunnelBody, parseFunnelBody, POST, runtime
+- `src/app/api/funnel/route.ts` — `/api/funnel` · dynamic, POST, runtime
 - `src/app/api/health/route.ts` — `/api/health` · dynamic, GET, runtime
 - `src/app/api/metrics/events/route.ts` — `/api/metrics/events` · POST, runtime
 - `src/app/api/metrics/workspace/route.ts` — `/api/metrics/workspace` · dynamic, GET, runtime
@@ -240,7 +240,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/projects/[projectSlug]/links/[linkId]/password/route.ts` — `/api/projects/:projectSlug/links/:linkId/password` · dynamic, GET, runtime
 - `src/app/api/projects/[projectSlug]/links/[linkId]/route.ts` — `/api/projects/:projectSlug/links/:linkId` · DELETE, dynamic, PATCH, runtime
 - `src/app/api/projects/[projectSlug]/links/route.ts` — `/api/projects/:projectSlug/links` · dynamic, GET, POST, runtime
-- `src/app/api/projects/[projectSlug]/route.ts` — `/api/projects/:projectSlug` · DELETE, PATCH, runtime
+- `src/app/api/projects/[projectSlug]/route.ts` — `/api/projects/:projectSlug` · DELETE, GET, PATCH, runtime
 - `src/app/api/projects/[projectSlug]/shareviews/route.ts` — `/api/projects/:projectSlug/shareviews` · dynamic, GET, runtime
 - `src/app/api/projects/[projectSlug]/shareviews/viewer-doc/route.ts` — `/api/projects/:projectSlug/shareviews/viewer-doc` · dynamic, GET, runtime
 - `src/app/api/projects/[projectSlug]/shareviews/visits/route.ts` — `/api/projects/:projectSlug/shareviews/visits` · dynamic, GET, runtime
@@ -288,7 +288,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/users/me/name/route.ts` — `/api/users/me/name` · POST, runtime
 - `src/app/api/visits/[visitBriefId]/brief/route.ts` — `/api/visits/:visitBriefId/brief` · maxDuration, POST, runtime
 - `src/app/api/waitlist/accept/route.ts` — `/api/waitlist/accept` · dynamic, POST, runtime
-- `src/app/org/switch/route.ts` — `/org/switch` · GET, jsonForScript, runtime
+- `src/app/org/switch/route.ts` — `/org/switch` · GET, runtime
 - `src/app/p/[shareId]/[docId]/pdf/route.ts` — `/p/:shareId/:docId/pdf` · GET, runtime
 - `src/app/p/[shareId]/[docId]/preview/route.ts` — `/p/:shareId/:docId/preview` · GET, runtime
 - `src/app/s/[shareId]/changes/route.ts` — `/s/:shareId/changes` · dynamic, GET, runtime
@@ -713,6 +713,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/format/initials.ts` · initialsFromNameOrEmail
 - `src/lib/format/money.ts` · formatUsdFromCents, formatUsdOrNotAvailable
 - `src/lib/format/number.ts` · clampNonNegInt, formatInt
+- `src/lib/funnel/body.ts` · FUNNEL_CTAS, FUNNEL_EVENTS, FunnelBody, parseFunnelBody
 - `src/lib/funnel/report.ts` · buildFunnelReport, firstWallPipeline, FUNNEL_REPORT_CTAS, FUNNEL_STEP_TYPES, FunnelReport, FunnelReportCta, funnelStepsPipeline, FunnelWeek, …
 - `src/lib/gating/actor.ts` · accountDisabledChanged, activeOrgCandidateOrder, activeOrgChanged, Actor, applyTempUserHeaders, isActiveMember, membershipChanged, resolveActor, …
 - `src/lib/gating/actorRateLimit.ts` · ActorRateLimitError, actorRateLimitResponse, API_KEY_REQUEST_LIMIT, API_KEY_REQUEST_WINDOW_MS, guardApiKeyRequest, guardTempWorkspaceCreation, TEMP_WORKSPACE_CREATE_LIMIT, TEMP_WORKSPACE_CREATE_WINDOW_MS
@@ -734,6 +735,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/http/dateIdCursor.ts` · DateIdCursor, dateIdCursorClause, decodeDateIdCursor, encodeDateIdCursor, parseLimit
 - `src/lib/http/errorResponse.ts` · authOrRateLimitResponse, errorJson, ErrorJsonOptions, errorMessage
 - `src/lib/http/fetchJson.ts` · ApiErrorShape, extractErrorMessage, fetchJson
+- `src/lib/http/jsonForScript.ts` · jsonForScript
 - `src/lib/http/rateLimit.ts` · clientIpFromRequest, rateLimit, rateLimitedResponse, RateLimitInput, RateLimitResult
 - `src/lib/http/safeFetchUrl.ts` · assertSafeOutboundUrl, isPrivateAddress, resolveSafeOutboundAddresses, SafeFetchError, SafeFetchOptions, SafeFetchResult, safeFetchUrl
 - `src/lib/legal/terms.ts` · CURRENT_TERMS_VERSION, PRIVACY_URL, TERMS_URL
@@ -815,7 +817,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/preflight/env.ts` · Group, Result, runEnvPreflight, Status, summarise
 - `src/lib/projects/docCountFilter.ts` · projectDocCountFilter
 - `src/lib/projects/requestSettings.ts` · botIdHashPrefixFilter, requestUploadPathFor
-- `src/lib/projects/scope.ts` · liveProjectByIdMatch, liveProjectFilter
+- `src/lib/projects/scope.ts` · liveProjectByIdMatch, liveProjectBySlugMatch, liveProjectFilter, slugBackfillPendingFilter
 - `src/lib/realtime/ticket.ts` · REALTIME_TICKET_TTL_SECONDS, realtimeSecret, RealtimeTicket, signRealtimeTicket, verifyRealtimeTicket
 - `src/lib/share/anonymousNoticeAudience.ts` · AlreadyToldLookup, AlreadyToldQuery, cursorBackedAlreadyTold, queueBackedAlreadyTold
 - `src/lib/share/brand.ts` · brandInitials, ShareWorkspaceBrand

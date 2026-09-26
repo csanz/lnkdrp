@@ -74,11 +74,18 @@ const ShareLinkSchema = new Schema(
     /** Refuse the link after this instant (null = never). */
     expiresAt: { type: Date, default: null },
 
-    passwordSalt: { type: String, default: null },
-    passwordHash: { type: String, default: null },
-    passwordEnc: { type: String, default: null },
-    passwordEncIv: { type: String, default: null },
-    passwordEncTag: { type: String, default: null },
+    /**
+     * `select: false` on all five: a query gets the password material only when it asks
+     * (`WITH_LINK_PASSWORD` in src/lib/share/passwordSelect.ts), so a listing, a join or a card
+     * cannot carry a hash out by accident. The readers that gate on it, `resolveShareLink` and
+     * `resolveProjectLink` first among them, opt in explicitly; a reader that forgot would treat a
+     * locked link as open, which tests/lib/sharePasswordSelect.test.ts guards against.
+     */
+    passwordSalt: { type: String, default: null, select: false },
+    passwordHash: { type: String, default: null, select: false },
+    passwordEnc: { type: String, default: null, select: false },
+    passwordEncIv: { type: String, default: null, select: false },
+    passwordEncTag: { type: String, default: null, select: false },
 
     createdByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
     /**

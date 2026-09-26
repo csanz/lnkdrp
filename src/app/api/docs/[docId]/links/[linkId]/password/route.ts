@@ -21,6 +21,7 @@ import { recordActivity } from "@/lib/activity/log";
 import { rateLimit } from "@/lib/http/rateLimit";
 import { decryptSharePassword } from "@/lib/sharePassword";
 import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { WITH_LINK_PASSWORD } from "@/lib/share/passwordSelect";
 import { accessDocForLinks, linkErrorResponse } from "../../shared";
 import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
@@ -60,7 +61,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     // `includeArchived: true` so a deleted link can be told apart from an id that never existed —
     // the two deserve different answers — and then refused below.
     const link = Types.ObjectId.isValid(linkId)
-      ? await ShareLinkModel.findOne({ _id: new Types.ObjectId(linkId), docId: docObjectId, orgId }).lean<ShareLink>()
+      ? await ShareLinkModel.findOne({ _id: new Types.ObjectId(linkId), docId: docObjectId, orgId }, WITH_LINK_PASSWORD).lean<ShareLink>()
       : null;
     if (!link) {
       return applyTempUserHeaders(NextResponse.json({ error: "Link not found." }, { status: 404 }), actor);

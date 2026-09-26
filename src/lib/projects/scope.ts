@@ -63,3 +63,53 @@ export function liveProjectByIdMatch(
       }
     : { _id: projectId, orgId, ...notDeleted };
 }
+
+/**
+ * The by-slug counterpart of {@link liveProjectByIdMatch}: the same tenancy and deletion bounds,
+ * keyed on the workspace-unique `slug` instead of `_id`.
+ *
+ * Slugs are unique per workspace (`{ orgId, slug }`) and, for projects that predate workspaces,
+ * per owner (`{ userId, slug }`), so the two alternatives of the legacy branch can never both
+ * match a different row. The exact-match on `slug` is deliberate: the route lower-cases the
+ * caller's slug before it gets here, and every stored slug is lower-case (`slugify`), so a regex
+ * would only buy a collection scan.
+ */
+export function liveProjectBySlugMatch(
+  slug: string,
+  orgId: Types.ObjectId,
+  legacyUserId: Types.ObjectId,
+  allowLegacyByUserId: boolean,
+): Record<string, unknown> {
+  const notDeleted = { isDeleted: { $ne: true } };
+  return allowLegacyByUserId
+    ? {
+        ...notDeleted,
+        $or: [
+          { slug, orgId },
+          { slug, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+        ],
+      }
+    : { slug, orgId, ...notDeleted };
+}
+
+/**
+ * True when the workspace still holds a live project with no stored slug.
+ *
+ * Projects created before slugs existed get one lazily: `GET /api/projects` (without `lite=1` or
+ * `sidebar=1`) backfills a slug for every row it lists. Until that has happened a by-slug lookup
+ * cannot find such a project, and a 404 from `GET /api/projects/:slug` then means "not yet
+ * addressable", not "does not exist". The route reports the difference so a client (the MCP's
+ * `projectIdForSlug`) can fall back to listing, which performs the backfill, only when it is the
+ * legacy case and not on every miss.
+ */
+export function slugBackfillPendingFilter(
+  orgId: Types.ObjectId,
+  legacyUserId: Types.ObjectId,
+  allowLegacyByUserId: boolean,
+): Record<string, unknown> {
+  const noSlug = { $or: [{ slug: { $exists: false } }, { slug: null }, { slug: "" }] };
+  const tenant = allowLegacyByUserId
+    ? { $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] }
+    : { orgId };
+  return { $and: [tenant, noSlug, { isDeleted: { $ne: true } }] };
+}

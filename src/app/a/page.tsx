@@ -36,7 +36,11 @@ type Overview = {
   trend: Record<"users" | "docs" | "views", { current: number; previous: number }>;
   health: { jobs: number; failing: string[]; pendingDeletions: number };
   series: TrendPoint[];
-  /** One row per plan limit that refused somebody in the window; see the route for the two counts. */
+  /**
+   * One row per plan limit that stopped somebody in the window. `hits` is walls hit, not
+   * refusals: since 2026-09-25 `planLimitResponse` writes one row per workspace and limit per 10
+   * minutes, so a workspace retrying inside that window counts once. See the route.
+   */
   planLimits: Array<{ limit: string; hits: number; workspaces: number }>;
 };
 
@@ -225,13 +229,20 @@ export default function AdminHomePage() {
 
         <AdminSection
           title="Where the plan stops people"
-          description="Every refusal a plan limit produced in the window. Eight routes have been recording these since limits shipped; this is the first screen to read them."
+          description="Walls hit in the window, not refusals: a workspace that keeps retrying the same limit inside 10 minutes counts once. The funnel page follows what those workspaces did next."
+          actions={
+            <Link href="/a/funnel" className={ADMIN_ROW_ACTION_LINK}>
+              Open the funnel
+            </Link>
+          }
         >
           {planLimits.length ? (
             <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
               <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3 border-b border-[var(--border)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
                 <span>Limit</span>
-                <span className="text-right">Refusals</span>
+                <span className="text-right" title="Distinct 10-minute windows in which a workspace met this limit; retries inside a window are one hit">
+                  Walls hit
+                </span>
                 <span className="text-right">Workspaces</span>
               </div>
               <ul className="divide-y divide-[var(--border)]">
@@ -243,8 +254,8 @@ export default function AdminHomePage() {
                     <span className="truncate font-medium">{PLAN_LIMIT_LABELS[row.limit] ?? row.limit}</span>
                     <span className="text-right tabular-nums">{num(row.hits)}</span>
                     {/* The second number is the one that matters for pricing: one workspace
-                        retrying twenty times is demand in the first column and a single frustrated
-                        person in this one. */}
+                        coming back to the same wall day after day is demand in the first column
+                        and a single frustrated person in this one. */}
                     <span className="text-right tabular-nums text-[var(--muted)]">{num(row.workspaces)}</span>
                   </li>
                 ))}

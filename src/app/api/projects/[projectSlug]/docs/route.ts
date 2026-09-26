@@ -19,6 +19,7 @@ import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { requestUploadPathFor } from "@/lib/projects/requestSettings";
 import { ensureDefaultProjectLink } from "@/lib/share/projectLinks";
 import { liveProjectByIdMatch } from "@/lib/projects/scope";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 
 export const runtime = "nodejs";
 /**
@@ -225,18 +226,11 @@ export async function GET(
         const guideDocId = guideDocIdRaw ? String(guideDocIdRaw) : "";
         let guideDocTitle: string | null = null;
         if (guideDocId && Types.ObjectId.isValid(guideDocId)) {
-          const guide = await DocModel.findOne({
-            _id: new Types.ObjectId(guideDocId),
-            ...(allowLegacyByUserId
-              ? {
-                  $or: [
-                    { orgId },
-                    { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-                  ],
-                }
-              : { orgId }),
-            isDeleted: { $ne: true },
-          })
+          // A by-id lookup of one document: the shared match, so a guide in the trash or in another
+          // workspace is not rendered as this repo's guide by title.
+          const guide = await DocModel.findOne(
+            buildDocMatch(new Types.ObjectId(guideDocId), orgId, legacyUserId, allowLegacyByUserId),
+          )
             .select({ title: 1 })
             .lean();
           const t = guide && typeof guide.title === "string" ? guide.title.trim() : "";

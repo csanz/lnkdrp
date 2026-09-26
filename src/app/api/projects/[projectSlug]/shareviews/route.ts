@@ -50,6 +50,7 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
 import { projectShareIds, toProjectLinkDTO } from "@/lib/share/projectLinks";
+import { WITH_LINK_PASSWORD } from "@/lib/share/passwordSelect";
 import {
   LAST_ACTIVITY_EXPR,
   intersectShareIds,
@@ -199,8 +200,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
 
     // `?shareId=` scopes every aggregate to one link of *this* project. A slug from another
     // project (or a document link) is a 404, never a silent whole-project read.
+    //
+    // `WITH_LINK_PASSWORD` because the row is returned as `link: toProjectLinkDTO(link)`, whose
+    // `passwordEnabled` reads the `select: false` hash; a bare read reported every locked link open.
     const link = shareIdFilter
-      ? await ShareLinkModel.findOne({ shareId: shareIdFilter, projectId, ...PROJECT_LINK_FILTER }).lean<ShareLink>()
+      ? await ShareLinkModel.findOne({ shareId: shareIdFilter, projectId, ...PROJECT_LINK_FILTER }, WITH_LINK_PASSWORD).lean<ShareLink>()
       : null;
     if (shareIdFilter && !link) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);

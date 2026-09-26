@@ -1,7 +1,8 @@
 /**
  * API route for `/api/projects/:id`.
  *
- * Update/delete a project. For request repos, also supports updating request review settings.
+ * Read (by id or slug), update or delete a project. For request repos, also supports updating request
+ * review settings.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -16,7 +17,8 @@ import { recordActivity } from "@/lib/activity/log";
 import { authOrRateLimitResponse, errorJson } from "@/lib/http/errorResponse";
 import { setAllProjectLinksEnabled, syncProjectShareState } from "@/lib/share/projectLinks";
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
-import { liveProjectByIdMatch } from "@/lib/projects/scope";
+import { liveProjectByIdMatch, liveProjectBySlugMatch, slugBackfillPendingFilter } from "@/lib/projects/scope";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 
 export const runtime = "nodejs";
 
@@ -148,6 +150,122 @@ function parseRequestTokenRotation(raw: unknown): RequestTokenRotation | null {
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+/**
+ * The project DTO `GET /api/projects` returns for one row, so a by-slug read and a list read
+ * describe a project with the same keys. `isRequest` is the row's real value here (the list only
+ * ever carries non-request projects, so it hard-codes false).
+ */
+function projectListDto(project: ProjectRow) {
+  const raw = project.docCount;
+  const tokenRaw = project.requestUploadToken;
+  const token = typeof tokenRaw === "string" && tokenRaw.trim() ? tokenRaw.trim() : "";
+  return {
+    id: String(project._id),
+    shareId: project.shareId ?? null,
+    name: project.name ?? "",
+    slug: typeof project.slug === "string" ? project.slug : "",
+    description: project.description ?? "",
+    isRequest: Boolean(project.isRequest) || Boolean(token),
+    docCount: Number.isFinite(raw) ? Number(raw) : 0,
+    autoAddFiles: Boolean(project.autoAddFiles),
+    updatedDate: project.updatedDate ? new Date(project.updatedDate as Date).toISOString() : null,
+    createdDate: project.createdDate ? new Date(project.createdDate as Date).toISOString() : null,
+  };
+}
+
+/** The fields `GET` projects and `projectListDto` reads. */
+type ProjectRow = {
+  _id: unknown;
+  shareId?: unknown;
+  name?: string | null;
+  slug?: unknown;
+  description?: string | null;
+  isRequest?: unknown;
+  requestUploadToken?: unknown;
+  docCount?: unknown;
+  autoAddFiles?: unknown;
+  updatedDate?: unknown;
+  createdDate?: unknown;
+};
+
+/**
+ * `GET /api/projects/:idOrSlug`
+ *
+ * One project by id (24 hex) or by slug, bounded the way PATCH and DELETE below bound theirs
+ * (`liveProjectByIdMatch` / `liveProjectBySlugMatch`: this workspace, or the caller's own
+ * pre-workspace projects while they are in their personal workspace; never a deleted row). Any
+ * workspace member may read, viewers included, as with `GET .../docs`.
+ *
+ * Exists so a client holding a slug can resolve it in one call. Before this the MCP server had to
+ * search names and then page through the whole list to find a slug, which is 50 requests on a
+ * large workspace for what the unique `{ orgId, slug }` index answers directly.
+ *
+ * Out: `{ project }` in the shape `GET /api/projects` lists. 404 `{ error: "Not found" }` when no
+ * such project; when the slug matched nothing but the workspace still has live projects with no
+ * slug stored (created before slugs existed; `GET /api/projects` backfills them lazily), the 404
+ * carries `reason: "slug_backfill_pending"` so a client can tell "not addressable yet" from "does
+ * not exist" and list once to trigger the backfill.
+ */
+export async function GET(
+  request: Request,
+  ctx: { params: Promise<{ projectSlug: string }> },
+) {
+  try {
+    const { projectSlug } = await ctx.params;
+    const param = decodeURIComponent(projectSlug).trim();
+
+    debugLog(2, "[api/projects/:id] GET", { project: param });
+    const actor = await resolveActor(request);
+    await connectMongo();
+
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const notFound = (extra: Record<string, unknown> = {}) =>
+      applyTempUserHeaders(NextResponse.json({ error: "Not found", ...extra }, { status: 404 }), actor);
+
+    if (!param) return notFound();
+    const byId = Types.ObjectId.isValid(param) && /^[0-9a-f]{24}$/i.test(param);
+    // Stored slugs are lower-case (`slugify`), and the unique index is an exact match.
+    const slug = param.toLowerCase();
+    const select = {
+      _id: 1,
+      shareId: 1,
+      name: 1,
+      slug: 1,
+      description: 1,
+      isRequest: 1,
+      requestUploadToken: 1,
+      docCount: 1,
+      autoAddFiles: 1,
+      updatedDate: 1,
+      createdDate: 1,
+    };
+    const project = (await ProjectModel.findOne(
+      byId
+        ? liveProjectByIdMatch(new Types.ObjectId(param), orgId, legacyUserId, allowLegacyByUserId)
+        : liveProjectBySlugMatch(slug, orgId, legacyUserId, allowLegacyByUserId),
+    )
+      .select(select)
+      .lean()) as ProjectRow | null;
+
+    if (!project) {
+      if (byId) return notFound();
+      const pending = await ProjectModel.exists(slugBackfillPendingFilter(orgId, legacyUserId, allowLegacyByUserId));
+      return notFound(pending ? { reason: "slug_backfill_pending" } : {});
+    }
+
+    return applyTempUserHeaders(
+      NextResponse.json({ project: projectListDto(project) }, { headers: { "cache-control": "no-store" } }),
+      actor,
+    );
+  } catch (err) {
+    const authOrLimited = authOrRateLimitResponse(err);
+    if (authOrLimited) return authOrLimited;
+    return errorJson(err, { status: 500, publicMessage: "Could not load the project", context: "[api/projects/:slug] GET failed" });
+  }
+}
+
 /**
  * Handle PATCH requests.
  */
@@ -585,7 +703,9 @@ export async function DELETE(
             const primaryIsRequest = currentPrimary ? String(currentPrimary) === String(projectId) : false;
             const nextPrimary = primaryIsRequest || !currentPrimary ? newProjectId : currentPrimary;
 
-            const docFilter = { _id: docId, ...docTenant, isDeleted: { $ne: true } };
+            // Per-document writes go through the one document rule (src/lib/docs/docMatch.ts): the
+            // same workspace/legacy bound as `docTenant`, plus "not deleted", in one place.
+            const docFilter = buildDocMatch(new Types.ObjectId(String(docId)), orgId, legacyUserId, allowLegacyByUserId);
             await DocModel.updateOne(docFilter, {
               $set: {
                 primaryProjectId: nextPrimary,
@@ -611,7 +731,7 @@ export async function DELETE(
           const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
           if (!docId) continue;
           await DocModel.updateOne(
-            { _id: docId, ...docTenant, isDeleted: { $ne: true } },
+            buildDocMatch(new Types.ObjectId(String(docId)), orgId, legacyUserId, allowLegacyByUserId),
             {
               $set: {
                 primaryProjectId: null,
@@ -629,7 +749,7 @@ export async function DELETE(
           const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
           if (!docId) continue;
           await DocModel.updateOne(
-            { _id: docId, ...docTenant, isDeleted: { $ne: true } },
+            buildDocMatch(new Types.ObjectId(String(docId)), orgId, legacyUserId, allowLegacyByUserId),
             {
               $set: {
                 isDeleted: true,

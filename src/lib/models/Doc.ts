@@ -212,14 +212,18 @@ const docSchema = new Schema(
      *
      * - Never store plaintext passwords.
      * - When `sharePasswordHash` is present, the share page is gated behind a password.
+     * - Since the link model this is a mirror of the default link's material (`syncDocShareState`);
+     *   the gate itself reads `ShareLink.passwordHash`.
+     * - `select: false` on all five: a bare `DocModel.findOne` no longer carries them, and the few
+     *   readers that need the mirror opt in (`WITH_DOC_PASSWORD*` in src/lib/share/passwordSelect.ts).
      */
-    sharePasswordSalt: { type: String, default: null },
-    sharePasswordHash: { type: String, default: null },
+    sharePasswordSalt: { type: String, default: null, select: false },
+    sharePasswordHash: { type: String, default: null, select: false },
     // Encrypted (reversible) form for owners to view/edit the current password.
     // This is encrypted server-side using a secret and is never exposed publicly.
-    sharePasswordEnc: { type: String, default: null },
-    sharePasswordEncIv: { type: String, default: null },
-    sharePasswordEncTag: { type: String, default: null },
+    sharePasswordEnc: { type: String, default: null, select: false },
+    sharePasswordEncIv: { type: String, default: null, select: false },
+    sharePasswordEncTag: { type: String, default: null, select: false },
 
     /**
      * If set, this doc was originally received via a request link repo.

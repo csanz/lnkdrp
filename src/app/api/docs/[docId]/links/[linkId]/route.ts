@@ -9,6 +9,7 @@
  */
 import { NextResponse } from "next/server";
 import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { WITH_LINK_PASSWORD } from "@/lib/share/passwordSelect";
 import { Types } from "mongoose";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
@@ -62,7 +63,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
   const { docId, linkId } = await ctx.params;
   const gate = await accessDocForLinks(request, docId, "member");
   if (!gate.ok) return gate.response;
-  const { actor, docId: docObjectId, orgId, title } = gate.access;
+  const { actor, docId: docObjectId, orgId, title, homeProjectId } = gate.access;
   try {
     if (!Types.ObjectId.isValid(linkId)) {
       return applyTempUserHeaders(NextResponse.json({ error: "Invalid linkId" }, { status: 400 }), actor);
@@ -89,7 +90,8 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
       Object.keys(settings).length > 0
         ? await updateShareLink({ orgId, linkId, settings })
         : {
-            link: (await ShareLinkModel.findOne({ _id: new Types.ObjectId(linkId), docId: docObjectId, orgId, archivedAt: null }).lean<ShareLink>())!,
+            // Opted in to the password fields so the DTO's `passwordEnabled` answers from the row.
+            link: (await ShareLinkModel.findOne({ _id: new Types.ObjectId(linkId), docId: docObjectId, orgId, archivedAt: null }, WITH_LINK_PASSWORD).lean<ShareLink>())!,
             limit: null,
             restored: undefined,
           };
@@ -105,6 +107,9 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
         actorKind: actor.kind,
         type: "share_link.updated",
         docId: docObjectId,
+        // Stamped with the document's room so the room's own feed shows its links changing
+        // (docs/prds/lnkdrp-project-home.md, decision 2); it came free with the access check.
+        ...(homeProjectId ? { projectId: homeProjectId } : {}),
         title,
         meta: {
           linkId: dto.id,
@@ -141,6 +146,9 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
           actorKind: actor.kind,
           type: "share.updated",
           docId: docObjectId,
+          // The restore belongs to the room for the same reason the update above does: it is the
+          // moment several of that room's links came back to life.
+          ...(homeProjectId ? { projectId: homeProjectId } : {}),
           title,
           meta: {
             shareEnabled: true,
@@ -206,7 +214,7 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ docId: s
   const { docId, linkId } = await ctx.params;
   const gate = await accessDocForLinks(request, docId, "member");
   if (!gate.ok) return gate.response;
-  const { actor, docId: docObjectId, orgId, title } = gate.access;
+  const { actor, docId: docObjectId, orgId, title, homeProjectId } = gate.access;
   try {
     if (!Types.ObjectId.isValid(linkId)) {
       return applyTempUserHeaders(NextResponse.json({ error: "Invalid linkId" }, { status: 400 }), actor);
@@ -220,6 +228,9 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ docId: s
       actorKind: actor.kind,
       type: "share_link.revoked",
       docId: docObjectId,
+      // Revoking access to a room's document is the row that room most needs to have
+      // (docs/prds/lnkdrp-project-home.md, decision 2).
+      ...(homeProjectId ? { projectId: homeProjectId } : {}),
       title,
       meta: { linkId: String(link._id), shareId: link.shareId, linkLabel: link.label },
       request,

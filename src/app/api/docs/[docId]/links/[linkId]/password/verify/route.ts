@@ -18,6 +18,7 @@ import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { rateLimit } from "@/lib/http/rateLimit";
 import { verifySharePassword } from "@/lib/sharePassword";
 import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { WITH_LINK_PASSWORD } from "@/lib/share/passwordSelect";
 import { accessDocForLinks, linkErrorResponse } from "../../../shared";
 
 export const runtime = "nodejs";
@@ -67,7 +68,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     // `includeArchived: true` so a deleted link can be told apart from an id that never existed,
     // and then refused below.
     const link = Types.ObjectId.isValid(linkId)
-      ? await ShareLinkModel.findOne({ _id: new Types.ObjectId(linkId), docId: docObjectId, orgId }).lean<ShareLink>()
+      ? await ShareLinkModel.findOne({ _id: new Types.ObjectId(linkId), docId: docObjectId, orgId }, WITH_LINK_PASSWORD).lean<ShareLink>()
       : null;
     if (!link) {
       return applyTempUserHeaders(NextResponse.json({ error: "Link not found." }, { status: 404 }), actor);

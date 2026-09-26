@@ -458,7 +458,7 @@ A document owns **any number of share links** — one per audience — instead o
 
 ## Admin tools
 
-- **Admin home**: `/a`
+- **Admin home**: `/a` — headline figures and trend chart (`GET /api/admin/overview?days=N`), revenue, the "Where the plan stops people" table and the two things that need attention (failing jobs, pending deletions). The plan-limit table counts `plan.limit_reached` rows per limit and per distinct workspace; since 2026-09-25 those rows are written once per workspace and limit per 10 minutes (`planLimitResponse` dedupe in `src/lib/billing/planLimits.ts`), so the first column is walls hit, not refusals, and rows from before that date (one per refusal) are not comparable with it. The section links to `/a/funnel`.
 - **Tools → Cache**: `/a/tools/cache`
   - Inspect browser localStorage keys/values and clear app caches (useful for debugging navigation/data state during development).
   - Clear actions use a quick click-to-confirm UI (avoids relying on browser confirm dialogs).

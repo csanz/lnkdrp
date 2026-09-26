@@ -17,6 +17,7 @@ import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse, type LimitCheck, type PlanLimitBlocked } from "@/lib/billing/planLimits";
 import { ensureDefaultLink, setAllLinksEnabled, syncDocShareState, updateShareLink } from "@/lib/share/links";
+import { WITH_DOC_PASSWORD_HASH } from "@/lib/share/passwordSelect";
 import { buildDocMatch } from "@/lib/docs/docMatch";
 import { restoreDocToLastGood } from "@/lib/uploads/restoreDocAfterFailure";
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
@@ -256,6 +257,9 @@ export async function GET(
         "aiOutput.summary": 1,
         "aiOutput.tags": 1,
       });
+    } else {
+      // The mirror's hash is `select: false`; the response reports `sharePasswordEnabled` from it.
+      docQuery.select(WITH_DOC_PASSWORD_HASH);
     }
     let docLean = await docQuery.lean();
     if (!docLean) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -284,7 +288,7 @@ export async function GET(
               shareId: { $in: [null, undefined, ""] },
             },
             { $set: { shareId: candidate } },
-            { new: true },
+            { new: true, projection: WITH_DOC_PASSWORD_HASH },
           ).lean();
           if (updated) {
             docLean = updated;
@@ -292,7 +296,7 @@ export async function GET(
             break;
           }
           // Another request beat us to it; re-fetch and continue.
-          docLean = await DocModel.findOne({ ...docMatch }).lean();
+          docLean = await DocModel.findOne({ ...docMatch }, WITH_DOC_PASSWORD_HASH).lean();
           if ((docLean as any)?.shareId) {
             ensured = true;
             break;
@@ -1180,7 +1184,8 @@ export async function PATCH(
     const doc = await DocModel.findOneAndUpdate(
       { ...docMatch },
       updateDoc,
-      { new: true, ...(onlyMembershipChange ? { timestamps: false } : {}) },
+      // `sharePasswordEnabled` in the response reads the `select: false` mirror off this row.
+      { new: true, projection: WITH_DOC_PASSWORD_HASH, ...(onlyMembershipChange ? { timestamps: false } : {}) },
     ).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -1200,6 +1205,19 @@ export async function PATCH(
       }
     }
 
+    /**
+     * The document's home project, off the pre-read rather than a second query.
+     *
+     * Every row about a document that lives in a room has to name the room, because the room's own
+     * feed is filtered on the row's `projectId` (docs/prds/lnkdrp-project-home.md, decision 2). A
+     * document with no home keeps `projectId` null, and the field is omitted rather than set to null
+     * so the rows read the same as the ones the create and replace paths write.
+     */
+    const homeProjectId =
+      before && (before as { primaryProjectId?: unknown }).primaryProjectId
+        ? String((before as { primaryProjectId?: unknown }).primaryProjectId)
+        : null;
+
     // Archive and unarchive change what recipients can open (every link of an archived doc 404s),
     // so the owner's feed records them.
     if (wantsArchiveChange && before && Boolean((before as { isArchived?: unknown }).isArchived) !== body.isArchived) {
@@ -1209,6 +1227,7 @@ export async function PATCH(
         actorKind: actor.kind,
         type: body.isArchived ? "doc.archived" : "doc.unarchived",
         docId: doc._id,
+        ...(homeProjectId ? { projectId: homeProjectId } : {}),
         title: doc.title ?? null,
         request,
       });
@@ -1435,9 +1454,16 @@ export async function DELETE(
       },
       { new: false },
     )
-      .select({ _id: 1, title: 1 })
+      // `primaryProjectId` rides along for the activity row: a document deleted out of a data room
+      // has to show up in that room's feed, which filters on the row's `projectId`
+      // (docs/prds/lnkdrp-project-home.md, decision 2). One extra field beats a second query.
+      .select({ _id: 1, title: 1, primaryProjectId: 1 })
       .lean();
     if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    const homeProjectId = (deleted as { primaryProjectId?: unknown }).primaryProjectId
+      ? String((deleted as { primaryProjectId?: unknown }).primaryProjectId)
+      : null;
 
     // A deleted document keeps no tags: the rows would otherwise sit in the join collection
     // pointing at something nothing can open (src/lib/tags/service.ts).
@@ -1449,6 +1475,7 @@ export async function DELETE(
       actorKind: actor.kind,
       type: "doc.deleted",
       docId: docObjectId,
+      ...(homeProjectId ? { projectId: homeProjectId } : {}),
       title: (deleted as { title?: unknown }).title as string | null | undefined,
       request,
     });

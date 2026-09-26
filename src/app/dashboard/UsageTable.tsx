@@ -17,7 +17,8 @@ import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefr
 export type UsageRow = {
   id: string;
   createdAt: string; // ISO
-  action: "summary" | "review" | "history" | "unknown";
+  /** The ledger action. `brief` is a visit brief; it has one price and no quality level. */
+  action: "summary" | "review" | "history" | "brief" | "unknown";
   quality: "basic" | "standard" | "advanced";
   credits: number;
   status: "pending" | "charged" | "refunded" | "failed";
@@ -26,6 +27,21 @@ export type UsageRow = {
 };
 
 /** Rows per page in the usage table. */
+/**
+ * What each ledger `actionType` is called in this table.
+ *
+ * It used to be `summary ? "Summary" : review ? "AI review" : "AI compare"`, so every action the
+ * list did not name read as "AI compare". Visit briefs (one credit, no level) therefore showed up
+ * as compares charging one credit, which is not a price compare has: a reader of this table could
+ * only conclude the charge was wrong.
+ */
+const ACTION_LABELS: Record<string, string> = {
+  summary: "Summary",
+  review: "AI review",
+  history: "AI compare",
+  brief: "Visit brief",
+};
+
 const USAGE_PAGE_SIZE = 25;
 
 const PAGE_BUTTON_CLASS =
@@ -241,12 +257,14 @@ export default function UsageTable({
                             className="underline decoration-dotted underline-offset-2 hover:text-[var(--fg)]"
                             title="What this action costs"
                           >
-                            {r.action === "summary" ? "Summary" : r.action === "review" ? "AI review" : "AI compare"}
+                            {ACTION_LABELS[r.action] ?? "Unknown"}
                           </Link>
                         )}
                       </td>
                       <td className="px-4 py-3 text-[var(--muted-2)]">
-                        {r.quality === "basic" ? "Basic" : r.quality === "standard" ? "Standard" : "Advanced"}
+                        {/* A visit brief has one price and no level to choose, so the stored
+                            "basic" is an artefact of the column, not a choice anyone made. */}
+                        {r.action === "brief" ? "–" : r.quality === "basic" ? "Basic" : r.quality === "standard" ? "Standard" : "Advanced"}
                       </td>
                       <td className="px-4 py-3">
                         {r.doc?.id ? (
