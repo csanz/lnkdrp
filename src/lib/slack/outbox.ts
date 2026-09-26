@@ -15,7 +15,7 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { debugError, debugLog } from "@/lib/debug";
-import { BACKOFF_MS, MAX_ATTEMPTS } from "@/lib/notifications/queue";
+import { BACKOFF_MS, CLAIM_STALE_MS, MAX_ATTEMPTS } from "@/lib/notifications/queue";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { SlackConnectionModel, type SlackConnection } from "@/lib/models/SlackConnection";
@@ -90,14 +90,28 @@ async function routingFor(orgId: Types.ObjectId, event: SlackOutboxEvent): Promi
   if (direct) out.add(String(direct));
   const docId = oid(event.docId);
   if (docId) {
-    const doc = (await DocModel.findOne({ _id: docId, orgId }).select({ projectIds: 1, primaryProjectId: 1, receivedViaRequestProjectId: 1, visibility: 1 }).lean()) as
-      | { projectIds?: unknown[]; primaryProjectId?: unknown; receivedViaRequestProjectId?: unknown; visibility?: string }
+    const doc = (await DocModel.findOne({ _id: docId, orgId }).select({ projectIds: 1, primaryProjectId: 1, projectId: 1, receivedViaRequestProjectId: 1, visibility: 1 }).lean()) as
+      | { projectIds?: unknown[]; primaryProjectId?: unknown; projectId?: unknown; receivedViaRequestProjectId?: unknown; visibility?: string }
       | null;
     if (doc?.visibility === "project") {
       const home = doc.primaryProjectId ? String(doc.primaryProjectId) : (doc.projectIds ?? []).map(String)[0];
       return { projectIds: home ? [home] : [], allowDefault: false };
     }
+    /**
+     * All three pointers, not just the array. A document's rooms live in `projectIds`, its home in
+     * `primaryProjectId`, and `projectId` is the backward-compat alias the model still carries
+     * (`Doc.ts`, which has its own `extractProjectIdSet` reading exactly these three).
+     *
+     * The array alone was wrong twice over. A document whose home is set but whose `projectIds` has
+     * not caught up never routed to that room's mapped channel at all — it went to the catch-all,
+     * which is an ordinary routing miss. Once rooms can be locked it stops being ordinary: the room
+     * the lock check below is meant to find would not be in the candidate set, so the lock would
+     * not be seen and the private room's activity would land in the channel the whole workspace
+     * reads. A leak through an omission, which is the shape that survives review.
+     */
     for (const p of doc?.projectIds ?? []) if (p) out.add(String(p));
+    if (doc?.primaryProjectId) out.add(String(doc.primaryProjectId));
+    if (doc?.projectId) out.add(String(doc.projectId));
     if (doc?.receivedViaRequestProjectId) out.add(String(doc.receivedViaRequestProjectId));
   }
   const projectIds = Array.from(out);
@@ -177,7 +191,37 @@ export async function enqueueSlackPosts(input: EnqueueSlackInput): Promise<numbe
   }
 }
 
-export type DrainResult = { claimed: number; sent: number; retried: number; skipped: number; dead: number; revoked: number };
+export type DrainResult = { claimed: number; sent: number; retried: number; skipped: number; dead: number; revoked: number; recovered: number };
+
+/**
+ * Hand back rows claimed by a drain that died mid-send (`sending` for longer than
+ * `CLAIM_STALE_MS`), the way `recoverStaleClaims` does for the notification queue.
+ *
+ * Without this a Slack post could be lost for good with no trace. The claim sets `sending` and
+ * every drain selects `pending`, so a row whose drain was torn down between the claim and the
+ * terminal write was never looked at again: the TTL index only reaps `sent` rows, nothing counts
+ * `sending`, and no admin surface reads the outbox. The event simply never arrived and the channel
+ * looked like a routing bug.
+ *
+ * The token goes back with the claim, so the drain that was holding the row owns nothing and its
+ * late write cannot land on the next claim's row. Attempts are deliberately not incremented: a
+ * torn-down runner is not a failed send, and charging it would burn the row's retries.
+ */
+export async function recoverStaleSlackClaims(params: { workspaceId?: string | Types.ObjectId | null; now?: Date; staleMs?: number } = {}): Promise<number> {
+  const now = params.now ?? new Date();
+  const staleMs = Number.isFinite(Number(params.staleMs)) ? Number(params.staleMs) : CLAIM_STALE_MS;
+  try {
+    await connectMongo();
+    const filter: Record<string, unknown> = { status: "sending", claimedAt: { $lt: new Date(now.getTime() - staleMs) } };
+    const orgId = oid(params.workspaceId);
+    if (orgId) filter.orgId = orgId;
+    const res = await SlackOutboxModel.updateMany(filter, { $set: { status: "pending", nextAttemptAt: now, claimedAt: null, claimToken: null } });
+    return res?.modifiedCount ?? 0;
+  } catch (err) {
+    debugError(1, "[slack] stale claim recovery failed", { message: err instanceof Error ? err.message : String(err) });
+    return 0;
+  }
+}
 
 /**
  * Post what is due. Scoped to one workspace, to specific rows (the moment after an event), or
@@ -185,10 +229,14 @@ export type DrainResult = { claimed: number; sent: number; retried: number; skip
  * do not wait on each other.
  */
 export async function drainSlackOutbox(params: { workspaceId?: string | Types.ObjectId | null; rowIds?: Types.ObjectId[]; now?: Date; limit?: number } = {}): Promise<DrainResult> {
-  const result: DrainResult = { claimed: 0, sent: 0, retried: 0, skipped: 0, dead: 0, revoked: 0 };
+  const result: DrainResult = { claimed: 0, sent: 0, retried: 0, skipped: 0, dead: 0, revoked: 0, recovered: 0 };
   const now = params.now ?? new Date();
   try {
     await connectMongo();
+    // A sweep (the cron, or the visit-brief run) is the only place that can see another drain's
+    // abandoned rows, so it is where they are handed back. A drain scoped to rows it just wrote
+    // has nothing to recover and skips the extra write.
+    if (!params.rowIds?.length) result.recovered = await recoverStaleSlackClaims({ workspaceId: params.workspaceId, now });
     const filter: Record<string, unknown> = { status: "pending", nextAttemptAt: { $lte: now } };
     const orgId = oid(params.workspaceId);
     if (orgId) filter.orgId = orgId;
