@@ -59,16 +59,25 @@ export const ACTIVITY_PAGE_SIZES = [25, 50, 100] as const;
 export const DEFAULT_ACTIVITY_PAGE_SIZE = 25;
 
 /**
+ * How a name in the sentence is drawn.
+ *
+ * Underlined at rest, not only on hover: it shipped styled exactly like the plain text beside it,
+ * which made a working link invisible.
+ */
+const SUBJECT_LINK_CLASS =
+  "font-medium text-[var(--fg)] underline decoration-dotted decoration-[var(--muted-2)] underline-offset-4 transition-colors hover:decoration-solid hover:decoration-[var(--fg)]";
+
+/**
  * The name at the head of the row's sentence, as a link, in priority order.
  *
  * 1. `readerHref` - a recipient. A reader is not a contributor: their page is the reading page for
  *    that link, and they must never be addressed by a contributor key (see brief 1.4).
- * 2. `agent.href` - the row is the agent's action, so the subject is the agent even when the
- *    sentence reads "Alice and Claude Code". The owner is one click away on the agent's page,
- *    which is the right depth for it: crediting the row to Alice would file her agent's work
- *    under her name.
+ * 2. `agent.href` - the row is the agent's action, so the subject is the agent.
  * 3. `actor.href` - a member acting in the app.
  * 4. null - a system row (a cron, the pipeline) belongs to nobody, so it stays plain text.
+ *
+ * This decides the link for a subject that names ONE contributor. A row that credits a member and
+ * their agent together is drawn by {@link RowSubject} as two links instead; see the note there.
  *
  * Exported for its own test: the precedence is the whole rule, and it is the kind of thing a later
  * edit reorders by accident.
@@ -215,6 +224,92 @@ export type RowEnter = "fresh" | "none";
  * or to the document, and the document title inside the suffix to the document. The second row
  * carries the timestamp and whichever of Share link / Analytics / What changed the event supports.
  */
+/**
+ * Is this row credited to a member *and* their agent, and if so what are the two names and where
+ * does each go?
+ *
+ * Only the exact sentence the label builder writes for that case (`"<person> and <agent label>"`)
+ * counts, so a subject that merely contains the word "and" is never cut in half. A recipient row
+ * is never split: a reader is not a contributor, and their link is the reading page for that share.
+ *
+ * Exported so the rule can be tested without a browser: this repo has no DOM test environment, and
+ * the defect it fixes (two names, one destination) is invisible in a type.
+ */
+export function coCreditedSubject(
+  item: ActivityItem,
+  subject: string,
+): { person: string; agentLabel: string; personHref: string | null; agentHref: string | null } | null {
+  if (item.readerHref) return null;
+  const person = actorDisplayName(item.actor);
+  const agentLabel = item.agent?.label ?? null;
+  if (!person || !agentLabel) return null;
+  if (subject !== `${person} and ${agentLabel}`) return null;
+  return {
+    person,
+    agentLabel,
+    personHref: item.actor?.href ?? null,
+    agentHref: item.agent?.href ?? null,
+  };
+}
+
+/**
+ * The name (or names) at the head of a row, linked.
+ *
+ * A row done by a member through their agent reads "Alice and Claude Code", and that was a single
+ * link to the agent's page. Two names, one destination: on the agent's own page clicking "Alice"
+ * did nothing at all, which reads as a broken link, and everywhere else it took you somewhere the
+ * name you clicked did not say. Each name now goes to its own contributor, which is also what the
+ * pages themselves promise: an agent's page says who connected it, a person's page lists their
+ * agents.
+ *
+ * Everything else keeps the single-subject rule in {@link subjectHrefFor}, recipients included: a
+ * reader is not a contributor and their link is the reading page for that share.
+ */
+function RowSubject({
+  item,
+  subject,
+  href,
+  title,
+}: {
+  item: ActivityItem;
+  subject: string;
+  href: string | null;
+  title: string;
+}) {
+  const pair = coCreditedSubject(item, subject);
+  if (pair) {
+    const { person, agentLabel, personHref, agentHref } = pair;
+    return (
+      <span className="font-medium text-[var(--fg)]">
+        {personHref ? (
+          <Link href={personHref} title={`See everything ${person} changed`} className={SUBJECT_LINK_CLASS}>
+            {person}
+          </Link>
+        ) : (
+          person
+        )}
+        <span className="font-normal text-[var(--muted)]">{" and "}</span>
+        {agentHref ? (
+          <Link href={agentHref} title={`See everything ${agentLabel} changed`} className={SUBJECT_LINK_CLASS}>
+            {agentLabel}
+          </Link>
+        ) : (
+          agentLabel
+        )}
+      </span>
+    );
+  }
+
+  if (href) {
+    return (
+      <Link href={href} title={title} className={SUBJECT_LINK_CLASS}>
+        {subject}
+      </Link>
+    );
+  }
+  return <span className="font-medium text-[var(--fg)]">{subject}</span>;
+}
+
 export function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: RowEnter }) {
   // A "replaced" row announces a new version and says nothing about it; this opens that version's
   // entry from the document's history without leaving the feed.
@@ -353,17 +448,7 @@ export function ActivityRow({ item, enter = "none" }: { item: ActivityItem; ente
               link" while it was already there. A dotted rule is the quiet version of the object
               links further along the sentence: enough to say this name goes somewhere, not enough
               to compete with the document title. */}
-          {subjectHref ? (
-            <Link
-              href={subjectHref}
-              title={subjectTitle}
-              className="font-medium text-[var(--fg)] underline decoration-dotted decoration-[var(--muted-2)] underline-offset-4 transition-colors hover:decoration-solid hover:decoration-[var(--fg)]"
-            >
-              {s.subject}
-            </Link>
-          ) : (
-            <span className="font-medium text-[var(--fg)]">{s.subject}</span>
-          )}
+          <RowSubject item={item} subject={s.subject} href={subjectHref} title={subjectTitle} />
           <span>{s.verb}</span>
           {objectNode}
           {suffixNode}
