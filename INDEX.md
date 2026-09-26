@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 988 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 986 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -575,7 +575,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/agents/owners.ts` · KeyOwner, resolveOwners
 - `src/lib/ai/agentSummary.ts` · AGENT_KEY_POINT_MAX_CHARS, AGENT_KEY_POINTS_MAX, AGENT_KEY_POINTS_MIN, AGENT_SUMMARY_MAX_CHARS, AGENT_SUMMARY_MIN_CHARS, AgentSummary, agentSummaryToAnalysis, cleanAgentText, …
 - `src/lib/ai/aiRunRecorder.ts` · AI_RUN_PROMPT_MAX_CHARS, AiRunKind, AiRunMeta, completeAiRun, failAiRun, startAiRun
-- `src/lib/ai/analyzePdfText.ts` · AiDocAnalysis, AiDocAnalysisSchema, analysisTelemetry, AnalysisTelemetry, analyzePdfText, isFallbackAnalysis, normalizeAiDocAnalysis
+- `src/lib/ai/analyzePdfText.ts` · AiDocAnalysis, AiDocAnalysisSchema, analysisTelemetry, AnalysisTelemetry, ANALYZE_TIMEOUT_MS, analyzePdfText, isFallbackAnalysis, normalizeAiDocAnalysis
 - `src/lib/ai/askFromText.ts` · extractAskDetailFromText, extractDollarAmounts, findRaiseAmount, resolveAsk
 - `src/lib/ai/constants.ts` · CATEGORY_LABELS, CATEGORY_VALUES, CategoryValue, CONFIDENCE_VALUES, ConfidenceValue, INTENDED_AUDIENCE_LABELS, INTENDED_AUDIENCE_VALUES, IntendedAudienceValue, …
 - `src/lib/ai/docChangeDiff.ts` · DocChangeDiff, DocChangeDiffSchema, DocChangeDiffUsage, isNoChangeSummary, NO_CHANGE_SUMMARY, normalizeForCompare, runDocChangeDiff, shapeDiff
@@ -660,7 +660,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/contacts/service.ts` · CONTACT_SORTS, CONTACT_TAG_TARGET_KIND, ContactDetail, ContactFilters, contactIdentityAllowed, ContactRow, CONTACTS_CSV_MAX_ROWS, contactsCsv, …
 - `src/lib/credits/adminMutations.ts` · AdminCreditMutationAction, adminMutateCredits, adminSimulateNewBillingCycle
 - `src/lib/credits/aiAutomation.ts` · AI_AUTOMATION_DEFAULT, AiAutomation, getAiAutomation, isAutomationOn, parseAutomationFlag, resolveAiAutomation
-- `src/lib/credits/costCatalog.ts` · COST_CATALOG, costAnchorId, CostCatalogEntry, costEntryForAction, FREE_ACTIONS, QUALITY_BLURBS, QUALITY_LABELS, QUALITY_TIERS
+- `src/lib/credits/costCatalog.ts` · COST_CATALOG, costAnchorId, CostCatalogEntry, costEntryForAction, flatPriceOf, FREE_ACTIONS, hasQualityLevels, QUALITY_BLURBS, …
 - `src/lib/credits/creditService.ts` · defaultBalanceForWorkspace, failAndRefundLedger, FREE_DAILY_CREDIT_CAP, markLedgerCharged, recordUnbilledRun, reserveCreditsOrThrow, starterCreditsForWorkspace
 - `src/lib/credits/cycleKey.ts` · cycleKeyForUsage, startOfUtcMonth, usageCycleStart
 - `src/lib/credits/errors.ts` · DAILY_CAP_CODE, isDailyCapError, isOutOfCreditsError, OUT_OF_CREDITS_CODE
@@ -671,10 +671,10 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/credits/purchases.ts` · expireCreditPurchases, grantCreditPack
 - `src/lib/credits/qualityDefaults.ts` · defaultHistoryQualityTierForPlan, getDefaultHistoryQualityTier, parseQualityTier, resolveHistoryQualityTier
 - `src/lib/credits/schedule.ts` · BRIEF_CREDITS, creditsForRun, INCLUDED_ACTIONS_AT_LAUNCH
-- `src/lib/credits/serviceCore.ts` · createCreditService
+- `src/lib/credits/serviceCore.ts` · createCreditService, LedgerRefundResult, LedgerSettleResult
 - `src/lib/credits/snapshot.ts` · CreditsSnapshot, getCreditsSnapshot
 - `src/lib/credits/staleReservations.ts` · releaseStaleReservations, ReleaseStaleReservationsResult, StaleReservationRow
-- `src/lib/credits/store.ts` · CreditLedgerFull, CreditLedgerStub, CreditStore, CreditsUsageSums, WorkspaceBalanceSnapshot
+- `src/lib/credits/store.ts` · CreditLedgerFull, CreditLedgerStub, CreditStore, CreditsUsageSums, LedgerTransition, WorkspaceBalanceSnapshot
 - `src/lib/credits/stripeReporting.ts` · batchIdempotencyKey, buildMeterEventParams, DEFAULT_CREDITS_METER_EVENT_NAME, getAiCreditsPriceId, getCreditsMeterEventName, groupClaimedLedgersByBatch, groupOnDemandLedgersForStripe, REPORT_CLAIM_TTL_MS, …
 - `src/lib/credits/summaryRequeue.ts` · requeueSkippedSummaries
 - `src/lib/credits/types.ts` · ActionType, CreditBucket, LedgerStatus, QualityTier
@@ -732,6 +732,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/gating/entryGate.ts` · enforceEntryGates
 - `src/lib/gating/forbidApiKey.ts` · forbidApiKey
 - `src/lib/gating/requireAdmin.ts` · AdminGate, requireAdmin
+- `src/lib/gating/serverComponentRequest.ts` · serverComponentRequest
 - `src/lib/gating/tempUserClient.ts` · captureTempUserFromResponse, clearTempUser, fetchWithTempUser, getTempUser, setTempUser, TEMP_USER_STORAGE_KEY, tempUserHeaders, TempUserStored, …
 - `src/lib/gating/tempUserHeaders.ts` · TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER
 - `src/lib/gating/waitlist.ts` · accessStatusChanged, forbidWaitlisted, isWaitlistedActor, readAccessStatus
@@ -886,8 +887,8 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/usage/reconcile.ts` · cycleRowsMatch, reconcileUsageAggsFromLedger, ReconcileUsageAggsResult
 - `src/lib/vercel/client.ts` · getDeployment, getProject, isVercelConfigured, listDeployments, VERCEL_TIMEOUT_MS, vercelConfig, VercelConfig, VercelDeployment, …
 - `src/lib/visits/pageOutline.ts` · getPageOutline, outlineEntryFromText, PAGE_OUTLINE_MAX_PAGES, PAGE_OUTLINE_VERSION, PAGE_TEXT_MAX_CHARS, PageOutlineEntry
-- `src/lib/visits/scheduleVisitBrief.ts` · dueAtFor, scheduleVisitBrief, ScheduleVisitBriefInput, VISIT_QUIET_MS
-- `src/lib/visits/visitBriefs.ts` · BRIEF_MIN_PAGES, BRIEF_MIN_VISIT_MS, BRIEFS_PER_DAY, buildSittingStats, buildVisitBriefRecord, CLAIM_STALE_MS, claimDueVisitBriefs, DEFAULT_CLAIM_LIMIT, …
+- `src/lib/visits/scheduleVisitBrief.ts` · dueAtFor, NEW_SITTINGS_PER_LINK_PER_HOUR, NEW_SITTINGS_WINDOW_MS, newSittingBucketKey, scheduleVisitBrief, ScheduleVisitBriefInput, VISIT_QUIET_MS
+- `src/lib/visits/visitBriefs.ts` · BRIEF_MIN_PAGES, BRIEF_MIN_VISIT_MS, BRIEFS_PER_DAY, briefsWrittenToday, buildSittingStats, buildVisitBriefRecord, CLAIM_STALE_MS, claimDailyBriefSlot, …
 - `src/lib/waitlist/acceptToken.ts` · AcceptTokenFailure, createAcceptToken, verifyAcceptToken, VerifyAcceptTokenResult, WAITLIST_ACCEPT_PURPOSE, WAITLIST_ACCEPT_TTL_MS
 - `src/lib/waitlist/waitlist.ts` · AccessStatus, accessStatusOf, approveUser, initialAccessStatus, isAllowlistedEmail, readWaitlistState, waitlistBlockedNotice, WaitlistBlockedReason, …
 
@@ -942,10 +943,6 @@ Clients, helpers and components that live beside the page that uses them.
 
 Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 
-- `scripts/_tmp-dataroom-full.ts`
-- `scripts/_tmp-dataroom-intro.ts`
-- `scripts/_tmp-dataroom-sim.ts`
-- `scripts/_tmp-mini.ts`
 - `scripts/admin-add.ts` · refuseIfUnusable
 - `scripts/ai-ask-repair.ts`
 - `scripts/audit-stored-blob-urls.ts`
@@ -973,6 +970,7 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `scripts/docchange-from-upload-repair.ts`
 - `scripts/gen-env-secrets.mjs`
 - `scripts/home-shot-brief.ts`
+- `scripts/home-shot-slack.ts`
 - `scripts/lib/exit.ts` · exit
 - `scripts/lib/time.mjs` · safeTimestamp
 - `scripts/measure-image-tokens.ts`

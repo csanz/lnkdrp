@@ -1262,6 +1262,7 @@ export async function PATCH(
           actorKind: actor.kind,
           type: "share.updated",
           docId: doc._id,
+          ...(homeProjectId ? { projectId: homeProjectId } : {}),
           title: doc.title ?? null,
           meta: { changed },
           request,

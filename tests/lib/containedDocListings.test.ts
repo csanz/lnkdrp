@@ -76,3 +76,61 @@ describe("contained documents: project-scoped listings", () => {
     });
   }
 });
+
+/**
+ * The other half of the same rule (docs/prds/lnkdrp-project-home.md, decision 7): containment
+ * changes DISCOVERY, not access, so `GET /api/docs` spreads the filter when the request BROWSES and
+ * deliberately skips it when the request ADDRESSES a document the caller already names. Applying it
+ * to an addressing request made a contained document unreachable, with two symptoms:
+ * `lnkdrp_add_docs_to_project` pre-checks existence with `?ids=<id>` and answered notFound instead
+ * of listing the document under "contained", and `lnkdrp_get_share` / `lnkdrp_get_share_stats`
+ * resolve a shareId through `?q=<shareId>` and answered not_found for a link that opens fine in a
+ * browser. Pinned here beside the listings because browse-filtered and address-unfiltered are one
+ * decision: weaken either side and one of the two bugs comes back.
+ */
+describe("contained documents: GET /api/docs filters browsing, not addressing", () => {
+  const src = source("src/app/api/docs/route.ts");
+  /** Only the GET handler: POST also mentions `visibility`, and has nothing to do with listing. */
+  const get = src.slice(src.indexOf("export async function GET"), src.indexOf("export async function POST"));
+
+  it("still applies the filter, on the browse path", () => {
+    expect(get).toMatch(/if \(!addressing\) Object\.assign\(filter, workspaceListableDocFilter\(\)\)/);
+  });
+
+  it("no longer spreads the filter unconditionally, and leaves the rest of the filter alone", () => {
+    const start = get.indexOf("const filter: Record<string, unknown> = {");
+    // The literal alone, not the comment that follows it: the comment names the helper on purpose.
+    const literal = get.slice(start, get.indexOf("};", start));
+    expect(literal, "the filter literal must not decide containment before `q=` has been read").not.toContain(
+      "workspaceListableDocFilter",
+    );
+    // isDeleted, isArchived and the org scope are unchanged: only the visibility rule moved.
+    expect(literal).toContain("isDeleted: { $ne: true }");
+    expect(literal).toContain("isArchived: archivedOnly ? true : { $ne: true }");
+    expect(literal).toContain("...orgScope");
+  });
+
+  it("treats `ids=` as addressing, because the caller already holds the ids", () => {
+    expect(get).toMatch(/let addressing = ids\.length > 0;/);
+  });
+
+  it("treats an exact document id or an exact slug in `q=` as addressing", () => {
+    // An anchored twin of the substring regex the search itself uses.
+    expect(get).toContain("const exactRx = new RegExp(`^${q.replace(");
+    // A document id, spelled out as 24 hex digits rather than delegated to `Types.ObjectId.isValid`:
+    // the rule decides whether a contained document leaves discovery, so it states what a caller may
+    // send instead of inheriting a driver's coercion rules.
+    expect(get).toMatch(/\/\^\[0-9a-fA-F\]\{24\}\$\/\.test\(q\)/);
+    expect(get).not.toMatch(/addressing\s*=[^;]*Types\.ObjectId\.isValid\(q\)/);
+    // The slug of any of the document's links, and `Doc.shareId` itself for a document whose default
+    // link row was never materialised.
+    expect(get).toContain(".select({ docId: 1, shareId: 1 })");
+    expect(get).toMatch(/linkHits\.some\(\(l\) => typeof l\.shareId === "string" && exactRx\.test\(l\.shareId\)\)/);
+    expect(get).toMatch(/DocModel\.exists\(\{ \.\.\.orgScope, shareId: exactRx \}\)/);
+  });
+
+  it("decides addressing in exactly those two places, so a free-text `q=` and a plain list stay filtered", () => {
+    expect(get.match(/\baddressing\s*=/g) ?? []).toHaveLength(2);
+    expect(get).not.toMatch(/\baddressing\s*=\s*true;/);
+  });
+});

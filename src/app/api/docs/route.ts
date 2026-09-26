@@ -128,19 +128,42 @@ export async function GET(request: Request) {
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
 
     // List most recently updated docs.
+    /**
+     * The tenancy clause, named rather than spread inline because the addressing check below reuses
+     * it: an exact-slug lookup has to be bounded by the same workspace as the listing itself.
+     */
+    const orgScope: Record<string, unknown> = allowLegacyByUserId
+      ? {
+          $or: [
+            { orgId },
+            { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+          ],
+        }
+      : { orgId };
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
-      ...workspaceListableDocFilter(),
       isArchived: archivedOnly ? true : { $ne: true },
-      ...(allowLegacyByUserId
-        ? {
-            $or: [
-              { orgId },
-              { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-            ],
-          }
-        : { orgId }),
+      ...orgScope,
     };
+    /**
+     * Browsing is filtered; addressing is not (docs/prds/lnkdrp-project-home.md, decision 7:
+     * containment changes DISCOVERY, not access).
+     *
+     * `workspaceListableDocFilter()` used to be spread into the filter above unconditionally, which
+     * also hid a contained document from callers that had *named* the one they wanted. Two tools
+     * broke on it. `lnkdrp_add_docs_to_project` pre-checks existence with `?ids=<id>` and so
+     * reported a contained document as notFound instead of listing it under "contained", telling the
+     * human their document does not exist. `lnkdrp_get_share` and `lnkdrp_get_share_stats` resolve a
+     * shareId through `?q=<shareId>` and so answered not_found for a link that opens perfectly well
+     * in a browser.
+     *
+     * So the rule is applied at the end of filter assembly, and only for a browse: a plain list, or
+     * a free-text `q=`. It is skipped when the caller already holds the ids (`ids=`), or when `q=`
+     * is an exact document id or the exact slug of a document or of one of its links. A free-text
+     * `q=` that is not an id stays filtered, which is the half of the rule that keeps a contained
+     * document out of discovery.
+     */
+    let addressing = ids.length > 0;
     if (ids.length) {
       // Direct lookup by IDs (used by the client for fast "starred docs" verification/metadata).
       filter._id = { $in: ids.map((id) => new Types.ObjectId(id)) };
@@ -161,10 +184,28 @@ export async function GET(request: Request) {
       // success full of zeroes — indistinguishable from a link nobody has opened yet. An agent
       // asked "how is the link I revoked doing?" was told "no traffic", confidently and wrongly.
       const linkHits = await ShareLinkModel.find({ shareId: rx, orgId, archivedAt: null, ...DOC_LINK_FILTER })
-        .select({ docId: 1 })
+        .select({ docId: 1, shareId: 1 })
         .limit(50)
-        .lean<Array<{ docId: Types.ObjectId }>>();
+        .lean<Array<{ docId: Types.ObjectId; shareId?: string }>>();
       const linkDocIds = linkHits.map((l) => l.docId).filter(Boolean);
+      /**
+       * Is this `q=` addressing one document, or searching for some? (See decision 7 above.)
+       *
+       * `rx` matches substrings, so an anchored twin asks the exact question. Three ways to be
+       * exact: a document id, the slug of one of the links just fetched, or `Doc.shareId` itself —
+       * the last one because a legacy document whose default link row was never materialised is
+       * still reachable by its own slug, and `ensureDefaultLink` is best-effort.
+       *
+       * The id arm spells out 24 hex digits rather than calling `Types.ObjectId.isValid`, which is
+       * the looser question: it answers yes for anything a driver could coerce into an id, and the
+       * rule it guards decides whether a contained document leaves discovery. A literal that says
+       * exactly what a caller may send cannot drift when the driver's coercion rules do.
+       */
+      const exactRx = new RegExp(`^${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+      addressing =
+        /^[0-9a-fA-F]{24}$/.test(q) ||
+        linkHits.some((l) => typeof l.shareId === "string" && exactRx.test(l.shareId)) ||
+        Boolean(await DocModel.exists({ ...orgScope, shareId: exactRx }));
       /**
        * `$and`, never `filter.$or = …`.
        *
@@ -185,6 +226,10 @@ export async function GET(request: Request) {
       const existingAnd = Array.isArray(filter.$and) ? (filter.$and as Array<Record<string, unknown>>) : [];
       filter.$and = [...existingAnd, { $or: searchClauses }];
     }
+    // Containment is a discovery rule, so it lands on the browse path only (decision 7, above).
+    // Applied here rather than in the filter literal because the `q=` branch is what decides whether
+    // this request names a document or is looking for one.
+    if (!addressing) Object.assign(filter, workspaceListableDocFilter());
 
     const useIds = Boolean(ids.length);
     const total = useIds ? 0 : await DocModel.countDocuments(filter);

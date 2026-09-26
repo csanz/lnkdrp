@@ -85,7 +85,8 @@ first integration listed there; the page is built to list more.
    an event that fires twice posts once. Nothing here can slow or fail the request that caused it.
 
 5. **Exactly the email's events, at exactly the email's moments.** Slack posts are enqueued at
-   the same four call sites that enqueue the email kinds, with the same dedupe source:
+   the same call sites that enqueue the email kinds, with the same dedupe source. The four the
+   email has:
    - `share_views` (`stats/route.ts`, a new viewer on a link) → "opened",
    - `visit_briefs` (`visitBriefs.ts` `announceAndEnqueue`) → "brief",
    - `doc_updates` (`process/route.ts`) → "replaced",
@@ -94,8 +95,12 @@ first integration listed there; the page is built to list more.
    do, and the feed already has it. Amended 2026-09-25: a document *added to a project*
    (`doc.added_to_project`, `src/app/api/docs/[docId]/route.ts`) does post, as the fifth kind
    `docs`, because a routed room's channel is exactly where "a document landed in this deal room"
-   belongs; Chris asked for it after watching a data room fill up in silence. Return visits are covered by the brief. This keeps one
-   definition of "an event happened" for both channels.
+   belongs; Chris asked for it after watching a data room fill up in silence. That kind grew the
+   same day to cover a document that finished uploading (`process/route.ts`, first version only, so
+   a request-inbox drop keeps its own `received` post), which is how a document born inside a room
+   announces itself there once rather than twice. A new share link posts under `docUpdates`
+   (`docs/[docId]/links` and `projects/[projectSlug]/links`). Return visits are covered by the
+   brief. This keeps one definition of "an event happened" for both channels.
 
 6. **Content follows the plan, as email does.** On Free, `share.viewed` carries no viewer
    identity and the view email says "someone"; the Slack message says the same. Briefs are Pro
@@ -103,7 +108,9 @@ first integration listed there; the page is built to list more.
    builders take, so the two cannot disagree about what a workspace is allowed to see.
 
 7. **Per-event switches on the connection, all on by default.** `events: { views, briefs,
-   docUpdates, requests }`. Off means the outbox row is not written. These are workspace
+   docUpdates, requests, docs }` — five, not four: `docs` ("New documents") joined them on
+   2026-09-25 with the fifth event kind in decision 5, and `SLACK_EVENT_KEYS` in
+   `src/lib/slack/connections.ts` is the list. Off means the outbox row is not written. These are workspace
    switches, distinct from each member's email modes; the member preferences stay untouched.
 
 8. **Block Kit with a plain-text fallback, one message per event, no threads.** A header line,
@@ -175,7 +182,7 @@ send-time preference lookup is per member; this is per workspace.
   a short reason; nothing partial is stored.
 - `GET /api/orgs/active/slack` (member): `{ connected, teamName, channelName, events, status,
   lastPostAt, lastError, configurationUrl }`. Never the URL.
-- `PATCH /api/orgs/active/slack` (admin): the four event switches.
+- `PATCH /api/orgs/active/slack` (admin): the five event switches (decision 7).
 - `POST /api/orgs/active/slack/test` (admin): posts "LinkDrop is connected to #channel" through
   the same sender, so the first message a customer sees is proof.
 - `DELETE /api/orgs/active/slack` (admin): decision 11.
@@ -207,7 +214,7 @@ mirroring what it does for brief emails. No new cron entry.
   channel was removed") and a button. Slack is the only card at launch; the list is data-driven
   so the next integration is one more entry. Under the list, a short "More coming" line.
 - **`/integrations/slack`** (the detail page the card opens): nothing connected, a paragraph
-  and "Add to Slack". Connected: one row per channel (team, channel, the four switches, "Send
+  and "Add to Slack". Connected: one row per channel (team, channel, the five switches, "Send
   a test message", "Disconnect", the last error if any), a "Default" marker with "Make
   default", an "Add channel" button, and under it a projects table with a channel dropdown per
   project defaulting to "workspace default". The dropdown is the whole mapping UI. The OAuth

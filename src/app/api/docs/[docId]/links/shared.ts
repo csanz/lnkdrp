@@ -58,6 +58,16 @@ export type DocAccess = {
   /** The workspace the document belongs to (backfilled for legacy personal docs). */
   orgId: Types.ObjectId;
   title: string | null;
+  /**
+   * The document's home project as a string, or null when it lives in no project
+   * (docs/prds/lnkdrp-project-home.md, decision 2).
+   *
+   * It is read here, off the row both handlers already fetch, because every link event belongs to
+   * the room the document lives in as much as to the workspace: a project's own feed is filtered on
+   * the row's `projectId` (`GET /api/activity?projectId=`), so a row without it is simply missing
+   * from the room whose document it describes.
+   */
+  homeProjectId: string | null;
 };
 
 export type DocAccessResult = { ok: true; access: DocAccess } | { ok: false; response: Response };
@@ -89,8 +99,10 @@ export async function accessDocForLinks(
   const legacyUserId = new Types.ObjectId(actor.userId);
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
   const doc = (await DocModel.findOne(buildDocMatch(docId, orgId, legacyUserId, allowLegacyByUserId))
-    .select({ _id: 1, orgId: 1, title: 1 })
-    .lean()) as { _id: Types.ObjectId; orgId?: Types.ObjectId | null; title?: string | null } | null;
+    .select({ _id: 1, orgId: 1, title: 1, primaryProjectId: 1 })
+    .lean()) as
+    | { _id: Types.ObjectId; orgId?: Types.ObjectId | null; title?: string | null; primaryProjectId?: Types.ObjectId | null }
+    | null;
   if (!doc) {
     return { ok: false, response: applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor) };
   }
@@ -113,6 +125,7 @@ export async function accessDocForLinks(
       docId,
       orgId: doc.orgId ?? orgId,
       title: typeof doc.title === "string" ? doc.title : null,
+      homeProjectId: doc.primaryProjectId ? String(doc.primaryProjectId) : null,
     },
   };
 }

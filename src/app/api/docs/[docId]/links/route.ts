@@ -86,7 +86,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
   const { docId } = await ctx.params;
   const gate = await accessDocForLinks(request, docId, "member");
   if (!gate.ok) return gate.response;
-  const { actor, docId: docObjectId, orgId, title } = gate.access;
+  const { actor, docId: docObjectId, orgId, title, homeProjectId } = gate.access;
   try {
     // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
     // queued account to /waitlist, which is a decoration: the browser could still call this route
@@ -143,6 +143,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       actorKind: actor.kind,
       type: "share_link.created",
       docId: docObjectId,
+      // A document that lives in a room shares from that room, so the room's own feed has to carry
+      // the new link (docs/prds/lnkdrp-project-home.md, decision 2). The home project rides along on
+      // the row the access check already read, so this costs no query.
+      ...(homeProjectId ? { projectId: homeProjectId } : {}),
       title,
       meta: { linkId: dto.id, shareId: dto.shareId, linkLabel: dto.label, audience: dto.audience, enabled: dto.enabled },
       request,
