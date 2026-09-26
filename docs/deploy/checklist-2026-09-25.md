@@ -128,9 +128,14 @@ introduces, and the fifteen commits since this file was written added none.
 
 ## 3. Indexes
 
-**Built by the migration runner (step 1)**: the nine listed above (the eight of migrations 0002 to
-0006 plus `activityevents.orgId_1_userId_1_createdDate_-1__id_-1` from 0007). Nothing else needs the
-runner.
+**Built by the migration runner (step 1)**: sixteen, counted from the migration files. Two on
+`orgmemberships` (0001, dropped and rebuilt plain); four from 0002 (`shareviews.lastViewedAt_-1`,
+`sharevisits.lastEventAt_-1`, `sharelinks.lastViewedAt_-1`, `activityevents.type_1_createdDate_-1`);
+the two `projects` unique indexes (0003); the `airuns` TTL (0004); six on `contacts` (0006:
+`orgId_1_email_1` unique, then `orgId_1_lastSeenAt_-1`, `orgId_1_domain_1`, `orgId_1_docIds_1`,
+`orgId_1_projectIds_1`, `orgId_1_name_1`); and `activityevents.orgId_1_userId_1_createdDate_-1__id_-1`
+(0007). 0005 builds none. The spot check above names ten of the sixteen; the six `contacts` indexes
+are covered by 0006 failing loudly if the unique one cannot build. Nothing else needs the runner.
 
 **Built by Mongoose `autoIndex` on the first function that imports the model after the deploy**
 (DEPLOY.md 5.4 explains that a failure here is silent). New collections, all empty at deploy, so
