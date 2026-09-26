@@ -124,6 +124,9 @@ const ICON_BY_TYPE: Record<string, HeroIcon> = {
   "download_request.created": ArrowDownTrayIcon,
   "download_request.approved": CheckCircleIcon,
   "download_request.denied": XCircleIcon,
+  // A private data room, with the padlock Slack taught everybody to read (locked-projects PRD).
+  "project.locked": LockClosedIcon,
+  "project.unlocked": LockOpenIcon,
 };
 
 /** Render a user-friendly relative time string for ISO timestamps. */

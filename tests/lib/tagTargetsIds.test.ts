@@ -30,6 +30,18 @@ const tagsForTargets = vi.fn(async (params: { targetIds: ReadonlyArray<string> }
 
 vi.mock("@/lib/gating/actor", () => ({ resolveActor, applyTempUserHeaders }));
 vi.mock("@/lib/tags/service", () => ({ tagsForTargets }));
+vi.mock("@/lib/mongodb", () => ({ connectMongo: vi.fn(async () => undefined) }));
+/**
+ * No locked rooms (docs/prds/lnkdrp-locked-projects.md, decision 16).
+ *
+ * The route filters the ids it was handed through the hidden set before it asks the service, so
+ * without this the ids below would go looking for a database. Nothing hidden means every valid id
+ * still reaches `tagsForTargets`, which is exactly what these tests are about.
+ */
+vi.mock("@/lib/projects/lockScope", () => ({
+  hiddenProjectIds: async () => [],
+  lockedHomeExclusion: () => ({}),
+}));
 
 const { GET } = await import("@/app/api/tags/targets/route");
 

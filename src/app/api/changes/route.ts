@@ -35,6 +35,7 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { UserModel } from "@/lib/models/User";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
@@ -119,14 +120,24 @@ export async function GET(request: Request) {
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
 
+    /**
+     * Documents whose home is a locked room this person is not in (decision 13).
+     *
+     * Not optional on any of the three branches, and not for the reason the other listings have. Every
+     * item here carries the document's `shareId`, and `/s/:shareId` needs no workspace identity at
+     * all, so one row of this history IS the document rather than a hint about it. The summary text is
+     * the second half of the same problem: "renamed the acquirer list" is the content.
+     */
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
+
     // The workspace's live documents, which is what "the workspace's history" means here. With
     // `?docId=` it is one document instead, and that is the shared by-id match (plus the same
     // visibility rule the listing applies) rather than the listing filter with an `_id` bolted on.
     const docFilter: Record<string, unknown> = docIdRaw
-      ? { ...buildDocMatch(new Types.ObjectId(docIdRaw), orgId, legacyUserId, allowLegacyByUserId), ...workspaceListableDocFilter() }
+      ? { ...buildDocMatch(new Types.ObjectId(docIdRaw), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion), ...workspaceListableDocFilter() }
       : allowLegacyByUserId
-        ? { isDeleted: { $ne: true }, ...workspaceListableDocFilter(), $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] }
-        : { orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter() };
+        ? { isDeleted: { $ne: true }, ...workspaceListableDocFilter(), ...lockedExclusion, $or: [{ orgId }, { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] }] }
+        : { orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter(), ...lockedExclusion };
     const docs = (await DocModel.find(docFilter)
       .select({ _id: 1, title: 1, shareId: 1, updatedDate: 1 })
       .sort({ updatedDate: -1 })

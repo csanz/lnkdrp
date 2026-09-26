@@ -19,6 +19,7 @@ import { checkLimit, planLimitResponse, type LimitCheck, type PlanLimitBlocked }
 import { ensureDefaultLink, setAllLinksEnabled, syncDocShareState, updateShareLink } from "@/lib/share/links";
 import { WITH_DOC_PASSWORD_HASH } from "@/lib/share/passwordSelect";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor, projectGrantIds, projectVisibilityClause } from "@/lib/projects/lockScope";
 import { restoreDocToLastGood } from "@/lib/uploads/restoreDocAfterFailure";
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
 import { enqueueSlackPosts } from "@/lib/slack/outbox";
@@ -206,8 +207,9 @@ export async function GET(
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
     const docObjectId = new Types.ObjectId(docId);
-    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId);
+    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId, lockedExclusion);
 
     // Fetch doc (lean) so we don't pay for a full Mongoose document instance on this hot path.
     // NOTE: We still do a few best-effort backfills below; keep them lightweight.
@@ -458,10 +460,23 @@ export async function GET(
     ];
     const uniqueProjectIds = Array.from(new Map(allProjectIds.map((id) => [String(id), id])).values());
 
+    /**
+     * The rooms this document is in, as this reader may see them.
+     *
+     * `visibility` so the page can draw a padlock on the pill for a private room, and the clause so a
+     * room the reader holds no grant for is not on the list at all (decision 14: a locked room's NAME
+     * is a leak). A document whose own home is locked never reaches this code, because the match above
+     * refuses it; what this catches is the other case, a document filed into both an open room and a
+     * private one, where the pill would otherwise name the private one to everybody in the open one.
+     */
     const projects =
       uniqueProjectIds.length
-        ? await ProjectModel.find({ _id: { $in: uniqueProjectIds }, orgId })
-            .select({ _id: 1, name: 1, slug: 1, isRequest: 1, requestReviewEnabled: 1 })
+        ? await ProjectModel.find({
+            _id: { $in: uniqueProjectIds },
+            orgId,
+            $and: [projectVisibilityClause(await projectGrantIds(orgId, actor.userId, request))],
+          })
+            .select({ _id: 1, name: 1, slug: 1, visibility: 1, isRequest: 1, requestReviewEnabled: 1 })
             .lean()
         : [];
 
@@ -673,6 +688,7 @@ export async function GET(
           id: String(p._id),
           name: p.name ?? "",
           slug: (p as unknown as { slug?: unknown }).slug ?? "",
+          visibility: (p as unknown as { visibility?: unknown }).visibility === "locked" ? "locked" : "workspace",
           isRequest: Boolean((p as unknown as { isRequest?: unknown }).isRequest),
           requestReviewEnabled: Boolean((p as unknown as { requestReviewEnabled?: unknown }).requestReviewEnabled),
         })),
@@ -889,7 +905,8 @@ export async function PATCH(
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId);
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
+    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId, lockedExclusion);
 
     const setFields: Record<string, unknown> = {};
     const addToSetFields: Record<string, unknown> = {};
@@ -949,9 +966,17 @@ export async function PATCH(
     );
     if (joiningProjectIds.length) {
       const unique = [...new Set(joiningProjectIds)].map((id) => new Types.ObjectId(id));
+      /**
+       * And through the visibility clause, which makes this the write decision 27 names: filing a
+       * document into a locked room is how a non-member would get the room listed on a page they can
+       * already open, and from there its name, its slug and its other documents. The refusal stays the
+       * 404 this already answers for another workspace's id, because a filter that told the caller the
+       * room exists would undo the rest of the feature.
+       */
       const owned = await ProjectModel.countDocuments({
         _id: { $in: unique },
         isDeleted: { $ne: true },
+        $and: [projectVisibilityClause(await projectGrantIds(orgId, actor.userId, request))],
         $or: [{ orgId }, ...(allowLegacyByUserId ? [{ orgId: null, userId: legacyUserId }] : [])],
       });
       if (owned !== unique.length) {
@@ -1353,10 +1378,15 @@ export async function PATCH(
       ).values(),
     );
 
+    // The same per-viewer room list the GET returns, for the same reason (decision 14).
     const projects =
       uniqueDocProjectIds.length
-        ? await ProjectModel.find({ _id: { $in: uniqueDocProjectIds }, orgId })
-            .select({ _id: 1, name: 1, slug: 1 })
+        ? await ProjectModel.find({
+            _id: { $in: uniqueDocProjectIds },
+            orgId,
+            $and: [projectVisibilityClause(await projectGrantIds(orgId, actor.userId, request))],
+          })
+            .select({ _id: 1, name: 1, slug: 1, visibility: 1 })
             .lean()
         : [];
     const primaryProject =
@@ -1383,6 +1413,7 @@ export async function PATCH(
             id: String(p._id),
             name: p.name ?? "",
             slug: (p as unknown as { slug?: unknown }).slug ?? "",
+            visibility: (p as unknown as { visibility?: unknown }).visibility === "locked" ? "locked" : "workspace",
           })),
           visibility: (doc as { visibility?: unknown }).visibility === "project" ? "project" : "workspace",
           isArchived: Boolean(doc.isArchived),
@@ -1444,8 +1475,9 @@ export async function DELETE(
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
     const docObjectId = new Types.ObjectId(docId);
-    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId);
+    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId, lockedExclusion);
 
     // `findOneAndUpdate` (returning the pre-update doc) so the activity row gets the title without a second query.
     const deleted = await DocModel.findOneAndUpdate(

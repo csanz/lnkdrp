@@ -31,6 +31,15 @@ import {
 } from "@/lib/analytics/shareViewAggregates";
 
 const ORG_ID = (process.env.WORKSPACE_METRICS_TEST_ORG_ID ?? "").trim();
+/**
+ * The viewer these reconciliations run as.
+ *
+ * `loadWorkspaceMetrics` is per person now (docs/prds/lnkdrp-locked-projects.md, decision 16), so it
+ * needs one. A fresh id holds no `ProjectMembership` grants, which is the right default here: the seed
+ * corpus has no locked room, so the visible set is the whole workspace either way, and a test that
+ * quietly ran as a member of a private room would stop reconciling the moment one existed.
+ */
+const VIEWER_USER_ID = "000000000000000000000000";
 
 /** Both an org to read and a database to read it from, or the suite has nothing to reconcile. */
 function canRun(): boolean {
@@ -66,7 +75,7 @@ describe("workspace metrics reconcile with document metrics", () => {
       const { ShareVisitModel } = await import("@/lib/models/ShareVisit");
 
       const now = new Date();
-      const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, plan: "pro", requestedRange: "30d", now });
+      const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, viewerUserId: VIEWER_USER_ID, plan: "pro", requestedRange: "30d", now });
       const start = windowStartUtc(payload.range.days, now);
       const startKey = start.toISOString().slice(0, 10);
 
@@ -137,7 +146,7 @@ describe("workspace metrics reconcile with document metrics", () => {
 
   it.skipIf(!canRun())("the headline totals are the sum of the documents behind them", async () => {
     const { loadWorkspaceMetrics } = await import("@/lib/analytics/workspace/query");
-    const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, plan: "pro", requestedRange: "30d" });
+    const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, viewerUserId: VIEWER_USER_ID, plan: "pro", requestedRange: "30d" });
 
     // The area under each series equals its headline figure — the invariant the chart relies on.
     expect(payload.series.reduce((a, p) => a + p.views, 0)).toBe(payload.headline.views.value);
@@ -155,7 +164,7 @@ describe("workspace metrics reconcile with document metrics", () => {
     const now = new Date();
     // 7 days on purpose: the shorter the window, the more of a lifetime counter falls outside it,
     // which is exactly the gap this assertion is here to catch.
-    const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, plan: "pro", requestedRange: "7d", now });
+    const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, viewerUserId: VIEWER_USER_ID, plan: "pro", requestedRange: "7d", now });
     if (!payload.people.items.length) return;
 
     const start = windowStartUtc(payload.range.days, now);
@@ -179,7 +188,7 @@ describe("workspace metrics reconcile with document metrics", () => {
 
   it.skipIf(!canRun())("returning readers are counted, never derived from opens minus views", async () => {
     const { loadWorkspaceMetrics } = await import("@/lib/analytics/workspace/query");
-    const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, plan: "pro", requestedRange: "30d" });
+    const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, viewerUserId: VIEWER_USER_ID, plan: "pro", requestedRange: "30d" });
     const returning = payload.docsOpened.returningReaders;
     if (returning === null) return;
 
@@ -192,7 +201,7 @@ describe("workspace metrics reconcile with document metrics", () => {
   it.skipIf(!canRun())("Free withholds every identity and its history beyond the plan window", async () => {
     const { loadWorkspaceMetrics } = await import("@/lib/analytics/workspace/query");
     const { FREE_ANALYTICS_DAYS } = await import("@/lib/billing/planLimits");
-    const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, plan: "free", requestedRange: "90d" });
+    const payload = await loadWorkspaceMetrics({ orgId: ORG_ID, viewerUserId: VIEWER_USER_ID, plan: "free", requestedRange: "90d" });
 
     expect(payload.range.days).toBe(FREE_ANALYTICS_DAYS);
     expect(payload.range.clampedByPlan).toBe(true);

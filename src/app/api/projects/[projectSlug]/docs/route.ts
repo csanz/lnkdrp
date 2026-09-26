@@ -20,6 +20,7 @@ import { requestUploadPathFor } from "@/lib/projects/requestSettings";
 import { ensureDefaultProjectLink } from "@/lib/share/projectLinks";
 import { liveProjectByIdMatch } from "@/lib/projects/scope";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 
 export const runtime = "nodejs";
 /**
@@ -83,12 +84,22 @@ export async function GET(
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    /**
+     * Documents whose home is a locked room this caller is not in (decision 12).
+     *
+     * The project itself has already passed the visibility clause, so this is the other half: a
+     * document is hidden by its HOME, which means one filed into both this room and a private one it
+     * calls home is absent here too. That is the sharp edge decision 12 names, and it is the right
+     * side of it, because the alternative lists a title and a `shareId` for a document whose own page
+     * answers 404.
+     */
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
     const projectIdParam = decodeURIComponent(projectSlug).trim();
     if (!Types.ObjectId.isValid(projectIdParam)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const project = await ProjectModel.findOne(
-      liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId),
+      await liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
     )
       .select({
         _id: 1,
@@ -105,6 +116,10 @@ export async function GET(
         docCount: 1,
         autoAddFiles: 1,
         shareEnabled: 1,
+        // The project page loads its own row through this route, so the padlock in its header and its
+        // members panel come from here (docs/prds/lnkdrp-locked-projects.md).
+        visibility: 1,
+        lockedAt: 1,
         isRequest: 1,
         requestUploadToken: 1,
         requestViewToken: 1,
@@ -229,7 +244,7 @@ export async function GET(
           // A by-id lookup of one document: the shared match, so a guide in the trash or in another
           // workspace is not rendered as this repo's guide by title.
           const guide = await DocModel.findOne(
-            buildDocMatch(new Types.ObjectId(guideDocId), orgId, legacyUserId, allowLegacyByUserId),
+            buildDocMatch(new Types.ObjectId(guideDocId), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion),
           )
             .select({ title: 1 })
             .lean();
@@ -265,6 +280,7 @@ export async function GET(
       $and: [
         // Backward-compat: old docs only have `projectId`; new docs use `projectIds[]`.
         { $or: [{ projectId: project._id }, { projectIds: project._id }] },
+        ...(Object.keys(lockedExclusion).length ? [lockedExclusion] : []),
       ],
     };
     if (q) {
@@ -383,6 +399,7 @@ export async function GET(
         description: project.description ?? "",
         autoAddFiles: Boolean((project as unknown as { autoAddFiles?: unknown }).autoAddFiles),
         shareEnabled: (project as unknown as { shareEnabled?: unknown }).shareEnabled !== false,
+        visibility: (project as unknown as { visibility?: unknown }).visibility === "locked" ? "locked" : "workspace",
         isRequest: Boolean((project as unknown as { isRequest?: unknown }).isRequest),
         request: requestSettings,
       },

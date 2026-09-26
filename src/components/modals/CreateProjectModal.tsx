@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { LockClosedIcon } from "@heroicons/react/24/outline";
 import AgentHintNotice from "@/components/AgentHintNotice";
 import Modal from "@/components/modals/Modal";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
@@ -28,6 +29,8 @@ export default function CreateProjectModal({
   setName,
   description,
   setDescription,
+  locked = false,
+  setLocked,
 }: {
   open: boolean;
   onClose: () => void;
@@ -40,6 +43,13 @@ export default function CreateProjectModal({
   setName: (v: string) => void;
   description: string;
   setDescription: (v: string) => void;
+  /** Create it as a private data room (docs/prds/lnkdrp-locked-projects.md). */
+  locked?: boolean;
+  /**
+   * Omitted in a personal workspace, which hides the control entirely: a one-person workspace has
+   * nobody to hide from, and a switch that does nothing is worse than no switch (decision 21).
+   */
+  setLocked?: (v: boolean) => void;
 }) {
   const { plan } = usePlan();
   const { openUpgrade } = useUpgradeModal();
@@ -103,6 +113,30 @@ export default function CreateProjectModal({
             className="mt-2 min-h-[96px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
           />
         </div>
+
+        {setLocked ? (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
+            <label className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={locked}
+                disabled={busy}
+                onChange={(e) => setLocked(e.target.checked)}
+              />
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--fg)]">
+                  <LockClosedIcon className="h-3.5 w-3.5 text-[var(--muted-2)]" aria-hidden="true" />
+                  Make it private
+                </span>
+                <span className="mt-0.5 block text-[12px] leading-5 text-[var(--muted-2)]">
+                  Only the people you add will see this room. For everyone else in the workspace,
+                  including owners, it does not appear at all. You can add people after you create it.
+                </span>
+              </span>
+            </label>
+          </div>
+        ) : null}
 
         {showLimitNotice ? (
           <PlanLimitNotice

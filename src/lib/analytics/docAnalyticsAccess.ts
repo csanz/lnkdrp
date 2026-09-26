@@ -12,6 +12,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast, type Actor } from "@/lib/gating/actor";
 import {
   analyticsTierForPlan,
@@ -51,7 +52,8 @@ export async function resolveDocAnalyticsAccess(request: Request, docId: string)
   const orgId = new Types.ObjectId(actor.orgId);
   const legacyUserId = new Types.ObjectId(actor.userId);
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-  const raw = await DocModel.findOne(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId))
+  const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
+  const raw = await DocModel.findOne(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId, lockedExclusion))
     .select({ _id: 1, orgId: 1, title: 1, slideNodes: 1, pageSlugs: 1 })
     .lean<{ _id: Types.ObjectId; orgId?: Types.ObjectId | null; title?: unknown; slideNodes?: unknown; pageSlugs?: unknown }>();
   if (!raw) return fail(404, "Not found");

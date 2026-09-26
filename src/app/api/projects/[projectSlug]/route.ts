@@ -19,6 +19,20 @@ import { setAllProjectLinksEnabled, syncProjectShareState } from "@/lib/share/pr
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
 import { liveProjectByIdMatch, liveProjectBySlugMatch, slugBackfillPendingFilter } from "@/lib/projects/scope";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
+import {
+  deleteProjectGrants,
+  grantProjectMembership,
+  LOCKED_ROOM_MEMBER_CAP,
+  lockedHomeExclusionFor,
+  projectVisibilityChanged,
+} from "@/lib/projects/lockScope";
+import { lockReview, verifyLockReviewToken, type LockTarget } from "@/lib/projects/lockReview";
+import { lockNotSupportedOnRequestResponse } from "@/lib/projects/lockRefusals";
+import { isLockedProject, isRequestProject } from "@/lib/projects/resolveProject";
+import { projectRoster } from "@/lib/projects/roster";
+import { skipPendingForProject } from "@/lib/notifications/queue";
+import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 
 export const runtime = "nodejs";
 
@@ -168,6 +182,10 @@ function projectListDto(project: ProjectRow) {
     isRequest: Boolean(project.isRequest) || Boolean(token),
     docCount: Number.isFinite(raw) ? Number(raw) : 0,
     autoAddFiles: Boolean(project.autoAddFiles),
+    // "locked" is a private data room: it exists only for the people in it. Absent on every row that
+    // predates the feature, which reads as "workspace" exactly as the filters treat it.
+    visibility: isLockedProject(project) ? "locked" : "workspace",
+    lockedAt: project.lockedAt instanceof Date ? project.lockedAt.toISOString() : null,
     updatedDate: project.updatedDate ? new Date(project.updatedDate as Date).toISOString() : null,
     createdDate: project.createdDate ? new Date(project.createdDate as Date).toISOString() : null,
   };
@@ -177,6 +195,8 @@ function projectListDto(project: ProjectRow) {
 type ProjectRow = {
   _id: unknown;
   shareId?: unknown;
+  visibility?: unknown;
+  lockedAt?: unknown;
   name?: string | null;
   slug?: unknown;
   description?: string | null;
@@ -238,25 +258,50 @@ export async function GET(
       requestUploadToken: 1,
       docCount: 1,
       autoAddFiles: 1,
+      visibility: 1,
+      lockedAt: 1,
       updatedDate: 1,
       createdDate: 1,
     };
     const project = (await ProjectModel.findOne(
       byId
-        ? liveProjectByIdMatch(new Types.ObjectId(param), orgId, legacyUserId, allowLegacyByUserId)
-        : liveProjectBySlugMatch(slug, orgId, legacyUserId, allowLegacyByUserId),
+        ? await liveProjectByIdMatch(new Types.ObjectId(param), orgId, legacyUserId, allowLegacyByUserId, actor.userId, request)
+        : await liveProjectBySlugMatch(slug, orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
     )
       .select(select)
       .lean()) as ProjectRow | null;
 
     if (!project) {
       if (byId) return notFound();
-      const pending = await ProjectModel.exists(slugBackfillPendingFilter(orgId, legacyUserId, allowLegacyByUserId));
+      const pending = await ProjectModel.exists(
+        await slugBackfillPendingFilter(orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
+      );
       return notFound(pending ? { reason: "slug_backfill_pending" } : {});
     }
 
+    /**
+     * The roster rides along on the by-id read (decision 23), so the header banner and the members
+     * panel render a field rather than infer one. Only for a locked room: an open project has nothing
+     * to be a member of, and paying two reads on every project page to say "workspace" would be a
+     * cost the feature imposes on workspaces that never use it.
+     */
+    const locked = isLockedProject(project);
+    const roster = locked
+      ? await projectRoster({ orgId: actor.orgId, projectId: project._id as Types.ObjectId, viewerUserId: actor.userId, locked })
+      : null;
+
     return applyTempUserHeaders(
-      NextResponse.json({ project: projectListDto(project) }, { headers: { "cache-control": "no-store" } }),
+      NextResponse.json(
+        {
+          project: {
+            ...projectListDto(project),
+            visibleBecause: roster?.visibleBecause ?? "workspace",
+            members: roster?.members ?? [],
+            membersCanManageLinks: roster?.membersCanManageLinks ?? true,
+          },
+        },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {
@@ -295,7 +340,24 @@ export async function PATCH(
       requestRequireAuthToUpload: boolean;
       shareEnabled: boolean;
       rotateRequestTokens: RequestTokenRotation;
+      visibility: string;
+      reviewToken: string;
+      keepUserIds: string[];
     }>;
+
+    // Lock or unlock a data room (docs/prds/lnkdrp-locked-projects.md, decisions 10, 23, 26 and 31).
+    const visibilityTarget: LockTarget | null =
+      body.visibility === "locked" || body.visibility === "workspace" ? body.visibility : null;
+    if (visibilityTarget) {
+      /**
+       * Identity-grade, so a key may not do it (decision 23). The refusal is here rather than at the
+       * top of the handler because everything else a PATCH can carry — a rename, a description, the
+       * share switch, a token rotation — is document work an agent is meant to do, and refusing the
+       * whole route would break the MCP's `lnkdrp_update_project`.
+       */
+      const keyRefusal = forbidApiKey(actor, "make a data room private, or open one up");
+      if (keyRefusal) return keyRefusal;
+    }
 
     // `{ shareEnabled }` on its own is a visibility toggle: it must not require or overwrite the
     // name/description/autoAddFiles the full settings form sends.
@@ -306,8 +368,12 @@ export async function PATCH(
     // made to carry a name it does not have. Without this the rotate call fell into the
     // "Project name is required" 400 below and there was no way to reach the new code at all.
     const rotateOnly = body.name === undefined && typeof body.shareEnabled !== "boolean" && rotateRequestTokens !== null;
-    // Both partial shapes skip the settings half of this handler.
-    const omitsSettings = shareOnly || rotateOnly;
+    // `{ visibility }`, with or without the public-link checkbox beside it, is the third partial
+    // shape: the lock dialog does not carry a name, and without this it fell into the "Project name
+    // is required" 400 below and there was no way to reach the lock at all.
+    const lockOnly = body.name === undefined && rotateRequestTokens === null && visibilityTarget !== null;
+    // All three partial shapes skip the settings half of this handler.
+    const omitsSettings = shareOnly || rotateOnly || lockOnly;
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const description = typeof body.description === "string" ? body.description.trim() : "";
     const autoAddFiles = typeof body.autoAddFiles === "boolean" ? body.autoAddFiles : false;
@@ -334,10 +400,123 @@ export async function PATCH(
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
     const project = await ProjectModel.findOne(
-      liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId),
+      await liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
     );
     if (!project) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+    }
+
+    /**
+     * The lock, decided before anything else this handler writes.
+     *
+     * Order matters twice over. The request-inbox refusal and the review token are checked before a
+     * single field is touched, so a refused lock changes nothing at all; and the grants are written
+     * AFTER `save()` below, because a room that is locked with no members is a room nobody can open
+     * and there is no owner bypass to get back in (decision 21).
+     */
+    const wasLocked = isLockedProject(project as unknown as { visibility?: unknown });
+    let lockWrite: { target: LockTarget; keepUserIds: string[] } | null = null;
+    if (visibilityTarget && (visibilityTarget === "locked") !== wasLocked) {
+      // Both things that make a request inbox, read off the row rather than from the `isRequest`
+      // constant below, which is declared with the settings half of this handler.
+      if (visibilityTarget === "locked" && isRequestProject(project as unknown as { isRequest?: unknown; requestUploadToken?: unknown })) {
+        return applyTempUserHeaders(lockNotSupportedOnRequestResponse(), actor);
+      }
+      const tokenCheck = verifyLockReviewToken(body.reviewToken, {
+        projectId: project._id,
+        userId: actor.userId,
+        target: visibilityTarget,
+      });
+      if (!tokenCheck.ok) {
+        /**
+         * No valid token: work out whether this room has anything to review. An empty room with no
+         * links and nobody to hide it from does not, and making somebody confirm a dialog about zero
+         * documents and zero readers is how they learn to click through the one that matters.
+         *
+         * The refusal carries the review itself, so the client can open the dialog from this response
+         * rather than making a second request to be told what it just asked about.
+         */
+        const review = await lockReview({
+          orgId,
+          actorUserId: actor.userId,
+          project: project as unknown as Parameters<typeof lockReview>[0]["project"],
+          target: visibilityTarget,
+        });
+        if (review.reviewRequired) {
+          return applyTempUserHeaders(
+            NextResponse.json(
+              {
+                error:
+                  visibilityTarget === "locked"
+                    ? "Review what making this data room private does before confirming it."
+                    : "Review what opening this data room up does before confirming it.",
+                code: "LOCK_REVIEW_REQUIRED",
+                reason: tokenCheck.reason,
+                review,
+              },
+              { status: 400 },
+            ),
+            actor,
+          );
+        }
+      }
+
+      let keepUserIds: string[] = [];
+      if (visibilityTarget === "locked") {
+        // The actor is always in. Locking yourself out of the room you are locking is not a state
+        // this route is allowed to produce.
+        const wanted = [
+          actor.userId,
+          ...(Array.isArray(body.keepUserIds) ? body.keepUserIds : []).filter(
+            (id): id is string => typeof id === "string" && Types.ObjectId.isValid(id.trim()),
+          ).map((id) => id.trim()),
+        ];
+        const unique = [...new Set(wanted)];
+        if (unique.length > LOCKED_ROOM_MEMBER_CAP) {
+          return applyTempUserHeaders(
+            NextResponse.json(
+              {
+                error: `A data room can hold ${LOCKED_ROOM_MEMBER_CAP} people. Choose fewer, or leave the room open.`,
+                code: "PROJECT_MEMBER_CAP",
+              },
+              { status: 409 },
+            ),
+            actor,
+          );
+        }
+        // Only live workspace members: v1 has no guests, and a grant for somebody who has left is a
+        // row nothing can act on whose name would still sit on the roster.
+        const live = (await OrgMembershipModel.find({
+          orgId,
+          userId: { $in: unique.map((id) => new Types.ObjectId(id)) },
+          isDeleted: { $ne: true },
+        })
+          .select({ userId: 1 })
+          .lean()) as Array<{ userId?: Types.ObjectId }>;
+        keepUserIds = live.map((m) => (m.userId ? String(m.userId) : "")).filter(Boolean);
+        /**
+         * The actor is in whether or not a membership row says so.
+         *
+         * `requireOrgRole` passes the owner of a PERSONAL workspace even when the membership row is
+         * missing or stale, which is correct there and would leave `keepUserIds` empty here: a locked
+         * room with nobody in it, which nobody can open and which only break-glass could recover.
+         */
+        if (!keepUserIds.includes(actor.userId)) keepUserIds.push(actor.userId);
+
+        (project as unknown as { visibility?: string }).visibility = "locked";
+        (project as unknown as { lockedAt?: Date | null }).lockedAt = new Date();
+        (project as unknown as { lockedByUserId?: Types.ObjectId | null }).lockedByUserId = new Types.ObjectId(actor.userId);
+      } else {
+        /**
+         * Unlock KEEPS the grants (decision 31), so re-locking restores the same room and an
+         * accidental unlock is not a data loss. `lockedAt` and `lockedByUserId` describe the lock that
+         * is in force, so they are cleared: the history of who locked it and when is in the feed.
+         */
+        (project as unknown as { visibility?: string }).visibility = "workspace";
+        (project as unknown as { lockedAt?: Date | null }).lockedAt = null;
+        (project as unknown as { lockedByUserId?: Types.ObjectId | null }).lockedByUserId = null;
+      }
+      lockWrite = { target: visibilityTarget, keepUserIds };
     }
 
     if (typeof body.shareEnabled === "boolean") {
@@ -403,6 +582,92 @@ export async function PATCH(
       ? []
       : (["name", "description", "autoAddFiles", "shareEnabled"] as const).filter((f) => project.isModified(f));
     await project.save();
+    /**
+     * Forget the cached locked-id set for this workspace, before anything reads it again
+     * (docs/prds/lnkdrp-locked-projects.md, decision 5's caching note).
+     *
+     * The set is cached per workspace for ten seconds because the document surfaces ask for it on
+     * every request. Ten seconds of staleness is a fair trade for a read and not for the write that
+     * just changed the answer: the person who locked the room is about to see the page repaint, and
+     * without this it would repaint from the pre-lock answer. Unconditional rather than inside the
+     * `lockWrite` branch because this save is also how a locked room gets renamed, and a stale entry
+     * costs nothing to drop.
+     */
+    projectVisibilityChanged({ orgId: actor.orgId });
+
+    /**
+     * The lock is written; now the things that depend on it.
+     *
+     * Grants first, and awaited: the room is already invisible to everybody, so until these rows
+     * exist nobody can open it. A failure here leaves a locked room with whoever was seated so far
+     * and is surfaced as a 500, which is recoverable (retry, or unlock) in a way "locked with nobody
+     * in it" is not.
+     */
+    if (lockWrite?.target === "locked") {
+      for (const userId of lockWrite.keepUserIds) {
+        await grantProjectMembership({
+          orgId,
+          projectId: project._id,
+          userId,
+          // The room role records why the grant exists in the room's own terms; the workspace role
+          // still decides what may be done (decision 24). Everybody kept at lock time is an editor,
+          // because they were already working in this room when it was open.
+          role: "editor",
+          via: String((project as unknown as { userId?: unknown }).userId ?? "") === userId ? "creator" : "added",
+          addedByUserId: actor.userId,
+        });
+      }
+      /**
+       * Pending mail about this room, owed to people who are not in it, is dropped (decision 31).
+       * The document ids are needed because a `doc_updates` row carries the document and not always
+       * the project; both windows this cannot close are named in the lock dialog.
+       */
+      try {
+        const homeDocs = (await DocModel.find({
+          orgId,
+          isDeleted: { $ne: true },
+          $or: [{ primaryProjectId: project._id }, { primaryProjectId: null, projectIds: project._id }],
+        })
+          .select({ _id: 1 })
+          .limit(2000)
+          .lean()) as Array<{ _id: Types.ObjectId }>;
+        await skipPendingForProject({
+          orgId,
+          projectId: project._id,
+          docIds: homeDocs.map((d) => d._id),
+          exceptUserIds: lockWrite.keepUserIds,
+          reason: "not a project member",
+        });
+      } catch (err) {
+        // Best-effort: the room is locked either way, and `runGroup`'s send-time check is the
+        // backstop for a row this pass did not reach.
+        debugError(1, "[api/projects/:id] PATCH could not drop pending notifications for a locked room", {
+          projectId: projectIdParam,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (lockWrite) {
+      /**
+       * `projectId: null` on purpose (decision 17): this row belongs in the WORKSPACE feed, where the
+       * people who are losing the room can see why it disappeared. A room that vanishes from ten
+       * sidebars with no explanation is a support ticket, and its name was already public to those
+       * ten people. Every row after this one carries `projectId` and lives only in the room's feed.
+       */
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: lockWrite.target === "locked" ? "project.locked" : "project.unlocked",
+        projectId: null,
+        title: project.name ?? null,
+        meta: {
+          projectName: project.name ?? null,
+          ...(lockWrite.target === "locked" ? { members: lockWrite.keepUserIds.length } : {}),
+        },
+        request,
+      });
+    }
     // The project share switch is a switch over the project's *links* now that a project can have
     // several (docs/prds/lnkdrp-project-links.md): `Project.shareEnabled` alone would leave
     // `/p/:shareId` resolving through a link row that still says enabled. Marks what it disables,
@@ -519,6 +784,7 @@ export async function PATCH(
             return Number.isFinite(raw) ? Number(raw) : 0;
           })(),
           autoAddFiles: Boolean(project.autoAddFiles),
+          visibility: isLockedProject(project as unknown as { visibility?: unknown }) ? "locked" : "workspace",
           isRequest,
           request: isRequest
             ? {
@@ -587,6 +853,15 @@ export async function DELETE(
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    /**
+     * The document rule the per-document writes below inherit (decision 11).
+     *
+     * Inert for the request repos this branch re-homes, because a request inbox can never be locked
+     * (decision 10) and its documents are homed in it. It is passed anyway rather than `{}` because
+     * the alternative is a `buildDocMatch` call in this file that says the lock does not apply here,
+     * and the next person to copy these three lines would carry that with them.
+     */
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
     const docTenant = allowLegacyByUserId
       ? {
           $or: [
@@ -614,7 +889,7 @@ export async function DELETE(
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
     const project = await ProjectModel.findOne(
-      liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId),
+      await liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
     );
     if (!project) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -705,7 +980,7 @@ export async function DELETE(
 
             // Per-document writes go through the one document rule (src/lib/docs/docMatch.ts): the
             // same workspace/legacy bound as `docTenant`, plus "not deleted", in one place.
-            const docFilter = buildDocMatch(new Types.ObjectId(String(docId)), orgId, legacyUserId, allowLegacyByUserId);
+            const docFilter = buildDocMatch(new Types.ObjectId(String(docId)), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion);
             await DocModel.updateOne(docFilter, {
               $set: {
                 primaryProjectId: nextPrimary,
@@ -731,7 +1006,7 @@ export async function DELETE(
           const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
           if (!docId) continue;
           await DocModel.updateOne(
-            buildDocMatch(new Types.ObjectId(String(docId)), orgId, legacyUserId, allowLegacyByUserId),
+            buildDocMatch(new Types.ObjectId(String(docId)), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion),
             {
               $set: {
                 primaryProjectId: null,
@@ -749,7 +1024,7 @@ export async function DELETE(
           const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
           if (!docId) continue;
           await DocModel.updateOne(
-            buildDocMatch(new Types.ObjectId(String(docId)), orgId, legacyUserId, allowLegacyByUserId),
+            buildDocMatch(new Types.ObjectId(String(docId)), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion),
             {
               $set: {
                 isDeleted: true,
@@ -804,7 +1079,42 @@ export async function DELETE(
       // ignore; best-effort
     }
 
+    /**
+     * A document that has just lost its home is not contained any more, it is nowhere
+     * (docs/prds/lnkdrp-locked-projects.md, decision 32).
+     *
+     * `Doc.visibility: "project"` means "listed only inside its data room". This delete is a hard
+     * `deleteOne` and never cleared that word, so a contained document whose room was deleted
+     * disappeared from every workspace listing AND from every project, while `/p/:shareId` kept
+     * serving it to recipients: an unrecoverable publisher, live today. Untidy while a room is
+     * public, unacceptable once one can be private and the member list that would say who to ask is
+     * about to be deleted too.
+     *
+     * Scoped to documents that now have no project at all: the re-home step above has already run, so
+     * anything still contained and still in a room keeps its containment.
+     */
+    await DocModel.updateMany(
+      {
+        ...docTenant,
+        visibility: "project",
+        primaryProjectId: null,
+        projectId: null,
+        $or: [{ projectIds: { $exists: false } }, { projectIds: { $size: 0 } }],
+      },
+      { $set: { visibility: "workspace" } },
+    );
+
+    /**
+     * The sequence above is resumable, and the order is the mechanism: every step is an idempotent
+     * `updateMany` and the project row is deleted LAST, so a crash anywhere in the middle leaves the
+     * room in place and a retry finishes the job. The grants go after the row itself for the same
+     * reason (see `deleteProjectGrants`).
+     */
     await ProjectModel.deleteOne({ _id: projectId, ...docTenant });
+    await deleteProjectGrants({ orgId: actor.orgId, projectId });
+    // A deleted room is no longer one of the workspace's locked ids, and a stale entry would keep
+    // excluding documents whose home no longer exists.
+    projectVisibilityChanged({ orgId: actor.orgId });
 
     // The project row is gone for good (this delete is not a soft one), so its tag assignments
     // have nothing left to point at (src/lib/tags/service.ts).

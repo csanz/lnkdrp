@@ -105,7 +105,7 @@ describe("GET /api/projects/:slug", () => {
 
     expect(projectFindOne).toHaveBeenCalledTimes(1);
     const filter = firstFilter(projectFindOne);
-    expect(filter).toEqual(liveProjectBySlugMatch("series-a-data-room", TEAM_ORG, ME, false));
+    expect(filter).toEqual(await liveProjectBySlugMatch("series-a-data-room", TEAM_ORG, ME, false, ME));
     // In a team workspace there is no by-user alternative at all: another member's pre-workspace
     // projects, and the caller's own, must not surface here.
     expect(JSON.stringify(filter)).not.toContain("userId");
@@ -119,8 +119,9 @@ describe("GET /api/projects/:slug", () => {
 
     const filter = firstFilter(projectFindOne);
     // Stored slugs are lower-case, so the caller's spelling is folded before the exact match.
-    expect(filter).toEqual(liveProjectBySlugMatch("series-a-data-room", PERSONAL_ORG, ME, true));
-    expect(Object.keys(filter).sort()).toEqual(["$or", "isDeleted"]);
+    expect(filter).toEqual(await liveProjectBySlugMatch("series-a-data-room", PERSONAL_ORG, ME, true, ME));
+    // `$and` carries the visibility clause; the legacy tenancy alternative stays the only `$or`.
+    expect(Object.keys(filter).sort()).toEqual(["$and", "$or", "isDeleted"]);
     expect(filter.$or).toEqual([
       { slug: "series-a-data-room", orgId: PERSONAL_ORG },
       { slug: "series-a-data-room", userId: ME, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
@@ -131,7 +132,7 @@ describe("GET /api/projects/:slug", () => {
     projectFindOne.mockImplementation(() => chain(stored));
     const res = await get(PROJECT.toString());
     expect(res.status).toBe(200);
-    expect(firstFilter(projectFindOne)).toEqual(liveProjectByIdMatch(PROJECT, TEAM_ORG, ME, false));
+    expect(firstFilter(projectFindOne)).toEqual(await liveProjectByIdMatch(PROJECT, TEAM_ORG, ME, false, ME));
     // A miss by id is a plain 404: the backfill question is only asked about slugs.
     projectFindOne.mockImplementation(() => chain(null));
     const miss = await get(new Types.ObjectId().toString());
@@ -146,7 +147,7 @@ describe("GET /api/projects/:slug", () => {
     expect(body).toEqual({ error: "Not found" });
     // It asked whether a slug-less legacy project could explain the miss, with the same bound.
     expect(projectExists).toHaveBeenCalledTimes(1);
-    expect(firstFilter(projectExists)).toEqual(slugBackfillPendingFilter(TEAM_ORG, ME, false));
+    expect(firstFilter(projectExists)).toEqual(await slugBackfillPendingFilter(TEAM_ORG, ME, false, ME));
     expect(JSON.stringify(firstFilter(projectExists))).not.toContain("userId");
   });
 
@@ -173,6 +174,14 @@ describe("GET /api/projects/:slug", () => {
       autoAddFiles: false,
       updatedDate: "2026-09-20T10:00:00.000Z",
       createdDate: "2026-09-01T10:00:00.000Z",
+      // A private data room's fields (docs/prds/lnkdrp-locked-projects.md, decision 23). The by-id
+      // read carries the roster so the header banner and the members panel render a field rather than
+      // infer one; an open project says "workspace" and reads no grants at all.
+      visibility: "workspace",
+      lockedAt: null,
+      visibleBecause: "workspace",
+      members: [],
+      membersCanManageLinks: true,
     });
     expect(res.headers.get("cache-control")).toBe("no-store");
   });

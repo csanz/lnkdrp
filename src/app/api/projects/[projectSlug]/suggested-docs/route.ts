@@ -4,6 +4,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { liveProjectByIdMatch } from "@/lib/projects/scope";
@@ -141,7 +142,7 @@ export async function GET(
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const projectId = new Types.ObjectId(projectIdParam);
     const project = await ProjectModel.findOne(
-      liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId),
+      await liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
     )
       .select({ _id: 1, name: 1, description: 1 })
       .lean();
@@ -169,6 +170,10 @@ export async function GET(
         : { orgId }),
       isDeleted: { $ne: true },
       ...workspaceListableDocFilter(),
+      // A suggestion is a workspace-wide document listing with a project's tags for a query, so it
+      // carries the locked-room rule like every other one: a document whose home is a private room
+      // must not be offered for filing into an open one (decision 11).
+      ...(await lockedHomeExclusionFor(orgId, actor.userId, request)),
       isArchived: { $ne: true },
       "aiOutput.tags": { $in: tags },
     };

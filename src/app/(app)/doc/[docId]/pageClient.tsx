@@ -16,6 +16,7 @@ import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import TagsRow from "@/components/tags/TagsRow";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import DocProjectsModal, { type DocProjectListItem } from "@/components/modals/DocProjectsModal";
+import ProjectLockIcon from "@/components/project/ProjectLockIcon";
 import { useAuthEnabled, useNavigationLockWhile } from "@/app/providers";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { apiCreateUpload, PlanLimitClientError, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
@@ -55,7 +56,15 @@ type DocDTO = {
   projectId?: string | null;
   project?: { id: string; name: string; isRequest?: boolean; requestReviewEnabled?: boolean } | null;
   projectIds?: string[];
-  projects?: Array<{ id: string; name: string; slug?: string; isRequest?: boolean; requestReviewEnabled?: boolean }>;
+  projects?: Array<{
+    id: string;
+    name: string;
+    slug?: string;
+    /** "locked" is a private data room: the pill wears a padlock (locked-projects PRD). */
+    visibility?: "workspace" | "locked";
+    isRequest?: boolean;
+    requestReviewEnabled?: boolean;
+  }>;
   isArchived?: boolean;
   /** "project" = contained: listed only inside its data room (PRD decision 7). */
   visibility?: "workspace" | "project";
@@ -1462,13 +1471,18 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const projects = useMemo((): DocProjectListItem[] => {
     const ps = Array.isArray(doc.projects) ? doc.projects : [];
     const normalized = ps
-      .map((p) => {
+      .map((p): DocProjectListItem | null => {
         if (!p || typeof p !== "object") return null;
         const id = typeof (p as { id?: unknown }).id === "string" ? String((p as { id: string }).id) : "";
         const name = typeof (p as { name?: unknown }).name === "string" ? String((p as { name: string }).name).trim() : "";
         const slug = typeof (p as { slug?: unknown }).slug === "string" ? String((p as { slug: string }).slug).trim() : undefined;
         if (!id || !name) return null;
-        return { id, name, ...(slug ? { slug } : {}) };
+        return {
+          id,
+          name,
+          ...(slug ? { slug } : {}),
+          visibility: (p as { visibility?: unknown }).visibility === "locked" ? "locked" : "workspace",
+        };
       })
       .filter((x): x is DocProjectListItem => Boolean(x));
     // de-dupe by id, keep order
@@ -2384,6 +2398,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                                     />
                                   )}
                                   <span className="max-w-[160px] truncate">{p.name}</span>
+                                  {/* The room is private: the same padlock the sidebar and the
+                                      project header draw, at this row's size. */}
+                                  <ProjectLockIcon locked={p.visibility === "locked"} className="h-3.5 w-3.5" />
                                 </span>
                               );
                               return href ? (

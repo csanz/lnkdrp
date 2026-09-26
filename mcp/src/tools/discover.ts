@@ -49,6 +49,14 @@ const ACTIVITY_TYPES = [
   "project.created",
   "project.updated",
   "project.deleted",
+  // A data room made private, opened up again, or gaining and losing people
+  // (docs/prds/lnkdrp-locked-projects.md). An agent only ever sees the rows for rooms its key's owner
+  // can see: `project.locked` and `project.unlocked` sit in the workspace feed, while the member rows
+  // carry a project id and reach the feed only through a room the caller is in.
+  "project.locked",
+  "project.unlocked",
+  "project.member_added",
+  "project.member_removed",
   "doc.added_to_project",
   "doc.removed_from_project",
   "request_repo.created",

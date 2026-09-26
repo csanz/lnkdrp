@@ -12,6 +12,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
 import { requireOrgRole, type OrgRole } from "@/lib/orgs/requireOrgRole";
 import { ShareLinkError } from "@/lib/share/links";
@@ -98,7 +99,8 @@ export async function accessDocForLinks(
   const orgId = new Types.ObjectId(actor.orgId);
   const legacyUserId = new Types.ObjectId(actor.userId);
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-  const doc = (await DocModel.findOne(buildDocMatch(docId, orgId, legacyUserId, allowLegacyByUserId))
+  const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
+  const doc = (await DocModel.findOne(buildDocMatch(docId, orgId, legacyUserId, allowLegacyByUserId, lockedExclusion))
     .select({ _id: 1, orgId: 1, title: 1, primaryProjectId: 1 })
     .lean()) as
     | { _id: Types.ObjectId; orgId?: Types.ObjectId | null; title?: string | null; primaryProjectId?: Types.ObjectId | null }

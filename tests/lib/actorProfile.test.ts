@@ -53,6 +53,16 @@ vi.mock("@/lib/models/Doc", () => ({
 vi.mock("@/lib/models/Project", () => ({
   ProjectModel: { find: () => ({ select: () => ({ lean: async () => projects }) }) },
 }));
+/**
+ * No locked rooms in these fixtures (docs/prds/lnkdrp-locked-projects.md, decision 14).
+ *
+ * A contributor's project list is named through `projectNamesFor` now, which asks who is reading. This
+ * file is about the aggregates, so the grant read is stubbed empty: every room is visible, and the
+ * expectations below are the ones they were written as.
+ */
+vi.mock("@/lib/models/ProjectMembership", () => ({
+  ProjectMembershipModel: { find: () => ({ select: () => ({ lean: async () => [] }) }), db: { readyState: 1 } },
+}));
 vi.mock("@/lib/models/User", () => ({
   UserModel: {
     find: (q: { _id?: { $in?: Types.ObjectId[] } }) => ({
@@ -96,7 +106,7 @@ describe("a person's profile", () => {
   });
 
   test("counts, buckets and the date range come from one grouped read", async () => {
-    const res = await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } });
+    const res = await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } });
     expect(res).not.toBeNull();
     expect(res!.totalActions).toBe(10);
     expect(res!.workActions).toBe(6);
@@ -116,7 +126,7 @@ describe("a person's profile", () => {
   });
 
   test("byType lists work types only, biggest first", async () => {
-    const res = await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } });
+    const res = await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } });
     expect(res!.byType).toEqual([
       { type: "doc.created", count: 3 },
       { type: "share_link.created", count: 2 },
@@ -126,7 +136,7 @@ describe("a person's profile", () => {
   });
 
   test("identity, key and href", async () => {
-    const res = await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } });
+    const res = await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } });
     expect(res!.kind).toBe("person");
     expect(res!.name).toBe("Alice Ng");
     expect(res!.email).toBe("alice@example.com");
@@ -138,13 +148,13 @@ describe("a person's profile", () => {
 
   test("a member with no name left is called by the local part of their address", async () => {
     users = [{ _id: ALICE, name: "", email: "alice@example.com" }];
-    const res = await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } });
+    const res = await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } });
     expect(res!.name).toBe("alice");
   });
 
   test("a member whose account is gone keeps their page and is named as a member", async () => {
     users = [];
-    const res = await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } });
+    const res = await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } });
     expect(res!.name).toBe("A member");
     expect(res!.email).toBeNull();
     expect(res!.href).toBe(`/people/${ALICE}`);
@@ -159,7 +169,7 @@ describe("a person's profile", () => {
       { _id: DOC_LIVE, title: "Series A deck", isDeleted: false },
       { _id: DOC_GONE, title: "Old draft", isDeleted: true },
     ];
-    const res = await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } });
+    const res = await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } });
     expect(res!.docs).toEqual([
       {
         id: String(DOC_LIVE),
@@ -183,14 +193,14 @@ describe("a person's profile", () => {
   test("a document purged outright is still listed, untitled and unlinked", async () => {
     docRows = [{ _id: DOC_GONE, n: 1, last: AT("2026-09-19T00:00:00Z") }];
     docs = [];
-    const res = await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } });
+    const res = await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } });
     expect(res!.docs[0]).toMatchObject({ title: null, deleted: true, href: null });
   });
 
   test("projects are named and linked", async () => {
     projectRows = [{ _id: PROJECT, n: 4, last: AT("2026-09-18T00:00:00Z") }];
     projects = [{ _id: PROJECT, name: "Fundraising" }];
-    const res = await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } });
+    const res = await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } });
     expect(res!.projects).toEqual([
       {
         id: String(PROJECT),
@@ -207,7 +217,7 @@ describe("a person's profile", () => {
       { _id: "claude-code", n: 12, last: AT("2026-09-22T00:00:00Z") },
       { _id: "gemini-cli", n: 3, last: AT("2026-09-11T00:00:00Z") },
     ];
-    const res = await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } });
+    const res = await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } });
     expect(res!.agents).toEqual([
       {
         key: `agent:claude-code@${ALICE}`,
@@ -237,6 +247,7 @@ describe("an agent's profile", () => {
   test("is named by its client label, and says who connected it", async () => {
     const res = await loadActorProfile({
       orgId: ORG,
+      viewerUserId: String(ALICE),
       key: { kind: "agent", client: "claude-code", ownerUserId: String(ALICE) },
     });
     expect(res!.kind).toBe("agent");
@@ -258,6 +269,7 @@ describe("an agent's profile", () => {
   test("an unknown owner is a real contributor with nowhere to link", async () => {
     const res = await loadActorProfile({
       orgId: ORG,
+      viewerUserId: String(ALICE),
       key: { kind: "agent", client: "claude-code", ownerUserId: null },
     });
     expect(res!.key).toBe("agent:claude-code@unknown");
@@ -285,9 +297,9 @@ describe("resolveAgentOwner", () => {
 describe("nothing here", () => {
   test("a contributor with no rows in this workspace is null, so the route can 404", async () => {
     typeRows = [];
-    expect(await loadActorProfile({ orgId: ORG, key: { kind: "person", userId: String(ALICE) } })).toBeNull();
+    expect(await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "person", userId: String(ALICE) } })).toBeNull();
     expect(
-      await loadActorProfile({ orgId: ORG, key: { kind: "agent", client: "claude-code", ownerUserId: null } }),
+      await loadActorProfile({ orgId: ORG, viewerUserId: String(ALICE), key: { kind: "agent", client: "claude-code", ownerUserId: null } }),
     ).toBeNull();
   });
 });

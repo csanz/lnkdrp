@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowUpTrayIcon, CpuChipIcon, DocumentPlusIcon, LinkIcon, LockClosedIcon } from "@heroicons/react/24/outline";
+import { lockedOptionLabel } from "@/components/project/ProjectLockIcon";
 import UploadButton from "@/components/UploadButton";
 import FirstRunWelcome from "@/components/onboarding/FirstRunWelcome";
 import AgentHintNotice from "@/components/AgentHintNotice";
@@ -54,7 +55,12 @@ export default function HomeAuthedClient() {
  * only cleared on a route change (providers.tsx), so it would stay up forever. The page picks the
  * staged file up from `usePendingUpload` and switches to its preview instead.
  */
-export type UploadProjectOption = { id: string; name: string };
+export type UploadProjectOption = {
+  id: string;
+  name: string;
+  /** "locked" is a private data room. A `<select>` cannot hold a padlock, so the option says it. */
+  visibility?: "workspace" | "locked";
+};
 
 /** What the "Add to a data room" picker needs: the list, the choice, and the id that is safe to send. */
 export type UploadProjectPickerState = {
@@ -88,13 +94,15 @@ export function useUploadProjectPicker({ enabled = true }: { enabled?: boolean }
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetchJson<{ projects?: Array<{ id?: unknown; name?: unknown }> }>(
+        const res = await fetchJson<{ projects?: Array<{ id?: unknown; name?: unknown; visibility?: unknown }> }>(
           "/api/projects?limit=50&page=1&lite=1",
           { method: "GET" },
         );
         const list: UploadProjectOption[] = [];
         for (const p of Array.isArray(res?.projects) ? res.projects : []) {
-          if (typeof p?.id === "string" && p.id && typeof p?.name === "string") list.push({ id: p.id, name: p.name });
+          if (typeof p?.id === "string" && p.id && typeof p?.name === "string") {
+            list.push({ id: p.id, name: p.name, visibility: p.visibility === "locked" ? "locked" : "workspace" });
+          }
         }
         if (!cancelled) setOptions(list);
       } catch {
@@ -144,7 +152,10 @@ export function UploadProjectPicker({
         <option value="">No data room (workspace)</option>
         {options.map((o) => (
           <option key={o.id} value={o.id}>
-            {o.name}
+            {/* The padlock in words: a private room in this list is a room the workspace cannot see,
+                and a picker that hid that would file a document somewhere the uploader did not
+                expect. */}
+            {lockedOptionLabel(o.name, o.visibility === "locked")}
           </option>
         ))}
       </select>

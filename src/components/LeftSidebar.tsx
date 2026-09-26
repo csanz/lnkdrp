@@ -242,6 +242,8 @@ type ProjectListItem = {
   slug: string;
   description: string;
   isRequest?: boolean;
+  /** "locked" is a private data room: it exists only for the people in it, and its row wears a padlock. */
+  visibility?: "workspace" | "locked";
   docCount?: number;
   updatedDate: string | null;
   createdDate: string | null;
@@ -512,6 +514,8 @@ export default function LeftSidebar({
   const [planLimitNudgeDismissed, setPlanLimitNudgeDismissed] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDescription, setNewProjectDescription] = useState("");
+  /** Create it as a private data room (docs/prds/lnkdrp-locked-projects.md, decision 31). */
+  const [newProjectLocked, setNewProjectLocked] = useState(false);
   const [newProjectBusy, setNewProjectBusy] = useState(false);
   const [newProjectError, setNewProjectError] = useState<string | null>(null);
   const [pendingNewProjectNavId, setPendingNewProjectNavId] = useState<string | null>(null);
@@ -1825,6 +1829,9 @@ export default function LeftSidebar({
           name,
           description,
           autoAddFiles: false,
+          // The create route seats the creator as the room's first member; there is no owner bypass,
+          // so a locked room with nobody in it is a room nobody can open.
+          ...(newProjectLocked ? { locked: true } : {}),
         }),
       });
       const json = (await res.json().catch(() => ({}))) as {
@@ -1856,6 +1863,8 @@ export default function LeftSidebar({
         slug: typeof json?.project?.slug === "string" ? json.project.slug : "",
         description,
         isRequest: false,
+        // So the row wears its padlock immediately, rather than on the next sidebar refresh.
+        visibility: newProjectLocked ? "locked" : "workspace",
         docCount: 0,
         updatedDate: new Date().toISOString(),
         createdDate: new Date().toISOString(),
@@ -3133,11 +3142,15 @@ export default function LeftSidebar({
         setName={setNewProjectName}
         description={newProjectDescription}
         setDescription={setNewProjectDescription}
+        locked={newProjectLocked}
+        /* Hidden entirely in a personal workspace: nobody to hide from, so no switch (decision 21). */
+        setLocked={plan && !plan.isPersonalOrg ? setNewProjectLocked : undefined}
         onClose={() => {
           if (newProjectBusy) return;
           setShowCreateProjectModal(false);
           setNewProjectError(null);
           setNewProjectLimitError(null);
+          setNewProjectLocked(false);
           setPendingNewProjectNavId(null);
         }}
         onCreate={() => void createProject()}

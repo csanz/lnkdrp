@@ -12,7 +12,10 @@
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
+import { connectMongo } from "@/lib/mongodb";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { DocModel } from "@/lib/models/Doc";
+import { hiddenProjectIds, lockedHomeExclusion } from "@/lib/projects/lockScope";
 import { TAG_TARGET_KINDS, type TagTargetKind } from "@/lib/models/TagAssignment";
 import { tagsForTargets } from "@/lib/tags/service";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
@@ -53,7 +56,43 @@ export async function GET(request: Request) {
       return applyTempUserHeaders(NextResponse.json({ ok: true, tags: {} }, { headers: { "cache-control": "no-store" } }), actor);
     }
 
-    const byTarget = await tagsForTargets({ orgId: actor.orgId, targetKind, targetIds: ids });
+    /**
+     * Ids the caller may not see never reach the assignment read
+     * (docs/prds/lnkdrp-locked-projects.md, decision 16).
+     *
+     * A dot on a row is small and this endpoint is not: it takes two hundred arbitrary ids and says,
+     * per id, whether the workspace has anything filed about it. Handed a locked room's id it answered
+     * that room's tags, which both confirms the room exists and names what it is about. The room half
+     * costs nothing — `hiddenProjectIds` is the answer already — and the document half pays one indexed
+     * `_id` read, and only while the workspace actually holds a locked room, so the sidebar's hot path
+     * is untouched in every workspace that has never locked anything.
+     */
+    // `connectMongo` here and not in the service: this is the first read this handler makes now, and
+    // `hiddenProjectIds` refuses rather than guessing when it cannot see the collection.
+    await connectMongo();
+    const hidden = await hiddenProjectIds(actor.orgId, actor.userId, request);
+    let visibleIds = ids;
+    if (hidden.length) {
+      if (targetKind === "project") {
+        const hiddenSet = new Set(hidden.map((id) => String(id)));
+        visibleIds = ids.filter((id) => !hiddenSet.has(id));
+      } else if (targetKind === "doc") {
+        const rows = (await DocModel.find({
+          _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
+          orgId: new Types.ObjectId(actor.orgId),
+          ...lockedHomeExclusion(hidden),
+        })
+          .select({ _id: 1 })
+          .lean()) as Array<{ _id: Types.ObjectId }>;
+        const live = new Set(rows.map((r) => String(r._id)));
+        visibleIds = ids.filter((id) => live.has(id));
+      }
+    }
+    if (!visibleIds.length) {
+      return applyTempUserHeaders(NextResponse.json({ ok: true, tags: {} }, { headers: { "cache-control": "no-store" } }), actor);
+    }
+
+    const byTarget = await tagsForTargets({ orgId: actor.orgId, targetKind, targetIds: visibleIds });
     const tags: Record<string, unknown[]> = {};
     for (const [targetId, list] of byTarget) tags[targetId] = list;
 

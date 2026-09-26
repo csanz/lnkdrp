@@ -8,7 +8,7 @@ import { Types } from "mongoose";
 import { put } from "@vercel/blob";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { ProjectModel } from "@/lib/models/Project";
+import { projectNameFor } from "@/lib/projects/names";
 import { UploadModel } from "@/lib/models/Upload";
 import { buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import { debugError, debugLog } from "@/lib/debug";
@@ -459,9 +459,18 @@ async function importUrl(
       | null;
     // Born in a room (docs/prds/lnkdrp-project-home.md, decision 2): the row says "in Data room".
     const homeProjectId = activityDoc?.primaryProjectId && Types.ObjectId.isValid(String(activityDoc.primaryProjectId)) ? String(activityDoc.primaryProjectId) : null;
-    const homeProjectName = homeProjectId ? (((await ProjectModel.findById(homeProjectId).select({ name: 1 }).lean().catch(() => null)) as { name?: string } | null)?.name ?? null) : null;
     const activityDocOrgId =
       activityDoc && (activityDoc as { orgId?: unknown }).orgId ? String((activityDoc as { orgId?: unknown }).orgId) : null;
+    // Through the one name helper (docs/prds/lnkdrp-locked-projects.md, decision 14), which supplies
+    // the `orgId` this `findById` never had and answers null for a room the importer may not see.
+    const homeProjectName = homeProjectId
+      ? await projectNameFor({
+          orgId: activityDocOrgId ?? actor.orgId,
+          id: homeProjectId,
+          viewerUserId: actor.userId,
+          request,
+        }).catch(() => null)
+      : null;
     void recordActivity({
       orgId: activityDocOrgId ?? actor.orgId,
       userId: actor.userId,

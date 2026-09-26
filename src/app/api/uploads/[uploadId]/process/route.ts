@@ -13,6 +13,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { UploadModel } from "@/lib/models/Upload";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
+import { projectGrantIds, projectVisibilityClause } from "@/lib/projects/lockScope";
+import { projectNameFor } from "@/lib/projects/names";
 import { ReviewModel } from "@/lib/models/Review";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
@@ -1323,8 +1325,17 @@ export async function POST(
        */
       const homeProjectIdRaw = existingDocObj ? (existingDocObj as { primaryProjectId?: unknown }).primaryProjectId : null;
       const homeProjectId = homeProjectIdRaw && Types.ObjectId.isValid(String(homeProjectIdRaw)) ? String(homeProjectIdRaw) : null;
+      // Through the one name helper (docs/prds/lnkdrp-locked-projects.md, decision 14), which supplies
+      // the `orgId` this `findById` never had. The uploader can see the room by construction — the
+      // version-matching refusal in `POST /api/uploads` is what makes that true — so for a legitimate
+      // upload this resolves exactly as it did.
       const homeProjectName = homeProjectId
-        ? (((await ProjectModel.findById(homeProjectId).select({ name: 1 }).lean().catch(() => null)) as { name?: string } | null)?.name ?? null)
+        ? await projectNameFor({
+            orgId: String((existingDocObj as { orgId?: unknown } | null)?.orgId ?? actor.orgId),
+            id: homeProjectId,
+            viewerUserId: actor.userId,
+            request,
+          }).catch(() => null)
         : null;
       const priorExtractedTextRaw =
         existingDocObj && typeof (existingDocObj as { extractedText?: unknown }).extractedText === "string"
@@ -1415,7 +1426,24 @@ export async function POST(
        * `autoAddFiles`, written into `projectIds`: a document in workspace A filed into a project
        * of workspace B, which `PATCH /api/docs/:id` refuses to do by hand (review M6).
        */
-      const allProjects = await ProjectModel.find({ orgId: existingDocOrgId, isDeleted: { $ne: true } })
+      const allProjects = await ProjectModel.find({
+        orgId: existingDocOrgId,
+        isDeleted: { $ne: true },
+        /**
+         * And only the rooms the UPLOADER can see (docs/prds/lnkdrp-locked-projects.md, decision 27).
+         *
+         * This set is the auto-routing model's whole world: its names and descriptions go into the
+         * prompt, and with `autoAddFiles` the id it picks is written straight into `projectIds`. So a
+         * locked room here is two leaks in one, the room's name and description read back in the
+         * model's own explanation, and a document filed into a room the uploader is not in and can
+         * then see listed. Filtering the candidate set means the model is never told the room exists,
+         * which is stronger than refusing its answer afterwards.
+         *
+         * `actor.userId` is the uploader on every branch: the internal and upload-secret paths above
+         * synthesize their actor from the upload's own owner.
+         */
+        $and: [projectVisibilityClause(await projectGrantIds(existingDocOrgId, actor.userId, request))],
+      })
         .select({ _id: 1, name: 1, description: 1, autoAddFiles: 1 })
         .sort({ updatedDate: -1 })
         .limit(250)

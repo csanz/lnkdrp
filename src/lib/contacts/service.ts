@@ -30,6 +30,13 @@ import {
 } from "@/lib/models/Contact";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
+import {
+  hiddenProjectIds,
+  lockedHomeExclusion,
+  lockedHomeExclusionFor,
+  projectGrantIds,
+  projectVisibilityClause,
+} from "@/lib/projects/lockScope";
 import { ShareViewerEmailModel } from "@/lib/models/ShareViewerEmail";
 import { TagAssignmentModel, type TagTargetKind } from "@/lib/models/TagAssignment";
 import { UserModel } from "@/lib/models/User";
@@ -246,6 +253,23 @@ export type ContactFilters = {
   source?: ContactSourceKind;
 };
 
+/**
+ * Who is asking, which contacts now needs to know
+ * (docs/prds/lnkdrp-locked-projects.md, decision 15).
+ *
+ * Contacts are a recipient-IDENTITY surface, and decision 15 calls it the highest-value single leak on
+ * the list because its output is both an identity and a capability: each row is a real person's name
+ * and address, and the detail carries `sources[].shareId`, which is a link that opens the room. The
+ * filters are the sharp end — `?projectId=<locked id>` handed a non-member a private room's whole
+ * reader list off one indexed lookup — and the detail is the other, because it names the rooms and
+ * documents one person has read.
+ */
+export type ContactViewer = {
+  viewerUserId: string | Types.ObjectId;
+  /** The route's own request, for the per-request grant memo. */
+  request?: Request;
+};
+
 export const CONTACT_SORTS: readonly ContactSort[] = ["lastSeen", "firstSeen", "name", "domain", "documentsRead", "visits"];
 
 /**
@@ -319,8 +343,22 @@ async function verifiedEmails(orgId: Types.ObjectId, emails: string[]): Promise<
  * The Mongo filter for a list, or null when a filter can only match nothing (a malformed id, a tag
  * with no contacts), so the caller can answer empty without a query.
  */
-async function buildFilter(orgId: Types.ObjectId, f: ContactFilters): Promise<Record<string, unknown> | null> {
+async function buildFilter(
+  orgId: Types.ObjectId,
+  f: ContactFilters,
+  viewer: ContactViewer,
+): Promise<Record<string, unknown> | null> {
   const filter: Record<string, unknown> = { orgId, isDeleted: { $ne: true } };
+
+  /**
+   * The locked rooms, read only when one of the two id filters is actually in play.
+   *
+   * A plain contacts list asks nothing about rooms, so it pays nothing here, and a workspace that has
+   * never locked anything gets the empty array and every branch below short-circuits. `null` is the
+   * refusal shape this function already has for "a filter that can only match nothing", which is what
+   * makes the answer for a locked room byte-identical to the answer for a room with no readers.
+   */
+  const hidden = f.docId || f.projectId ? await hiddenProjectIds(orgId, viewer.viewerUserId, viewer.request) : [];
 
   const q = typeof f.q === "string" ? f.q.trim() : "";
   if (q) {
@@ -330,11 +368,16 @@ async function buildFilter(orgId: Types.ObjectId, f: ContactFilters): Promise<Re
   if (f.docId) {
     const id = toObjectId(f.docId);
     if (!id) return null;
+    // Through the document's HOME, not through the document's own tenancy: `?docId=` is the same
+    // question as `?projectId=` asked one level down, and a locked room's document has readers.
+    if (hidden.length && !(await DocModel.exists({ _id: id, orgId, ...lockedHomeExclusion(hidden) }))) return null;
     filter.docIds = id;
   }
   if (f.projectId) {
     const id = toObjectId(f.projectId);
     if (!id) return null;
+    // No read needed: `hidden` IS the set of rooms this caller may not name.
+    if (hidden.some((hiddenId) => String(hiddenId) === String(id))) return null;
     filter.projectIds = id;
   }
   if (typeof f.shareId === "string" && f.shareId.trim()) filter["sources.shareId"] = f.shareId.trim();
@@ -423,7 +466,7 @@ function pageArgs(params: { sort?: ContactSort; dir?: "asc" | "desc"; page?: num
  * domain default to ascending because that is how a list of names reads.
  */
 export async function listContacts(
-  params: { orgId: string | Types.ObjectId; identity: boolean } & ContactFilters & {
+  params: { orgId: string | Types.ObjectId; identity: boolean } & ContactViewer & ContactFilters & {
       sort?: ContactSort;
       dir?: "asc" | "desc";
       page?: number;
@@ -435,7 +478,7 @@ export async function listContacts(
   if (!orgId) return { items: [], total: 0, page, limit };
   await connectMongo();
 
-  const filter = await buildFilter(orgId, params);
+  const filter = await buildFilter(orgId, params, params);
   if (!filter) return { items: [], total: 0, page, limit };
 
   const [total, items] = await Promise.all([
@@ -446,11 +489,13 @@ export async function listContacts(
 }
 
 /** One contact with its history: sources, the documents and projects by title, the note by name. */
-export async function getContact(params: {
-  orgId: string | Types.ObjectId;
-  contactId: string;
-  identity: boolean;
-}): Promise<ContactDetail | null> {
+export async function getContact(
+  params: {
+    orgId: string | Types.ObjectId;
+    contactId: string;
+    identity: boolean;
+  } & ContactViewer,
+): Promise<ContactDetail | null> {
   const orgId = toObjectId(params.orgId);
   const contactId = toObjectId(params.contactId);
   if (!orgId || !contactId) return null;
@@ -463,18 +508,38 @@ export async function getContact(params: {
   const projectIds = Array.isArray(doc.projectIds) ? doc.projectIds : [];
   const noteBy = doc.note?.byUserId ?? null;
 
+  /**
+   * This person's history, as this reader may see it (decision 15).
+   *
+   * Both reads carry the rule, and both lists below are then built from what came BACK rather than from
+   * the ids on the contact row. That order is the whole fix: `docs[]` took its `shareId` from
+   * `sources[]` and only its title from the document read, so filtering the read alone would have left
+   * a row with no title and a working link to a private room.
+   */
   const [verified, tags, docRows, projectRows, noteAuthor] = await Promise.all([
     verifiedEmails(orgId, [doc.email]),
     tagsForTarget({ orgId, targetKind: CONTACT_TAG_TARGET_KIND, targetId: doc._id }),
     docIds.length
-      ? (DocModel.find({ _id: { $in: docIds }, orgId, isDeleted: { $ne: true } })
-          .select({ title: 1, docName: 1 })
-          .lean() as unknown as Promise<Array<{ _id: Types.ObjectId; title?: string | null; docName?: string | null }>>)
+      ? (async () =>
+          DocModel.find({
+            _id: { $in: docIds },
+            orgId,
+            isDeleted: { $ne: true },
+            ...(await lockedHomeExclusionFor(orgId, params.viewerUserId, params.request)),
+          })
+            .select({ title: 1, docName: 1 })
+            .lean() as unknown as Promise<Array<{ _id: Types.ObjectId; title?: string | null; docName?: string | null }>>)()
       : Promise.resolve([]),
     projectIds.length
-      ? (ProjectModel.find({ _id: { $in: projectIds }, orgId, isDeleted: { $ne: true } })
-          .select({ name: 1, slug: 1 })
-          .lean() as unknown as Promise<Array<{ _id: Types.ObjectId; name?: string | null; slug?: string | null }>>)
+      ? (async () =>
+          ProjectModel.find({
+            _id: { $in: projectIds },
+            orgId,
+            isDeleted: { $ne: true },
+            $and: [projectVisibilityClause(await projectGrantIds(orgId, params.viewerUserId, params.request))],
+          })
+            .select({ name: 1, slug: 1 })
+            .lean() as unknown as Promise<Array<{ _id: Types.ObjectId; name?: string | null; slug?: string | null }>>)()
       : Promise.resolve([]),
     noteBy
       ? (UserModel.findById(noteBy).select({ name: 1 }).lean() as unknown as Promise<{ name?: string | null } | null>)
@@ -482,29 +547,45 @@ export async function getContact(params: {
   ]);
 
   const row = toRow(doc, { identity: params.identity, verified: verified.has(doc.email.toLowerCase()), tags });
-  const sources = (Array.isArray(doc.sources) ? doc.sources : []).map((s) => ({
-    kind: s.kind,
-    shareId: s.shareId ?? null,
-    docId: s.docId ? String(s.docId) : null,
-    projectId: s.projectId ? String(s.projectId) : null,
-    at: iso(s.at),
-  }));
+  const titles = new Map(docRows.map((d) => [String(d._id), d.title?.trim() || d.docName?.trim() || null]));
+  const names = new Map(projectRows.map((p) => [String(p._id), { name: p.name ?? null, slug: p.slug ?? null }]));
+
+  /**
+   * A source row carries a `shareId`, so a source pointing into a room this reader cannot see is that
+   * room (decision 13). Dropped rather than blanked: a `kind` and a date with the link removed still
+   * says "this person read something you are not allowed to know about".
+   *
+   * A source with neither a `docId` nor a `projectId` is kept — an introduction or a sign-in is about
+   * the person and not about a room.
+   */
+  const sources = (Array.isArray(doc.sources) ? doc.sources : [])
+    .filter((s) => (s.docId ? titles.has(String(s.docId)) : true))
+    .filter((s) => (s.projectId ? names.has(String(s.projectId)) : true))
+    .map((s) => ({
+      kind: s.kind,
+      shareId: s.shareId ?? null,
+      docId: s.docId ? String(s.docId) : null,
+      projectId: s.projectId ? String(s.projectId) : null,
+      at: iso(s.at),
+    }));
 
   // The newest source per document tells the history which link they read it on, and when.
   const lastByDoc = new Map<string, ContactSourceDTO>();
   for (const s of sources) if (s.docId) lastByDoc.set(s.docId, s);
-  const titles = new Map(docRows.map((d) => [String(d._id), d.title?.trim() || d.docName?.trim() || null]));
-  const docs = docIds.map((id) => {
-    const key = String(id);
-    const last = lastByDoc.get(key) ?? null;
-    return { docId: key, title: titles.get(key) ?? null, shareId: last?.shareId ?? null, lastSeenAt: last?.at ?? null };
-  });
-  const names = new Map(projectRows.map((p) => [String(p._id), { name: p.name ?? null, slug: p.slug ?? null }]));
-  const projects = projectIds.map((id) => {
-    const key = String(id);
-    const p = names.get(key);
-    return { projectId: key, name: p?.name ?? null, slug: p?.slug ?? null };
-  });
+  const docs = docIds
+    .filter((id) => titles.has(String(id)))
+    .map((id) => {
+      const key = String(id);
+      const last = lastByDoc.get(key) ?? null;
+      return { docId: key, title: titles.get(key) ?? null, shareId: last?.shareId ?? null, lastSeenAt: last?.at ?? null };
+    });
+  const projects = projectIds
+    .filter((id) => names.has(String(id)))
+    .map((id) => {
+      const key = String(id);
+      const p = names.get(key);
+      return { projectId: key, name: p?.name ?? null, slug: p?.slug ?? null };
+    });
 
   const note =
     doc.note && typeof doc.note.text === "string" && doc.note.text
@@ -520,12 +601,14 @@ export async function getContact(params: {
 }
 
 /** Write the team's note on a contact. An empty string clears it. Returns the contact, or null when it is not theirs. */
-export async function setContactNote(params: {
-  orgId: string | Types.ObjectId;
-  contactId: string;
-  userId: string | Types.ObjectId;
-  text: string;
-}): Promise<ContactDetail | null> {
+export async function setContactNote(
+  params: {
+    orgId: string | Types.ObjectId;
+    contactId: string;
+    userId: string | Types.ObjectId;
+    text: string;
+  } & ContactViewer,
+): Promise<ContactDetail | null> {
   const orgId = toObjectId(params.orgId);
   const contactId = toObjectId(params.contactId);
   const userId = toObjectId(params.userId);
@@ -540,7 +623,7 @@ export async function setContactNote(params: {
   if (!res.matchedCount) return null;
 
   const identity = await contactIdentityAllowed(orgId);
-  return getContact({ orgId, contactId: params.contactId, identity });
+  return getContact({ orgId, contactId: params.contactId, identity, viewerUserId: params.viewerUserId, request: params.request });
 }
 
 /** Rows read per query while a download streams. Large enough that 25,000 rows is 50 queries. */
@@ -555,12 +638,12 @@ export { CONTACTS_CSV_MAX_ROWS } from "./csv";
  * the status code is already 200 and there is no way left to say "this would have been short".
  */
 export async function countContacts(
-  params: { orgId: string | Types.ObjectId } & ContactFilters,
+  params: { orgId: string | Types.ObjectId } & ContactViewer & ContactFilters,
 ): Promise<number> {
   const orgId = toObjectId(params.orgId);
   if (!orgId) return 0;
   await connectMongo();
-  const filter = await buildFilter(orgId, params);
+  const filter = await buildFilter(orgId, params, params);
   if (!filter) return 0;
   return ContactModel.countDocuments(filter);
 }
@@ -574,7 +657,7 @@ export async function countContacts(
  * stream for ever; the route refuses past the cap instead of relying on it.
  */
 export async function* contactsCsvChunks(
-  params: { orgId: string | Types.ObjectId; identity: boolean } & ContactFilters & { sort?: ContactSort; dir?: "asc" | "desc" },
+  params: { orgId: string | Types.ObjectId; identity: boolean } & ContactViewer & ContactFilters & { sort?: ContactSort; dir?: "asc" | "desc" },
 ): AsyncGenerator<string> {
   yield CONTACTS_CSV_HEADER + CSV_EOL;
   const { sort, dir } = pageArgs(params);
@@ -582,7 +665,7 @@ export async function* contactsCsvChunks(
   if (!orgId) return;
   await connectMongo();
 
-  const filter = await buildFilter(orgId, params);
+  const filter = await buildFilter(orgId, params, params);
   if (!filter) return;
 
   for (let skip = 0; skip < CONTACTS_CSV_MAX_ROWS; skip += CSV_BATCH) {
@@ -600,7 +683,7 @@ export async function* contactsCsvChunks(
  * thing in hand, and is the same bytes in the same order.
  */
 export async function contactsCsv(
-  params: { orgId: string | Types.ObjectId; identity: boolean } & ContactFilters & { sort?: ContactSort; dir?: "asc" | "desc" },
+  params: { orgId: string | Types.ObjectId; identity: boolean } & ContactViewer & ContactFilters & { sort?: ContactSort; dir?: "asc" | "desc" },
 ): Promise<string> {
   let out = "";
   for await (const chunk of contactsCsvChunks(params)) out += chunk;

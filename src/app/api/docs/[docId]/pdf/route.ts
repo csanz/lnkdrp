@@ -4,6 +4,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { UploadModel } from "@/lib/models/Upload";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 
@@ -63,7 +64,8 @@ export async function GET(
   const orgId = new Types.ObjectId(actor.orgId);
   const legacyUserId = new Types.ObjectId(actor.userId);
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-  const doc = await DocModel.findOne(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId))
+  const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
+  const doc = await DocModel.findOne(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion))
     .select({ blobUrl: 1 })
     .lean();
 

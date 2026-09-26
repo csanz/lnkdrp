@@ -41,6 +41,8 @@ export type SidebarProjectListItem = {
   slug: string;
   description: string;
   isRequest?: boolean;
+  /** "locked" is a private data room: it exists only for the people in it, and its row wears a padlock. */
+  visibility?: "workspace" | "locked";
   docCount?: number;
   updatedDate: string | null;
   createdDate: string | null;

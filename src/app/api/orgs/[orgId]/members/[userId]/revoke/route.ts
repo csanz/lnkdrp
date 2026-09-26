@@ -14,6 +14,7 @@ import { OrgModel } from "@/lib/models/Org";
 import { sendMemberRemovedEmail } from "@/lib/email/sendMemberRemovedEmail";
 import { debugError } from "@/lib/debug";
 import { forbidApiKey } from "@/lib/gating/forbidApiKey";
+import { revokeProjectGrants } from "@/lib/projects/lockScope";
 
 export const runtime = "nodejs";
 
@@ -78,6 +79,20 @@ export async function POST(request: Request, ctx: { params: Promise<{ orgId: str
   // ageing out over the next ten seconds (see `membershipChanged`).
   membershipChanged({ orgId, userId: targetUserId });
 
+  /**
+   * Their grants into this workspace's private data rooms go with the membership
+   * (docs/prds/lnkdrp-locked-projects.md, decision 4). One shared writer rather than an update here,
+   * because a grant that keeps `isDeleted` without `revokedAt` cannot answer "when did they lose this
+   * room", and because `src/app/api/org-invites/claim/route.ts` deliberately revives a revoked
+   * `OrgMembership` with the invite's role: a person who is re-invited must come back with no rooms.
+   *
+   * Awaited, and before the response: room access outliving the membership by even one request is the
+   * thing this line exists to prevent. A locked room that loses its last member this way is
+   * owner-recoverable through break-glass, which is why removing the last member through the room's
+   * own route is refused while this succeeds.
+   */
+  const grantsCleared = await revokeProjectGrants({ orgId, userId: targetUserId });
+
   void recordActivity({
     orgId,
     userId: actor.userId,
@@ -114,7 +129,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ orgId: str
     })();
   }
 
-  return NextResponse.json({ ok: true, orgId, userId: targetUserId });
+  // `roomsLost` is how the Members page can say the room is now owner-recoverable only, rather than
+  // the person who removed them finding out from a support ticket.
+  return NextResponse.json({ ok: true, orgId, userId: targetUserId, roomsLost: grantsCleared });
 }
 
 

@@ -70,3 +70,6 @@ next-env.d.ts
 !.env.example
 
 tests/share/.seed/
+
+.vercel
+.env*

@@ -25,7 +25,8 @@ import { ACTIVITY_WORK_TYPES, bucketForType, emptyCounts } from "@/lib/activity/
 import { resolveOwners } from "@/lib/agents/owners";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { DocModel } from "@/lib/models/Doc";
-import { ProjectModel } from "@/lib/models/Project";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
+import { projectNamesFor } from "@/lib/projects/names";
 import { UserModel } from "@/lib/models/User";
 
 import { buildActorFilter } from "./actorFilter";
@@ -108,11 +109,28 @@ async function loadTargets(
   ])) as TargetRow[];
 }
 
-/** The documents behind the grouped rows, titled and marked deleted. */
-async function decorateDocs(rows: TargetRow[]): Promise<ActorProfileDoc[]> {
+/**
+ * The documents behind the grouped rows, titled and marked deleted.
+ *
+ * The locked-room exclusion lands here and the existing "a purged document keeps its line" rule does the
+ * rest (docs/prds/lnkdrp-locked-projects.md, decision 11): a document in a room this reader is outside
+ * resolves to nothing, so its line loses its title and its link and reads exactly like a purged one.
+ * That is the right shape — those two must not be distinguishable — and it keeps the contributor's
+ * action count honest against the feed below.
+ *
+ * No `orgId` is added, deliberately: documents that predate workspaces carry none and this page renders
+ * them for their owner in their own personal workspace.
+ */
+async function decorateDocs(
+  rows: TargetRow[],
+  viewer: { orgId: Types.ObjectId; viewerUserId: string | Types.ObjectId },
+): Promise<ActorProfileDoc[]> {
   const ids = rows.map((r) => (r?._id ? String(r._id) : "")).filter((id) => Types.ObjectId.isValid(id));
   if (!ids.length) return [];
-  const docs = (await DocModel.find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } })
+  const docs = (await DocModel.find({
+    _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
+    ...(await lockedHomeExclusionFor(viewer.orgId, viewer.viewerUserId)),
+  })
     .select({ _id: 1, title: 1, isDeleted: 1 })
     .lean()) as Array<{ _id?: unknown; title?: unknown; isDeleted?: unknown }>;
   const byId = new Map(docs.map((d) => [String(d?._id ?? ""), d]));
@@ -139,22 +157,33 @@ async function decorateDocs(rows: TargetRow[]): Promise<ActorProfileDoc[]> {
   return out;
 }
 
-/** The projects behind the grouped rows, named. */
-async function decorateProjects(rows: TargetRow[]): Promise<ActorProfileProject[]> {
+/**
+ * The projects behind the grouped rows, named as the reader may see them.
+ *
+ * Through `projectNamesFor` (docs/prds/lnkdrp-locked-projects.md, decision 14), which is also where the
+ * missing `orgId` comes from. A room the reader holds no grant for is dropped from the list rather than
+ * rendered nameless: this is a "what did this person work on" list, so a row with no name and a live
+ * `/project/<id>` link is both an admission that the room exists and a link to a 404.
+ *
+ * The consequence is stated because it is a real one: a member's contribution counts in the header are
+ * computed over their whole feed, so they can exceed what this list shows. That is the same divergence
+ * the file header already documents for contained documents, and it is the honest direction.
+ */
+async function decorateProjects(
+  rows: TargetRow[],
+  viewer: { orgId: Types.ObjectId; viewerUserId: string | Types.ObjectId },
+): Promise<ActorProfileProject[]> {
   const ids = rows.map((r) => (r?._id ? String(r._id) : "")).filter((id) => Types.ObjectId.isValid(id));
   if (!ids.length) return [];
-  const projects = (await ProjectModel.find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } })
-    .select({ _id: 1, name: 1 })
-    .lean()) as Array<{ _id?: unknown; name?: unknown }>;
-  const byId = new Map(projects.map((p) => [String(p?._id ?? ""), p]));
+  const byId = await projectNamesFor({ orgId: viewer.orgId, ids, viewerUserId: viewer.viewerUserId });
 
   const out: ActorProfileProject[] = [];
   for (const row of rows) {
     const id = row?._id ? String(row._id) : "";
     const last = iso(row?.last);
     if (!id || !last) continue;
-    const project = byId.get(id);
-    const name = typeof project?.name === "string" && project.name.trim() ? project.name.trim() : null;
+    const name = byId.get(id) ?? null;
+    if (!name) continue;
     out.push({ id, name, actions: count(row?.n), lastAt: last, href: `/project/${encodeURIComponent(id)}` });
   }
   return out;
@@ -203,6 +232,8 @@ async function loadPersonAgents(orgId: Types.ObjectId, userId: string): Promise<
 export async function loadActorProfile(params: {
   orgId: Types.ObjectId;
   key: ContributorKey;
+  /** Who is reading the page, so the rooms it names are rooms they may see (decision 14). */
+  viewerUserId: string | Types.ObjectId;
 }): Promise<ActorProfile | null> {
   const { orgId, key } = params;
   const match: Record<string, unknown> = {
@@ -252,7 +283,8 @@ export async function loadActorProfile(params: {
   byType.sort((a, b) => b.count - a.count || a.type.localeCompare(b.type));
 
   const [docRows, projectRows] = await Promise.all([loadTargets(match, "docId"), loadTargets(match, "projectId")]);
-  const [docs, projects] = await Promise.all([decorateDocs(docRows), decorateProjects(projectRows)]);
+  const viewer = { orgId, viewerUserId: params.viewerUserId };
+  const [docs, projects] = await Promise.all([decorateDocs(docRows, viewer), decorateProjects(projectRows, viewer)]);
 
   const serialised = formatContributorKey(key);
   const href = contributorHref(key);

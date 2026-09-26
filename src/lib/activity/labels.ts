@@ -33,7 +33,20 @@ export const ACTIVITY_FILTERS = [
   {
     id: "projects",
     label: "Projects",
-    types: ["project.created", "project.updated", "project.deleted", "doc.added_to_project", "doc.removed_from_project"],
+    types: [
+      "project.created",
+      "project.updated",
+      "project.deleted",
+      // A room being made private, opened up again, or gaining and losing people
+      // (docs/prds/lnkdrp-locked-projects.md). Filed with the projects because that is what they are
+      // about: who a room exists for is a fact about the room, not about the workspace's membership.
+      "project.locked",
+      "project.unlocked",
+      "project.member_added",
+      "project.member_removed",
+      "doc.added_to_project",
+      "doc.removed_from_project",
+    ],
   },
   // Filing, kept out of Documents and Projects on purpose: a burst of tagging would otherwise
   // drown the rows about the documents themselves, and "show me what got filed" is its own
@@ -357,6 +370,22 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "updated project", object: projectLabel(item), suffix: null };
     case "project.deleted":
       return { subject, verb: "deleted project", object: projectLabel(item), suffix: "(its documents were kept)" };
+    // A private data room. "Private" rather than "locked" in the sentence: the padlock is the icon,
+    // and "made X private" is what the person did in the words the create dialog used.
+    case "project.locked":
+      return { subject, verb: "made", object: projectLabel(item), suffix: "private" };
+    case "project.unlocked":
+      return { subject, verb: "opened", object: projectLabel(item), suffix: "to the whole workspace" };
+    case "project.member_added": {
+      const who = metaString(item.meta, "name") || metaString(item.meta, "email") || "someone";
+      return { subject, verb: "added", object: who, suffix: `to ${projectLabel(item)}` };
+    }
+    case "project.member_removed": {
+      const who = metaString(item.meta, "name") || metaString(item.meta, "email") || "a member";
+      return item.meta?.self === true
+        ? { subject, verb: "left", object: projectLabel(item), suffix: null }
+        : { subject, verb: "removed", object: who, suffix: `from ${projectLabel(item)}` };
+    }
     case "doc.added_to_project":
       return { subject, verb: "added", object: docTitle, suffix: `to ${projectLabel(item)}` };
     case "doc.removed_from_project":

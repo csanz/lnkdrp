@@ -46,21 +46,30 @@ const PROJECT_BY_ID_ROUTES = [
   "src/app/api/projects/[projectSlug]/links/shared.ts",
 ];
 
+/**
+ * The builders take a viewer and await a grant read (docs/prds/lnkdrp-locked-projects.md,
+ * decision 7), so every assertion below awaits. The visibility half of the result is pinned in
+ * tests/lib/lockedProjectScope.test.ts; what is pinned HERE is that adding it did not disturb the
+ * tenancy and deletion bounds, and in particular that the legacy `$or` is still the only top-level
+ * `$or` in the object.
+ */
 describe("liveProjectByIdMatch", () => {
-  test("a workspace project is bounded by workspace and by deletion, together", () => {
-    expect(liveProjectByIdMatch(PROJECT_ID, ORG_ID, USER_ID, false)).toEqual({
-      _id: PROJECT_ID,
-      orgId: ORG_ID,
-      isDeleted: { $ne: true },
-    });
+  test("a workspace project is bounded by workspace and by deletion, together", async () => {
+    const match = await liveProjectByIdMatch(PROJECT_ID, ORG_ID, USER_ID, false, USER_ID);
+    expect(Object.keys(match).sort()).toEqual(["$and", "_id", "isDeleted", "orgId"]);
+    expect(match._id).toEqual(PROJECT_ID);
+    expect(match.orgId).toEqual(ORG_ID);
+    expect(match.isDeleted).toEqual({ $ne: true });
   });
 
-  test("the legacy branch keeps `isDeleted` beside the `$or`, not as a second one", () => {
-    const match = liveProjectByIdMatch(PROJECT_ID, ORG_ID, USER_ID, true);
+  test("the legacy branch keeps `isDeleted` beside the `$or`, not as a second one", async () => {
+    const match = await liveProjectByIdMatch(PROJECT_ID, ORG_ID, USER_ID, true, USER_ID);
 
     // The whole point: exactly one top-level `$or`, and the deletion bound outside it so it applies
-    // to both alternatives rather than to whichever branch happened to be written last.
-    expect(Object.keys(match).sort()).toEqual(["$or", "isDeleted"]);
+    // to both alternatives rather than to whichever branch happened to be written last. The
+    // visibility clause is a third key (`$and`) for the same reason: a second `$or` would have
+    // replaced this one.
+    expect(Object.keys(match).sort()).toEqual(["$and", "$or", "isDeleted"]);
     expect(match.isDeleted).toEqual({ $ne: true });
     expect(match.$or).toEqual([
       { _id: PROJECT_ID, orgId: ORG_ID },
@@ -68,18 +77,19 @@ describe("liveProjectByIdMatch", () => {
     ]);
   });
 
-  test("a legacy project resolves only from the person's own workspace", () => {
+  test("a legacy project resolves only from the person's own workspace", async () => {
     // `allowLegacyByUserId` is the caller's answer to "is the actor in their personal workspace",
     // so with it false there is no by-userId alternative at all — a team workspace must not surface
     // the caller's own pre-workspace projects.
-    expect(JSON.stringify(liveProjectByIdMatch(PROJECT_ID, ORG_ID, USER_ID, false))).not.toContain("userId");
+    const match = await liveProjectByIdMatch(PROJECT_ID, ORG_ID, USER_ID, false, USER_ID);
+    expect(JSON.stringify(match)).not.toContain("userId");
   });
 
-  test("it agrees with the list filter about what deleted means", () => {
+  test("it agrees with the list filter about what deleted means", async () => {
     // If these two ever disagree, a project is actionable but invisible, or visible but refused.
-    expect(liveProjectByIdMatch(PROJECT_ID, ORG_ID, USER_ID, false).isDeleted).toEqual(
-      liveProjectFilter(ORG_ID).isDeleted,
-    );
+    const match = await liveProjectByIdMatch(PROJECT_ID, ORG_ID, USER_ID, false, USER_ID);
+    const list = await liveProjectFilter(ORG_ID, USER_ID);
+    expect(match.isDeleted).toEqual(list.isDeleted);
   });
 });
 

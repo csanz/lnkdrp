@@ -40,7 +40,7 @@ import { ShareLinkModel } from "@/lib/models/ShareLink";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
-import { ProjectModel } from "@/lib/models/Project";
+import { projectNamesFor } from "@/lib/projects/names";
 import { UserModel } from "@/lib/models/User";
 import {
   NotificationQueueModel,
@@ -732,6 +732,14 @@ type DocUpdateItem = {
 async function buildVisitBriefRound(params: {
   orgId: Types.ObjectId;
   orgIdStr: string;
+  /**
+   * The one person this round is for.
+   *
+   * `runGroup` groups by `{ orgId, userId, kind }`, so every row here is owed to the same member, which
+   * is what lets one viewer decide whether a room may be named (docs/prds/lnkdrp-locked-projects.md,
+   * decision 14).
+   */
+  recipientUserId: string;
   rows: ClaimedNotification[];
   mode: SendMode;
   membershipId: string;
@@ -764,14 +772,28 @@ async function buildVisitBriefRound(params: {
   }
   const [docTitles, projects, links] = await Promise.all([
     loadDocTitles(params.orgId, Array.from(docIds)),
+    /**
+     * Room names, through the one helper (decision 14).
+     *
+     * This lookup carried no tenancy clause at all, so a `projectId` from any workspace in the database
+     * came back named into somebody's email. `projectNamesFor` supplies the missing `orgId` and the
+     * visibility clause in the same change, and answers `null` for a room this recipient may not see —
+     * which the subject line below renders as the neutral "Data room" it already uses for a nameless
+     * room. Narrowing the AUDIENCE of these emails is M5's job; this is the narrower promise that a mail
+     * that does go out cannot carry a private room's name.
+     */
     projectIds.size
-      ? (ProjectModel.find({ _id: { $in: Array.from(projectIds).map((id) => new Types.ObjectId(id)) } }).select({ _id: 1, name: 1 }).lean() as Promise<any[]>)
-      : Promise.resolve([] as any[]),
+      ? projectNamesFor({
+          orgId: params.orgId,
+          ids: Array.from(projectIds),
+          viewerUserId: params.recipientUserId,
+        })
+      : Promise.resolve(new Map<string, string | null>()),
     shareIds.size
       ? (ShareLinkModel.find({ shareId: { $in: Array.from(shareIds) } }).select({ shareId: 1, label: 1, audience: 1, isDefault: 1, projectId: 1 }).lean() as Promise<any[]>)
       : Promise.resolve([] as any[]),
   ]);
-  const projectName = new Map(projects.map((p) => [String(p._id), typeof p.name === "string" && p.name.trim() ? p.name.trim() : "Data room"]));
+  const projectName = new Map(Array.from(projects, ([id, name]) => [id, name ?? "Data room"] as const));
   const linkByShareId = new Map(links.map((l) => [String(l.shareId), l]));
 
   const items: Array<{ row: ClaimedNotification; entry: VisitBriefEntry }> = [];
@@ -1192,6 +1214,8 @@ type RepoLinkItem = { row: ClaimedNotification; docId: string; docTitle: string;
  * skipped rather than emailed as a bare upload.
  */
 async function buildRepoLinkRound(params: {
+  /** The one member this round is for; see `buildVisitBriefRound`. */
+  recipientUserId: string;
   orgId: Types.ObjectId;
   orgIdStr: string;
   rows: ClaimedNotification[];
@@ -1237,7 +1261,7 @@ async function buildRepoLinkRound(params: {
     }
   }
 
-  const requestDocs = await loadRequestDocs(params.orgId, Array.from(new Set(docIdByRow.values())));
+  const requestDocs = await loadRequestDocs(params.orgId, params.recipientUserId, Array.from(new Set(docIdByRow.values())));
 
   const items: RepoLinkItem[] = [];
   for (const row of params.rows) {
@@ -1297,9 +1321,17 @@ async function loadDocTitles(orgId: Types.ObjectId, docIds: readonly string[]): 
   return out;
 }
 
-/** Live request documents by id, with the name of the request repo they landed in. */
+/**
+ * Live request documents by id, with the name of the request repo they landed in.
+ *
+ * `recipientUserId` is the member this round is for. A request inbox can never be locked (decision 10),
+ * so the clause `projectNamesFor` applies is inert here — it goes through the helper anyway so this file
+ * holds no project read of its own, which is what `tests/lib/lockedProjectSurfaces.test.ts` counts, and
+ * so the next repo-link field somebody adds inherits the rule instead of asking for it.
+ */
 async function loadRequestDocs(
   orgId: Types.ObjectId,
+  recipientUserId: string,
   docIds: readonly string[],
 ): Promise<Map<string, { title: string; requestName: string }>> {
   const out = new Map<string, { title: string; requestName: string }>();
@@ -1328,21 +1360,9 @@ async function loadRequestDocs(
   }
   if (!rows.length) return out;
 
-  const projects = await ProjectModel.find({
-    _id: { $in: Array.from(projectIds).map((id) => new Types.ObjectId(id)) },
-    orgId,
-    isDeleted: { $ne: true },
-  })
-    .select({ _id: 1, name: 1 })
-    .lean();
+  const names = await projectNamesFor({ orgId, ids: Array.from(projectIds), viewerUserId: recipientUserId });
   const projectName = new Map<string, string>();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  for (const p of projects as any[]) {
-    const id = p?._id ? String(p._id) : "";
-    if (!Types.ObjectId.isValid(id)) continue;
-    const name = typeof p?.name === "string" ? p.name.trim() : "";
-    projectName.set(id, name || "Request");
-  }
+  for (const [id, name] of names) projectName.set(id, name ?? "Request");
   for (const row of rows) out.set(row.docId, { title: row.title, requestName: projectName.get(row.projectId) ?? "Request" });
   return out;
 }
@@ -1756,6 +1776,8 @@ async function renderAndSend(params: {
   const { group, rows, mode, orgId, now, dryRun, totals } = params;
   const orgIdStr = group.orgId;
   const kind = group.kind;
+  // One group is one member (`DueGroup` keys on it), which is the viewer the room-name helper needs.
+  const userId = group.userId;
 
   let round: Round;
   if (kind === "share_views") {
@@ -1798,6 +1820,7 @@ async function renderAndSend(params: {
     round = await buildVisitBriefRound({
       orgId,
       orgIdStr,
+      recipientUserId: userId,
       rows,
       mode,
       membershipId: params.membershipId,
@@ -1820,6 +1843,7 @@ async function renderAndSend(params: {
     round = await buildRepoLinkRound({
       orgId,
       orgIdStr,
+      recipientUserId: userId,
       rows,
       mode,
       membershipId: params.membershipId,

@@ -42,7 +42,7 @@ export async function GET(request: Request) {
     const limitParam = Number(params.get("limit"));
     const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(50, Math.floor(limitParam))) : 20;
 
-    const links = await searchShareLinks({ orgId: actor.orgId, query, limit });
+    const links = await searchShareLinks({ orgId: actor.orgId, query, limit, viewerUserId: actor.userId, request });
     return applyTempUserHeaders(NextResponse.json({ query, links }, { headers: { "cache-control": "no-store" } }), actor);
   } catch (err) {
     return errorJson(err, { status: 500, publicMessage: "Could not search share links", context: "[api/share-links] GET failed" });

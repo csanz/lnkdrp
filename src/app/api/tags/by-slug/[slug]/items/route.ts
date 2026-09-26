@@ -15,6 +15,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { lockedHomeExclusionFor, projectGrantIds, projectVisibilityClause } from "@/lib/projects/lockScope";
 import { ProjectModel } from "@/lib/models/Project";
 import { TagModel } from "@/lib/models/Tag";
 import { toTagDTO, targetsForTag } from "@/lib/tags/service";
@@ -62,15 +63,33 @@ export async function GET(request: Request, ctx: { params: Promise<{ slug: strin
      * Until then the read is bounded by what it was always bounded by: the assignment rows, which
      * `targetsForTag` here and the sidebar's own count both already load uncapped.
      */
+    /**
+     * Both lists carry the locked-room rule (docs/prds/lnkdrp-locked-projects.md, decision 16).
+     *
+     * A tag page is the one place both kinds meet, so it is the one place a single missing clause
+     * leaks both: the projects list names a room outright and the documents list carries titles from
+     * inside one. The assignment rows above are read by `orgId` alone, deliberately, because they are
+     * ids and the two reads below are where ids become names.
+     */
+    const [lockedExclusion, grantIds] = await Promise.all([
+      lockedHomeExclusionFor(orgId, actor.userId, request),
+      projectGrantIds(orgId, actor.userId, request),
+    ]);
+
     const [docs, projects] = await Promise.all([
       docIds.length
-        ? DocModel.find({ _id: { $in: docIds.map((id) => new Types.ObjectId(id)) }, orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter() })
+        ? DocModel.find({ _id: { $in: docIds.map((id) => new Types.ObjectId(id)) }, orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter(), ...lockedExclusion })
             .select({ title: 1, updatedDate: 1, createdDate: 1, currentVersion: 1, isArchived: 1 })
             .sort({ updatedDate: -1 })
             .lean()
         : Promise.resolve([]),
       projectIds.length
-        ? ProjectModel.find({ _id: { $in: projectIds.map((id) => new Types.ObjectId(id)) }, orgId, isDeleted: { $ne: true } })
+        ? ProjectModel.find({
+            _id: { $in: projectIds.map((id) => new Types.ObjectId(id)) },
+            orgId,
+            isDeleted: { $ne: true },
+            $and: [projectVisibilityClause(grantIds)],
+          })
             .select({ name: 1, slug: 1, description: 1, docCount: 1, updatedDate: 1 })
             .sort({ updatedDate: -1 })
             .lean()

@@ -40,7 +40,7 @@ import { SubscriptionModel } from "@/lib/models/Subscription";
 import { SlackConnectionModel } from "@/lib/models/SlackConnection";
 import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { recordActivity, type ActivityActorKind } from "@/lib/activity/log";
-import { liveProjectFilter } from "@/lib/projects/scope";
+import { allProjectsFilter } from "@/lib/projects/scope";
 // The cap counts shared documents directly through `DocModel` below. It used to import the
 // share-links service to count links instead — the drift that made two documents read "11 of 3"
 // — and this comment described that import as the thing keeping the cap honest. It was the thing
@@ -248,9 +248,18 @@ export async function getWorkspaceUsage(
       isDeleted: { $ne: true },
       isArchived: { $ne: true },
     }),
-    // Same filter the project list uses (src/lib/projects/scope.ts): the cap must never count a
-    // project the owner cannot see in their list.
-    ProjectModel.countDocuments(liveProjectFilter(id)),
+    /**
+     * Every live project in the workspace, through the deliberately lock-free
+     * `allProjectsFilter` (src/lib/projects/scope.ts, docs/prds/lnkdrp-locked-projects.md
+     * decision 29).
+     *
+     * The cap and the list agreed for a reason: counting a project the owner could not see is what
+     * produced "used: 2, max: 1". They diverge here in exactly one direction, and only for a
+     * locked room. Applying the visibility clause to the cap would make the Free plan unlimited by
+     * locking, which is a worse failure than a count the caller cannot fully explain, so the
+     * divergence is mitigated by the copy in `planLimitResponse` and not by filtering.
+     */
+    ProjectModel.countDocuments(allProjectsFilter(id)),
     /**
      * Seats count people who can *act*, not everyone with a login.
      *

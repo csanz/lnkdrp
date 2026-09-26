@@ -60,6 +60,7 @@ import { after } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { UserModel } from "@/lib/models/User";
@@ -72,7 +73,7 @@ import { WITH_LINK_PASSWORD } from "@/lib/share/passwordSelect";
 import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
 import { buildAnalyticsTeaser } from "@/lib/analytics/teaser";
 import { debugError } from "@/lib/debug";
-import { ProjectModel } from "@/lib/models/Project";
+import { projectNamesFor } from "@/lib/projects/names";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { projectLinkMetricsHref } from "@/lib/analytics/workspace/shape";
 import { pickReaderIdentity, type ShareViewIdentity } from "@/lib/share/readerIdentity";
@@ -268,7 +269,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const orgId = new Types.ObjectId(actor.orgId);
       const legacyUserId = new Types.ObjectId(actor.userId);
       const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-      const doc = await DocModel.findOne(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId))
+      const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
+      const doc = await DocModel.findOne(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion))
         .select({
           _id: 1,
           orgId: 1,
@@ -1114,13 +1116,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               .select({ shareId: 1, label: 1, projectId: 1 })
               .lean()) as Array<{ shareId: string; label?: string | null; projectId?: Types.ObjectId | null }>;
             const projectIds = links.map((l) => l.projectId).filter(Boolean) as Types.ObjectId[];
-            const projects = projectIds.length
-              ? ((await ProjectModel.find({ _id: { $in: projectIds } }).select({ name: 1 }).lean()) as Array<{
-                  _id: Types.ObjectId;
-                  name?: string | null;
-                }>)
-              : [];
-            const projectById = new Map(projects.map((p) => [String(p._id), p.name ?? null]));
+            // Room names through the one helper (docs/prds/lnkdrp-locked-projects.md, decision 14): it
+            // supplies the `orgId` this read never had, and answers null for a room this reader holds no
+            // grant for, so a viewer who came through a private room's link is attributed to the link
+            // rather than to the room.
+            const projectById = await projectNamesFor({
+              orgId,
+              ids: projectIds,
+              viewerUserId: actor.userId,
+              request,
+            });
             const linkBySlug = new Map(links.map((l) => [l.shareId, l]));
 
             /** A name or an email that is actually there, so an empty string is not mistaken for one. */

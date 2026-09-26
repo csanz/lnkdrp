@@ -22,6 +22,12 @@ import { logErrorEvent } from "@/lib/errors/logger";
 import { resolveActor } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { forbidApiKey } from "@/lib/gating/forbidApiKey";
+import {
+  lockedHomeExclusionFor,
+  projectGrantIds,
+  projectVisibilityClause,
+  revokeProjectGrants,
+} from "@/lib/projects/lockScope";
 
 export const runtime = "nodejs";
 
@@ -62,11 +68,31 @@ export async function GET(request: Request, ctx: { params: Promise<{ orgId: stri
     .lean();
   if (!org) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  /**
+   * The counts, as this admin may see them (docs/prds/lnkdrp-locked-projects.md, decisions 16 and 21).
+   *
+   * `canAdmin` above is a workspace role and the lock has no role term, so an owner or an admin who is
+   * not in a private data room does not count it here either. That is the whole point of the no-bypass
+   * rule: a number on the workspace settings page that is one higher than the project list is the
+   * sentence "there is a room you cannot see", and the rooms people lock are the ones whose excluded
+   * reader is senior.
+   *
+   * `documents` is filtered by the document's home for the same reason. The plan cap is the one count
+   * in the product that deliberately still sees everything (decision 29), and it is not this one.
+   */
   const counts = includeCounts
     ? {
         members: await OrgMembershipModel.countDocuments({ orgId: orgObjectId, isDeleted: { $ne: true } }),
-        docs: await DocModel.countDocuments({ orgId: orgObjectId, isDeleted: { $ne: true } }),
-        projects: await ProjectModel.countDocuments({ orgId: orgObjectId, isDeleted: { $ne: true } }),
+        docs: await DocModel.countDocuments({
+          orgId: orgObjectId,
+          isDeleted: { $ne: true },
+          ...(await lockedHomeExclusionFor(orgObjectId, actor.userId, request)),
+        }),
+        projects: await ProjectModel.countDocuments({
+          orgId: orgObjectId,
+          isDeleted: { $ne: true },
+          $and: [projectVisibilityClause(await projectGrantIds(orgObjectId, actor.userId, request))],
+        }),
         uploads: await UploadModel.countDocuments({ orgId: orgObjectId, isDeleted: { $ne: true } }),
         invites: await OrgInviteModel.countDocuments({ orgId: orgObjectId, isRevoked: { $ne: true } }),
       }
@@ -216,6 +242,16 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ orgId: s
   }
   await OrgMembershipModel.updateMany({ orgId: orgObjectId }, { $set: { isDeleted: true, updatedDate: now } });
   await OrgInviteModel.updateMany({ orgId: orgObjectId }, { $set: { isRevoked: true, updatedDate: now } });
+
+  /**
+   * Every grant into this workspace's private data rooms, through the one writer that clears them
+   * (docs/prds/lnkdrp-locked-projects.md, decision 4).
+   *
+   * No `userId`: the rooms are going with the workspace, so this is all of them. It matters because
+   * the sweep is a SOFT delete — the projects below keep their rows — so a grant left live here would
+   * still be live if this workspace were ever restored, naming people who have since left.
+   */
+  await revokeProjectGrants({ orgId, now });
 
   await ProjectModel.updateMany({ orgId: orgObjectId, isDeleted: { $ne: true } }, { $set: { isDeleted: true, updatedDate: now } });
   await DocModel.updateMany(

@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 1003 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 1017 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -249,6 +249,8 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/api/projects/[projectSlug]/links/[linkId]/password/route.ts` — `/api/projects/:projectSlug/links/:linkId/password` · dynamic, GET, runtime
 - `src/app/api/projects/[projectSlug]/links/[linkId]/route.ts` — `/api/projects/:projectSlug/links/:linkId` · DELETE, dynamic, PATCH, runtime
 - `src/app/api/projects/[projectSlug]/links/route.ts` — `/api/projects/:projectSlug/links` · dynamic, GET, POST, runtime
+- `src/app/api/projects/[projectSlug]/lock-review/route.ts` — `/api/projects/:projectSlug/lock-review` · GET, runtime
+- `src/app/api/projects/[projectSlug]/members/route.ts` — `/api/projects/:projectSlug/members` · DELETE, GET, POST, runtime
 - `src/app/api/projects/[projectSlug]/route.ts` — `/api/projects/:projectSlug` · DELETE, GET, PATCH, runtime
 - `src/app/api/projects/[projectSlug]/shareviews/route.ts` — `/api/projects/:projectSlug/shareviews` · dynamic, GET, runtime
 - `src/app/api/projects/[projectSlug]/shareviews/viewer-doc/route.ts` — `/api/projects/:projectSlug/shareviews/viewer-doc` · dynamic, GET, runtime
@@ -515,8 +517,11 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/onboarding/OnboardingTopBar.tsx` · default
 - `src/components/people/ActorPageClient.tsx` · default
 - `src/components/people/ContributorsCard.tsx` · default
+- `src/components/project/LockReviewModal.tsx` · default, LockReviewPayload
 - `src/components/project/ProjectHeaderActions.tsx` · default, ProjectHeaderPage
 - `src/components/project/ProjectIdentityRow.tsx` · default
+- `src/components/project/ProjectLockIcon.tsx` · default, lockedOptionLabel
+- `src/components/project/ProjectMembersPanel.tsx` · default
 - `src/components/support/PlainChat.tsx` · default, isViewerPath, openSupportChat, PLAIN_CHAT_SCRIPT, PlainThreadField, SUPPORT_PATH
 - `src/components/support/PlainChatWorkspace.tsx` · default
 - `src/components/support/SupportLink.tsx` · default, SUPPORT_EMAIL
@@ -795,6 +800,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/models/Project.ts` · Project, ProjectModel
 - `src/lib/models/ProjectClick.ts` · ProjectClick, ProjectClickModel
 - `src/lib/models/ProjectLinkView.ts` · ProjectLinkView, ProjectLinkViewModel, VISIT_ID_HASH_CAP
+- `src/lib/models/ProjectMembership.ts` · ProjectMembership, ProjectMembershipModel, ProjectMembershipRole, ProjectMembershipVia
 - `src/lib/models/ProjectView.ts` · ProjectView, ProjectViewModel
 - `src/lib/models/RateLimit.ts` · RateLimit, RateLimitModel
 - `src/lib/models/Review.ts` · Review, ReviewModel
@@ -845,7 +851,13 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/people/types.ts` · ACTOR_PROFILE_LIST_LIMIT, ActorProfile, ActorProfileAgent, ActorProfileDoc, ActorProfileOwner, ActorProfileProject
 - `src/lib/preflight/env.ts` · Group, Result, runEnvPreflight, Status, summarise
 - `src/lib/projects/docCountFilter.ts` · projectDocCountFilter
+- `src/lib/projects/lockRefusals.ts` · LOCK_NOT_SUPPORTED_ON_REQUEST, lockNotSupportedOnRequestResponse
+- `src/lib/projects/lockReview.ts` · createLockReviewToken, LOCK_REVIEW_PURPOSE, LOCK_REVIEW_TTL_MS, lockReview, LockReview, LockReviewFailure, LockReviewPerson, LockTarget, …
+- `src/lib/projects/lockScope.ts` · deleteProjectGrants, grantProjectMembership, HIDDEN_PROJECT_IDS_CAP, hiddenProjectIds, LOCKED_ROOM_MEMBER_CAP, lockedHomeExclusion, lockedHomeExclusionExpr, lockedHomeExclusionFor, …
+- `src/lib/projects/names.ts` · projectNameFor, projectNamesFor
 - `src/lib/projects/requestSettings.ts` · botIdHashPrefixFilter, requestUploadPathFor
+- `src/lib/projects/resolveProject.ts` · isLockedProject, isRequestProject, ResolvedProject, resolveProjectForActor
+- `src/lib/projects/roster.ts` · LINK_WRITE_ROLES, ProjectMemberDto, projectRoster, ProjectRoster
 - `src/lib/projects/scope.ts` · allProjectsFilter, liveProjectByIdMatch, liveProjectBySlugMatch, liveProjectFilter, slugBackfillPendingFilter
 - `src/lib/realtime/ticket.ts` · REALTIME_TICKET_TTL_SECONDS, realtimeSecret, RealtimeTicket, signRealtimeTicket, verifyRealtimeTicket
 - `src/lib/share/anonymousNoticeAudience.ts` · AlreadyToldLookup, AlreadyToldQuery, cursorBackedAlreadyTold, queueBackedAlreadyTold
@@ -1008,6 +1020,7 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `scripts/reset-local.ts`
 - `scripts/review-intel-backfill.mjs`
 - `scripts/rollup-doc-metrics.ts`
+- `scripts/seed-locked-demo.ts`
 - `scripts/send-test-emails.ts`
 - `scripts/sharelinks-analytics-backfill.ts`
 - `scripts/sharelinks-backfill.ts`
@@ -1048,4 +1061,5 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `db/migration/20260925_0005_request_repos_is_request.mjs` · up
 - `db/migration/20260925_0006_contacts_backfill.mjs` · up
 - `db/migration/20260925_0007_activity_actor_index.mjs` · up
+- `db/migration/20260925_0007_projects_locked_indexes.mjs` · up
 - `db/migration/run.mjs`

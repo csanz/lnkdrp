@@ -60,7 +60,13 @@ export async function accessProjectForLinks(
   const orgId = new Types.ObjectId(actor.orgId);
   const legacyUserId = new Types.ObjectId(actor.userId);
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-  const project = (await ProjectModel.findOne(liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId))
+  // One clause here covers seven routes (links, one link, that link's password, shareviews,
+  // shareviews/visits, shareviews/viewer-doc and visit-briefs), and it has to land BEFORE the
+  // legacy-adopt `updateOne` below, or a non-member of a locked room would write to the row on the
+  // way to being refused (docs/prds/lnkdrp-locked-projects.md, decision 9).
+  const project = (await ProjectModel.findOne(
+    await liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
+  )
     .select({ _id: 1, orgId: 1, name: 1 })
     .lean()) as { _id: Types.ObjectId; orgId?: Types.ObjectId | null; name?: string | null } | null;
   if (!project) {

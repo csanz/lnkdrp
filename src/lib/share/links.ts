@@ -26,6 +26,9 @@ import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { encryptSharePassword, hashSharePassword, shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { checkLimit, type LimitCheck } from "@/lib/billing/planLimits";
+// Only `searchShareLinks` uses this: the recipient half of this file has no actor and stays
+// lock-free (decision 25).
+import { hiddenProjectIds, lockedHomeExclusion } from "@/lib/projects/lockScope";
 import { SHARE_PASSWORD_MIN, SHARE_PASSWORD_MAX } from "./passwordPolicy";
 import { WITH_LINK_PASSWORD, WITH_LINK_PASSWORD_PROJECTION } from "./passwordSelect";
 import { shareAuthCookieMatches } from "./cookieCompare";
@@ -553,14 +556,27 @@ export type ShareLinkSearchHit = {
  * would drop every project link from workspace search (a collection carries one text index, so
  * both kinds share this one). The `$match` after them keeps a hit only when *its own* owner is
  * live, which also drops a row whose owner was hard-deleted out from under it.
+ *
+ * `viewerUserId` is the locked-room half (docs/prds/lnkdrp-locked-projects.md, decision 13), and this
+ * surface is the one that decision exists for. It had no role check and no visibility filter of any
+ * kind, it ran a `$text` query over every label in the workspace, and it returned a `shareId`.
+ * A `shareId` is not metadata: `/s/:shareId` and `/p/:shareId` need no workspace identity, so one row
+ * of this search IS the document or the room rather than a hint about it. So a third `$match` goes in
+ * after the joins, dropping a hit whose project is a room the caller cannot see and a hit whose
+ * document's home is one — both halves, because a locked room's documents carry their own links.
  */
 export async function searchShareLinks(input: {
   orgId: string | Types.ObjectId;
   query: string;
   limit?: number;
+  /** The caller. Required: a search with no viewer is a search with no lock. */
+  viewerUserId: string | Types.ObjectId;
+  /** The route's own request, for the per-request grant memo. */
+  request?: Request;
 }): Promise<ShareLinkSearchHit[]> {
   await connectMongo();
   const orgId = oid(input.orgId);
+  const hidden = await hiddenProjectIds(orgId, input.viewerUserId, input.request);
   const limit = Number.isFinite(input.limit) && (input.limit ?? 0) >= 1 ? Math.min(50, Math.floor(input.limit!)) : 20;
   const query = input.query.trim();
   if (!query) return [];
@@ -579,6 +595,20 @@ export async function searchShareLinks(input: {
         ],
       },
     },
+    /**
+     * And the locked rooms, before the sort and the limit.
+     *
+     * Before, deliberately: the ranking and the `limit` above are documented to run after the
+     * visibility `$match` so that `limit` results are the top `limit` VISIBLE matches. A locked room's
+     * links are no different, and a hit dropped afterwards would also quietly shorten the page.
+     *
+     * A project link has no `doc` and a document link has no `project`, so each arm is inert for the
+     * other kind: a missing field is not `$in` an array, and the second `$nor` arm's `null` equality
+     * is satisfied by a missing field with no `projectIds` to intersect.
+     */
+    ...(hidden.length
+      ? [{ $match: { $and: [{ "project._id": { $nin: hidden } }, lockedHomeExclusion(hidden, "doc")] } }]
+      : []),
     { $sort: { score: { $meta: "textScore" } } },
     { $limit: limit },
     {

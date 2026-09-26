@@ -70,7 +70,7 @@ export async function GET(request: Request) {
     }
 
     await connectMongo();
-    const profile = await loadActorProfile({ orgId: new Types.ObjectId(actor.orgId), key });
+    const profile = await loadActorProfile({ orgId: new Types.ObjectId(actor.orgId), key, viewerUserId: actor.userId });
     if (!profile) {
       return NextResponse.json({ error: NOT_FOUND }, { status: 404, headers: { "cache-control": "no-store" } });
     }

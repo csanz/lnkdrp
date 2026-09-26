@@ -3,6 +3,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { TAG_DOCS_SORT } from "@/lib/tags/service";
 import { debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
@@ -59,6 +60,10 @@ export async function GET(
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
       ...workspaceListableDocFilter(),
+      // Every row here carries the document's `shareId`, and `/s/:shareId` needs no workspace
+      // identity, so an AI keyword shared by a private room's document would hand out the document
+      // itself (docs/prds/lnkdrp-locked-projects.md, decision 13).
+      ...(await lockedHomeExclusionFor(orgId, actor.userId, request)),
       "aiOutput.tags": rx,
       ...(allowLegacyByUserId
         ? {

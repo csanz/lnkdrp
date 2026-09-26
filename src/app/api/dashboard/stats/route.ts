@@ -8,6 +8,13 @@ import { connectMongo } from "@/lib/mongodb";
 import { resolveActorForStats } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import {
+  hiddenProjectIds,
+  lockedHomeExclusion,
+  lockedHomeExclusionExpr,
+  projectGrantIds,
+  projectVisibilityClause,
+} from "@/lib/projects/lockScope";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { ShareViewModel } from "@/lib/models/ShareView";
@@ -117,7 +124,27 @@ export async function GET(request: Request) {
       const since7d = new Date(since30d);
       since7d.setUTCDate(since30d.getUTCDate() + Math.max(0, rangeDays - 7));
 
-      const docActiveMatch = { orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter(), isArchived: { $ne: true } };
+      /**
+       * Locked rooms, in all three shapes this file needs (docs/prds/lnkdrp-locked-projects.md,
+       * decision 16).
+       *
+       * Every tile here is a count, and a count is an oracle: "documents 41" against a tag page,
+       * a project list and a metrics page that all say 38 is a sentence reading "three private ones
+       * exist". Verification 7 asks for the harder version of that promise — these numbers are
+       * identical for a non-member before and after a room is locked — which is why the exclusion goes
+       * on the document facet, the project aggregate AND the `ShareView` join rather than on whichever
+       * one looked most like a listing.
+       */
+      const hidden = await hiddenProjectIds(orgId, actor.userId, request);
+      const grantIds = await projectGrantIds(orgId, actor.userId, request);
+
+      const docActiveMatch = {
+        orgId,
+        isDeleted: { $ne: true },
+        ...workspaceListableDocFilter(),
+        ...lockedHomeExclusion(hidden),
+        isArchived: { $ne: true },
+      };
 
     const [
       docAggArr,
@@ -159,7 +186,10 @@ export async function GET(request: Request) {
         },
       ]),
       ProjectModel.aggregate([
-        { $match: { orgId, isDeleted: { $ne: true } } },
+        // `projectsActive` is the tile beside the document count, and a locked room the caller is not
+        // in must not be in it: `/api/projects` does not list it, so counting it here would be the
+        // same disagreement between a list and a count that decision 29 accepts only for the plan cap.
+        { $match: { orgId, isDeleted: { $ne: true }, ...projectVisibilityClause(grantIds) } },
         {
           $group: {
             _id: null,
@@ -206,6 +236,8 @@ export async function GET(request: Request) {
                       { $eq: ["$orgId", orgId] },
                       { $ne: ["$isDeleted", true] },
                       { $ne: ["$visibility", "project"] },
+                      // The `$expr` twin of the home exclusion, beside the containment twin above it.
+                      ...lockedHomeExclusionExpr(hidden),
                     ],
                   },
                 },

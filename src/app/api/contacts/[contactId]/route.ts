@@ -49,7 +49,7 @@ export async function GET(request: Request, ctx: Ctx) {
 
     try {
       const identity = await contactIdentityAllowed(actor.orgId);
-      const contact = await getContact({ orgId: actor.orgId, contactId, identity });
+      const contact = await getContact({ orgId: actor.orgId, contactId, identity, viewerUserId: actor.userId, request });
       if (!contact) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE }), actor);
       }
@@ -93,7 +93,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
         );
       }
 
-      const updated = await setContactNote({ orgId: actor.orgId, contactId, userId: actor.userId, text });
+      const updated = await setContactNote({ orgId: actor.orgId, contactId, userId: actor.userId, text, viewerUserId: actor.userId, request });
       if (!updated) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE }), actor);
       }

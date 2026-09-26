@@ -58,6 +58,10 @@ COPY src/lib/limits/uploads.ts ./src/lib/limits/uploads.ts
 # lnkdrp_untag folds tag names with the same function the server files them under, so removing a tag
 # by a differently-accented or punctuated spelling works. Pure string handling, no server deps.
 COPY src/lib/tags/slug.ts ./src/lib/tags/slug.ts
+# get_activity and revision_contributors hand out contributor keys and page URLs; both are built by
+# the app's single definition of that format, so the tools and the pages can never drift apart.
+# Import-free leaf (no mongoose), so it copies as one file; without it the image dies at boot.
+COPY src/lib/people/contributorKey.ts ./src/lib/people/contributorKey.ts
 COPY mcp ./mcp
 
 USER node

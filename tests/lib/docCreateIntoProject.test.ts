@@ -16,7 +16,12 @@ const doc = readFileSync("src/lib/models/Doc.ts", "utf8");
 
 describe("POST /api/docs { projectId }", () => {
   test("the project is checked in the caller's workspace, alive, and not a request inbox, before any write", () => {
-    expect(create).toMatch(/ProjectModel\.findOne\(\{ _id: new Types\.ObjectId\(pid\), orgId: new Types\.ObjectId\(actor\.orgId\), isDeleted: \{ \$ne: true \} \}\)/);
+    // The read is now multi-line because it also carries the locked-room visibility clause
+    // (docs/prds/lnkdrp-locked-projects.md, decision 27): a room the caller is not in is not a room
+    // they can create into, and the refusal stays the PROJECT_NOT_FOUND asserted below.
+    expect(create).toMatch(
+      /ProjectModel\.findOne\(\{\s+_id: new Types\.ObjectId\(pid\),\s+orgId: new Types\.ObjectId\(actor\.orgId\),\s+isDeleted: \{ \$ne: true \},\s+\$and: \[projectVisibilityClause\(await projectGrantIds\(actor\.orgId, actor\.userId, request\)\)\],\s+\}\)/,
+    );
     expect(create).toContain('code: "PROJECT_NOT_FOUND"');
     expect(create).toContain('code: "PROJECT_IS_INBOX"');
     expect(create.indexOf('code: "PROJECT_IS_INBOX"')).toBeLessThan(create.indexOf("await DocModel.create({"));

@@ -12,7 +12,9 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { ProjectModel } from "@/lib/models/Project";
+import { liveProjectFilter } from "@/lib/projects/scope";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugLog } from "@/lib/debug";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -40,6 +42,8 @@ type SidebarProjectListItem = {
   slug: string;
   description: string;
   isRequest?: boolean;
+  /** "locked" is a private data room, which the sidebar row draws with a padlock. */
+  visibility?: "workspace" | "locked";
   docCount?: number;
   updatedDate: string | null;
   createdDate: string | null;
@@ -92,10 +96,16 @@ export async function GET(request: Request) {
       : { orgId };
 
     // Docs (recent)
+    //
+    // The locked-room exclusion belongs here for the same reason the project half of this route was
+    // fixed in M1 rather than later (docs/prds/lnkdrp-locked-projects.md, decision 9): the sidebar is
+    // the first place a private room would show up, and "Recent" would have shown its documents by
+    // title and `shareId` even with the room itself gone from the list beside them.
     const docsFilter: Record<string, unknown> = {
       ...scopedOr,
       isDeleted: { $ne: true },
       ...workspaceListableDocFilter(),
+      ...(await lockedHomeExclusionFor(orgId, actor.userId, request)),
       isArchived: { $ne: true },
     };
 
@@ -157,21 +167,22 @@ export async function GET(request: Request) {
     };
 
     // Projects (non-request)
-    // Deleted rows are excluded here for the same reason `/api/projects` excludes them: a row the
-    // sidebar lists but every project route refuses is a dead end. The page's own 404 branch calls
-    // `refreshSidebarCache` to prune exactly this, which only worked if the list agreed.
+    // Imported, not copied. This route used to restate the `liveProjectFilter` rule inline, and a
+    // hand-rolled copy of an access rule is the containment drift problem in its project form: the
+    // sidebar is the FIRST place a locked room would appear, and the copy would have gone on listing
+    // it after every other surface stopped. Deleted rows are excluded for the same reason
+    // `/api/projects` excludes them: a row the sidebar lists but every project route refuses is a
+    // dead end, and the page's own 404 branch calls `refreshSidebarCache` to prune exactly this,
+    // which only worked if the list agreed.
+    const { orgId: _scopedOrgId, ...liveProject } = await liveProjectFilter(orgId, actor.userId, request);
     const projectsFilter: Record<string, unknown> = {
       ...scopedOr,
-      isDeleted: { $ne: true },
-      $and: [
-        { $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }] },
-        { $or: [{ requestUploadToken: { $exists: false } }, { requestUploadToken: null }, { requestUploadToken: "" }] },
-      ],
+      ...liveProject,
     };
     const [projectsTotal, projectsRaw] = await Promise.all([
       ProjectModel.countDocuments(projectsFilter),
       ProjectModel.find(projectsFilter)
-        .select({ _id: 1, name: 1, slug: 1, description: 1, docCount: 1, updatedDate: 1, createdDate: 1 })
+        .select({ _id: 1, name: 1, slug: 1, description: 1, docCount: 1, visibility: 1, updatedDate: 1, createdDate: 1 })
         .sort({ updatedDate: -1, _id: -1 })
         .limit(projectsLimit)
         .lean(),
@@ -183,6 +194,7 @@ export async function GET(request: Request) {
         slug: (p as { slug?: string }).slug ?? "",
         description: (p as { description?: string }).description ?? "",
         isRequest: false,
+        visibility: (p as unknown as { visibility?: unknown }).visibility === "locked" ? "locked" : "workspace",
         docCount: (function () {
           const raw = (p as unknown as { docCount?: unknown }).docCount;
           return Number.isFinite(raw) ? Number(raw) : 0;

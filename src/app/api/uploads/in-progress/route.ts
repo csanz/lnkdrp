@@ -22,6 +22,7 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { IN_FLIGHT_UPLOAD_STATUSES } from "@/lib/uploads/progress";
 
 export const runtime = "nodejs";
@@ -54,8 +55,15 @@ export async function GET(request: Request) {
     const orgId = new Types.ObjectId(actor.orgId);
     const since = new Date(Date.now() - MAX_AGE_MS);
 
-    // Documents this workspace believes are mid-upload, for the union below and for their titles.
-    const preparingDocs = await DocModel.find({ orgId, status: "preparing", isDeleted: { $ne: true } })
+    /**
+     * Documents this workspace believes are mid-upload, for the union below and for their titles.
+     *
+     * Both document reads carry the locked-room exclusion (decision 11), and the `filter` at the end of
+     * this handler is what makes that enough: a row whose document could not be resolved has no title
+     * and is dropped, so an upload into a private room simply is not in this feed for a non-member.
+     */
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
+    const preparingDocs = await DocModel.find({ orgId, status: "preparing", isDeleted: { $ne: true }, ...lockedExclusion })
       .select({ _id: 1, title: 1 })
       .sort({ updatedDate: -1 })
       .limit(MAX_ITEMS * 2)
@@ -84,7 +92,9 @@ export async function GET(request: Request) {
       .filter((id) => id && !titles.has(id))
       .map((id) => new Types.ObjectId(id));
     if (missing.length) {
-      const extra = await DocModel.find({ _id: { $in: missing }, orgId }).select({ _id: 1, title: 1 }).lean();
+      const extra = await DocModel.find({ _id: { $in: missing }, orgId, ...lockedExclusion })
+        .select({ _id: 1, title: 1 })
+        .lean();
       for (const d of extra) titles.set(String(d._id), typeof d.title === "string" ? d.title : null);
     }
 

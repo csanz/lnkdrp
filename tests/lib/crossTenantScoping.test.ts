@@ -147,6 +147,8 @@ beforeEach(() => {
   uploadFind.mockReturnValue({
     sort: () => ({ skip: () => ({ limit: () => ({ populate: () => ({ lean: async () => [] }) }) }) }),
   });
+  // No rows, so the workspace holds no locked room and every filter asserted below is the one it was
+  // written as (docs/prds/lnkdrp-locked-projects.md: the clause is inert with nothing locked).
   projectFind.mockReturnValue({ select: () => ({ lean: async () => [] }) });
   docFind.mockReturnValue(docsChain([]));
 });

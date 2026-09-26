@@ -6,6 +6,7 @@ import { resolveExistingActor } from "@/lib/gating/actor";
 import { errorJson } from "@/lib/http/errorResponse";
 import { rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { liveProjectByIdMatch } from "@/lib/projects/scope";
 import { PageTimingModel } from "@/lib/models/PageTiming";
 import { ProjectClickModel } from "@/lib/models/ProjectClick";
@@ -199,7 +200,11 @@ export async function POST(request: Request) {
       // branches below ship with no equivalent at all, so the filter now comes from the one place
       // that defines "a document this actor may act on".
       const docObjectId = new Types.ObjectId(docIdRaw);
-      const ok = await DocModel.exists(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId));
+      // And the same rule the two project branches below apply, in its document form: a page-timing
+      // event for a document whose home is a locked room this reader is not in is an existence
+      // oracle for that document, which is exactly what the project branches refuse (decision 11).
+      const lockedExclusion = await lockedHomeExclusionFor(orgId, viewerUserId, request);
+      const ok = await DocModel.exists(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId, lockedExclusion));
       if (!ok) {
         // Mirror other doc APIs: 404 for "not found / not authorized".
         return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -255,7 +260,7 @@ export async function POST(request: Request) {
       // The only real sender is the signed-in project page, which is already scoped to the actor's
       // active workspace, so a genuine view never misses here.
       const visible = await ProjectModel.exists(
-        liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId),
+        await liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId, viewerUserId, request),
       );
       if (!visible) {
         // Mirror the doc branch: 404 for "not found / not authorized".
@@ -289,7 +294,7 @@ export async function POST(request: Request) {
       // unchecked call appended a fresh row carrying two caller-supplied 2048-character strings.
       // Same workspace proof as the view branch.
       const visible = await ProjectModel.exists(
-        liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId),
+        await liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId, viewerUserId, request),
       );
       if (!visible) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });

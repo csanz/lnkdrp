@@ -25,6 +25,7 @@ import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
+import { lockedHomeExclusionFor, projectGrantIds, projectVisibilityClause } from "@/lib/projects/lockScope";
 import { ContactModel } from "@/lib/models/Contact";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { TAG_TARGET_KINDS, type TagTargetKind } from "@/lib/models/TagAssignment";
@@ -56,11 +57,24 @@ type TargetCheck = { ok: boolean; homeProjectId: string | null };
 
 const NOT_IN_WORKSPACE: TargetCheck = { ok: false, homeProjectId: null };
 
-/** The target exists, is live, and belongs to the caller's workspace — or this returns `ok: false`. */
+/**
+ * The target exists, is live, belongs to the caller's workspace and is something the caller may see
+ * — or this returns `ok: false`.
+ *
+ * `{ _id, orgId, isDeleted }` had no visibility notion of ANY kind, which made this the one place a
+ * non-member could ask "does this room exist" and get a 200 rather than a 404
+ * (docs/prds/lnkdrp-locked-projects.md, decision 16). Worse than an oracle, in fact: tagging a locked
+ * room writes a `TagAssignment` row that then prints the room on the tag's own item list. Both kinds
+ * carry the rule — the room by its visibility clause, the document by its home — and the refusal is
+ * the same "Not found" the route already answers for another workspace's id, so a member and a
+ * non-member cannot tell each other's answers apart.
+ */
 async function targetIsInWorkspace(params: {
   orgId: string;
   targetKind: TagTargetKind;
   targetId: string;
+  viewerUserId: string;
+  request?: Request;
 }): Promise<TargetCheck> {
   if (!Types.ObjectId.isValid(params.targetId)) return NOT_IN_WORKSPACE;
   await connectMongo();
@@ -71,14 +85,24 @@ async function targetIsInWorkspace(params: {
   // in whichever model the "else" branch happened to name.
   switch (params.targetKind) {
     case "doc": {
-      const doc = (await DocModel.findOne(live).select({ _id: 1, primaryProjectId: 1 }).lean()) as
-        | { primaryProjectId?: unknown }
-        | null;
+      const doc = (await DocModel.findOne({
+        ...live,
+        ...(await lockedHomeExclusionFor(params.orgId, params.viewerUserId, params.request)),
+      })
+        .select({ _id: 1, primaryProjectId: 1 })
+        .lean()) as { primaryProjectId?: unknown } | null;
       if (!doc) return NOT_IN_WORKSPACE;
       return { ok: true, homeProjectId: doc.primaryProjectId ? String(doc.primaryProjectId) : null };
     }
     case "project":
-      return (await ProjectModel.findOne(live).select({ _id: 1 }).lean()) ? { ok: true, homeProjectId: null } : NOT_IN_WORKSPACE;
+      return (await ProjectModel.findOne({
+        ...live,
+        $and: [projectVisibilityClause(await projectGrantIds(params.orgId, params.viewerUserId, params.request))],
+      })
+        .select({ _id: 1 })
+        .lean())
+        ? { ok: true, homeProjectId: null }
+        : NOT_IN_WORKSPACE;
     case "contact":
       return (await ContactModel.findOne(live).select({ _id: 1 }).lean()) ? { ok: true, homeProjectId: null } : NOT_IN_WORKSPACE;
     default:
@@ -140,7 +164,7 @@ export async function GET(request: Request) {
     if (!targetKind || !targetId) {
       return applyTempUserHeaders(NextResponse.json({ error: "targetKind and targetId are required" }, { status: 400 }), actor);
     }
-    if (!(await targetIsInWorkspace({ orgId: actor.orgId, targetKind, targetId })).ok) {
+    if (!(await targetIsInWorkspace({ orgId: actor.orgId, targetKind, targetId, viewerUserId: actor.userId, request })).ok) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
 
@@ -172,7 +196,7 @@ export async function POST(request: Request) {
       }
       const keyRefusal = contactWriteRefusal(actor, targetKind, "tag a person");
       if (keyRefusal) return keyRefusal;
-      const target = await targetIsInWorkspace({ orgId: actor.orgId, targetKind, targetId });
+      const target = await targetIsInWorkspace({ orgId: actor.orgId, targetKind, targetId, viewerUserId: actor.userId, request });
       if (!target.ok) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
       }
@@ -255,7 +279,7 @@ export async function DELETE(request: Request) {
       }
       const keyRefusal = contactWriteRefusal(actor, targetKind, "untag a person");
       if (keyRefusal) return keyRefusal;
-      const target = await targetIsInWorkspace({ orgId: actor.orgId, targetKind, targetId });
+      const target = await targetIsInWorkspace({ orgId: actor.orgId, targetKind, targetId, viewerUserId: actor.userId, request });
       if (!target.ok) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
       }

@@ -11,7 +11,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { DocModel } from "@/lib/models/Doc";
 import { containedDocIds } from "@/lib/docs/visibility";
-import { ProjectModel } from "@/lib/models/Project";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
+import { projectNamesFor } from "@/lib/projects/names";
 import { UserModel } from "@/lib/models/User";
 import { debugLog } from "@/lib/debug";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -274,16 +275,39 @@ export async function GET(request: Request) {
             .select({ _id: 1, name: 1, email: 1, isTemp: 1 })
             .lean()
         : Promise.resolve([]),
+      /**
+       * Document titles and slugs, tenanted and filtered by the document's home.
+       *
+       * The `shareId` here is why this cannot wait for M4: `/s/:shareId` needs no workspace identity, so
+       * one hydrated row of this feed IS the document (decision 13). Which feed ROWS a non-member sees
+       * is M4's job; this is the narrower promise that a row which does come through can neither name
+       * nor open a document in a room they are outside. A row whose document does not resolve renders
+       * with no title and no link, which this list already does for a purged document.
+       */
       docIds.size
-        ? DocModel.find({ _id: { $in: Array.from(docIds.values()) } })
+        ? DocModel.find({
+            _id: { $in: Array.from(docIds.values()) },
+            // No `orgId` added here, deliberately: documents that predate workspaces carry none, and
+            // this feed renders them for their owner in their own personal workspace. The exclusion is
+            // the fix that was missing; the tenancy one decision 14 asks for is on the PROJECT read
+            // below, where the name of another workspace's room was the leak.
+            ...(await lockedHomeExclusionFor(orgId, actor.userId, request)),
+          })
             .select({ _id: 1, title: 1, shareId: 1, isDeleted: 1 })
             .lean()
         : Promise.resolve([]),
+      /**
+       * Room names, through the one helper that decides whether this reader may have them
+       * (docs/prds/lnkdrp-locked-projects.md, decision 14).
+       *
+       * This read had NO tenancy clause at all: a `projectId` on a row from any workspace in the
+       * database came back named. So the cross-tenant fix and the locked-room fix are the same missing
+       * WHERE clause, and both arrive here. The feed's own exclusion — which rows a non-member sees at
+       * all — is M4; this is the narrower promise that a row that does come through cannot name a room.
+       */
       projectIds.size
-        ? ProjectModel.find({ _id: { $in: Array.from(projectIds.values()) } })
-            .select({ _id: 1, name: 1 })
-            .lean()
-        : Promise.resolve([]),
+        ? projectNamesFor({ orgId, ids: Array.from(projectIds.values()), viewerUserId: actor.userId, request })
+        : Promise.resolve(new Map<string, string | null>()),
       viewerKeys.size
         ? ShareViewModel.find({ $or: viewerKeyClauses })
             .select({ shareId: 1, botIdHash: 1, viewerName: 1, viewerEmail: 1, viewerEmailSnapshot: 1 })
@@ -344,9 +368,7 @@ export async function GET(request: Request) {
       });
     }
     const projectById = new Map<string, { name: string | null }>();
-    for (const p of projects) {
-      projectById.set(String(p._id), { name: typeof p.name === "string" && p.name.trim() ? p.name.trim() : null });
-    }
+    for (const [id, name] of projects) projectById.set(id, { name });
 
     const items = page.map((r) => {
       const isRecipientRow = r.actorKind === "viewer" && RECIPIENT_TYPES.has(r.type as string);

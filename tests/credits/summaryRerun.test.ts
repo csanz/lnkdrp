@@ -48,6 +48,16 @@ vi.mock("@/lib/models/Doc", () => ({
     }),
   },
 }));
+// `queueSummaryRerun` now asks `lockScope` which locked rooms to exclude from a caller's home.
+// That helper reads the Project and ProjectMembership collections directly rather than through the
+// mocked `connectMongo`, so without this the two caller-identity tests below hang until the 5s
+// timeout. Empty exclusions are the right default here: these tests are about whose workspace a
+// document resolves from, not about locked rooms.
+vi.mock("@/lib/projects/lockScope", () => ({
+  hiddenProjectIds: async () => [],
+  lockedHomeExclusion: () => ({}),
+  lockedHomeExclusionFor: async () => ({}),
+}));
 vi.mock("@/lib/uploads/internalProcess", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/uploads/internalProcess")>()),
   triggerUploadProcessing: trigger,

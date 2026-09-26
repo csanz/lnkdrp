@@ -7,6 +7,7 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import {
   isBlobPathnameForUpload,
   isBlobUrlForUpload,
@@ -144,6 +145,7 @@ export async function GET(
 
     // By workspace, not by owner: a teammate polling a colleague's upload got `doc.status: null`
     // and a page that never said "ready".
+    const lockedExclusion = await lockedHomeExclusionFor(actor.orgId, actor.userId, request);
     const doc = upload.docId
       ? await DocModel.findOne(
           buildDocMatch(
@@ -151,11 +153,26 @@ export async function GET(
             new Types.ObjectId(actor.orgId),
             new Types.ObjectId(actor.userId),
             actor.orgId === actor.personalOrgId,
+            lockedExclusion,
           ),
         )
           .select({ status: 1 })
           .lean()
       : null;
+    /**
+     * An upload pointing at a document in a locked room this caller is outside is the room
+     * (docs/prds/lnkdrp-locked-projects.md, decision 13).
+     *
+     * The upload row above is matched by `{ _id, userId, orgId }`, so this is the person who uploaded
+     * the file and has since lost access to the room it lives in. Their own poller must not keep
+     * reporting that room's processing state, and the answer is the uniform 404 rather than a blanked
+     * field, because "your upload exists but its document is unavailable" is the sentence the lock
+     * exists to avoid. Only while something is hidden: with no locked room a missing document means a
+     * hard-deleted one, which this route has always reported as `doc.status: null`.
+     */
+    if (Object.keys(lockedExclusion).length > 0 && upload.docId && !doc) {
+      return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+    }
 
     return applyTempUserHeaders(
       NextResponse.json({

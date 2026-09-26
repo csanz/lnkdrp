@@ -21,6 +21,8 @@ import { usePlan } from "@/lib/client/usePlan";
 import { trackProjectClick, trackProjectView } from "@/lib/metrics/client";
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
+import ProjectLockIcon from "@/components/project/ProjectLockIcon";
+import ProjectMembersPanel from "@/components/project/ProjectMembersPanel";
 import TagsRow from "@/components/tags/TagsRow";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import ProjectSharePanel from "@/components/ProjectSharePanel";
@@ -57,6 +59,8 @@ type ProjectDTO = {
   autoAddFiles: boolean;
   /** Whether `/p/:shareId` resolves; absent on old cached payloads = enabled. */
   shareEnabled?: boolean;
+  /** "locked" is a private data room: it exists only for the people in it (locked-projects PRD). */
+  visibility?: "workspace" | "locked";
   isRequest?: boolean;
   request?: {
     uploadPath: string | null;
@@ -951,6 +955,10 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                 Request link
               </span>
             ) : null}
+            {/* The padlock Slack taught everybody to read, beside the name: this room exists for the
+                people in it. In the badge slot rather than inside the title, which is an editable
+                input half the time. */}
+            <ProjectLockIcon locked={project?.visibility === "locked"} className="h-4 w-4" />
             {/* Beside the name, not in a card down the rail: a tag says what this project *is*, and
                 the badge slot is sized for the 32px title row, so the band keeps its height. */}
             {project ? (
@@ -1315,6 +1323,29 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
               {/* One grid child, not two: the column holds the tags card and the link panel, and a
                   third child would drop the panel onto a second row. */}
               <div className="flex min-w-0 flex-col gap-5 lg:min-h-0 lg:overflow-auto">
+              {/* Who this room is for, above the link panel on purpose: "who inside can see it" and
+                  "who outside can" are the two halves of the same question, and decision 26 exists
+                  because people answer one and assume the other. A request inbox is filled through a
+                  capability link and can never be private (decision 10), so it has no panel. */}
+              {project && !isRequestRepo ? (
+                <ProjectMembersPanel
+                  projectId={projectSlug}
+                  projectName={title}
+                  locked={project.visibility === "locked"}
+                  isPersonalWorkspace={Boolean(plan?.isPersonalOrg)}
+                  canManage={Boolean(plan && plan.role !== "viewer")}
+                  onVisibilityChanged={() => {
+                    // The lock changes what every list may show, so the page and the sidebar both
+                    // reload rather than keeping a cached row that says "workspace".
+                    notifyProjectsChanged();
+                    void refreshSidebarCache({ reason: "project-visibility", force: true });
+                    // The project row this page holds now says the wrong thing about itself, and the
+                    // cached docs payload carries it, so both are dropped and refetched.
+                    projectDocsCache.clear();
+                    setDocsChangedTick((t) => t + 1);
+                  }}
+                />
+              ) : null}
               {project?.isRequest ? (
                 <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
                   <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">

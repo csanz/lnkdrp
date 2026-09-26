@@ -51,6 +51,7 @@ const docFind = vi.fn((_filter: Record<string, unknown>) => chain([] as unknown[
 const docUpdateOne = vi.fn(async (..._a: unknown[]) => ({ matchedCount: 1, modifiedCount: 1 }));
 const docCountDocuments = vi.fn(async (_filter: Record<string, unknown>) => 0);
 const projectFindOne = vi.fn((_filter: Record<string, unknown>) => chain(null as unknown));
+const projectFind = vi.fn((_filter: Record<string, unknown>) => chain([] as unknown[]));
 const projectUpdateOne = vi.fn(async (..._a: unknown[]) => ({ matchedCount: 1, modifiedCount: 1 }));
 
 vi.mock("@/lib/mongodb", () => ({ connectMongo: vi.fn(async () => undefined) }));
@@ -72,8 +73,16 @@ vi.mock("@/lib/models/Doc", () => ({
 vi.mock("@/lib/models/Project", () => ({
   ProjectModel: {
     findOne: (f: Record<string, unknown>) => projectFindOne(f),
+    // The locked-room helper reads the workspace's locked project ids (decision 6). No rows here, so
+    // `hiddenProjectIds` answers `[]`, `lockedHomeExclusion` answers `{}`, and the filters these tests
+    // compare stay byte-identical to the ones they were written against — which is exactly the
+    // no-locked-project guarantee, asserted by construction rather than by assumption.
+    find: (f: Record<string, unknown>) => projectFind(f),
     updateOne: (...a: unknown[]) => projectUpdateOne(...a),
   },
+}));
+vi.mock("@/lib/models/ProjectMembership", () => ({
+  ProjectMembershipModel: { find: () => chain([]), db: { readyState: 1 } },
 }));
 vi.mock("@/lib/models/Upload", () => ({ UploadModel: { find: () => chain([]) } }));
 vi.mock("@/lib/models/Review", () => ({ ReviewModel: { aggregate: vi.fn(async () => []) } }));
@@ -101,8 +110,9 @@ const inTeam = { kind: "user", userId: ME.toString(), orgId: TEAM_ORG.toString()
 /** Signed in, in their own personal workspace: pre-workspace documents of theirs resolve too. */
 const inPersonal = { kind: "user", userId: ME.toString(), orgId: PERSONAL_ORG.toString(), personalOrgId: PERSONAL_ORG.toString() };
 
-const teamMatch = buildDocMatch(DOC, TEAM_ORG, ME, false);
-const personalMatch = buildDocMatch(DOC, PERSONAL_ORG, ME, true);
+/** No locked rooms in these fixtures, so the exclusion is `{}` and the match is what it always was. */
+const teamMatch = buildDocMatch(DOC, TEAM_ORG, ME, false, {});
+const personalMatch = buildDocMatch(DOC, PERSONAL_ORG, ME, true, {});
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -13,6 +13,7 @@ import { membershipChanged, resolveActor } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { forbidApiKey } from "@/lib/gating/forbidApiKey";
+import { revokeProjectGrants } from "@/lib/projects/lockScope";
 
 export const runtime = "nodejs";
 
@@ -65,6 +66,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ orgId: str
   );
 
   membershipChanged({ orgId, userId: actor.userId });
+
+  // Leaving takes the private data rooms with it, through the one writer that clears grants
+  // (docs/prds/lnkdrp-locked-projects.md, decision 4). Somebody who leaves and is later re-invited
+  // comes back into the workspace with no rooms, which is the same rule the revoke route follows.
+  await revokeProjectGrants({ orgId, userId: actor.userId });
 
   // The workspace they left still gets to know: the people still in it see one person fewer on the
   // Members page and, without this, nothing that says when or who.

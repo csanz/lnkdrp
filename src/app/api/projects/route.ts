@@ -15,6 +15,8 @@ import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { authOrRateLimitResponse, errorJson } from "@/lib/http/errorResponse";
 import { liveProjectFilter } from "@/lib/projects/scope";
+import { ProjectMembershipModel } from "@/lib/models/ProjectMembership";
+import { projectMembershipChanged } from "@/lib/projects/lockScope";
 import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 const MAX_PROJECT_NAME_LENGTH = 80;
@@ -129,10 +131,11 @@ export async function GET(request: Request) {
 
     // Projects endpoint returns ONLY non-request projects.
     // Requests are listed via `/api/requests` to enforce strict separation.
-    // The workspace's live, non-request projects (src/lib/projects/scope.ts) — the same filter the
-    // plan cap counts, so the list can never disagree with "used: N" — plus the legacy personal
-    // scope, which only ever widens what a personal workspace sees.
-    const { orgId: _scopedOrgId, ...liveProject } = liveProjectFilter(orgId);
+    // The live, non-request projects this caller may see (src/lib/projects/scope.ts), plus the
+    // legacy personal scope, which only ever widens what a personal workspace sees. The plan cap
+    // counts through `allProjectsFilter` instead, because a locked room still occupies a slot; the
+    // two now differ by exactly the caller's visibility clause and nothing else.
+    const { orgId: _scopedOrgId, ...liveProject } = await liveProjectFilter(orgId, actor.userId, request);
     const filter: Record<string, unknown> = {
       ...(allowLegacyByUserId
         ? {
@@ -156,8 +159,11 @@ export async function GET(request: Request) {
     // Without this, MongoDB is free to return ties in arbitrary order, causing UI "flip" on refresh.
     // Perf: `lite=1` is used by small pickers (doc actions menu) and must be as cheap as possible.
     // Only include fields those UIs actually need (id + name + slug for display/linking).
+    // `visibility` is in both shapes, `lite` included: the pickers are exactly where a locked room
+    // needs its padlock, and a list that named rooms without saying which are private would make
+    // "Add to a data room" read as though everything in it is shared with the workspace.
     const select = lite
-      ? "_id name slug"
+      ? "_id name slug visibility"
       : {
           _id: 1,
           shareId: 1,
@@ -166,6 +172,7 @@ export async function GET(request: Request) {
           description: 1,
           docCount: 1,
           autoAddFiles: 1,
+          visibility: 1,
           updatedDate: 1,
           createdDate: 1,
         };
@@ -239,6 +246,7 @@ export async function GET(request: Request) {
               return Number.isFinite(raw) ? Number(raw) : 0;
             })(),
             autoAddFiles: Boolean((p as unknown as { autoAddFiles?: unknown }).autoAddFiles),
+            visibility: (p as unknown as { visibility?: unknown }).visibility === "locked" ? "locked" : "workspace",
             updatedDate: p.updatedDate ? new Date(p.updatedDate).toISOString() : null,
             createdDate: p.createdDate ? new Date(p.createdDate).toISOString() : null,
           })),
@@ -285,11 +293,16 @@ export async function POST(request: Request) {
       name: string;
       description: string;
       autoAddFiles: boolean;
+      locked: boolean;
     }>;
 
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const description = typeof body.description === "string" ? body.description.trim() : "";
     const autoAddFiles = typeof body.autoAddFiles === "boolean" ? body.autoAddFiles : false;
+    // Create it as a private data room (docs/prds/lnkdrp-locked-projects.md, decision 31's create
+    // half). Nothing in the UI sends this yet; the MCP's `lnkdrp_create_project` will, because an
+    // agent creating something LESS visible than the default is not a risk worth a refusal.
+    const locked = body.locked === true;
     if (!name) return NextResponse.json({ error: "Project name is required" }, { status: 400 });
     // Same cap PATCH enforces; create had none, so a rename could fail on a name create accepted.
     if (name.length > MAX_PROJECT_NAME_LENGTH) {
@@ -323,14 +336,45 @@ export async function POST(request: Request) {
       slug,
       description,
       autoAddFiles,
+      ...(locked ? { visibility: "locked", lockedAt: new Date(), lockedByUserId: userId } : {}),
     });
     const p = (Array.isArray(created) ? created[0] : created) as typeof created;
+    const projectId = (p as unknown as { _id: Types.ObjectId })._id;
+
+    if (locked) {
+      // Seat the creator as the first member, or the room is invisible to everybody including them.
+      // There is no owner bypass anywhere in this feature (decision 21), so an empty locked room is
+      // not a room with a caretaker, it is a room nobody can open until break-glass exists. If the
+      // grant cannot be written the project is deleted again and the create fails: it is seconds
+      // old and holds no documents and no links, so nothing is lost, and a caller who retries gets
+      // their name back instead of a 409 against a room they cannot see.
+      try {
+        await ProjectMembershipModel.create({
+          orgId,
+          projectId,
+          userId,
+          role: "editor",
+          via: "creator",
+          addedByUserId: userId,
+        });
+        // The caller lists their projects immediately after this, and the grant cache would
+        // otherwise serve them the empty answer it read seconds ago and hide the room they just
+        // made.
+        projectMembershipChanged({ orgId, userId });
+      } catch (grantErr) {
+        debugLog(1, "[api/projects] POST could not seat the creator in a locked room", {
+          project: String(projectId),
+        });
+        await ProjectModel.deleteOne({ _id: projectId }).catch(() => undefined);
+        throw grantErr;
+      }
+    }
     void recordActivity({
       orgId: actor.orgId,
       userId: actor.userId,
       actorKind: actor.kind,
       type: "project.created",
-      projectId: (p as unknown as { _id: Types.ObjectId })._id,
+      projectId,
       title: name,
       meta: { projectName: name },
       request,
@@ -340,7 +384,7 @@ export async function POST(request: Request) {
       NextResponse.json(
         {
           project: {
-            id: String((p as unknown as { _id: Types.ObjectId })._id),
+            id: String(projectId),
             shareId: (p as unknown as { shareId?: unknown }).shareId ?? null,
             name,
             slug,
@@ -351,6 +395,7 @@ export async function POST(request: Request) {
               return Number.isFinite(raw) ? Number(raw) : 0;
             })(),
             autoAddFiles,
+            visibility: locked ? "locked" : "workspace",
           },
           ...(limitCheck.warning ? { planWarning: limitCheck.warning } : {}),
         },

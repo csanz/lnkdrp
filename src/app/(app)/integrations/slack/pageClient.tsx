@@ -14,6 +14,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import ProjectLockIcon, { lockedOptionLabel } from "@/components/project/ProjectLockIcon";
 import { usePlan } from "@/lib/client/usePlan";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import type { SlackConnectionDto, SlackEventKey } from "@/lib/slack/connections";
@@ -36,7 +37,7 @@ const REASON_COPY: Record<string, string> = {
   plan_limit: "Nothing was connected: this workspace is at its Slack channel limit. Upgrade to Pro to add another channel and route projects to it.",
 };
 
-type RoutableProject = { id: string; name: string; isRequest: boolean };
+type RoutableProject = { id: string; name: string; isRequest: boolean; locked?: boolean };
 
 /**
  * Every room and request inbox in the workspace, for the picker. Two pages of fifty is far past
@@ -49,8 +50,20 @@ async function loadRoutableProjects(): Promise<RoutableProject[]> {
       const res = await fetch(`${path}?limit=50&page=${page}${isRequest ? "" : "&lite=1"}`, { cache: "no-store" });
       if (!res.ok) return;
       const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-      const rows = Array.isArray(json?.[key]) ? (json![key] as Array<{ id?: unknown; name?: unknown }>) : [];
-      for (const r of rows) if (typeof r?.id === "string") out.push({ id: r.id, name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : "Untitled", isRequest });
+      const rows = Array.isArray(json?.[key])
+        ? (json![key] as Array<{ id?: unknown; name?: unknown; visibility?: unknown }>)
+        : [];
+      for (const r of rows)
+        if (typeof r?.id === "string")
+          out.push({
+            id: r.id,
+            name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : "Untitled",
+            isRequest,
+            // A private data room routed to a channel posts its activity to whoever is in that
+            // channel, which is the one thing no filter can fix (decision 20), so the picker says
+            // which rooms are private before anybody maps one.
+            locked: r.visibility === "locked",
+          });
       if (rows.length < 50) return;
     }
   };
@@ -419,7 +432,7 @@ function ProjectRouting({
               const other = elsewhere.get(p.id);
               return (
                 <option key={p.id} value={p.id}>
-                  {p.name}
+                  {lockedOptionLabel(p.name, Boolean(p.locked))}
                   {p.isRequest ? " (request inbox)" : ""}
                   {other ? ` · now on ${other}` : ""}
                 </option>
@@ -439,6 +452,7 @@ function ProjectRouting({
             const name = p ? p.name : projects === null ? "…" : "A removed project";
             return (
               <li key={pid} className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[12px] text-[var(--fg)]">
+                <ProjectLockIcon locked={p?.locked} className="h-3 w-3" />
                 <span className="max-w-[18rem] truncate">{name}</span>
                 {p?.isRequest ? <span className="text-[var(--muted-2)]">inbox</span> : null}
                 {canManage ? (

@@ -650,6 +650,53 @@ export async function skipPending(params: {
 }
 
 /**
+ * Skip the pending mail about one data room that is owed to people who are not in it
+ * (docs/prds/lnkdrp-locked-projects.md, decision 31).
+ *
+ * Locking a room narrows its audience, and a row in this queue means one person is owed one email:
+ * nothing re-derives that audience later, so a row enqueued before the lock would send afterwards
+ * and name a room the recipient can no longer open. This is the one place that can be caught.
+ *
+ * Two windows stay open and the lock dialog says so out loud: mail already sent is gone, and a row
+ * already claimed by the cron between the event and the lock still sends, which is one batch wide.
+ * That is why this matches `pending` only — a `sending` row belongs to the runner holding it, and
+ * stealing it is how one email goes out twice.
+ *
+ * Unlike {@link skipPending} this is scoped to a room rather than to a kind: the whole point is to
+ * leave the rest of a member's backlog alone.
+ */
+export async function skipPendingForProject(params: {
+  orgId: string | Types.ObjectId;
+  projectId: string | Types.ObjectId;
+  /** Documents whose home is the room, for the rows that carry a document and no project. */
+  docIds?: ReadonlyArray<string | Types.ObjectId>;
+  /** The room's members: their rows stay. */
+  exceptUserIds?: ReadonlyArray<string | Types.ObjectId>;
+  reason: string;
+}): Promise<number> {
+  const orgId = toObjectId(params.orgId);
+  const projectId = toObjectId(params.projectId);
+  if (!orgId || !projectId) return 0;
+  const docIds = toObjectIds(params.docIds ?? []);
+  const keep = toObjectIds(params.exceptUserIds ?? []);
+  const reason = (params.reason ?? "").trim().slice(0, 300) || "not a project member";
+  await connectMongo();
+  const res = await NotificationQueueModel.updateMany(
+    {
+      orgId,
+      status: "pending",
+      ...(keep.length ? { userId: { $nin: keep } } : {}),
+      $or: [
+        { "event.projectId": projectId },
+        ...(docIds.length ? [{ "event.docId": { $in: docIds } }] : []),
+      ],
+    },
+    { $set: { status: "skipped", skippedReason: reason, claimedAt: null, claimToken: null } },
+  );
+  return res.modifiedCount ?? 0;
+}
+
+/**
  * Hand back rows claimed by a run that died mid-send (`sending` for longer than `CLAIM_STALE_MS`).
  *
  * Attempts are deliberately not incremented: nobody knows whether the mail went out, and a crash is

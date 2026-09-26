@@ -141,6 +141,9 @@ describe("what comes back", () => {
     expect(loadActorProfile).toHaveBeenCalledWith({
       orgId: new Types.ObjectId(ORG),
       key: { kind: "agent", client: "claude-code", ownerUserId: ALICE },
+      // The reader, because the page names rooms and a locked one is not theirs to see
+      // (docs/prds/lnkdrp-locked-projects.md, decision 14).
+      viewerUserId: ALICE,
     });
   });
 

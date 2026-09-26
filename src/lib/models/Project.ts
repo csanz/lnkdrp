@@ -41,6 +41,28 @@ const projectSchema = new Schema(
      * NOTE: These fields are referenced by request-link routes and the upload
      * processing pipeline.
      */
+    /**
+     * Who in the workspace this project exists for (docs/prds/lnkdrp-locked-projects.md, decision 1).
+     *
+     * `"workspace"` is every member, which is what a project has always been. `"locked"` is a
+     * private data room: it exists only for the people holding a `ProjectMembership` row, with no
+     * bypass for an owner or an admin, and for everyone else it is absent rather than refused.
+     *
+     * The word mirrors `Doc.visibility: "workspace" | "project"` so the two settings read as one
+     * vocabulary: containment says which listings a document appears in, the lock says which people
+     * a project exists for. It is a word and not an `isLocked: boolean` so that a third state (a
+     * read-only or an archived room) does not need a second field saying the same kind of thing.
+     *
+     * Every filter spreads `{ visibility: { $ne: "locked" } }` through
+     * `projectVisibilityClause()` in `src/lib/projects/lockScope.ts`, never an equality: rows
+     * written before this field existed carry no `visibility` at all.
+     */
+    visibility: { type: String, trim: true, enum: ["workspace", "locked"], default: "workspace", index: true },
+    /** When the room was locked. Null for a project that has never been locked. */
+    lockedAt: { type: Date, default: null },
+    /** Who locked it. Kept after an unlock so the feed row and the audit question stay answerable. */
+    lockedByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+
     isRequest: { type: Boolean, default: false, index: true },
     requestUploadToken: { type: String, trim: true, default: null, index: true },
     /**
@@ -129,9 +151,26 @@ projectSchema.index(
 
 export type Project = InferSchemaType<typeof projectSchema>;
 
+const ExistingProjectModel = mongoose.models.Project as Model<Project> | undefined;
+
 export const ProjectModel: Model<Project> =
-  (mongoose.models.Project as Model<Project> | undefined) ??
-  mongoose.model<Project>("Project", projectSchema);
+  ExistingProjectModel ?? mongoose.model<Project>("Project", projectSchema);
+
+// Dev safety: Next.js hot reload can reuse an already-compiled Mongoose model, so schema additions
+// made during development would not take effect until a server restart. Patch newer fields into the
+// cached schema (the same pattern `OrgMembership.ts` and `Upload.ts` carry). Locking a room is a
+// PATCH-shaped write and strict mode silently DROPS an unknown path on PATCH rather than rejecting
+// it, so without this a hot-reloaded dev server would accept the lock request, write nothing, and
+// present the bug as an authorization failure: the room stays visible and the switch looks broken.
+if (ExistingProjectModel && !ExistingProjectModel.schema.path("visibility")) {
+  ExistingProjectModel.schema.add({
+    // Must match the schema above, or a hot-reloaded process gives new projects a different default
+    // from the one a fresh process gives them.
+    visibility: { type: String, trim: true, enum: ["workspace", "locked"], default: "workspace", index: true },
+    lockedAt: { type: Date, default: null },
+    lockedByUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+  } as any);
+}
 
 
 

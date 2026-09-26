@@ -11,6 +11,7 @@ import { debugError, debugLog } from "@/lib/debug";
 import { resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { StarredDocModel } from "@/lib/models/StarredDoc";
 
 export const runtime = "nodejs";
@@ -20,13 +21,26 @@ function isObjectIdString(v: unknown): v is string {
   return typeof v === "string" && Types.ObjectId.isValid(v);
 }
 
-function docsVisibilityFilter(actor: { orgId: string; personalOrgId?: string | null; userId: string }) {
+/**
+ * The documents this caller may star, and may still see starred.
+ *
+ * Async because of the last clause: a starred document whose home is a locked room the caller holds
+ * no grant for is gone from the list, exactly as it is gone from `/api/docs`
+ * (docs/prds/lnkdrp-locked-projects.md, decision 11). The star ROW survives, as it survives a delete
+ * and an archive, because being removed from a room is the kind of thing that gets undone and a
+ * document that comes back should come back starred.
+ */
+async function docsVisibilityFilter(
+  actor: { orgId: string; personalOrgId?: string | null; userId: string },
+  request?: Request,
+): Promise<Record<string, unknown>> {
   const orgId = new Types.ObjectId(actor.orgId);
   const legacyUserId = new Types.ObjectId(actor.userId);
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
   return {
     isDeleted: { $ne: true },
     ...workspaceListableDocFilter(),
+    ...(await lockedHomeExclusionFor(actor.orgId, actor.userId, request)),
     isArchived: { $ne: true },
     ...(allowLegacyByUserId
       ? {
@@ -71,7 +85,7 @@ export async function POST(request: Request) {
 
     // Only allow docs visible to the actor under current org context.
     const allowedDocs = await DocModel.find({
-      ...docsVisibilityFilter(actor),
+      ...(await docsVisibilityFilter(actor, request)),
       _id: { $in: cleaned.map((d) => new Types.ObjectId(d.docId)) },
     })
       .select({ _id: 1 })

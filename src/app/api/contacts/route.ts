@@ -99,6 +99,8 @@ export async function GET(request: Request) {
       const result = await listContacts({
         orgId: actor.orgId,
         identity,
+        viewerUserId: actor.userId,
+        request,
         ...parsed.filters,
         sort: parsed.sort,
         dir: parsed.dir,

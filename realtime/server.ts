@@ -488,6 +488,11 @@ async function main() {
             "fullDocument._id": 1,
             "fullDocument.orgId": 1,
             "fullDocument.name": 1,
+            // Whether this row is a private data room (docs/prds/lnkdrp-locked-projects.md,
+            // decision 18). Projected so the handler below can skip its frame: without it this
+            // watcher broadcasts a locked room's NAME to every socket in the workspace, which is a
+            // content leak today in a different shape and fatal the moment a room can be locked.
+            "fullDocument.visibility": 1,
           },
         },
       ],
@@ -496,12 +501,25 @@ async function main() {
   projects.on("change", (change) => {
     const doc = (
       change as {
-        fullDocument?: { _id?: unknown; orgId?: unknown; name?: unknown };
+        fullDocument?: { _id?: unknown; orgId?: unknown; name?: unknown; visibility?: unknown };
       }
     ).fullDocument;
     // A delete carries no fullDocument; the client refetches its list either way, so the id is enough.
     const orgId = doc?.orgId;
     if (!orgId) return;
+    /**
+     * A locked room's frame is skipped for everybody, members included, and that is deliberate for
+     * this milestone: this broadcast has no per-socket notion of who holds a grant (that is the
+     * ticket's grant set, which comes later), so the only answer that cannot leak a room's name to a
+     * colleague who is not in it is to say nothing. The cost is that a member's sidebar learns about
+     * a change to a locked room on its next poll rather than instantly; the nudge this frame sends
+     * triggers a refetch of `/api/sidebar`, which is filtered anyway.
+     *
+     * The test is `=== "locked"` and not `!== "workspace"` for the same reason the Mongo clause is a
+     * `$ne`: every project row that predates this feature carries no `visibility` field at all, and
+     * treating "absent" as locked would silence this watcher for the entire product.
+     */
+    if (doc?.visibility === "locked") return;
     broadcast(String(orgId), {
       type: "project",
       project: {

@@ -3,6 +3,7 @@
 import { EllipsisHorizontalIcon, FolderIcon, InboxArrowDownIcon } from "@heroicons/react/24/outline";
 import type { Dispatch, SetStateAction } from "react";
 import Modal from "@/components/modals/Modal";
+import ProjectLockIcon from "@/components/project/ProjectLockIcon";
 
 type ProjectListItem = {
   id: string;
@@ -10,6 +11,8 @@ type ProjectListItem = {
   slug: string;
   description: string;
   isRequest?: boolean;
+  /** "locked" is a private data room: it exists only for the people in it, and its row wears a padlock. */
+  visibility?: "workspace" | "locked";
   docCount?: number;
   updatedDate: string | null;
   createdDate: string | null;
@@ -117,6 +120,7 @@ export default function SidebarProjectsModal({
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2 leading-5">
                         <span className="min-w-0 truncate font-semibold text-[var(--fg)]">{p.name}</span>
+                        <ProjectLockIcon locked={p.visibility === "locked"} className="h-4 w-4" />
                         {docCount !== null ? (
                           <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
                             {docCount} {docCount === 1 ? "doc" : "docs"}

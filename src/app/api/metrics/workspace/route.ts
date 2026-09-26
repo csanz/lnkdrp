@@ -17,6 +17,8 @@
  * by `orgId` instead of `docId`. A document's row here equals its own metrics page for the same
  * range; tests/lib/workspaceMetricsReconcile.test.ts checks that against the live seed corpus.
  */
+import { createHash } from "node:crypto";
+
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
@@ -27,6 +29,7 @@ import { getWorkspacePlan, type PlanId } from "@/lib/billing/planLimits";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { resolveActorForStats, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
+import { hiddenProjectIds } from "@/lib/projects/lockScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -92,7 +95,30 @@ export async function GET(request: Request) {
       await connectMongo();
       const plan: PlanId = await getWorkspacePlan(actor.orgId);
 
-      const cacheKey = `${actor.orgId}:${requestedRange}:${plan}`;
+      /**
+       * The cache key carries the caller's visible set, not just the workspace
+       * (docs/prds/lnkdrp-locked-projects.md, decision 16 and Verification 8).
+       *
+       * Filtering the rows and forgetting this key is the mistake that passes every cold local test
+       * and leaks in production: a member warms the entry, a non-member asks for the same workspace
+       * and range a second later, and the sixty seconds hand them the member's answer including the
+       * locked room's documents, links and readers.
+       *
+       * A HASH of the hidden set rather than the caller's id, deliberately, so the two hundred
+       * members of a workspace with no locked room still share one entry: `hiddenProjectIds` answers
+       * `[]` there, the suffix is empty, and the key is byte-identical to the one this route has always
+       * used. Two people with the same visible set share an entry, which is correct — they are owed the
+       * same payload — and the entry cannot outlive a grant change by more than the sixty seconds the
+       * cache already admits to.
+       */
+      const hidden = await hiddenProjectIds(actor.orgId, actor.userId, request);
+      const visibleSetKey = hidden.length
+        ? createHash("sha256")
+            .update(hidden.map((id) => String(id)).sort().join(","))
+            .digest("base64url")
+            .slice(0, 16)
+        : "";
+      const cacheKey = `${actor.orgId}:${requestedRange}:${plan}:${visibleSetKey}`;
       if (!fresh) {
         const cached = cacheGet(cacheKey);
         // `no-store` to the browser either way: the 60 seconds are a server-side shield, not a
@@ -100,7 +126,13 @@ export async function GET(request: Request) {
         if (cached) return NextResponse.json(cached, { headers: { "cache-control": "no-store" } });
       }
 
-      const payload = await loadWorkspaceMetrics({ orgId: actor.orgId, plan, requestedRange });
+      const payload = await loadWorkspaceMetrics({
+        orgId: actor.orgId,
+        viewerUserId: actor.userId,
+        request,
+        plan,
+        requestedRange,
+      });
       cacheSet(cacheKey, payload);
       return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
     } catch (e) {

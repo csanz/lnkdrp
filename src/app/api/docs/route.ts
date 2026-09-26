@@ -8,6 +8,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { lockedHomeExclusionFor, projectGrantIds, projectVisibilityClause } from "@/lib/projects/lockScope";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
@@ -230,6 +231,17 @@ export async function GET(request: Request) {
     // Applied here rather than in the filter literal because the `q=` branch is what decides whether
     // this request names a document or is looking for one.
     if (!addressing) Object.assign(filter, workspaceListableDocFilter());
+    /**
+     * The lock, UNCONDITIONALLY — outside the `addressing` guard above, and that is the difference
+     * between the two rules (docs/prds/lnkdrp-locked-projects.md, decision 11).
+     *
+     * Containment changes what is LISTED and deliberately leaves a named document reachable, which is
+     * why the line above is guarded. A lock has to change what is REACHABLE, or it is a listing filter
+     * with a padlock icon. The addressing path was opened on 2026-09-25 so that an agent holding an id
+     * or a slug could still resolve a contained document; a private room is the case where holding the
+     * id is exactly the attack, so `?ids=<id>` and `?q=<exact slug or shareId>` close here.
+     */
+    Object.assign(filter, await lockedHomeExclusionFor(orgId, actor.userId, request));
 
     const useIds = Boolean(ids.length);
     const total = useIds ? 0 : await DocModel.countDocuments(filter);
@@ -525,7 +537,21 @@ export async function POST(request: Request) {
       if (!Types.ObjectId.isValid(pid)) {
         return applyTempUserHeaders(NextResponse.json({ error: "Project not found.", code: "PROJECT_NOT_FOUND" }, { status: 400 }), actor);
       }
-      const project = (await ProjectModel.findOne({ _id: new Types.ObjectId(pid), orgId: new Types.ObjectId(actor.orgId), isDeleted: { $ne: true } })
+      /**
+       * Through the visibility clause, so a locked room the caller is not in is simply not a project
+       * they can create into (decision 27).
+       *
+       * It is a FILTER and not a check, which is why the refusal below is the `PROJECT_NOT_FOUND` this
+       * route already answers for a nonexistent id rather than a new code or a 403: filing a document
+       * into a room is how somebody outside it would get the room listed on their own document page,
+       * and a distinguishable refusal would confirm the room exists.
+       */
+      const project = (await ProjectModel.findOne({
+        _id: new Types.ObjectId(pid),
+        orgId: new Types.ObjectId(actor.orgId),
+        isDeleted: { $ne: true },
+        $and: [projectVisibilityClause(await projectGrantIds(actor.orgId, actor.userId, request))],
+      })
         .select({ _id: 1, name: 1, isRequest: 1 })
         .lean()) as { _id: Types.ObjectId; name?: string; isRequest?: boolean } | null;
       if (!project) {

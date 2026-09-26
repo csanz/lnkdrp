@@ -46,6 +46,21 @@ const recordActivity = vi.fn(async () => undefined);
 const isOwnerSideViewer = vi.fn(async () => true);
 
 vi.mock("@/lib/mongodb", () => ({ connectMongo }));
+/**
+ * No locked rooms in this fixture (docs/prds/lnkdrp-locked-projects.md, decision 11).
+ *
+ * The by-id document match now carries an exclusion the caller computes, so without this the handler
+ * would go looking for the projects collection. An empty hidden set makes the exclusion `{}`, which is
+ * the state a workspace with no private room is really in, so every filter asserted below is the one it
+ * was written against. The clause itself is pinned in `tests/lib/lockedProjectSurfaces.test.ts`.
+ */
+vi.mock("@/lib/projects/lockScope", () => ({
+  hiddenProjectIds: async () => [],
+  lockedHomeExclusion: () => ({}),
+  lockedHomeExclusionFor: async () => ({}),
+  projectGrantIds: async () => [],
+  projectVisibilityClause: () => ({ $or: [{ visibility: { $ne: "locked" } }, { _id: { $in: [] } }] }),
+}));
 vi.mock("@/lib/gating/actor", () => ({
   resolveActor,
   applyTempUserHeaders,

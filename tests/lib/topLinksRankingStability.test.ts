@@ -135,6 +135,7 @@ vi.mock("@/lib/models/ShareLink", () => ({
   },
 }));
 vi.mock("@/lib/models/User", () => ({ UserModel: { find: () => ({ select: () => ({ lean: async () => [] }) }) } }));
+// No locked rooms, so the exclusion is inert and the ranking below is exactly what it always was.
 vi.mock("@/lib/models/Project", () => ({ ProjectModel: { find: () => ({ select: () => ({ lean: async () => [] }) }) } }));
 vi.mock("@/lib/analytics/docScope", () => ({ docOnlyShareIdMatch: async () => ({ foreignShareIds: [], match: {} }) }));
 vi.mock("@/lib/share/links", () => ({ toShareLinkDTO: (l: unknown) => l }));

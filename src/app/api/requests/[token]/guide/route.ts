@@ -62,6 +62,15 @@ export async function POST(
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    /**
+     * No locked-room exclusion on this route, and that is decision 25 rather than an oversight.
+     *
+     * A request inbox can never be locked (decision 10) and its guide document is homed in it, so the
+     * clause would be inert; more importantly this is a recipient-facing capability surface, and
+     * `tests/lib/lockedProjectRecipients.test.ts` refuses the import outright, because a clause on the
+     * inbound half breaks every request link a workspace has already sent.
+     */
+    const lockedExclusion: Record<string, unknown> = {};
 
     // Both halves of this filter wanted to be a top-level `$or`, and the second one won — so the
     // workspace bound was deleted before the query was sent, and from a personal workspace (the
@@ -69,7 +78,11 @@ export async function POST(
     // them apart, and `liveProjectByIdMatch` is the same rule the project routes use.
     const project = await ProjectModel.findOne({
       $and: [
-        liveProjectByIdMatch(new Types.ObjectId(requestId), orgId, legacyUserId, allowLegacyByUserId),
+        // A request inbox can never be locked (docs/prds/lnkdrp-locked-projects.md, decision 10), so
+        // the visibility clause the builder adds matches every row this query can reach. The viewer
+        // is threaded through because the builder requires one, not because there is anything here
+        // to hide.
+        await liveProjectByIdMatch(new Types.ObjectId(requestId), orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
         {
           $or: [
             { isRequest: true },
@@ -95,7 +108,7 @@ export async function POST(
       const hasToken = typeof tokenRaw === "string" && tokenRaw.trim();
       if (!persistedIsRequest && hasToken) {
         await ProjectModel.updateOne(
-          liveProjectByIdMatch(new Types.ObjectId(requestId), orgId, legacyUserId, allowLegacyByUserId),
+          await liveProjectByIdMatch(new Types.ObjectId(requestId), orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
           { $set: { isRequest: true } },
         );
       }
@@ -104,19 +117,19 @@ export async function POST(
     }
 
     // The same rule the two writes below already use: one shared match, not a third copy of it.
-    const doc = await DocModel.findOne(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId))
+    const doc = await DocModel.findOne(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion))
       .select({ _id: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Doc not found" }, { status: 404 });
 
     await ProjectModel.updateOne(
-      liveProjectByIdMatch(new Types.ObjectId(requestId), orgId, legacyUserId, allowLegacyByUserId),
+      await liveProjectByIdMatch(new Types.ObjectId(requestId), orgId, legacyUserId, allowLegacyByUserId, actor.userId, request),
       { $set: { requestReviewGuideDocId: new Types.ObjectId(docId) } },
     );
 
     // Link the guide doc back to this request repo (durable doc-level pointer).
     await DocModel.updateOne(
-      buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId),
+      buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion),
       { $set: { guideForRequestProjectId: new Types.ObjectId(requestId) } },
     );
 
@@ -126,7 +139,7 @@ export async function POST(
       await DocModel.updateOne(
         {
           $and: [
-            buildDocMatch(new Types.ObjectId(String(prevGuideDocId)), orgId, legacyUserId, allowLegacyByUserId),
+            buildDocMatch(new Types.ObjectId(String(prevGuideDocId)), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion),
             { guideForRequestProjectId: new Types.ObjectId(requestId) },
           ],
         },

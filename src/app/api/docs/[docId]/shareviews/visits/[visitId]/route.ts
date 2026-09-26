@@ -9,6 +9,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
@@ -31,12 +32,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
 
     await connectMongo();
 
-    // Authorization: doc must belong to the actor's org (with legacy personal-org fallback).
+    // Authorization: doc must belong to the actor's org (with legacy personal-org fallback), and its
+    // home must not be a locked room this person holds no grant for. The lock is access rather than
+    // discovery (docs/prds/lnkdrp-locked-projects.md, decision 11), so it is this by-id check and not
+    // a listing filter that keeps a pasted document id out of a private room.
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
     const docObjectId = new Types.ObjectId(docId);
-    const docExists = await DocModel.exists(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId));
+    const docExists = await DocModel.exists(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId, lockedExclusion));
     if (!docExists) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }

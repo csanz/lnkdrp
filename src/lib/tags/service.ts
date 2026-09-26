@@ -19,6 +19,7 @@ import { Types, type PipelineStage } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { hiddenProjectIds, lockedHomeExclusion, projectGrantIds, projectVisibilityClause } from "@/lib/projects/lockScope";
 import { ProjectModel } from "@/lib/models/Project";
 import { ContactModel } from "@/lib/models/Contact";
 import { TagModel, type Tag } from "@/lib/models/Tag";
@@ -119,13 +120,21 @@ export const TAG_DOCS_SORT = { updatedDate: -1, _id: -1 } as const;
 export async function listTags(params: {
   orgId: string | Types.ObjectId;
   withCounts?: boolean;
+  /** The caller, for the counts: a count is a number about things, and some things are private. */
+  viewerUserId: string | Types.ObjectId;
+  request?: Request;
 }): Promise<TagDTO[]> {
   await connectMongo();
   const orgId = orgObjectId(params.orgId);
   const tags = (await TagModel.find({ orgId }).sort({ name: 1 }).lean()) as Tag[];
   if (!params.withCounts || !tags.length) return tags.map((t) => toTagDTO(t));
 
-  const byId = await countLiveAssignments({ orgId, tagIds: tags.map((t) => t._id) });
+  const byId = await countLiveAssignments({
+    orgId,
+    tagIds: tags.map((t) => t._id),
+    viewerUserId: params.viewerUserId,
+    request: params.request,
+  });
   return tags.map((t) => toTagDTO(t, byId.get(String(t._id)) ?? 0));
 }
 
@@ -153,6 +162,9 @@ export async function listTagsPage(params: {
   page?: number | null;
   limit?: number | null;
   withCounts?: boolean;
+  /** The caller, for the counts: a count is a number about things, and some things are private. */
+  viewerUserId: string | Types.ObjectId;
+  request?: Request;
 }): Promise<{ tags: TagDTO[]; total: number; page: number; limit: number }> {
   await connectMongo();
   const orgId = orgObjectId(params.orgId);
@@ -181,7 +193,12 @@ export async function listTagsPage(params: {
   if (!params.withCounts || !rows.length) {
     return { tags: rows.map((t) => toTagDTO(t)), total, page, limit };
   }
-  const byId = await countLiveAssignments({ orgId, tagIds: rows.map((t) => t._id) });
+  const byId = await countLiveAssignments({
+    orgId,
+    tagIds: rows.map((t) => t._id),
+    viewerUserId: params.viewerUserId,
+    request: params.request,
+  });
   return { tags: rows.map((t) => toTagDTO(t, byId.get(String(t._id)) ?? 0)), total, page, limit };
 }
 
@@ -200,10 +217,19 @@ export async function listTagsPage(params: {
 async function countLiveAssignments(params: {
   orgId: Types.ObjectId;
   tagIds: Types.ObjectId[];
+  viewerUserId: string | Types.ObjectId;
+  request?: Request;
 }): Promise<Map<string, number>> {
   const orgId = params.orgId;
   if (!params.tagIds.length) return new Map();
-  const rows = (await TagAssignmentModel.aggregate(liveAssignmentCountPipeline({ orgId, tagIds: params.tagIds }))) as Array<{
+  const rows = (await TagAssignmentModel.aggregate(
+    liveAssignmentCountPipeline({
+      orgId,
+      tagIds: params.tagIds,
+      hiddenProjectIds: await hiddenProjectIds(orgId, params.viewerUserId, params.request),
+      grantIds: await projectGrantIds(orgId, params.viewerUserId, params.request),
+    }),
+  )) as Array<{
     _id?: unknown;
     n?: unknown;
   }>;
@@ -226,8 +252,23 @@ async function countLiveAssignments(params: {
  * far as anything else is concerned. A contact counts while its row is live: contacts are never
  * archived, only soft-deleted (`isDeleted`) when a person is forgotten.
  */
-export function liveAssignmentCountPipeline(params: { orgId: Types.ObjectId; tagIds: Types.ObjectId[] }): PipelineStage[] {
+export function liveAssignmentCountPipeline(params: {
+  orgId: Types.ObjectId;
+  tagIds: Types.ObjectId[];
+  /** Locked rooms the caller holds no grant for; `[]` adds nothing to the pipeline. */
+  hiddenProjectIds: Types.ObjectId[];
+  /** The caller's own grants, so a member still counts their own rooms. */
+  grantIds: Types.ObjectId[];
+}): PipelineStage[] {
   const { orgId, tagIds } = params;
+  /**
+   * A tag's count is a number about things, and a locked room is one of the things
+   * (docs/prds/lnkdrp-locked-projects.md, decision 16). "Diligence · 14" beside a tag whose page
+   * opens on eleven rows is an oracle that says three private ones exist, and the room itself is a
+   * taggable target, so the count names rooms as well as documents. Both joins carry their own half of
+   * the rule: the document by its home, the project by the visibility clause.
+   */
+  const lockedDocs = lockedHomeExclusion(params.hiddenProjectIds);
   const liveTarget = (kind: TagTargetKind, from: string, as: string): PipelineStage => ({
     $lookup: {
       from,
@@ -243,7 +284,8 @@ export function liveAssignmentCountPipeline(params: { orgId: Types.ObjectId; tag
                 { $ne: ["$isDeleted", true] },
               ],
             },
-            ...(kind === "doc" ? workspaceListableDocFilter() : {}),
+            ...(kind === "doc" ? { ...workspaceListableDocFilter(), ...lockedDocs } : {}),
+            ...(kind === "project" ? projectVisibilityClause(params.grantIds) : {}),
           },
         },
         { $project: { _id: 1 } },

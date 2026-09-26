@@ -115,7 +115,7 @@ export async function GET(request: Request) {
       const [identity, label, total] = await Promise.all([
         contactIdentityAllowed(actor.orgId),
         workspaceLabel(actor.orgId),
-        countContacts({ orgId: actor.orgId, ...parsed.filters }),
+        countContacts({ orgId: actor.orgId, viewerUserId: actor.userId, request, ...parsed.filters }),
       ]);
       // Counted before a single byte goes out, because a download is a 200 the moment it starts:
       // there is no way to tell someone half way through a file that the rest of their list is
@@ -139,7 +139,15 @@ export async function GET(request: Request) {
       // still reading, and nothing holds the whole list in memory. The BOM is for Excel, which
       // reads a UTF-8 file without one as the local code page and turns a name like Renee's into
       // mojibake.
-      const chunks = contactsCsvChunks({ orgId: actor.orgId, identity, ...parsed.filters, sort: parsed.sort, dir: parsed.dir });
+      const chunks = contactsCsvChunks({
+        orgId: actor.orgId,
+        identity,
+        viewerUserId: actor.userId,
+        request,
+        ...parsed.filters,
+        sort: parsed.sort,
+        dir: parsed.dir,
+      });
       const encoder = new TextEncoder();
       const body = new ReadableStream<Uint8Array>({
         start(controller) {

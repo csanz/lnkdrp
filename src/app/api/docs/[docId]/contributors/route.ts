@@ -15,6 +15,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { loadAuthorship } from "@/lib/people/contributors";
 import { debugError } from "@/lib/debug";
@@ -42,8 +43,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
      * oldest documents, which are the ones with the most history worth attributing.
      */
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
     const doc = (await DocModel.findOne(
-      buildDocMatch(new Types.ObjectId(docId), orgId, new Types.ObjectId(actor.userId), allowLegacyByUserId),
+      buildDocMatch(new Types.ObjectId(docId), orgId, new Types.ObjectId(actor.userId), allowLegacyByUserId, lockedExclusion),
     )
       .select({ _id: 1, orgId: 1, userId: 1 })
       .lean()) as { orgId?: unknown; userId?: unknown } | null;

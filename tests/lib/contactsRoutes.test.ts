@@ -74,6 +74,21 @@ vi.mock("@/lib/models/Contact", async (importOriginal) => ({
 const docFindOne = vi.fn(() => ({ select: () => ({ lean: async () => ({ _id: CONTACT_ID, primaryProjectId: null }) }) }));
 vi.mock("@/lib/models/Doc", () => ({ DocModel: { findOne: docFindOne } }));
 vi.mock("@/lib/models/Project", () => ({ ProjectModel: { findOne: () => ({ select: () => ({ lean: async () => null }) }) } }));
+/**
+ * No locked rooms in these fixtures (docs/prds/lnkdrp-locked-projects.md, decision 15).
+ *
+ * Both the contacts routes and the tag-assignment target check now ask the helper who is looking; this
+ * file is about the routes, so the helper is stubbed to "nothing is hidden" and every filter below
+ * reaches the service exactly as it always did. The clause itself is pinned in
+ * `tests/lib/lockedProjectSurfaces.test.ts`.
+ */
+vi.mock("@/lib/projects/lockScope", () => ({
+  hiddenProjectIds: async () => [],
+  lockedHomeExclusion: () => ({}),
+  lockedHomeExclusionFor: async () => ({}),
+  projectGrantIds: async () => [],
+  projectVisibilityClause: () => ({ $or: [{ visibility: { $ne: "locked" } }, { _id: { $in: [] } }] }),
+}));
 vi.mock("@/lib/billing/planLimits", () => ({ getWorkspacePlan: async () => "pro" }));
 
 const { GET: listGet } = await import("@/app/api/contacts/route");
@@ -168,6 +183,9 @@ describe("GET /api/contacts", () => {
     expect(listContacts).toHaveBeenCalledWith({
       orgId: ORG,
       identity: true,
+      // The caller, and their request for the grant memo: contacts are filtered per person now.
+      viewerUserId: USER,
+      request: expect.any(Request),
       q: "priya",
       tagId,
       docId,
@@ -260,6 +278,8 @@ describe("GET /api/contacts/export", () => {
     await exportGet(new Request(`http://localhost/api/contacts/export?q=nair&tagId=${tagId}&source=introduced`));
     expect(countContacts).toHaveBeenCalledWith({
       orgId: ORG,
+      viewerUserId: USER,
+      request: expect.any(Request),
       q: "nair",
       tagId,
       docId: undefined,
@@ -283,6 +303,8 @@ describe("GET /api/contacts/export", () => {
     expect(contactsCsvChunks).toHaveBeenCalledWith({
       orgId: ORG,
       identity: false,
+      viewerUserId: USER,
+      request: expect.any(Request),
       q: "nair",
       tagId,
       docId: undefined,
@@ -318,7 +340,13 @@ describe("GET /api/contacts/:contactId", () => {
     const res = await detailGet(new Request(`http://localhost/api/contacts/${CONTACT_ID}`), ctx(CONTACT_ID));
     const json = await res.json();
     expect(res.status).toBe(200);
-    expect(getContact).toHaveBeenCalledWith({ orgId: ORG, contactId: CONTACT_ID, identity: false });
+    expect(getContact).toHaveBeenCalledWith({
+      orgId: ORG,
+      contactId: CONTACT_ID,
+      identity: false,
+      viewerUserId: USER,
+      request: expect.any(Request),
+    });
     expect(json.identity).toBe(false);
     expect(json.contact.id).toBe(CONTACT_ID);
   });
@@ -363,7 +391,14 @@ describe("PATCH /api/contacts/:contactId", () => {
     const res = await detailPatch(patchRequest({ note: "  warm, per Chris  " }), ctx(CONTACT_ID));
     const json = await res.json();
     expect(res.status).toBe(200);
-    expect(setContactNote).toHaveBeenCalledWith({ orgId: ORG, contactId: CONTACT_ID, userId: USER, text: "warm, per Chris" });
+    expect(setContactNote).toHaveBeenCalledWith({
+      orgId: ORG,
+      contactId: CONTACT_ID,
+      userId: USER,
+      text: "warm, per Chris",
+      viewerUserId: USER,
+      request: expect.any(Request),
+    });
     expect(json.contact.note.text).toBe("warm");
     expect(recordActivity).toHaveBeenCalledWith(
       expect.objectContaining({

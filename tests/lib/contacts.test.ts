@@ -68,6 +68,22 @@ vi.mock("@/lib/models/User", () => ({
   UserModel: { findById: () => ({ select: () => ({ lean: async () => state.user }) }) },
 }));
 vi.mock("@/lib/tags/service", () => ({ tagsForTargets, tagsForTarget }));
+/**
+ * No locked rooms here (docs/prds/lnkdrp-locked-projects.md, decision 15).
+ *
+ * The contacts service now asks who is looking before it builds a filter, and this file is about the
+ * filter building rather than about the lock: stubbing the helper to "nothing is hidden" is what keeps
+ * every query shape below byte-identical to the one it was written against, which is also the
+ * no-locked-project guarantee stated as a fixture. `tests/lib/lockedProjectSurfaces.test.ts` is where
+ * the clause itself is pinned.
+ */
+vi.mock("@/lib/projects/lockScope", () => ({
+  hiddenProjectIds: async () => [],
+  lockedHomeExclusion: () => ({}),
+  lockedHomeExclusionFor: async () => ({}),
+  projectGrantIds: async () => [],
+  projectVisibilityClause: () => ({ $or: [{ visibility: { $ne: "locked" } }, { _id: { $in: [] } }] }),
+}));
 
 const {
   WEBMAIL_DOMAINS,
@@ -264,7 +280,7 @@ describe("listContacts", () => {
     state.verifiedRows = [{ email: "priya@sequoiacap.com" }];
     state.tagsByTarget = new Map([[String(introduced._id), [{ id: "t1", name: "investor", slug: "investor", color: "sky" }]]]);
 
-    const free = await listContacts({ orgId: ORG, identity: false });
+    const free = await listContacts({ orgId: ORG, viewerUserId: USER, identity: false });
     expect(free.total).toBe(2);
     expect(free.items[0]).toMatchObject({
       id: String(introduced._id),
@@ -283,7 +299,7 @@ describe("listContacts", () => {
     expect(JSON.stringify(free.items[1])).not.toContain("Dev Patel");
     expect(JSON.stringify(free.items[1])).not.toContain("dev@acme.com");
 
-    const pro = await listContacts({ orgId: ORG, identity: true });
+    const pro = await listContacts({ orgId: ORG, viewerUserId: USER, identity: true });
     expect(pro.items[1]).toMatchObject({ name: "Dev Patel", email: "dev@acme.com" });
 
     expect(tagsForTargets).toHaveBeenCalledWith(expect.objectContaining({ targetKind: "contact" }));
@@ -291,7 +307,7 @@ describe("listContacts", () => {
   });
 
   test("default order is last seen, newest first, with an _id tie-break; the match is bounded by org and live rows", async () => {
-    await listContacts({ orgId: ORG, identity: true });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true });
     const pipeline = aggregate.mock.calls[0][0] as unknown as Array<Record<string, unknown>>;
     expect(pipeline[0]).toEqual({ $match: { orgId: ORG, isDeleted: { $ne: true } } });
     expect(pipeline.find((s) => "$sort" in s)).toEqual({ $sort: { lastSeenAt: -1, _id: -1 } });
@@ -301,14 +317,14 @@ describe("listContacts", () => {
   });
 
   test("search is an escaped, case-insensitive regex over name, address and domain", async () => {
-    await listContacts({ orgId: ORG, identity: true, q: " a.b+c " });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, q: " a.b+c " });
     const match = (aggregate.mock.calls[0][0] as unknown as Array<Record<string, unknown>>)[0].$match as Record<string, unknown>;
     const re = { $regex: String.raw`a\.b\+c`, $options: "i" };
     expect(match.$or).toEqual([{ name: re }, { email: re }, { domain: re }]);
   });
 
   test("filters land on the indexed fields", async () => {
-    await listContacts({ orgId: ORG, identity: true, docId: String(DOC), projectId: String(PROJECT), shareId: "abc", domain: "Acme.COM", source: "signed_in" });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, docId: String(DOC), projectId: String(PROJECT), shareId: "abc", domain: "Acme.COM", source: "signed_in" });
     const match = (aggregate.mock.calls[0][0] as unknown as Array<Record<string, unknown>>)[0].$match as Record<string, unknown>;
     expect(match).toEqual({
       orgId: ORG,
@@ -325,20 +341,20 @@ describe("listContacts", () => {
     const tagId = new Types.ObjectId();
     const target = new Types.ObjectId();
     state.tagAssignmentRows = [{ targetId: target }];
-    await listContacts({ orgId: ORG, identity: true, tagId: String(tagId) });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, tagId: String(tagId) });
     expect(tagAssignmentFind).toHaveBeenCalledWith({ orgId: ORG, tagId, targetKind: "contact" });
     const match = (aggregate.mock.calls[0][0] as unknown as Array<Record<string, unknown>>)[0].$match as Record<string, unknown>;
     expect(match._id).toEqual({ $in: [target] });
 
     aggregate.mockClear();
     state.tagAssignmentRows = [];
-    const empty = await listContacts({ orgId: ORG, identity: true, tagId: String(tagId) });
+    const empty = await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, tagId: String(tagId) });
     expect(empty).toEqual({ items: [], total: 0, page: 1, limit: 50 });
     expect(aggregate).not.toHaveBeenCalled();
   });
 
   test("a malformed id filter answers empty without a query", async () => {
-    const res = await listContacts({ orgId: ORG, identity: true, docId: "not-an-id" });
+    const res = await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, docId: "not-an-id" });
     expect(res.items).toEqual([]);
     expect(aggregate).not.toHaveBeenCalled();
   });
@@ -347,25 +363,25 @@ describe("listContacts", () => {
     const sortOf = () => (aggregate.mock.calls.at(-1)![0] as unknown as Array<Record<string, unknown>>).find((s) => "$sort" in s)!.$sort;
     const stageOf = (key: string) => (aggregate.mock.calls.at(-1)![0] as unknown as Array<Record<string, unknown>>).find((s) => key in s)![key];
 
-    await listContacts({ orgId: ORG, identity: true, sort: "name" });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, sort: "name" });
     expect(sortOf()).toEqual({ name: 1, _id: 1 });
-    await listContacts({ orgId: ORG, identity: true, sort: "domain", dir: "desc" });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, sort: "domain", dir: "desc" });
     expect(sortOf()).toEqual({ domain: -1, _id: -1 });
-    await listContacts({ orgId: ORG, identity: true, sort: "documentsRead" });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, sort: "documentsRead" });
     expect(sortOf()).toEqual({ documentsRead: -1, _id: -1 });
-    await listContacts({ orgId: ORG, identity: true, sort: "visits", dir: "asc" });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, sort: "visits", dir: "asc" });
     expect(sortOf()).toEqual({ visits: 1, _id: 1 });
-    await listContacts({ orgId: ORG, identity: true, sort: "firstSeen" });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, sort: "firstSeen" });
     expect(sortOf()).toEqual({ firstSeenAt: -1, _id: -1 });
-    await listContacts({ orgId: ORG, identity: true, sort: "bogus" as never });
+    await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, sort: "bogus" as never });
     expect(sortOf()).toEqual({ lastSeenAt: -1, _id: -1 });
 
-    const page = await listContacts({ orgId: ORG, identity: true, page: 3, limit: 999 });
+    const page = await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, page: 3, limit: 999 });
     expect(page).toMatchObject({ page: 3, limit: 200 });
     expect(stageOf("$skip")).toBe(400);
     expect(stageOf("$limit")).toBe(200);
 
-    const floor = await listContacts({ orgId: ORG, identity: true, page: -4, limit: 0 });
+    const floor = await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, page: -4, limit: 0 });
     expect(floor).toMatchObject({ page: 1, limit: 50 });
   });
 
@@ -374,7 +390,7 @@ describe("listContacts", () => {
 
     // `?page=1e21` used to reach Mongo as `$skip: 5e22`, which is not a 64-bit integer: the
     // aggregate threw and a bad query parameter became a 500 instead of an empty page.
-    const far = await listContacts({ orgId: ORG, identity: true, page: 1e21, limit: 200 });
+    const far = await listContacts({ orgId: ORG, viewerUserId: USER, identity: true, page: 1e21, limit: 200 });
     expect(far.page).toBe(1_000_000);
     const skip = stageOf("$skip") as number;
     expect(Number.isSafeInteger(skip)).toBe(true);
@@ -397,7 +413,7 @@ describe("getContact and the note", () => {
     state.projectRows = [{ _id: PROJECT, name: "Data room", slug: "data-room" }];
     state.user = { name: "Chris" };
 
-    const free = await getContact({ orgId: ORG, contactId: String(doc._id), identity: false });
+    const free = await getContact({ orgId: ORG, viewerUserId: USER, contactId: String(doc._id), identity: false });
     expect(free).not.toBeNull();
     expect(free).toMatchObject({ name: null, email: null, domain: "sequoiacap.com", introduced: false });
     expect(free!.docs).toEqual([{ docId: String(DOC), title: "Pitch deck", shareId: "s2", lastSeenAt: T1.toISOString() }]);
@@ -406,32 +422,32 @@ describe("getContact and the note", () => {
     expect(free!.sources).toHaveLength(2);
     expect(findOne).toHaveBeenCalledWith({ _id: doc._id, orgId: ORG, isDeleted: { $ne: true } });
 
-    const pro = await getContact({ orgId: ORG, contactId: String(doc._id), identity: true });
+    const pro = await getContact({ orgId: ORG, viewerUserId: USER, contactId: String(doc._id), identity: true });
     expect(pro).toMatchObject({ name: "Priya Nair", email: "priya@sequoiacap.com" });
   });
 
   test("a contact in another workspace, or a malformed id, is null", async () => {
     state.contact = null;
-    expect(await getContact({ orgId: ORG, contactId: String(new Types.ObjectId()), identity: true })).toBeNull();
-    expect(await getContact({ orgId: ORG, contactId: "nope", identity: true })).toBeNull();
+    expect(await getContact({ orgId: ORG, viewerUserId: USER, contactId: String(new Types.ObjectId()), identity: true })).toBeNull();
+    expect(await getContact({ orgId: ORG, viewerUserId: USER, contactId: "nope", identity: true })).toBeNull();
   });
 
   test("setContactNote writes who and when, clips to the limit, and an empty string clears", async () => {
     state.contact = contactDoc();
     state.plan = "pro";
-    await setContactNote({ orgId: ORG, contactId: String((state.contact as { _id: Types.ObjectId })._id), userId: USER, text: "  " + "x".repeat(2500) + "  " });
+    await setContactNote({ orgId: ORG, viewerUserId: USER, contactId: String((state.contact as { _id: Types.ObjectId })._id), userId: USER, text: "  " + "x".repeat(2500) + "  " });
     const [filter, update] = updateOne.mock.calls.at(-1) as unknown as [Record<string, unknown>, { $set: { note: { text: string; byUserId: Types.ObjectId; at: Date } | null } }];
     expect(filter).toMatchObject({ orgId: ORG, isDeleted: { $ne: true } });
     expect(update.$set.note!.text).toHaveLength(2000);
     expect(update.$set.note!.byUserId).toEqual(USER);
     expect(update.$set.note!.at).toBeInstanceOf(Date);
 
-    await setContactNote({ orgId: ORG, contactId: String((state.contact as { _id: Types.ObjectId })._id), userId: USER, text: "" });
+    await setContactNote({ orgId: ORG, viewerUserId: USER, contactId: String((state.contact as { _id: Types.ObjectId })._id), userId: USER, text: "" });
     const [, cleared] = updateOne.mock.calls.at(-1) as unknown as [unknown, { $set: { note: unknown } }];
     expect(cleared.$set.note).toBeNull();
 
     state.matchedCount = 0;
-    expect(await setContactNote({ orgId: ORG, contactId: String(new Types.ObjectId()), userId: USER, text: "x" })).toBeNull();
+    expect(await setContactNote({ orgId: ORG, viewerUserId: USER, contactId: String(new Types.ObjectId()), userId: USER, text: "x" })).toBeNull();
   });
 });
 
@@ -537,7 +553,7 @@ describe("CSV", () => {
     state.aggregateDocs = [
       contactDoc({ sources: [{ kind: "download_request", shareId: "s1", docId: DOC, projectId: null, at: T1 }] }),
     ];
-    const csv = await contactsCsv({ orgId: ORG, identity: false });
+    const csv = await contactsCsv({ orgId: ORG, viewerUserId: USER, identity: false });
     const row = csv.split("\r\n")[1];
     expect(row.startsWith(",,sequoiacap.com,false,")).toBe(true);
     expect(csv).not.toContain("Priya");
@@ -545,13 +561,13 @@ describe("CSV", () => {
     expect(csv).not.toContain("Someone");
 
     state.plan = "pro";
-    const full = await contactsCsv({ orgId: ORG, identity: true });
+    const full = await contactsCsv({ orgId: ORG, viewerUserId: USER, identity: true });
     expect(full.split("\r\n")[1].startsWith("Priya Nair,priya@sequoiacap.com,sequoiacap.com,")).toBe(true);
   });
 
   test("contactsCsv pages the query at 500 until a short page", async () => {
     state.aggregateDocs = [contactDoc()];
-    await contactsCsv({ orgId: ORG, identity: true, sort: "name" });
+    await contactsCsv({ orgId: ORG, viewerUserId: USER, identity: true, sort: "name" });
     expect(aggregate).toHaveBeenCalledTimes(1);
     const pipeline = aggregate.mock.calls[0][0] as unknown as Array<Record<string, unknown>>;
     expect(pipeline.find((s) => "$limit" in s)).toEqual({ $limit: 500 });
@@ -566,7 +582,7 @@ describe("CSV", () => {
    */
   test("contactsCsvChunks yields the header first, then a batch at a time", async () => {
     state.aggregateDocs = [contactDoc()];
-    const it = contactsCsvChunks({ orgId: ORG, identity: true });
+    const it = contactsCsvChunks({ orgId: ORG, viewerUserId: USER, identity: true });
     const first = await it.next();
     expect(first.value).toBe(CONTACTS_CSV_COLUMNS.join(",") + "\r\n");
     expect(aggregate).not.toHaveBeenCalled();
@@ -582,7 +598,7 @@ describe("CSV", () => {
     // Every page comes back full, so only the cap can end the walk.
     state.aggregateDocs = Array.from({ length: 500 }, () => contactDoc());
     let rows = 0;
-    for await (const chunk of contactsCsvChunks({ orgId: ORG, identity: true })) {
+    for await (const chunk of contactsCsvChunks({ orgId: ORG, viewerUserId: USER, identity: true })) {
       rows += chunk.split("\r\n").filter((l) => l && !l.startsWith("name,email")).length;
     }
     expect(rows).toBe(CONTACTS_CSV_MAX_ROWS);
@@ -591,7 +607,7 @@ describe("CSV", () => {
 
   test("countContacts counts through the same filter as the rows, and never reads one", async () => {
     state.total = 7;
-    expect(await countContacts({ orgId: ORG, q: "nair" })).toBe(7);
+    expect(await countContacts({ orgId: ORG, viewerUserId: USER, q: "nair" })).toBe(7);
     expect(aggregate).not.toHaveBeenCalled();
     const filter = countDocuments.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(filter.orgId).toEqual(ORG);

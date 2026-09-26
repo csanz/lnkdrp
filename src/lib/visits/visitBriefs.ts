@@ -1272,9 +1272,29 @@ async function announceAndEnqueue(params: {
   email?: boolean;
 }): Promise<void> {
   const { row } = params;
+  /**
+   * The room's name for the feed row, inside the room's own workspace.
+   *
+   * This was a bare `findById` with no `orgId` and no `isDeleted`, which decision 14 of
+   * docs/prds/lnkdrp-locked-projects.md picks out as one of three cross-tenant name reads: a
+   * `projectId` carried across from anywhere in the database came back named and went into an activity
+   * row and an email subject. The tenancy is the fix here.
+   *
+   * Deliberately NOT filtered by the locked-room clause, and there is no `projectNamesFor` call for the
+   * same reason: there is no viewer on this path. The row below carries `projectId`, which under the
+   * feed rule (decision 17) puts it in that room's own feed and nowhere else, so the name it stores is
+   * only ever read back by the room's members. Narrowing who is owed the resulting mail is M5's job,
+   * in this same file.
+   */
   let projectName: string | null = null;
   if (params.projectId) {
-    const p = (await ProjectModel.findById(params.projectId).select({ name: 1 }).lean()) as { name?: string } | null;
+    const p = (await ProjectModel.findOne({
+      _id: new Types.ObjectId(String(params.projectId)),
+      orgId: row.orgId,
+      isDeleted: { $ne: true },
+    })
+      .select({ name: 1 })
+      .lean()) as { name?: string } | null;
     projectName = typeof p?.name === "string" ? p.name : null;
   }
   try {

@@ -207,6 +207,21 @@ vi.mock("@/lib/gating/actor", () => ({
   applyTempUserHeaders: vi.fn((res: Response) => res),
 }));
 vi.mock("@/lib/mongodb", () => ({ connectMongo: vi.fn(async () => {}) }));
+/**
+ * No locked rooms in this fixture (docs/prds/lnkdrp-locked-projects.md, decision 11).
+ *
+ * The by-id document match now carries an exclusion the caller computes, so without this the handler
+ * would go looking for the projects collection. An empty hidden set makes the exclusion `{}`, which is
+ * the state a workspace with no private room is really in, so every filter asserted below is the one it
+ * was written against. The clause itself is pinned in `tests/lib/lockedProjectSurfaces.test.ts`.
+ */
+vi.mock("@/lib/projects/lockScope", () => ({
+  hiddenProjectIds: async () => [],
+  lockedHomeExclusion: () => ({}),
+  lockedHomeExclusionFor: async () => ({}),
+  projectGrantIds: async () => [],
+  projectVisibilityClause: () => ({ $or: [{ visibility: { $ne: "locked" } }, { _id: { $in: [] } }] }),
+}));
 vi.mock("@/lib/orgs/requireOrgEditor", () => ({ forbidUnlessOrgRole: vi.fn(async () => null) }));
 vi.mock("@/lib/gating/waitlist", () => ({ forbidWaitlisted: vi.fn(async () => null) }));
 vi.mock("@/lib/models/Doc", () => ({ DocModel: { exists: vi.fn(async () => ({ _id: "d" })) } }));

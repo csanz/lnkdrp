@@ -12,6 +12,7 @@ import { debugError } from "@/lib/debug";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -121,11 +122,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    // Connected before the locked-room read, which is the first query this handler makes: the two
+    // branches below each open with their own `connectMongo()`, and this one has to come first.
+    await connectMongo();
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
     const docObjectId = new Types.ObjectId(docId);
     // Was a hand-rolled copy of this filter that omitted `isDeleted` entirely, so a password could
     // be set on — or cleared from — a document already in the trash, and the write-through re-armed
     // its default link. `buildDocMatch` is the one rule; see src/lib/docs/docMatch.ts.
-    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId);
+    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId, lockedExclusion);
     if (password === null) {
       // Remove password.
       await connectMongo();
@@ -257,8 +262,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
     const doc = await DocModel.findOne(
-      buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId),
+      buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion),
     )
       // The encrypted material is not selected, so this handler cannot leak it however it changes.
       .select({ sharePasswordHash: 1 })

@@ -23,6 +23,7 @@ import {
   UNSUPPORTED_FILE_TYPE_CODE,
 } from "@/lib/blob/serverClientUploadRoute";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
@@ -55,6 +56,7 @@ export async function GET(request: Request) {
     const orgId = new Types.ObjectId(actor.orgId);
     const actorUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
 
     /**
      * The **workspace** bound — the rule `src/lib/docs/docMatch.ts` states for documents, applied
@@ -99,6 +101,9 @@ export async function GET(request: Request) {
       // reach the join, or a removed member learns titles by probing for them.
       const matchingDocs = await DocModel.find({
         title: rx,
+        // The same rule as the join below: a title inside a locked room must not even reach the
+        // search, or `?q=` is an oracle for what a private room is called.
+        ...lockedExclusion,
         ...(allowLegacyByUserId
           ? {
               $or: [
@@ -122,23 +127,51 @@ export async function GET(request: Request) {
       .sort({ createdDate: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
-      .populate({ path: "docId", select: { title: 1, shareId: 1 } })
       .lean();
+
+    /**
+     * The document join, through the locked-room rule rather than through `populate`
+     * (docs/prds/lnkdrp-locked-projects.md, decision 13).
+     *
+     * Every row here carries the document's present-day `title` and its public `shareId`, and
+     * `/s/:shareId` needs no workspace identity, so a row IS the document rather than a note about
+     * one. This listing is already scoped to the caller's own uploads, which is exactly the case that
+     * needs the rule: somebody who uploaded a file into a room and was then removed from it kept a
+     * row pointing at the room's current contents.
+     *
+     * One indexed `_id` read over at most `limit` ids, so this costs the same as the `populate` it
+     * replaces. A row whose document the exclusion hides is dropped rather than blanked, because a
+     * row with the title and the slug removed is still an answer to "was I in that room". `total`
+     * stays the unfiltered count of the caller's OWN upload rows: it names no room and no document,
+     * and a page can therefore come back shorter than `limit` while a locked room is in play.
+     */
+    const pageDocIds = uploads
+      .map((u) => (u.docId ? String(u.docId) : ""))
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    const visibleDocs = pageDocIds.length
+      ? ((await DocModel.find({ _id: { $in: pageDocIds }, ...lockedExclusion })
+          .select({ _id: 1, title: 1, shareId: 1 })
+          .lean()) as Array<{ _id: Types.ObjectId; title?: unknown; shareId?: unknown }>)
+      : [];
+    const docById = new Map(visibleDocs.map((d) => [String(d._id), d]));
+    // Only while something is hidden: with no locked room the map is a complete join and a document
+    // missing from it was hard-deleted, which this listing has always shown by its file name.
+    const hidingAnything = Object.keys(lockedExclusion).length > 0;
 
     return applyTempUserHeaders(
       NextResponse.json({
         total,
         page,
         limit,
-        uploads: uploads.map((u) => {
-          const doc = (u.docId ?? null) as
-            | { _id?: unknown; title?: unknown; shareId?: unknown }
-            | null;
+        uploads: uploads.flatMap((u) => {
+          const rawDocId = u.docId ? String(u.docId) : null;
+          const doc = rawDocId ? (docById.get(rawDocId) ?? null) : null;
+          if (hidingAnything && rawDocId && !doc) return [];
 
-          const docId =
-            doc && doc._id ? String(doc._id) : u.docId ? String(u.docId) : null;
+          const docId = rawDocId;
 
-          return {
+          return [{
             id: String(u._id),
             docId,
             docTitle:
@@ -151,7 +184,7 @@ export async function GET(request: Request) {
             version: Number.isFinite(u.version) ? u.version : null,
             status: u.status ?? null,
             createdDate: u.createdDate ? new Date(u.createdDate).toISOString() : null,
-          };
+          }];
         }),
       }),
       actor,
@@ -228,6 +261,14 @@ export async function POST(request: Request) {
     await connectMongo();
 
     /**
+     * Replacing a file is a write into the document, so the locked-room rule applies before the
+     * version is allocated (decision 27): uploading a matching file onto a document whose home is a
+     * private room is how somebody would inherit that document's links and its readers, which is a
+     * grant rather than an upload.
+     */
+    const postLockedExclusion = await lockedHomeExclusionFor(actor.orgId, actor.userId, request);
+
+    /**
      * The document, scoped to the **workspace** rather than to whoever uploaded it.
      *
      * This used to match on `userId: actor.userId`, which meant an invited member of a shared
@@ -242,6 +283,7 @@ export async function POST(request: Request) {
         new Types.ObjectId(actor.orgId),
         new Types.ObjectId(actor.userId),
         actor.orgId === actor.personalOrgId,
+        postLockedExclusion,
       ),
     );
     if (!doc) {
@@ -281,6 +323,7 @@ export async function POST(request: Request) {
           new Types.ObjectId(actor.orgId),
           new Types.ObjectId(actor.userId),
           actor.orgId === actor.personalOrgId,
+          postLockedExclusion,
         ),
       );
     }

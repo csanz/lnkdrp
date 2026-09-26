@@ -113,6 +113,9 @@ vi.mock("@/lib/models/ProjectClick", () => ({ ProjectClickModel: stub("ProjectCl
 vi.mock("@/lib/models/ProjectView", () => ({ ProjectViewModel: stub("ProjectView") }));
 vi.mock("@/lib/models/ShareDownloadRequest", () => ({ ShareDownloadRequestModel: stub("ShareDownloadRequest") }));
 vi.mock("@/lib/models/ProjectLinkView", () => ({ ProjectLinkViewModel: stub("ProjectLinkView") }));
+// Grants into locked data rooms joined the purge with the locked-projects work; unmocked the model
+// buffers against no database and times this test out, the same way OAuth and Contacts did.
+vi.mock("@/lib/models/ProjectMembership", () => ({ ProjectMembershipModel: stub("ProjectMembership") }));
 vi.mock("@/lib/models/ShareViewerEmail", () => ({ ShareViewerEmailModel: stub("ShareViewerEmail") }));
 vi.mock("@/lib/models/StarredDoc", () => ({ StarredDocModel: stub("StarredDoc") }));
 vi.mock("@/lib/models/Tag", () => ({ TagModel: stub("Tag") }));

@@ -8,6 +8,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { useMemo, type Dispatch, type SetStateAction } from "react";
 import IconButton from "@/components/ui/IconButton";
+import ProjectLockIcon from "@/components/project/ProjectLockIcon";
 import { PROJECT_NAV_OVERLAY_ID, showSwitchingOverlay } from "@/components/SwitchingOverlay";
 import TagDots from "@/components/tags/TagDots";
 import { useTargetTags } from "@/lib/client/useTargetTags";
@@ -18,6 +19,8 @@ type ProjectListItem = {
   slug: string;
   description: string;
   isRequest?: boolean;
+  /** "locked" is a private data room: it exists only for the people in it, and its row wears a padlock. */
+  visibility?: "workspace" | "locked";
   docCount?: number;
   updatedDate: string | null;
   createdDate: string | null;
@@ -221,7 +224,12 @@ export default function SidebarProjectsSection({
                           )}
                         </span>
                       )}
-                      <span className="block min-w-0 flex-1 truncate text-[var(--fg)]">{title}</span>
+                      <span className="block min-w-0 truncate text-[var(--fg)]">{title}</span>
+                      {/* The padlock Slack taught everybody to read, right after the name: this room
+                          exists for the people in it. It sits inside the flex row so a long name
+                          truncates before the lock does. */}
+                      <ProjectLockIcon locked={p.visibility === "locked"} className="h-3.5 w-3.5" />
+                      <span className="min-w-0 flex-1" />
                       {/* The project's tags, as dots, before the count: at a glance the sidebar
                           says which rooms are fundraising and which are diligence, without a word
                           of width spent on it. */}

@@ -48,6 +48,8 @@ export async function GET(request: Request) {
           page: asInt(url.searchParams.get("page")),
           limit: asInt(url.searchParams.get("limit")),
           withCounts: true,
+          viewerUserId: actor.userId,
+          request,
         });
         return applyTempUserHeaders(
           NextResponse.json({ ok: true, ...paged }, { headers: { "cache-control": "no-store" } }),
@@ -55,7 +57,7 @@ export async function GET(request: Request) {
         );
       }
 
-      const tags = await listTags({ orgId: actor.orgId, withCounts: true });
+      const tags = await listTags({ orgId: actor.orgId, withCounts: true, viewerUserId: actor.userId, request });
       return applyTempUserHeaders(
         NextResponse.json({ ok: true, tags, total: tags.length }, { headers: { "cache-control": "no-store" } }),
         actor,

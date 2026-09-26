@@ -36,6 +36,16 @@ export type ActivityType =
   | "project.created"
   | "project.updated"
   | "project.deleted"
+  // A private data room (docs/prds/lnkdrp-locked-projects.md, decisions 17 and 23). `project.locked`
+  // and `project.unlocked` are written with `projectId: null` and `meta.projectName`, which is what
+  // keeps them in the WORKSPACE feed under the existing feed rule: a room that vanishes from ten
+  // sidebars with no explanation is a support ticket, and its name was already public to those ten
+  // people. `member_added` and `member_removed` carry `projectId` and therefore live only in the
+  // room's own feed, where the people they are about are the people who can read them.
+  | "project.locked"
+  | "project.unlocked"
+  | "project.member_added"
+  | "project.member_removed"
   | "doc.added_to_project"
   | "doc.removed_from_project"
   // Filing. Worth a row because it is the one kind of housekeeping an agent keeps doing after a

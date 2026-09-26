@@ -15,6 +15,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { UploadModel } from "@/lib/models/Upload";
 import { triggerUploadProcessing } from "@/lib/uploads/internalProcess";
 
@@ -70,12 +71,27 @@ export async function queueSummaryRerun(params: {
   const allowLegacyByUserId = Boolean(
     callerOrgId && callerUserId && params.personalOrgId && callerOrgId === params.personalOrgId,
   );
+  /**
+   * The locked-room half, and only when a person is named.
+   *
+   * With a `userId` this is a member pressing "Write summary", so a document whose home is a room
+   * they are not in must answer not found like every other by-id surface
+   * (docs/prds/lnkdrp-locked-projects.md, decision 11). Without one the caller is
+   * `requeueSkippedSummaries`, which sweeps a workspace's skipped summaries when its subscription
+   * becomes billable: there is no viewer on that path, the credit belongs to the workspace rather
+   * than to a person, and a locked room's own members are the ones who would otherwise be left with
+   * a permanently blank summary. So it is deliberately lock-free, for the same reason the plan cap
+   * is (decision 29): the system counting or finishing its own work is not somebody reading a room.
+   */
+  const lockedExclusion =
+    callerOrgId && callerUserId ? await lockedHomeExclusionFor(callerOrgId, callerUserId) : {};
   const docMatch = callerOrgId
     ? buildDocMatch(
         upload.docId,
         new Types.ObjectId(callerOrgId),
         new Types.ObjectId(callerUserId ?? callerOrgId),
         allowLegacyByUserId,
+        lockedExclusion,
       )
     : // No workspace given at all: an internal caller that has already done its own scoping.
       { _id: upload.docId, isDeleted: { $ne: true } };

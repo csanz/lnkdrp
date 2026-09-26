@@ -48,6 +48,7 @@ import { ProjectClickModel } from "@/lib/models/ProjectClick";
 import { ProjectViewModel } from "@/lib/models/ProjectView";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
+import { ProjectMembershipModel } from "@/lib/models/ProjectMembership";
 import { ShareViewerEmailModel } from "@/lib/models/ShareViewerEmail";
 import { ContactModel } from "@/lib/models/Contact";
 import { StarredDocModel } from "@/lib/models/StarredDoc";
@@ -312,6 +313,23 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
   }
 
   if (!dryRun) {
+    /**
+     * This account's grants into private data rooms, in EVERY workspace
+     * (docs/prds/lnkdrp-locked-projects.md, decisions 3 and 4).
+     *
+     * Outside the `soloOrgIds` block, and before it. The batch below sweeps grants by workspace, by
+     * the pre-read project ids and by `userId`, but every one of those blocks is gated on this
+     * account owning a workspace alone: an account that was only ever a *member* of somebody else's
+     * workspace skipped all of it and left its grants behind, naming a purged person on a room's
+     * roster for ever. Before, because the memberships and the workspace rows are the index this
+     * whole function is derived from and nothing may still be pending when they go
+     * (`purgeOrgRowsLast.test.ts` pins that ordering).
+     *
+     * A hard delete rather than `revokeProjectGrants`, because this is the one caller whose job is to
+     * forget: `revokedAt` exists so a room can say who used to be in it, and that is exactly the
+     * record an account purge must not keep.
+     */
+    await ProjectMembershipModel.deleteMany({ userId: id });
     if (soloOrgIds.length) {
       /**
        * Every collection keyed to a workspace, not the twelve somebody remembered.
@@ -408,6 +426,15 @@ export async function purgeAccount(userId: string, opts?: { dryRun?: boolean }):
         VisitBriefModel.deleteMany(orgFilter),
         OrgInviteModel.deleteMany(orgFilter),
         ProjectModel.deleteMany(orgFilter),
+        // Grants into locked data rooms (docs/prds/lnkdrp-locked-projects.md, decisions 3 and 4).
+        // Three keys, because a grant can outlive any one of them: the workspace, the pre-read
+        // project ids (a room whose row is going in this same batch), and the person, whose grants in
+        // a workspace that is NOT being deleted are still their own data and must not leave a ghost
+        // on somebody else's roster. This sits before the membership and workspace deletes on
+        // purpose: those are the index this whole function is derived from.
+        ProjectMembershipModel.deleteMany({
+          $or: [orgFilter, { userId: id }, ...(projectIds.length ? [{ projectId: { $in: projectIds } }] : [])],
+        }),
         ProjectLinkViewModel.deleteMany(orgFilter),
         ShareViewerEmailModel.deleteMany(orgFilter),
         // The people this workspace heard from: someone else's personal data, held per workspace

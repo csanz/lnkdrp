@@ -29,6 +29,8 @@ import { Types, type PipelineStage } from "mongoose";
 
 import { projectLinkSlugsForOrg } from "@/lib/analytics/docScope";
 import { workspaceListableDocFilter } from "@/lib/docs/visibility";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
+import { projectNamesFor } from "@/lib/projects/names";
 import { loadContributors } from "./contributors";
 import { PROJECT_ANON_KEY_EXPR, splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
 import {
@@ -40,7 +42,6 @@ import {
 import type { PlanId } from "@/lib/billing/planLimits";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { ProjectModel } from "@/lib/models/Project";
 import { ShareLinkModel } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
@@ -179,6 +180,18 @@ export type WorkspaceMetricsInput = {
   orgId: string | Types.ObjectId;
   plan: PlanId;
   requestedRange: WorkspaceRangeKey;
+  /**
+   * The caller, because this payload is per person now
+   * (docs/prds/lnkdrp-locked-projects.md, decision 16).
+   *
+   * Every figure on the page is derived from the document set read below, so one clause there decides
+   * the whole response. The route's sixty-second cache has to carry the same identity or the filtering
+   * is undone by the caching, which is the failure mode decision 8 calls out by name: it passes every
+   * cold local test and serves a member's answer to a non-member in production.
+   */
+  viewerUserId: string | Types.ObjectId;
+  /** The route's own request, for the per-request grant memo. */
+  request?: Request;
   /** Injectable clock, so a test can pin the window. */
   now?: Date;
 };
@@ -277,8 +290,9 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   // a *document-scoped* figure on this page mean the same thing as the document's own page: a read
   // through a data room is the project's view, never the document's. They are fetched here, in
   // parallel with the documents, because the facet below has to be built with them in hand.
+  const lockedExclusion = await lockedHomeExclusionFor(orgId, input.viewerUserId, input.request);
   const [docs, projectShareIds] = (await Promise.all([
-    DocModel.find({ orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter() })
+    DocModel.find({ orgId, isDeleted: { $ne: true }, ...workspaceListableDocFilter(), ...lockedExclusion })
       .select({ _id: 1, title: 1, isArchived: 1, shareEnabled: 1, createdDate: 1, currentUploadId: 1 })
       .lean(),
     projectLinkSlugsForOrg(orgId),
@@ -844,20 +858,26 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
       projectId?: Types.ObjectId | null;
     }>;
 
-    // Project names for the project links among them only — one read, and only when there are any.
+    /**
+     * Project names for the project links among them only — one read, and only when there are any.
+     *
+     * Through `projectNamesFor`, which answers `null` for a room this reader may not see rather than
+     * naming it (decision 14). A link row whose name comes back null keeps its own label and loses the
+     * room: the ranked-links table is about link performance, and a locked room's NAME beside a view
+     * count is the leak.
+     */
     const projectIds = linkDocs
       .filter((l) => l.kind === "project" && l.projectId)
       .map((l) => l.projectId as Types.ObjectId);
     const projectNameById = new Map<string, string>();
     if (projectIds.length) {
-      const projects = (await ProjectModel.find({ orgId, _id: { $in: projectIds } })
-        .select({ _id: 1, name: 1 })
-        .lean()) as unknown as Array<{ _id?: Types.ObjectId; name?: unknown }>;
-      for (const p of projects) {
-        if (!p?._id) continue;
-        const name = typeof p.name === "string" ? p.name.trim() : "";
-        if (name) projectNameById.set(String(p._id), name);
-      }
+      const names = await projectNamesFor({
+        orgId,
+        ids: projectIds,
+        viewerUserId: input.viewerUserId,
+        request: input.request,
+      });
+      for (const [id, name] of names) if (name) projectNameById.set(id, name);
     }
 
     for (const link of linkDocs) {

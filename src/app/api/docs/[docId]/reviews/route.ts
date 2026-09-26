@@ -5,6 +5,7 @@ import { ReviewModel } from "@/lib/models/Review";
 import { debugError, debugLog } from "@/lib/debug";
 import { DocModel } from "@/lib/models/Doc";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { lockedHomeExclusionFor } from "@/lib/projects/lockScope";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
@@ -54,7 +55,8 @@ export async function GET(
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-    const docExists = await DocModel.exists(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId));
+    const lockedExclusion = await lockedHomeExclusionFor(orgId, actor.userId, request);
+    const docExists = await DocModel.exists(buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId, lockedExclusion));
     if (!docExists) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const filter = { docId: new Types.ObjectId(docId) };
