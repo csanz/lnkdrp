@@ -447,6 +447,18 @@ export function groupByDay(items: ActivityItem[]): ActivityDayGroup[] {
 
 /** The small caps label above a day's card - also the "In progress" heading, so they match. */
 export function DayHeading({ children }: { children: React.ReactNode }) {
+  return <ColumnHeading>{children}</ColumnHeading>;
+}
+
+/**
+ * The small label that sits above a column of cards.
+ *
+ * Both columns of a contributor's page use it - the feed's day headings on the left, the rail's
+ * card titles on the right - because the two have to start on the same line. They did not: the
+ * rail's title lived inside its card, so the card's own top padding pushed "Documents" below
+ * "Yesterday" and the page read as two lists that had slipped out of step.
+ */
+export function ColumnHeading({ children }: { children: React.ReactNode }) {
   return (
     <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
       {children}

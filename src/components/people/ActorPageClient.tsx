@@ -33,6 +33,7 @@ import {
   ActivityTypeTabs,
   DEFAULT_ACTIVITY_PAGE_SIZE,
   groupByDay,
+  ColumnHeading,
 } from "@/components/activity/ActivityRows";
 import { useActivityPages } from "@/components/activity/useActivityPages";
 import WorkChart from "@/components/activity/WorkChart";
@@ -132,12 +133,15 @@ function actionsLabel(n: number): string {
 /** A card in the right rail, built like the document page's rail cards. */
 function RailCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
-      <div className="mb-3 border-b border-[var(--divider)] pb-3 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-        {title}
+    <section>
+      {/* Outside the panel, not inside it: the feed's day heading has no card above it, so a title
+          set in the card's padding started lower than "Yesterday" and the two columns looked
+          misaligned. Same component as the feed heading, so they cannot drift again. */}
+      <ColumnHeading>{title}</ColumnHeading>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
+        <ul className="space-y-2.5">{children}</ul>
       </div>
-      <ul className="space-y-2.5">{children}</ul>
-    </div>
+    </section>
   );
 }
 
@@ -198,6 +202,15 @@ export default function ActorPageClient({ actorKey }: { actorKey: string }) {
     setState("loading");
     setProfileError(null);
     setSummary(null);
+    /**
+     * The previous contributor's profile goes too.
+     *
+     * Only the success path used to write `profile`, so following "Connected by Christian Sanz"
+     * off an agent's page left that agent's name, tiles and chart on screen under the person's
+     * URL: a flash while the request was in flight, and permanently if it failed. The page now
+     * shows its own loading state and then either the new contributor or an error.
+     */
+    setProfile(null);
     void (async () => {
       try {
         const res = await fetchWithTempUser(`/api/activity/actor?key=${encodeURIComponent(actorKey)}`, {

@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 995 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 996 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -435,6 +435,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/WorkspacePill.tsx` · default
 - `src/components/activity/ActivityRows.tsx` · ACTIVITY_PAGE_SIZES, ActivityDayGroup, ActivityDayGroups, ActivityFeedSkeleton, ActivityPager, ActivityRow, ActivitySubject, activityTabClass, …
 - `src/components/activity/ChangePreviewModal.tsx` · default
+- `src/components/activity/WorkChart.tsx` · default, pickTicks, TOOLTIP_STYLE
 - `src/components/activity/useActivityPages.ts` · ActivityPage, ActivityPages, PAGE_TRANSITION_MIN_MS, useActivityPages, UseActivityPagesOptions
 - `src/components/admin/AdminAccessState.tsx` · default, AdminAccessStateProps
 - `src/components/admin/AdminAlert.tsx` · default, AdminAlertProps
