@@ -193,7 +193,7 @@ export default function SlackPageClient({ initialSlack = null }: { initialSlack?
                 )}
                 <p className="mt-2 max-w-[70ch] text-[12px] leading-5 text-[var(--muted-2)]">
                   {atChannelCap
-                    ? "This channel keeps posting everything. Pro adds channels and sends each data room to the one its team is watching, so a raise and a hiring round do not land in the same place."
+                    ? "This channel keeps posting everything. A second channel is how a project gets routed to its own place: on Pro, pick the channel on Slack's screen, then choose the project on the new card, and everything else stays here."
                     : "Want one project's activity in its own channel? Click Add channel, pick the channel on Slack's screen, then choose the project on the new card. Everything else keeps posting to the default channel. Each channel is its own install on Slack's side."}
                 </p>
               </div>

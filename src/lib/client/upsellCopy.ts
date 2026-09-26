@@ -123,12 +123,15 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     ],
     secondaryLabel: "Compare plans",
   },
+  // Named for what the second channel is *for*. "A second channel" is the thing being refused, but
+  // nobody wants a second channel; they want one data room to stop posting into the room everyone
+  // reads. The title says routing, and the first bullet is the click that opened this.
   slack_channels: {
-    title: "A second Slack channel is a Pro feature",
+    title: "Routing a data room to its own channel is a Pro feature",
     reason:
-      "Free connects one channel and posts everything to it. Pro connects as many as you like and sends each data room to the one its team is already watching, so a raise and a hiring round do not land in the same place.",
+      "Free connects one channel and everything posts there. Pro adds channels and routes a project to the one its team is already watching, so the fundraising room posts to the fundraising channel and everything else stays in the catch-all.",
     bullets: [
-      "A channel per data room, routed to the team that cares about it",
+      "Another channel, and the projects you route to it post there instead of the catch-all",
       "Opens, visit briefs, replaced documents, received files and new documents, per channel",
       "The reader's name on every post, where Free says someone",
     ],
