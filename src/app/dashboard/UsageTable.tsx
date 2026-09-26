@@ -13,6 +13,9 @@ import Link from "next/link";
 import { cn } from "@/lib/cn";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
+// The pay-as-you-go rate this line multiplies by, from the mirror `tests/lib/planCopyMirror.test.ts`
+// holds to the server constant, rather than a second copy of "$0.10" typed into the JSX.
+import { CREDITS_COPY } from "@/lib/client/planNumbers";
 
 export type UsageRow = {
   id: string;
@@ -198,7 +201,7 @@ export default function UsageTable({
 
       {canViewSpend && showSpend ? (
         <div className="mt-3 text-[12px] text-[var(--muted-2)]">
-          Month-to-date spend (credits × $0.10):{" "}
+          Month-to-date spend (credits × {CREDITS_COPY.perCreditUsd}):{" "}
           <span className="font-semibold text-[var(--fg)]">
             {monthSpendCents === null ? "–" : formatUsdFromCents(monthSpendCents)}
           </span>

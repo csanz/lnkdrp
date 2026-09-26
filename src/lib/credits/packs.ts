@@ -86,7 +86,7 @@ export function findPurchasablePack(id: unknown): CreditPack | null {
   return typeof id === "string" ? (CREDIT_PACKS.find((p) => p.id === id) ?? null) : null;
 }
 
-/** "$5", "$39", "$4.50". */
+/** Cents as a money string: "$7", "$37", "$4.50". */
 export function formatPackPrice(cents: number): string {
   const dollars = cents / 100;
   return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;

@@ -159,7 +159,7 @@ export function bucketSplitLabel(split: AdminCreditBucketSplit): string {
   return parts.length ? parts.join(" + ") : "–";
 }
 
-/** "$39", "$4.50", "$0.10". */
+/** Cents as a money string: "$37", "$4.50", "$0.10". */
 export function fmtCents(cents: number): string {
   const dollars = asNumber(cents) / 100;
   return Number.isInteger(dollars) ? `$${dollars}` : `$${dollars.toFixed(2)}`;

@@ -321,7 +321,9 @@ type Capabilities = {
   recipientsCanBrowseVersions?: boolean;
   notMcpAccessible?: Array<{ feature?: string; reason?: string }>;
 };
-type WhoAmICredits = { costs?: { summary?: number[]; compare?: number[] }; creditsRemaining?: number | null; creditsResetAt?: string | null; onDemand?: boolean; capabilities?: Capabilities };
+/** One `costs` row: `levels` is what can be picked (empty = one price), `credits` that one price. */
+type AdvertisedCost = { levels?: string[]; perLevel?: Record<string, number>; credits?: number | null };
+type WhoAmICredits = { costs?: { summary?: AdvertisedCost; compare?: AdvertisedCost; brief?: AdvertisedCost }; creditsRemaining?: number | null; creditsResetAt?: string | null; onDemand?: boolean; capabilities?: Capabilities };
 type SharePdfAiFields = { warnings?: unknown; creditsRemaining?: number };
 type ReplacePdfResult = { docId: string; shareId: string; shareUrl: string; status: string; version: number; uploadId: string; title: string | null };
 /** Documents this run created; deleted in `finally` so the Free active-link cap is not consumed. */
@@ -583,14 +585,26 @@ async function main(): Promise<void> {
       info("workspace", `${me.orgName ?? "(unnamed)"} plan=${me.plan} scopes=${me.scopes?.join(",")} client="${me.client}" mcpVersion=${me.mcpVersion ?? "?"}`);
     });
 
-    // 5b. whoami costs come from the app's credit schedule, not a copy.
-    await step("lnkdrp_whoami costs equal creditsForRun (summary, history)", async () => {
+    // 5b. whoami costs come from the app's credit schedule, not a copy - and each row advertises
+    // only the levels the product can actually run it at. The summary is pinned to basic by every
+    // path that runs one, so three summary prices on the wire is three prices an agent can budget
+    // against and be charged something else for; that is what `levels: []` rules out.
+    await step("lnkdrp_whoami costs equal creditsForRun, with only pickable levels advertised", async () => {
       const me = await callTool<WhoAmICredits>(live, "lnkdrp_whoami", {});
       const tiers = ["basic", "standard", "advanced"] as const;
-      const summary = tiers.map((qualityTier) => creditsForRun({ actionType: "summary", qualityTier }));
-      const compare = tiers.map((qualityTier) => creditsForRun({ actionType: "history", qualityTier }));
-      assert(JSON.stringify(me.costs?.summary) === JSON.stringify(summary), `whoami.costs.summary ${JSON.stringify(me.costs?.summary)} !== ${JSON.stringify(summary)}`);
-      assert(JSON.stringify(me.costs?.compare) === JSON.stringify(compare), `whoami.costs.compare ${JSON.stringify(me.costs?.compare)} !== ${JSON.stringify(compare)}`);
+      const perTier = (actionType: "summary" | "history" | "brief") =>
+        Object.fromEntries(tiers.map((qualityTier) => [qualityTier, creditsForRun({ actionType, qualityTier })]));
+      const summaryBasic = creditsForRun({ actionType: "summary", qualityTier: "basic" });
+      const briefBasic = creditsForRun({ actionType: "brief", qualityTier: "basic" });
+      const flat = (credits: number) => ({ basic: credits, standard: credits, advanced: credits });
+      const rows: Array<[string, AdvertisedCost | undefined, AdvertisedCost]> = [
+        ["summary", me.costs?.summary, { levels: [], perLevel: flat(summaryBasic), credits: summaryBasic }],
+        ["compare", me.costs?.compare, { levels: [...tiers], perLevel: perTier("history"), credits: null }],
+        ["brief", me.costs?.brief, { levels: [], perLevel: flat(briefBasic), credits: briefBasic }],
+      ];
+      for (const [name, got, want] of rows) {
+        assert(JSON.stringify(got) === JSON.stringify(want), `whoami.costs.${name} ${JSON.stringify(got)} !== ${JSON.stringify(want)}`);
+      }
       assert(me.creditsRemaining === null || typeof me.creditsRemaining === "number", "whoami.creditsRemaining is neither a number nor null");
       assert(typeof me.onDemand === "boolean", "whoami.onDemand is not a boolean");
       info("credits", `costs=${JSON.stringify(me.costs)} remaining=${String(me.creditsRemaining)} resetAt=${String(me.creditsResetAt)} onDemand=${String(me.onDemand)}`);

@@ -13,18 +13,79 @@ import type { ToolContext } from "../context";
 import { handleTool } from "../errors";
 import { SAFETY_TAIL } from "./shared";
 
-/** Tier order of every cost array: basic, standard, advanced. */
+/** Every quality level the product has. A cost row names the subset it actually offers. */
 export const COST_TIERS: readonly QualityTier[] = ["basic", "standard", "advanced"];
 
-/** Credits per tier for one action, straight from `creditsForRun`. */
-function costsFor(actionType: ActionType): number[] {
-  return COST_TIERS.map((qualityTier) => creditsForRun({ actionType, qualityTier }));
+/**
+ * One advertised price, shaped so an agent can tell a choice from a fixed price.
+ *
+ * The same distinction the app's cost catalog draws (`src/lib/credits/costCatalog.ts`: a row
+ * declares the `levels` a person can pick, and an empty list means one price and nothing to
+ * choose). It is carried in the data here, not only in the prose, because the prose is the half a
+ * machine skips: `costs.summary` used to be `[1, 2, 5]` indexed by `costTiers`, which is a price
+ * list for three orderable things, and only one of them can be ordered.
+ */
+export type AdvertisedCost = {
+  /** Levels a caller can actually pick for this action. Empty means there is nothing to choose. */
+  levels: readonly QualityTier[];
+  /**
+   * Credits at each level. Always populated for all three, so a reader that ignores `levels` still
+   * gets a true number rather than an index error; when `levels` is empty all three are the price
+   * that is really charged.
+   */
+  perLevel: Record<QualityTier, number>;
+  /** The one price when `levels` is empty; `null` when the price depends on the level picked. */
+  credits: number | null;
+};
+
+/** A price row for an action whose level a person really can pick, straight from `creditsForRun`. */
+function pickableCost(actionType: ActionType): AdvertisedCost {
+  return {
+    levels: [...COST_TIERS],
+    perLevel: {
+      basic: creditsForRun({ actionType, qualityTier: "basic" }),
+      standard: creditsForRun({ actionType, qualityTier: "standard" }),
+      advanced: creditsForRun({ actionType, qualityTier: "advanced" }),
+    },
+    credits: null,
+  };
 }
 
-/** Credit costs by quality tier (basic, standard, advanced); `compare` is the `history` action, `brief` the visit brief. */
-export function creditCosts(): { summary: number[]; compare: number[]; brief: number[] } {
-  return { summary: costsFor("summary"), compare: costsFor("history"), brief: costsFor("brief") };
+/**
+ * A price row for an action the product only ever runs at one level: the tier every code path pins
+ * it to, repeated across `perLevel` so every lookup returns the price that is really charged.
+ */
+function fixedCost(actionType: ActionType, qualityTier: QualityTier): AdvertisedCost {
+  const credits = creditsForRun({ actionType, qualityTier });
+  return { levels: [], perLevel: { basic: credits, standard: credits, advanced: credits }, credits };
 }
+
+/**
+ * The credit price list `lnkdrp_whoami` advertises, action by action.
+ *
+ * `compare` is the `history` action and `brief` the visit brief. Only `compare` offers a level:
+ * the automatic summary is pinned to basic by every path that runs it (the upload process route's
+ * `summaryTier`, and the manual rewrite route, which takes no level from its caller), and a brief
+ * is one flat price at every tier. `tests/lib/mcpWhoamiCostsCatalog.test.ts` holds this equal to
+ * `COST_CATALOG`, the app's own answer to the same question, so the two surfaces that explain
+ * lnkdrp's AI prices cannot come apart again.
+ */
+export function creditCosts(): { summary: AdvertisedCost; compare: AdvertisedCost; brief: AdvertisedCost } {
+  return {
+    summary: fixedCost("summary", "basic"),
+    compare: pickableCost("history"),
+    brief: fixedCost("brief", "basic"),
+  };
+}
+
+/**
+ * The automatic summary's price, for the tool description's own prose.
+ *
+ * Read from the same schedule the payload quotes rather than typed into the sentence: an agent
+ * budgets a call from this description, so a number written out here is a price quote and has to
+ * stay one. It is the basic price because basic is the only price a summary can be run at.
+ */
+const SUMMARY_CREDITS = creditCosts().summary.perLevel.basic;
 
 /** One product surface no tool covers yet — named so an agent learns it exists at all. */
 type UncoveredFeature = { feature: string; reason: string };
@@ -132,6 +193,8 @@ export async function buildWhoamiPayload(ctx: ToolContext): Promise<Record<strin
     // a Pro workspace with this false just means the read failed, not that on-demand is off.
     onDemand: credits?.onDemandEnabled ?? false,
     capabilities: buildCapabilities(plan, ctx.config.featureRequestsEnabled),
+    // The levels that exist in the product, not the levels any given action offers: each row of
+    // `costs` carries its own `levels`, and for two of the three that list is empty.
     costTiers: [...COST_TIERS],
     costs: creditCosts(),
     mcpVersion: MCP_SERVER_VERSION,
@@ -145,13 +208,19 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
       title: "Who am I (lnkdrp)",
       description:
         "Verify the lnkdrp API key and return the workspace it acts on: userId, email, orgId, orgName, plan, key prefix, " +
-        "scopes and the client name lnkdrp recorded for this connection, plus the credit cost table (credits per tier " +
-        "basic/standard/advanced), creditsRemaining and creditsResetAt when readable, onDemand, capabilities, and the " +
-        "MCP server version. costs is a price list, not a prediction: the summary that runs automatically on every " +
-        "upload and replacement is always billed at basic (1 credit) whatever the workspace's review tier says, while " +
-        "a replacement's compare follows the workspace's history tier. So a replacement whose text changed costs " +
-        "1 + costs.compare[history tier], and one whose text is identical costs nothing at all - the compare is " +
-        "skipped and the previous summary kept, which is what unchangedFromPrevious reports. " +
+        "scopes and the client name lnkdrp recorded for this connection, plus the credit cost table, creditsRemaining " +
+        "and creditsResetAt when readable, onDemand, capabilities, and the MCP server version. " +
+        "costs prices three AI actions, and each row says whether there is anything to pick: levels is the quality " +
+        "levels you can actually order for that action and is empty when there are none, perLevel gives the credits at " +
+        "each level, and credits is the single price when levels is empty (null when it depends on the level). " +
+        "costs is a price list, not a prediction. summary and brief have no level to pick: the summary that runs " +
+        `automatically on every upload and replacement is always billed at basic (${SUMMARY_CREDITS} credit) whatever ` +
+        "the workspace's review tier says, and nothing in the product can order a dearer one; a visit brief is one " +
+        "flat price at every level too. compare is the only row with a choice, and a replacement's compare follows " +
+        "the workspace's own history tier, which whoami does not report. So a replacement whose text changed costs " +
+        "costs.summary.credits + costs.compare.perLevel[that tier], and one whose text is identical costs nothing at " +
+        "all - the compare is skipped and the previous summary kept, which is what unchangedFromPrevious reports. " +
+        "costTiers lists the levels that exist in the product; read a row's own levels for what can be picked on it. " +
         "creditsRemaining is credits the workspace holds (included, starter and purchased). " +
         "onDemand: true (Pro only) means AI runs keep going after creditsRemaining reaches 0, billed per credit up to " +
         "the workspace's spend limit, so 0 credits on Pro with onDemand is not a wall. Free workspaces add credits by " +

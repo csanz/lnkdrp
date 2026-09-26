@@ -308,7 +308,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         "Each replacement's AI summary costs credits, or nothing when you pass summary and keyPoints (write them " +
         "from the new content). The AI compare against the previous version (what changed, page by page) runs on " +
         "every replacement and costs credits at the workspace's default tier whether or not you pass a summary - " +
-        "see costs.compare in lnkdrp_whoami; short of credits it is skipped, never blocking the replace. A skipped AI step does not fail the call: the link is still valid and warnings says " +
+        "see costs.compare.perLevel in lnkdrp_whoami; short of credits it is skipped, never blocking the replace. A skipped AI step does not fail the call: the link is still valid and warnings says " +
         "what was skipped. " +
         SAFETY_TAIL,
       inputSchema: replacePdfInputShape,

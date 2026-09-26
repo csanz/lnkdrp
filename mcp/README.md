@@ -174,9 +174,16 @@ of control, bidi and zero-width characters; triple backticks are broken up so th
 ### `lnkdrp_whoami`
 In `{}`. Out: the whoami payload (`userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client`)
 plus `creditsRemaining`, `creditsResetAt`, `onDemand` (from `GET /api/credits/snapshot?fast=1`; `false`/`null` when
-unreadable; whoami never fails over them), `costTiers: ["basic","standard","advanced"]`, `costs: { summary: [1,2,5],
-compare: [2,5,12] }` and `mcpVersion`. `costs` are computed from `creditsForRun` (`src/lib/credits/schedule.ts`,
-imported by the MCP server and copied into the Docker image), so they always match what the app charges.
+unreadable; whoami never fails over them), `costTiers: ["basic","standard","advanced"]`, `costs` and `mcpVersion`.
+`costs` has a row per AI action (`summary`, `compare` = the `history` action, `brief`), each
+`{ levels, perLevel, credits }`: `levels` is the quality levels a caller can actually order (empty means there is
+no choice), `perLevel` the credits at each level, and `credits` the single price when `levels` is empty, `null`
+when it depends on the level. Only `compare` offers a choice, at `{basic:2, standard:5, advanced:12}`; the
+automatic summary is pinned to basic (1 credit) by every path that runs one and a visit brief is one flat credit,
+so both advertise `levels: []`. The numbers are computed from `creditsForRun` (`src/lib/credits/schedule.ts`,
+imported by the MCP server and copied into the Docker image), so they always match what the app charges, and
+`tests/lib/mcpWhoamiCostsCatalog.test.ts` holds the rows equal to the app's own cost catalog so the shapes cannot
+drift either.
 `onDemand` is Pro-only: it means AI runs continue past `creditsRemaining: 0`, billed per credit up to the
 workspace's spend limit. On Free it is always `false` — the snapshot cannot return anything else — so a Free
 workspace that reaches zero credits stops running AI until its cycle resets. It is also `false` when the snapshot
@@ -311,7 +318,7 @@ version counter that has moved on (`src/lib/uploads/abandonUpload.ts` — that s
 got stuck, and `lnkdrp_delete_doc` then refused it as "still being processed"). Nothing is ever
 deleted, and calling it again with a working source finishes the update.
 The AI compare against the previous version costs credits on every replacement, at the workspace's
-default tier, whether or not `summary` and `keyPoints` are passed — `whoami`'s `costs.compare` is the
+default tier, whether or not `summary` and `keyPoints` are passed — `whoami`'s `costs.compare.perLevel` is the
 figure. Short of credits it is skipped and reported in `warnings`, never blocking the replace.
 `unchangedFromPrevious: true` means the new file's extracted text matches the version it replaced: a new version
 number over identical content. The process route already knew (it sets `ai.summary: "unchanged"` and skips the

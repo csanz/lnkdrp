@@ -29,7 +29,7 @@ this section when the count, the deployment or the verification changes.
   note wrapped as viewer text and the plan's identity rule applied by the API. `lnkdrp_get_activity`
   accepts `contact.note_updated`. `lnkdrp_get_share_stats { includeVisits }` returns `recentVisits[]`, the
   stored AI visit briefs (a4f965d); `lnkdrp_get_activity` accepts the `share.visit_briefed` type
-  (948d724); `lnkdrp_whoami.costs.brief` prices it. `lnkdrp_get_share` says plainly that
+  (948d724); `lnkdrp_whoami.costs.brief.credits` prices it (one price, no level to pick). `lnkdrp_get_share` says plainly that
   `shareEnabled` is document-wide on both branches (e4dde41).
 - **Verified today.** `tests/mcp/e2e.ts` passed 55 of 55 steps against the Pro dev workspace
   ("Personal", now the harness default; the old default org answers `owner_removed` because its
@@ -83,7 +83,7 @@ Credits pay for AI runs only. Links, uploads and stats never need credits. The
 automatic AI summary costs 1 credit per upload, or 0 when the agent passes its own `summary` and
 `keyPoints` to `lnkdrp_share_pdf`. A **replacement is not free**: its summary follows the same
 rule, but the AI compare against the previous version is a second, separate run, charged at the
-workspace's default tier (`costs.compare`, 2/5/12 credits) on every replacement whose text differs
+workspace's default tier (`costs.compare.perLevel`, 2/5/12 credits) on every replacement whose text differs
 from the version before it — passing `summary` and `keyPoints` does not cover it, because a
 supplied summary is not a diff. It is credit-gated on every plan, not Pro-gated, and it costs
 nothing when the new file's text is identical to the old one (the compare short-circuits) or when
@@ -304,7 +304,9 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
 - Out: `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan: "free"|"pro", keyPrefix, scopes,
   client, credentialId, credentialKind: "key"|"oauth", creditsRemaining: number|null, creditsResetAt: string|null,
   onDemand: boolean, capabilities, costTiers: ["basic","standard","advanced"],
-  costs: { summary: [1,2,5], compare: [2,5,12], brief: [1,1,1] }, mcpVersion,
+  costs: { summary: { levels: [], perLevel: {basic:1,standard:1,advanced:1}, credits: 1 },
+           compare: { levels: ["basic","standard","advanced"], perLevel: {basic:2,standard:5,advanced:12}, credits: null },
+           brief: { levels: [], perLevel: {basic:1,standard:1,advanced:1}, credits: 1 } }, mcpVersion,
   integrations: { slack: { connected, channels: [{ channelName, teamName, isDefault, status, projectIds, events, lastPostAt }] } } }`.
   `credentialId` is the credential's own identity and `credentialKind` says what kind it is: the key id for a `lnk_…`
   bearer (`"key"`), the OAuth grant id for a signed-in connection (`"oauth"`). The grant id survives an access-token
@@ -315,11 +317,19 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
   "New documents", which joined the other four on 2026-09-25 — `SLACK_EVENT_KEYS` in `src/lib/slack/connections.ts` is the
   list); never the webhook, and there is no tool to change it (the Integrations page does). `client` is the label
   derived from the `initialize` client name (`"claude-code"` → `"Claude Code"`; unknown names are
-  title-cased). `costs` are credits per tier (basic, standard, advanced) for the AI actions, computed from
-  `creditsForRun` in `src/lib/credits/schedule.ts` (the MCP server imports it, so the table cannot drift);
-  `compare` is the `history` action and `brief` the visit brief, which costs one credit at every tier because the run is
-  the same short one whatever the workspace's tier says. The automatic summary runs at basic (1 credit), or costs nothing when the
-  agent supplies its own (`summary` + `keyPoints` on `lnkdrp_share_pdf`).
+  title-cased). `costs` prices the AI actions from `creditsForRun` in `src/lib/credits/schedule.ts` (the MCP server
+  imports it, so the table cannot drift), and each row says whether there is a level to pick: `levels` is what a
+  caller can actually order (empty means there is no choice), `perLevel` the credits at each level, and `credits`
+  the single price when `levels` is empty, `null` when it depends on the level. `compare` is the `history` action
+  and the only row with a choice; `summary` and `brief` have none. The automatic summary is pinned to basic by
+  every path that runs one (the upload process route's `summaryTier`, and the manual rewrite route, which takes
+  no level), and a visit brief is one flat credit whatever the workspace's tier says, because the run is the same
+  short one. Until 2026-09-26 this field was `{ summary: [1,2,5], compare: [2,5,12], brief: [1,1,1] }` indexed by
+  `costTiers`, which advertised three orderable summaries where the product sells one; `costTiers` now only lists
+  the levels that exist, and a row's own `levels` says what can be picked on it.
+  The summary costs nothing at all when the agent supplies its own (`summary` + `keyPoints` on `lnkdrp_share_pdf`).
+  `tests/lib/mcpWhoamiCostsCatalog.test.ts` holds `costs` equal to `src/lib/credits/costCatalog.ts`, the app's own
+  price list, row by row.
 - `plan` comes from `GET /api/plan` when readable, else from whoami. `creditsRemaining`, `creditsResetAt` and
   `onDemand` come from `GET /api/credits/snapshot?fast=1` (`creditsResetAt` is the snapshot's reset date, falling
   back to `cycleEnd`; both are `null` when the snapshot cannot be read, and `onDemand` is `false`). whoami never
@@ -588,9 +598,9 @@ blocked by the Free shared-document cap (mt_zKD3mlHp_K).
 - **A replacement is not a free operation, and `summary`/`keyPoints` do not make it one.** Beside
   the summary there is a second AI run that only replacements have: the **compare** against the
   previous version (what changed, page by page). It runs on every replacement and is charged at the
-  workspace's default tier — `costs.compare` from `lnkdrp_whoami`, 2/5/12 credits — whether or not
+  workspace's default tier — `costs.compare.perLevel` from `lnkdrp_whoami`, 2/5/12 credits — whether or not
   the agent supplied its own summary, because a supplied summary is not a diff. Budget from
-  `costs.compare`, not from `share_pdf`'s 1-or-0. It costs nothing only when the new file's text is
+  `costs.compare.perLevel`, not from `share_pdf`'s 1-or-0. It costs nothing only when the new file's text is
   identical to the previous version's (the compare short-circuits and the old summary is kept, which
   is why `get_share` reports that version as `unchanged` rather than stale), when the upload arrived
   through a recipient's request link, or when credits ran out — in which case it is skipped with a
@@ -1881,8 +1891,9 @@ Around fifty steps, printed one per line with its timing. In order:
    assertions for exactly the tools nobody had listed. The step's own name prints
    `EXPECTED_TOOLS.length`, so the count in the output is the list's, never a stale literal.
 3. **`lnkdrp_whoami`.** The expected `orgId`, `userId` and key prefix; a `client` that identifies
-   `lnkdrp-e2e`; `costs.summary` and `costs.compare` equal to `creditsForRun` (the check that stops
-   the cost table drifting from the app's); and `capabilities` in full — links never limited,
+   `lnkdrp-e2e`; every `costs` row equal to `creditsForRun` and advertising only the levels the
+   product can actually run it at (the check that stops the cost table drifting from the app's);
+   and `capabilities` in full — links never limited,
    project links Pro-only, every cap's `remaining` equal to `limit - used`, and `notMcpAccessible`
    naming `requestRepos` and `downloadAccessRequests` but no longer `projectManagement`.
 4. **Discovery.** `lnkdrp_list_docs` pages, honours `ids` and wraps titles as untrusted text;

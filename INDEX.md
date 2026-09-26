@@ -729,7 +729,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/format/bytes.ts` · formatBytes, formatPageCount, formatSizeChangeLine, sizeDelta, SizeDelta, toBytes
 - `src/lib/format/date.ts` · formatDateRange, formatDayKey, formatMonthLabel, formatShortDate, FormatShortDateInvalidBehavior
 - `src/lib/format/initials.ts` · initialsFromNameOrEmail
-- `src/lib/format/money.ts` · formatUsdFromCents, formatUsdOrNotAvailable
+- `src/lib/format/money.ts` · formatRatioPct, formatUsdCost, formatUsdFromCents, formatUsdOrNotAvailable
 - `src/lib/format/number.ts` · clampNonNegInt, formatInt
 - `src/lib/funnel/body.ts` · FUNNEL_CTAS, FUNNEL_EVENTS, FunnelBody, parseFunnelBody
 - `src/lib/funnel/report.ts` · buildFunnelReport, firstWallPipeline, FUNNEL_REPORT_CTAS, FUNNEL_STEP_TYPES, FunnelReport, FunnelReportCta, funnelStepsPipeline, FunnelWeek, …
@@ -947,7 +947,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `mcp/src/tools/shared.ts` · DISMISSED_PROMPT_NOTE, docIdSchema, DocRef, docRefShape, existsUnlessNotFound, OBJECT_ID_RE, requireExactlyOneRef, resolveDoc, …
 - `mcp/src/tools/starred.ts` · registerListStarredTool, registerStarDocsTool, starDocsInputShape
 - `mcp/src/tools/tags.ts` · registerListTagsTool, registerTagTool, registerUntagTool
-- `mcp/src/tools/whoami.ts` · buildWhoamiPayload, COST_TIERS, creditCosts, registerWhoamiTool
+- `mcp/src/tools/whoami.ts` · AdvertisedCost, buildWhoamiPayload, COST_TIERS, creditCosts, registerWhoamiTool
 - `mcp/src/untrusted.ts` · sanitizeUntrustedText, untrusted, Untrusted, UNTRUSTED_LIMITS, UNTRUSTED_NOTE, untrustedOrNull, UntrustedSource
 
 ## Scripts

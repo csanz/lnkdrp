@@ -12,6 +12,9 @@ import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
 import { CREDIT_PACKS, PURCHASED_CREDITS_EXPIRY_MONTHS } from "@/lib/credits/packs";
+// The daily brake is enforced by FREE_DAILY_CREDIT_CAP; this page quotes it through the copy
+// mirror rather than retyping the number the way the Terms page once retyped the pack prices.
+import { CREDITS_COPY } from "@/lib/client/planNumbers";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 import { getServerSession } from "next-auth";
 
@@ -100,8 +103,8 @@ export default async function CreditsPage() {
             <div>
               <h2 className="font-serif text-2xl tracking-tight text-white">No daily limit</h2>
               <p className="mt-3 text-sm leading-6 text-white/60">
-                Free workspaces use at most 15 credits a day. Buying any pack lifts that for your workspace, so the
-                credits you paid for are there when a busy day needs them.
+                Free workspaces use at most {CREDITS_COPY.freeDailyCap} credits a day. Buying any pack lifts that for
+                your workspace, so the credits you paid for are there when a busy day needs them.
               </p>
             </div>
           </div>

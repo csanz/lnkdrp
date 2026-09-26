@@ -57,7 +57,7 @@ export function whatHappensAfterFreeCredits(): string {
   return `buy a credit pack from ${formatPackPrice(CHEAPEST_PACK.priceCents)}, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} credits a month`;
 }
 
-/** The smallest pack, for "from $5" copy. */
+/** The smallest pack, for the "from <price>" copy above; the price is read, never typed. */
 const CHEAPEST_PACK = CREDIT_PACKS.reduce((min, p) => (p.priceCents < min.priceCents ? p : min));
 
 /**

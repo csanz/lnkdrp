@@ -48,8 +48,11 @@ export async function POST(request: Request) {
        * `/api/stripe/checkout`, `/api/stripe/portal` and `/api/billing/spend` all call
        * `forbidApiKey` and check the org role. This route checked neither, and an `lnk_` API key
        * resolves to a `kind: "user"` actor — so an agent could POST a packId and get back a live
-       * Stripe Checkout URL for a $39 charge bound to the workspace's own customer, and a `viewer`
-       * could do the same from the browser. Committing somebody else's workspace to a charge is
+       * Stripe Checkout URL, for as much as the largest pack in `CREDIT_PACKS` charges, bound to the
+       * workspace's own customer, and a `viewer` could do the same from the browser. (The amount
+       * this note used to name, $39, was a pack price retired in the same repricing that introduced
+       * $7/$14/$37 - a hand-typed figure in a comment about money, gone stale exactly the way the
+       * Terms page's pack list did.) Committing somebody else's workspace to a charge is
        * exactly what the role check on the subscription route exists to prevent; a one-off pack is
        * the same act for less money.
        */
