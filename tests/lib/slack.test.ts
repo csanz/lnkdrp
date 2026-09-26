@@ -5,9 +5,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { decryptSlackSecret, encryptSlackSecret, signSlackPayload, verifySlackSignature } from "@/lib/slack/crypto";
-import { postToSlackWebhook } from "@/lib/slack/post";
+import { postToSlackWebhook, slackPostBody } from "@/lib/slack/post";
 import { createSlackInstallState, SLACK_STATE_TTL_MS, verifySlackInstallState } from "@/lib/slack/state";
-import { slackTestMessage } from "@/lib/slack/messages";
+import { slackBurstMessage, slackTestMessage } from "@/lib/slack/messages";
 
 const HOOK = "https://hooks.slack.com/services/T000/B000/secretsecret";
 
@@ -96,14 +96,46 @@ describe("classifying a webhook's answer", () => {
     expect(hang.mock.calls[0][0]).toBe(HOOK);
   });
 
-  test("the body carries text and blocks", async () => {
+  test("a coloured message puts its blocks in an attachment, and says nothing twice", async () => {
     const f = respond(200, "ok");
     const msg = slackTestMessage({ workspaceName: "LNKDRP", channelName: "#deals", appUrl: "https://www.lnkdrp.com" });
     await postToSlackWebhook(HOOK, msg, { fetch: f });
     const init = f.mock.calls[0][1] as RequestInit;
-    const body = JSON.parse(String(init.body)) as { text: string; blocks: unknown[] };
-    expect(body.text).toContain("#deals");
-    expect(body.blocks).toHaveLength(2);
+    const body = JSON.parse(String(init.body)) as { text?: string; blocks?: unknown[]; attachments?: Array<{ color: string; blocks: unknown[]; fallback: string }> };
+    // The colour is what buys the left border, and blocks have to sit *inside* the attachment to
+    // get it — a top-level `blocks` beside a top-level colour would simply lose the colour.
+    expect(body.blocks).toBeUndefined();
+    expect(body.attachments).toHaveLength(1);
+    expect(body.attachments![0].color).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(body.attachments![0].blocks).toHaveLength(2);
+    /**
+     * The regression this test exists for. `text` beside an attachment is not a fallback: Slack
+     * renders it as the message and the attachment underneath, so every post arrived in the channel
+     * twice — once plain, once marked. It shipped that way and was caught by looking at a real
+     * channel, not here, which is why the assertion is on the absence.
+     */
+    expect(body.text).toBeUndefined();
+    expect(body.attachments![0].fallback).toContain("#deals");
+  });
+
+  test("an uncoloured message keeps its blocks at the top level", () => {
+    const body = slackPostBody({ text: "plain", blocks: [{ type: "context" }] }) as { blocks?: unknown[]; attachments?: unknown[] };
+    expect(body.blocks).toHaveLength(1);
+    expect(body.attachments).toBeUndefined();
+  });
+
+  test("every post refuses both kinds of unfurl", () => {
+    // Two switches, not one: `unfurl_links` covers text-based links and `unfurl_media` media, and
+    // Slack needs both off. Every URL in these messages points into the signed-in app, so the only
+    // card an unfurl could produce is the logged-out marketing page.
+    for (const msg of [
+      slackTestMessage({ workspaceName: "LNKDRP", channelName: "#deals", appUrl: "https://www.lnkdrp.com" }),
+      slackBurstMessage({ held: 4, cap: 30 }),
+    ]) {
+      const body = slackPostBody(msg) as { unfurl_links: boolean; unfurl_media: boolean };
+      expect(body.unfurl_links).toBe(false);
+      expect(body.unfurl_media).toBe(false);
+    }
   });
 });
 

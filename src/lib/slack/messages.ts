@@ -42,12 +42,65 @@ function twoBlocks(headline: string, context: string): unknown[] {
   ];
 }
 
+/**
+ * The two colours, and the line between them.
+ *
+ * A channel of these messages had no hierarchy: "Ana Lima opened Fundraising memo" and "Round terms
+ * was added · 1 page" were the same weight, the same blue, the same grey second line, so the event
+ * the product exists for was as easy to scroll past as a file upload. Slack groups consecutive posts
+ * from one app and hides the icon after the first, so nothing else in the message was going to carry
+ * that difference.
+ *
+ * The split is the PRD's own: the channel is for what *recipients* do (decision 5). Anything a
+ * recipient did — opened it, said who they are, finished reading, sent a file back — is the product's
+ * accent green, the same one the charts use. Anything the workspace did to its own documents —
+ * added, replaced, a new link — is grey and recedes. Two colours and not five: a legend nobody asked
+ * for is not a hierarchy, and the point is that one class jumps out, which stops being true as soon
+ * as everything is coloured.
+ *
+ * Exported, colours and emoji together, because the homepage shot composes this channel rather than
+ * photographing one (`scripts/home-shot-slack.ts`). A marketing picture that quietly disagrees with
+ * the product is worse than no picture, so there is one definition and two readers.
+ */
+export const SLACK_MARKS = {
+  /** What a recipient did: the product's own accent, the one the charts use. */
+  recipient: "#0f9f6e",
+  /** What the workspace did to its own documents. Recedes. */
+  workspace: "#6b7280",
+  opened: ":eyes:",
+  introduced: ":wave:",
+  brief: ":book:",
+  received: ":incoming_envelope:",
+  added: ":page_facing_up:",
+  replaced: ":arrows_counterclockwise:",
+  newLink: ":link:",
+  /** A project, by the one distinction the app itself draws between them. */
+  room: ":file_folder:",
+  inbox: ":inbox_tray:",
+} as const;
+
+const RECIPIENT = SLACK_MARKS.recipient;
+const WORKSPACE = SLACK_MARKS.workspace;
+
+/**
+ * One event, decorated.
+ *
+ * The emoji goes on the headline block and never into `text`: Slack reads `text` alone for mobile
+ * notifications and screen readers, where a leading emoji is noise read aloud before the sentence.
+ */
+function event(input: { color: string; emoji: string; text: string; headline: string; context: string }): SlackMessage {
+  return { text: input.text, color: input.color, blocks: twoBlocks(`${input.emoji} ${input.headline}`, input.context) };
+}
+
 export function slackTestMessage(input: { workspaceName: string; channelName: string; appUrl: string }): SlackMessage {
   const text = `LinkDrop is connected to ${input.channelName} for ${input.workspaceName}. Opens, visit briefs, replaced documents, received files and new documents will show up here.`;
+  // Carries the accent, so the button that proves the connection also shows what an event will
+  // look like when one arrives.
   return {
     text,
+    color: RECIPIENT,
     blocks: twoBlocks(
-      `*LinkDrop is connected to ${mrkdwn(input.channelName)}* for ${mrkdwn(input.workspaceName)}.\nOpens, visit briefs, replaced documents, received files and new documents will show up here.`,
+      `${SLACK_MARKS.introduced} *LinkDrop is connected to ${mrkdwn(input.channelName)}* for ${mrkdwn(input.workspaceName)}.\nOpens, visit briefs, replaced documents, received files and new documents will show up here.`,
       `Change what posts, or the channel, under <${input.appUrl}/integrations/slack|Integrations>.`,
     ),
   };
@@ -55,6 +108,8 @@ export function slackTestMessage(input: { workspaceName: string; channelName: st
 
 export function slackBurstMessage(input: { held: number; cap: number }): SlackMessage {
   const text = `…and ${input.held} more in the last minute. LinkDrop posts at most ${input.cap} a minute here; the rest follow shortly.`;
+  // Uncoloured on purpose: this is the channel talking about itself, not an event, and a bar here
+  // would give housekeeping the same standing as the things that actually happened.
   return { text, blocks: [{ type: "context", elements: [{ type: "mrkdwn", text: mrkdwn(text) }] }] };
 }
 
@@ -108,11 +163,30 @@ async function docTitle(orgId: Types.ObjectId, docId: Types.ObjectId | null): Pr
   return { title: (doc.title ?? "").trim() || "Untitled document", receivedVia: doc.receivedViaRequestProjectId ? String(doc.receivedViaRequestProjectId) : null, pages };
 }
 
-async function projectName(orgId: Types.ObjectId, projectId: Types.ObjectId | null): Promise<string | null> {
+/**
+ * A project's mark: the folder or the inbox tray, before its name.
+ *
+ * Projects have no icon of their own anywhere in the product — the sidebar draws every one of them
+ * with the same folder glyph — so this is not reading a stored choice, it is the same two-way
+ * distinction the app already makes: `isRequest` separates a data room from a request inbox, and
+ * those are different enough that a message saying "was added to" should not look identical for
+ * both. If projects ever gain a chosen emoji, this is the one function that changes.
+ */
+function roomEmoji(isRequest: boolean | undefined): string {
+  return isRequest ? SLACK_MARKS.inbox : SLACK_MARKS.room;
+}
+
+/** A room as it appears inside a sentence: its mark, then its name, linked when there is a URL. */
+function roomMark(room: { name: string; isRequest?: boolean }, url: string | null): string {
+  const name = url ? `<${url}|${mrkdwn(room.name)}>` : mrkdwn(room.name);
+  return `${roomEmoji(room.isRequest)} *${name}*`;
+}
+
+async function projectName(orgId: Types.ObjectId, projectId: Types.ObjectId | null): Promise<{ name: string; isRequest: boolean } | null> {
   if (!projectId) return null;
-  const project = (await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1 }).lean()) as { name?: string } | null;
+  const project = (await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1, isRequest: 1 }).lean()) as { name?: string; isRequest?: boolean } | null;
   if (!project) return null;
-  return (project.name ?? "").trim() || "a data room";
+  return { name: (project.name ?? "").trim() || "a data room", isRequest: Boolean(project.isRequest) };
 }
 
 async function linkName(shareId: string | null): Promise<string> {
@@ -136,11 +210,14 @@ async function renderIntroduction(f: Facts, orgId: Types.ObjectId, ev: NonNullab
   const docId = (ev.docId as Types.ObjectId | null) ?? null;
   let place = "a document";
   let url = `${f.appUrl}/activity`;
+  /** The room's mark when they arrived in one; a document has the message's own emoji already. */
+  let placeMark: string | null = null;
   if (projectId) {
-    const project = (await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1 }).lean()) as { name?: string } | null;
+    const project = await projectName(orgId, projectId);
     if (!project) return null;
-    place = (project.name ?? "").trim() || "a data room";
+    place = project.name;
     url = `${f.appUrl}/project/${String(projectId)}`;
+    placeMark = roomMark(project, url);
   } else if (docId) {
     const doc = await docTitle(orgId, docId);
     if (!doc) return null;
@@ -150,14 +227,14 @@ async function renderIntroduction(f: Facts, orgId: Types.ObjectId, ev: NonNullab
   const via = await linkName(ev.shareId ?? null);
   const readerUrl = viewerPageHref({ appUrl: f.appUrl, projectId: projectId ? String(projectId) : null, docId: docId ? String(docId) : null, kind: "anon", key: ev.viewerKey ? splitProjectViewerKey(ev.viewerKey).botIdHash : "" });
   const text = `${who} introduced themselves on ${place} via ${via}.${name && email ? ` ${email}` : ""}`;
-  return {
+  return event({
+    color: RECIPIENT,
+    emoji: SLACK_MARKS.introduced,
     text,
-    blocks: twoBlocks(
-      `${readerMark(who, readerUrl)} introduced themselves on <${url}|${mrkdwn(place)}>${name && email ? `
+    headline: `${readerMark(who, readerUrl)} introduced themselves on ${placeMark ?? `<${url}|${mrkdwn(place)}>`}${name && email ? `
 ${mrkdwn(email)}` : ""}`,
-      `via ${mrkdwn(via)}${readerUrl ? ` · <${readerUrl}|this reader>` : ""}`,
-    ),
-  };
+    context: `via ${mrkdwn(via)}${readerUrl ? ` · <${readerUrl}|this reader>` : ""}`,
+  });
 }
 
 export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage | null> {
@@ -177,10 +254,13 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
       const docUrl = `${f.appUrl}/doc/${String(ev.docId)}`;
       const readerUrl = readerPage(f, { docId: (ev.docId as Types.ObjectId | null) ?? null, projectId: (ev.projectId as Types.ObjectId | null) ?? null, viewerKey: ev.viewerKey });
       const text = `${who} opened ${doc.title} via ${via}.`;
-      return {
+      return event({
+        color: RECIPIENT,
+        emoji: SLACK_MARKS.opened,
         text,
-        blocks: twoBlocks(`${readerMark(who, readerUrl)} opened <${docUrl}|${mrkdwn(doc.title)}>`, `via ${mrkdwn(via)} · <${readerUrl ?? `${docUrl}/metrics`}|${readerUrl ? "this reader" : "see who's reading"}>`),
-      };
+        headline: `${readerMark(who, readerUrl)} opened <${docUrl}|${mrkdwn(doc.title)}>`,
+        context: `via ${mrkdwn(via)} · <${readerUrl ?? `${docUrl}/metrics`}|${readerUrl ? "this reader" : "see who's reading"}>`,
+      });
     }
     case "briefs": {
       const briefId = (ev.visitBriefId as Types.ObjectId | null) ?? null;
@@ -209,14 +289,24 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
         const body = clip((brief.brief.body ?? "").trim(), 600);
         return {
           text: `${who} finished reading ${title}: ${headline}`,
+          color: RECIPIENT,
+          // The one message that is not two lines, and the most valuable in the channel: it keeps
+          // its own shape (the headline in bold above the body) rather than being forced through
+          // `event`.
           blocks: [
-            { type: "section", text: { type: "mrkdwn", text: `*${mrkdwn(who)} finished reading <${readerUrl}|${mrkdwn(title)}>*\n*${mrkdwn(headline)}*${body ? `\n${mrkdwn(body)}` : ""}` } },
+            { type: "section", text: { type: "mrkdwn", text: `${SLACK_MARKS.brief} *${mrkdwn(who)} finished reading <${readerUrl}|${mrkdwn(title)}>*\n*${mrkdwn(headline)}*${body ? `\n${mrkdwn(body)}` : ""}` } },
             { type: "context", elements: [{ type: "mrkdwn", text: `${howFar ? `${mrkdwn(howFar)} · ` : ""}<${readerUrl}|the visit>` }] },
           ],
         };
       }
       const text = `${who} finished reading ${title}${howFar ? ` (${howFar})` : ""}.`;
-      return { text, blocks: twoBlocks(`${readerMark(who, readerPageUrl)} finished reading <${docUrl}|${mrkdwn(title)}>`, `${howFar ? `${mrkdwn(howFar)} · ` : ""}<${readerUrl}|the visit>`) };
+      return event({
+        color: RECIPIENT,
+        emoji: SLACK_MARKS.brief,
+        text,
+        headline: `${readerMark(who, readerPageUrl)} finished reading <${docUrl}|${mrkdwn(title)}>`,
+        context: `${howFar ? `${mrkdwn(howFar)} · ` : ""}<${readerUrl}|the visit>`,
+      });
     }
     case "docUpdates": {
       const docId = (ev.docId as Types.ObjectId | null) ?? null;
@@ -235,21 +325,31 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
         let title: string;
         let url: string;
         let more: string;
+        /** What the link points at, marked: a room carries its folder, a document does not. */
+        let targetMark: string;
         if (docId) {
           const doc = await docTitle(orgId, docId);
           if (!doc) return null;
           title = doc.title;
           url = `${f.appUrl}/doc/${String(docId)}`;
           more = `<${url}/links|all links>`;
+          targetMark = `<${url}|${mrkdwn(title)}>`;
         } else {
           const room = await projectName(orgId, projectId);
           if (!room || !projectId) return null;
-          title = room;
+          title = room.name;
           url = `${f.appUrl}/project/${String(projectId)}`;
-          more = `<${url}|open the data room>`;
+          more = `<${url}|open the ${room.isRequest ? "request inbox" : "data room"}>`;
+          targetMark = roomMark(room, url);
         }
         const text = `New link ${name} for ${title}.`;
-        return { text, blocks: twoBlocks(`New link *${mrkdwn(name)}* for <${url}|${mrkdwn(title)}>`, `${audience ? `for ${mrkdwn(audience)} · ` : ""}${more}`) };
+        return event({
+          color: WORKSPACE,
+          emoji: SLACK_MARKS.newLink,
+          text,
+          headline: `New link *${mrkdwn(name)}* for ${targetMark}`,
+          context: `${audience ? `for ${mrkdwn(audience)} · ` : ""}${more}`,
+        });
       }
       const doc = await docTitle(orgId, docId);
       if (!doc || !docId) return null;
@@ -261,10 +361,13 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
       const summary = clip((change?.diff?.summary ?? "").trim(), 300);
       const docUrl = `${f.appUrl}/doc/${String(docId)}`;
       const text = `${doc.title} was replaced${version ? ` (v${version})` : ""}.${summary ? ` ${summary}` : ""}`;
-      return {
+      return event({
+        color: WORKSPACE,
+        emoji: SLACK_MARKS.replaced,
         text,
-        blocks: twoBlocks(`*<${docUrl}|${mrkdwn(doc.title)}>* was replaced${version ? `, now v${version}` : ""}${summary ? `\n${mrkdwn(summary)}` : ""}`, `Every link keeps working and shows the new version · <${docUrl}/history|what changed>`),
-      };
+        headline: `*<${docUrl}|${mrkdwn(doc.title)}>* was replaced${version ? `, now v${version}` : ""}${summary ? `\n${mrkdwn(summary)}` : ""}`,
+        context: `Every link keeps working and shows the new version · <${docUrl}/history|what changed>`,
+      });
     }
     case "docs": {
       const docId = (ev.docId as Types.ObjectId | null) ?? null;
@@ -278,25 +381,30 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
         // Born in a room: say so, and link the room. Nothing else changes.
         const home = projectId ? await projectName(orgId, projectId) : null;
         const roomUrl = projectId ? `${f.appUrl}/project/${String(projectId)}` : null;
-        const text = home ? `${doc.title} was added to ${home}.` : `${doc.title} was added.`;
-        return {
+        const text = home ? `${doc.title} was added to ${home.name}.` : `${doc.title} was added.`;
+        return event({
+          color: WORKSPACE,
+          emoji: SLACK_MARKS.added,
           text,
-          blocks: twoBlocks(
-            `*<${docUrl}|${mrkdwn(doc.title)}>* was added${home && roomUrl ? ` to *<${roomUrl}|${mrkdwn(home)}>*` : ""}${pages ? ` · ${pages}` : ""}`,
-            `<${docUrl}|open it> · <${docUrl}/metrics|metrics>`,
-          ),
-        };
+          headline: `*<${docUrl}|${mrkdwn(doc.title)}>* was added${home ? ` to ${roomMark(home, roomUrl)}` : ""}${pages ? ` · ${pages}` : ""}`,
+          context: `<${docUrl}|open it> · <${docUrl}/metrics|metrics>`,
+        });
       }
       // A document filed into a project: the room's channel (or the default) hears it landed.
-      const project = projectId ? ((await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1, slug: 1 }).lean()) as { name?: string; slug?: string } | null) : null;
-      const room = (project?.name ?? "").trim() || "a project";
+      const project = projectId
+        ? ((await ProjectModel.findOne({ _id: projectId, orgId }).select({ name: 1, slug: 1, isRequest: 1 }).lean()) as { name?: string; slug?: string; isRequest?: boolean } | null)
+        : null;
+      const room = { name: (project?.name ?? "").trim() || "a project", isRequest: Boolean(project?.isRequest) };
       const docUrl = `${f.appUrl}/doc/${String(docId)}`;
       const roomUrl = project?.slug ? `${f.appUrl}/project/${encodeURIComponent(project.slug)}` : projectId ? `${f.appUrl}/project/${String(projectId)}` : null;
-      const text = `${doc.title} was added to ${room}.`;
-      return {
+      const text = `${doc.title} was added to ${room.name}.`;
+      return event({
+        color: WORKSPACE,
+        emoji: SLACK_MARKS.added,
         text,
-        blocks: twoBlocks(`*<${docUrl}|${mrkdwn(doc.title)}>* was added to ${roomUrl ? `*<${roomUrl}|${mrkdwn(room)}>*` : `*${mrkdwn(room)}*`}`, `Everyone with the room's link sees it now · <${docUrl}|open it>`),
-      };
+        headline: `*<${docUrl}|${mrkdwn(doc.title)}>* was added to ${roomMark(room, roomUrl)}`,
+        context: `Everyone with the room's link sees it now · <${docUrl}|open it>`,
+      });
     }
     case "requests": {
       const docId = (ev.docId as Types.ObjectId | null) ?? null;
@@ -306,10 +414,21 @@ export async function renderSlackEvent(row: SlackOutbox): Promise<SlackMessage |
       const upload = uploadId ? ((await UploadModel.findOne({ _id: uploadId, orgId }).select({ originalFileName: 1 }).lean()) as { originalFileName?: string } | null) : null;
       const fileName = (upload?.originalFileName ?? "").trim() || doc.title;
       const project = doc.receivedVia ? ((await ProjectModel.findOne({ _id: new Types.ObjectId(doc.receivedVia), orgId }).select({ name: 1 }).lean()) as { name?: string } | null) : null;
-      const inbox = (project?.name ?? "").trim() || "a request inbox";
+      // Always an inbox: the row exists because the file arrived through one, so the flag is not read.
+      const inbox = { name: (project?.name ?? "").trim() || "a request inbox", isRequest: true };
+      const inboxUrl = doc.receivedVia ? `${f.appUrl}/project/${doc.receivedVia}` : null;
       const docUrl = `${f.appUrl}/doc/${String(docId)}`;
-      const text = `${fileName} was received in ${inbox}.`;
-      return { text, blocks: twoBlocks(`*<${docUrl}|${mrkdwn(fileName)}>* was received in *${mrkdwn(inbox)}*`, `<${docUrl}|open it>`) };
+      const text = `${fileName} was received in ${inbox.name}.`;
+      // A recipient's colour, not the workspace's: a file landing in a request inbox is something
+      // someone outside did, which is the half of the channel worth looking up for. The envelope
+      // leads and the tray marks the inbox, so the two are not the same glyph twice in one line.
+      return event({
+        color: RECIPIENT,
+        emoji: SLACK_MARKS.received,
+        text,
+        headline: `*<${docUrl}|${mrkdwn(fileName)}>* was received in ${roomMark(inbox, inboxUrl)}`,
+        context: `<${docUrl}|open it>`,
+      });
     }
     default:
       return null;

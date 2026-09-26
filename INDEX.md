@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 996 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 998 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -739,6 +739,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/gating/entryGate.ts` · enforceEntryGates
 - `src/lib/gating/forbidApiKey.ts` · forbidApiKey
 - `src/lib/gating/requireAdmin.ts` · AdminGate, requireAdmin
+- `src/lib/gating/serverComponentRequest.ts` · serverComponentRequest
 - `src/lib/gating/tempUserClient.ts` · captureTempUserFromResponse, clearTempUser, fetchWithTempUser, getTempUser, setTempUser, TEMP_USER_STORAGE_KEY, tempUserHeaders, TempUserStored, …
 - `src/lib/gating/tempUserHeaders.ts` · TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER
 - `src/lib/gating/waitlist.ts` · accessStatusChanged, forbidWaitlisted, isWaitlistedActor, readAccessStatus
@@ -840,7 +841,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/preflight/env.ts` · Group, Result, runEnvPreflight, Status, summarise
 - `src/lib/projects/docCountFilter.ts` · projectDocCountFilter
 - `src/lib/projects/requestSettings.ts` · botIdHashPrefixFilter, requestUploadPathFor
-- `src/lib/projects/scope.ts` · liveProjectByIdMatch, liveProjectBySlugMatch, liveProjectFilter, slugBackfillPendingFilter
+- `src/lib/projects/scope.ts` · allProjectsFilter, liveProjectByIdMatch, liveProjectBySlugMatch, liveProjectFilter, slugBackfillPendingFilter
 - `src/lib/realtime/ticket.ts` · REALTIME_TICKET_TTL_SECONDS, realtimeSecret, RealtimeTicket, signRealtimeTicket, verifyRealtimeTicket
 - `src/lib/share/anonymousNoticeAudience.ts` · AlreadyToldLookup, AlreadyToldQuery, cursorBackedAlreadyTold, queueBackedAlreadyTold
 - `src/lib/share/brand.ts` · brandInitials, ShareWorkspaceBrand
@@ -871,10 +872,10 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/slack/config.ts` · SLACK_AUTH_REVOKE_URL, SLACK_CALLBACK_PATH, SLACK_OAUTH_ACCESS_URL, SLACK_OAUTH_AUTHORIZE_URL, SLACK_SCOPE, slackAppConfig, SlackAppConfig, slackEnabled, …
 - `src/lib/slack/connections.ts` · listSlackConnections, postThroughConnection, serializeSlackConnection, SLACK_EVENT_KEYS, SlackConnectionDto, SlackEventKey, SlackState
 - `src/lib/slack/crypto.ts` · decryptSlackSecret, encryptSlackSecret, signSlackPayload, verifySlackSignature
-- `src/lib/slack/messages.ts` · mrkdwn, realLinkLabel, renderSlackEvent, slackBurstMessage, slackTestMessage
+- `src/lib/slack/messages.ts` · mrkdwn, realLinkLabel, renderSlackEvent, SLACK_MARKS, slackBurstMessage, slackTestMessage
 - `src/lib/slack/outbox.ts` · DrainResult, drainSlackOutbox, EnqueueSlackInput, enqueueSlackPosts, SlackDocChange, SlackOutboxEvent
 - `src/lib/slack/pageState.ts` · slackStateForPage
-- `src/lib/slack/post.ts` · postToSlackWebhook, SLACK_POST_TIMEOUT_MS, SlackMessage, SlackPostOutcome
+- `src/lib/slack/post.ts` · postToSlackWebhook, SLACK_POST_TIMEOUT_MS, SlackMessage, slackPostBody, SlackPostOutcome
 - `src/lib/slack/routing.ts` · burstAllowance, RoutableConnection, routeSlackConnections, SLACK_BURST_PER_MINUTE, SLACK_BURST_WINDOW_MS
 - `src/lib/slack/state.ts` · createSlackInstallState, SLACK_STATE_TTL_MS, SlackInstallState, verifySlackInstallState
 - `src/lib/starredDocs.ts` · getStarredDocs, isDocStarred, moveStarredDoc, refreshStarredDocsFromServer, revertStarredOptimistic, STARRED_DOCS_CHANGED_EVENT, StarredDoc, toggleStarredDoc, …
@@ -980,6 +981,7 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `scripts/docchange-from-upload-repair.ts`
 - `scripts/gen-env-secrets.mjs`
 - `scripts/home-shot-brief.ts`
+- `scripts/home-shot-slack.ts`
 - `scripts/lib/exit.ts` · exit
 - `scripts/lib/time.mjs` · safeTimestamp
 - `scripts/measure-image-tokens.ts`

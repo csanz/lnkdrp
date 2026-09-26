@@ -9,10 +9,29 @@
  */
 
 export type SlackMessage = {
-  /** Plain text, shown in notifications and by clients that do not render blocks. */
+  /**
+   * Plain text, shown in notifications and by clients that do not render blocks.
+   *
+   * Not a summary of the blocks but a message in its own right: Slack reads only this for mobile
+   * notifications and for screen readers, which never reach the interior blocks. It must therefore
+   * say the whole thing on its own, and it carries no emoji so it reads as a sentence. Where it
+   * travels in the payload depends on whether there is a colour — see `slackPostBody`, which is the
+   * one place that decides.
+   */
   text: string;
   /** Block Kit blocks; optional so a test message can be text only. */
   blocks?: unknown[];
+  /**
+   * The attachment's left border, as a hex colour. What gives the channel a hierarchy: a recipient
+   * opening a document and a teammate filing one used to look identical, and the one the product
+   * exists for is the first.
+   *
+   * Sending `blocks` inside an `attachment` is the documented way to have both Block Kit layout and
+   * a colour — the attachment's own `blocks` and `color` are the two fields Slack still lists as
+   * current there, with every other attachment field marked legacy. Without a colour the blocks go
+   * at the top level as before.
+   */
+  color?: string;
 };
 
 export type SlackPostOutcome =
@@ -27,6 +46,36 @@ const DEAD_BODIES = new Set(["no_service", "channel_not_found", "invalid_token",
 
 const DEFAULT_RETRY_MS = 30_000;
 
+/**
+ * The JSON one message becomes.
+ *
+ * `unfurl_links` and `unfurl_media` are off on every post, and both are needed: the first governs
+ * text-based links and the second media, and Slack treats them as separate switches rather than one.
+ * Slack unfurls links in app messages by default, and every URL these messages carry points back
+ * into the signed-in app, so an unfurl could only ever add the marketing card a logged-out fetch
+ * returns — underneath a message that already says the thing properly. These two fields work on an
+ * incoming webhook, which is worth saying because most of the message-shaping controls do not.
+ */
+export function slackPostBody(message: SlackMessage): Record<string, unknown> {
+  const body: Record<string, unknown> = { unfurl_links: false, unfurl_media: false };
+  if (message.blocks?.length && message.color) {
+    /**
+     * `text` moves *into* the attachment, and this is the whole reason this function exists.
+     *
+     * Alongside `blocks` at the top level, `text` is a fallback: Slack renders the blocks and reads
+     * the text only for notifications. Alongside an `attachment`, it is not — Slack renders the text
+     * as the message and hangs the attachment underneath it, so every post said everything twice,
+     * once plain and once with its mark. `fallback` is the field that plays the fallback role for an
+     * attachment, and it feeds the same notification and screen-reader path.
+     */
+    body.attachments = [{ color: message.color, blocks: message.blocks, fallback: message.text }];
+  } else {
+    body.text = message.text;
+    if (message.blocks?.length) body.blocks = message.blocks;
+  }
+  return body;
+}
+
 export async function postToSlackWebhook(
   webhookUrl: string,
   message: SlackMessage,
@@ -39,7 +88,7 @@ export async function postToSlackWebhook(
     const res = await doFetch(webhookUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(message.blocks ? { text: message.text, blocks: message.blocks } : { text: message.text }),
+      body: JSON.stringify(slackPostBody(message)),
       signal: controller.signal,
     });
     const body = (await res.text().catch(() => "")).trim();

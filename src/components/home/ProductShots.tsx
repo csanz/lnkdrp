@@ -31,13 +31,19 @@ type Shot = {
 };
 
 /**
- * Five shots, in the order the product actually happens: the agent is given the tools, it sends the
- * link, you see what one recipient did with it, the brief of that visit arrives by email, and then
- * the whole workspace's stream — teammates, agents and readers together.
+ * Six shots, in the order the product actually happens: the agent is given the tools, it sends the
+ * link, you see what one recipient did with it, the brief of that visit arrives by email, then the
+ * whole workspace's stream — teammates, agents and readers together — and last, the same stream
+ * leaving the app for the Slack channel where the team already is.
  *
  * The brief (`public/images/home/brief.png`) is not a screenshot of a page but three real emails
  * composed by `composeVisitBriefEmail` and captured by `scripts/home-shot-brief.ts`; rerun that
- * script when the email changes rather than editing the image.
+ * script when the email changes rather than editing the image. The Slack shot
+ * (`public/images/home/slack.png`) is likewise composed, by `scripts/home-shot-slack.ts`: the
+ * settings page is one real screenshot kept beside that script, and the channel in front of it is
+ * *drawn* from the same `SLACK_MARKS` the renderer posts with — so the toggles say what can post,
+ * the messages show what did, and neither half can drift from the product without the script
+ * noticing.
  *
  * The agent comes first because it is the premise — the headline above says "built for AI agents"
  * and the section used to open on a metrics dashboard, so the page argued for itself backwards.
@@ -46,10 +52,15 @@ type Shot = {
  * screenshot of the same command underneath it would be the page saying one thing twice. The tool
  * list with its read / write / asks-first marks is the part nothing else on the page carries.
  *
- * The activity feed closes it. It was cut once for repeating the other two — its counts echo the
+ * The activity feed was the close. It was cut once for repeating the other two — its counts echo the
  * metrics shot, its agent attribution echoes the first — and put back because that reading missed
  * what it is actually for: it is the only shot showing a *team*, where a colleague, an agent and a
  * reader all appear in the same stream. The others each show one person alone with the product.
+ *
+ * Slack now closes it, after the feed rather than beside it, because it is the feed's answer to
+ * "and how would I ever see this?": the same moments, posted where the team already looks, with
+ * the settings page showing that each kind of post is a switch and each project can have its own
+ * channel. It is the only shot where the product appears inside someone else's window.
  */
 const SHOTS: Shot[] = [
   {
@@ -91,6 +102,16 @@ const SHOTS: Shot[] = [
     title: "All of it in one place",
     body: "Your teammates, your agents and your readers, in a single feed. Who shared what, which agent did it, and every open that followed.",
     alt: "The activity feed: documents added, links created and archived, alongside named readers opening documents, attributed to people and to connected agents.",
+  },
+  {
+    src: "/images/home/slack.png",
+    width: 2000,
+    height: 1200,
+    // Non-breaking space: at the heading's size this title sets in two lines, and "look" must not be
+    // the second one on its own.
+    title: "Posted where your teammates already look",
+    body: "Opens, visit briefs, replaced documents and new links, received files, new documents: five switches on every channel you connect. Route a data room to a channel of its own and the rest to the catch-all; recipients never see any of it.",
+    alt: "The Slack integration page: two connected channels, #sharelinks with a Default catch-all badge and five switches, and fundraising-dataroom with Data room and Fundraising 2026 routed to it; in front, the channel window itself, where two documents added to Fundraising 2026, a new Investors link and a replaced version carry a grey bar, and a reader introducing themselves, opening the memo and finishing it with a two-minute brief carry a green one.",
   },
 ];
 

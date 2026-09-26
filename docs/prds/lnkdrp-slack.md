@@ -127,7 +127,14 @@ first integration listed there; the page is built to list more.
    is for what recipients do"), drawn in colour. Two and not five: the point is that one class jumps
    out, which stops being true once everything is coloured. Each kind also leads with one emoji, in
    the blocks only and never in `text` — Slack reads `text` alone for mobile notifications and screen
-   readers, where a leading shortcode is announced before the sentence. `unfurl_links` and
+   readers, where a leading shortcode is announced before the sentence. A **project is marked
+   wherever it is named** — 📁 a data room, 📥 a request inbox — because the room was the one thing
+   in these messages with no mark at all, and "was added to Fundraising 2026" read as a document
+   line. That is not a stored choice: projects have no icon anywhere in the product (the sidebar
+   draws every one with the same folder), so this is the app's own `isRequest` split and nothing
+   more; `roomEmoji` is the single function to change if projects ever gain a chosen emoji. The
+   received-file line leads with 📨 rather than 📥 so the tray marks only the inbox and the same
+   glyph does not appear twice in one sentence. `unfurl_links` and
    `unfurl_media` are both false on every post: every URL here points into the signed-in app, so the
    only card an unfurl could add is the logged-out marketing page. Nesting `blocks` in an attachment
    is Slack's documented way to have both layout and a colour, and all of this works on the existing

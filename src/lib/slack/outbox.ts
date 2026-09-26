@@ -17,6 +17,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { debugError, debugLog } from "@/lib/debug";
 import { BACKOFF_MS, MAX_ATTEMPTS } from "@/lib/notifications/queue";
 import { DocModel } from "@/lib/models/Doc";
+import { ProjectModel } from "@/lib/models/Project";
 import { SlackConnectionModel, type SlackConnection } from "@/lib/models/SlackConnection";
 import { SlackOutboxModel, type SlackOutbox } from "@/lib/models/SlackOutbox";
 import { postThroughConnection, serializeSlackConnection, type SlackEventKey } from "./connections";
@@ -65,6 +66,23 @@ const oid = (v: string | Types.ObjectId | null | undefined): Types.ObjectId | nu
  * Where an event may go: the document's rooms, the request inbox it arrived through, and the
  * event's own project. A contained document (`visibility: "project"`) routes on its home room
  * alone and never falls back to the catch-all (docs/prds/lnkdrp-project-home.md, decision 6).
+ *
+ * A **locked** room does the same, for a stronger reason (docs/prds/lnkdrp-locked-projects.md,
+ * decision 20). A locked project exists only for the people holding a membership row, and the
+ * catch-all channel is read by the whole Slack workspace, so falling back to it would publish a
+ * private room's activity to exactly the people the lock exists to exclude — the room's name, its
+ * documents and its readers. Locking a room does not contain its documents, so this is not already
+ * covered by the branch above: an ordinary document in a locked room takes the path below.
+ *
+ * When any candidate room is locked the event routes to the locked rooms alone and never to the
+ * default, even if the document also sits in an unlocked room. The unlocked room's channel is still
+ * a channel this content was never cleared for, and a message naming the locked room is a leak
+ * wherever it lands.
+ *
+ * The limit this cannot reach, recorded because no filter closes it: a Slack channel's audience is
+ * Slack members, not `OrgMembership` rows. Routing a locked room to its own mapped channel is
+ * correct here and still publishes it to everyone in that channel. That is the mapping warning's
+ * job, not this function's.
  */
 async function routingFor(orgId: Types.ObjectId, event: SlackOutboxEvent): Promise<{ projectIds: string[]; allowDefault: boolean }> {
   const out = new Set<string>();
@@ -82,7 +100,16 @@ async function routingFor(orgId: Types.ObjectId, event: SlackOutboxEvent): Promi
     for (const p of doc?.projectIds ?? []) if (p) out.add(String(p));
     if (doc?.receivedViaRequestProjectId) out.add(String(doc.receivedViaRequestProjectId));
   }
-  return { projectIds: Array.from(out), allowDefault: true };
+  const projectIds = Array.from(out);
+  if (!projectIds.length) return { projectIds, allowDefault: true };
+
+  // `$eq` and not `$ne`: this asks which rooms *are* locked, so a row written before the field
+  // existed simply does not match, which is the answer we want.
+  const locked = (await ProjectModel.find({ orgId, _id: { $in: projectIds.map((p) => new Types.ObjectId(p)) }, visibility: "locked" })
+    .select({ _id: 1 })
+    .lean()) as Array<{ _id: Types.ObjectId }>;
+  if (locked.length) return { projectIds: locked.map((p) => String(p._id)), allowDefault: false };
+  return { projectIds, allowDefault: true };
 }
 
 /**

@@ -83,6 +83,18 @@ In the order they bite:
    partners by name as readers of a Series A deck (typed by hand into the Personal workspace, not
    seeded). Clean or reseed that workspace and retake all four before the page is linked anywhere.
    Metis task `mt_EdI_sXudDM`; needs the owner's signed-in browser.
+
+   The Slack shot's **channel** half is done and needs no retake: it is drawn by
+   `scripts/home-shot-slack.ts` from invented content (Ana Lima, Kestrel Row, Fundraising 2026) and
+   from the renderer's own `SLACK_MARKS`, so it cannot drift from the product or leak a workspace.
+   It replaced a real screenshot whose bold last line read "spent 30 sec on the lorem ipsum text …
+   filled with placeholder content", whose replace line said a round-terms document became "a new
+   list of books from Project Gutenberg", and whose reader was `ana@greylock.example` — an invented
+   person wearing a real firm's name.
+
+   Its **settings** half is still a real screenshot (`scripts/home-shot-slack/slack-settings.png`)
+   and still shows the owner's own sidebar: "MCP e2e", "Contained memo", "Team offsite agenda". Mild
+   next to the four above, but retake it in the same pass, then rerun the script.
 5. **Plain secrets** in Vercel so support can see who is writing (setup notes are outside the repo, in `private-docs/SUPPORT.md`).
 6. **Realtime on Fly** (`DEPLOY.md` 6). Not a blocker for a closed beta, since polling works, but
    the "sidebar flips to Connected instantly" story depends on it.

@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   brief: null as Record<string, unknown> | null,
   change: null as Record<string, unknown> | null,
   link: { label: "Investors", audience: null as string | null, isDefault: false } as Record<string, unknown> | null,
+  project: { name: "Acme NDA", isRequest: false } as Record<string, unknown> | null,
 }));
 
 const lean = (v: unknown) => ({ select: () => ({ lean: async () => v }), lean: async () => v });
@@ -28,7 +29,7 @@ vi.mock("@/lib/models/ShareLink", () => ({ ShareLinkModel: { findOne: () => lean
 vi.mock("@/lib/models/VisitBrief", () => ({ VisitBriefModel: { findOne: () => lean(state.brief) } }));
 vi.mock("@/lib/models/DocChange", () => ({ DocChangeModel: { findOne: () => lean(state.change) } }));
 vi.mock("@/lib/models/Upload", () => ({ UploadModel: { findOne: () => lean({ originalFileName: "nda-signed.pdf" }) } }));
-vi.mock("@/lib/models/Project", () => ({ ProjectModel: { findOne: () => lean({ name: "Acme NDA" }) } }));
+vi.mock("@/lib/models/Project", () => ({ ProjectModel: { findOne: () => lean(state.project) } }));
 vi.mock("@/lib/notifications/sendNotificationEmails", () => ({ publicBaseUrl: () => "https://www.lnkdrp.com" }));
 
 import { renderSlackEvent } from "@/lib/slack/messages";
@@ -49,6 +50,7 @@ beforeEach(() => {
   state.brief = null;
   state.change = null;
   state.link = { label: "Investors", audience: null, isDefault: false };
+  state.project = { name: "Acme NDA", isRequest: false };
 });
 
 describe("views", () => {
@@ -174,5 +176,70 @@ describe("docUpdates and requests", () => {
     state.doc = { title: "nda-signed", receivedViaRequestProjectId: new Types.ObjectId() };
     const m = await renderSlackEvent(row("requests", { uploadId: new Types.ObjectId() }));
     expect(m?.text).toBe("nda-signed.pdf was received in Acme NDA.");
+  });
+});
+
+/**
+ * The channel had no hierarchy: a recipient opening a document and a teammate filing one were the
+ * same weight, so the event the product exists for was as easy to scroll past as an upload. The
+ * colour is the whole fix, and the line it draws is the PRD's own — what a recipient did against
+ * what the workspace did to its own documents.
+ */
+describe("hierarchy", () => {
+  const RECIPIENT = "#0f9f6e";
+  const WORKSPACE = "#6b7280";
+
+  test("what a recipient did carries the accent; what the workspace did recedes", async () => {
+    state.pro = true;
+    state.brief = { status: "recap", stats: { timeSpentMs: 30_000, pagesSeen: 2 }, docId };
+    state.change = { diff: { summary: "New pricing" }, toVersion: 2 };
+
+    const recipient = [
+      await renderSlackEvent(row("views", { viewerName: "Ana" })),
+      await renderSlackEvent(row("views", { introduced: true, viewerName: "Ana", projectId: new Types.ObjectId() })),
+      await renderSlackEvent(row("briefs", { visitBriefId: new Types.ObjectId() })),
+      // A file arriving in a request inbox is someone outside acting, not housekeeping.
+      await renderSlackEvent(row("requests", { uploadId: new Types.ObjectId() })),
+    ];
+    const workspace = [
+      await renderSlackEvent(row("docs", { change: "created" })),
+      await renderSlackEvent(row("docs", { projectId: new Types.ObjectId() })),
+      await renderSlackEvent(row("docUpdates", { uploadId: new Types.ObjectId() })),
+      await renderSlackEvent(row("docUpdates", { change: "link_created", shareId: "s1" })),
+    ];
+
+    expect(recipient.map((m) => m?.color)).toEqual(Array(4).fill(RECIPIENT));
+    expect(workspace.map((m) => m?.color)).toEqual(Array(4).fill(WORKSPACE));
+  });
+
+  test("a room carries a folder and a request inbox a tray, wherever one is named", async () => {
+    state.doc = { title: "Acme cap table", receivedViaRequestProjectId: null };
+    const room = await renderSlackEvent(row("docs", { projectId: new Types.ObjectId() }));
+    expect(flat(room)).toContain(":file_folder:");
+    expect(flat(room)).not.toContain(":inbox_tray:");
+
+    // The same event into a request inbox, which the app draws differently and so does this.
+    state.project = { name: "Diligence uploads", isRequest: true };
+    const inbox = await renderSlackEvent(row("docs", { projectId: new Types.ObjectId() }));
+    expect(flat(inbox)).toContain(":inbox_tray:");
+    expect(flat(inbox)).not.toContain(":file_folder:");
+  });
+
+  test("a received file leads with the envelope so the tray marks only the inbox", async () => {
+    state.doc = { title: "nda-signed", receivedViaRequestProjectId: new Types.ObjectId() };
+    const m = await renderSlackEvent(row("requests", { uploadId: new Types.ObjectId() }));
+    const blocks = flat(m);
+    expect(blocks).toContain(":incoming_envelope:");
+    // One tray, on the inbox — not the lead as well.
+    expect(blocks.split(":inbox_tray:")).toHaveLength(2);
+  });
+
+  test("every event leads with an emoji in the blocks, and none leaks into the notification text", async () => {
+    state.doc = { title: "Q3 Deck", receivedViaRequestProjectId: null };
+    const m = await renderSlackEvent(row("docs", { change: "created" }));
+    expect(flat(m)).toContain(":page_facing_up:");
+    // `text` is read alone by screen readers and mobile notifications, where a leading shortcode is
+    // announced before the sentence it decorates.
+    expect(m?.text).not.toContain(":");
   });
 });
