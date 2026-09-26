@@ -86,7 +86,10 @@ note.
    field, team-written, 2,000 chars), and tags through `TagAssignment` with a third target kind,
    `contact`. Nothing here is not already stored somewhere; the table is a view that stays warm.
 
-4. **Identity follows the plan, exactly as everywhere else.** Free sees, in full, the contacts
+4. **Identity follows the plan, exactly as everywhere else.** (The feature itself does not: asked
+   on 2026-09-26 whether Contacts should be Pro-only, the answer was no. A Free list showing forty
+   domains with the names withheld argues for Pro better than a locked page, and hiding it would
+   contradict the rule that an introduction is shown on Free in the feed, the emails and Slack.) Free sees, in full, the contacts
    who introduced themselves, because introductions are already shown on Free; every other
    contact (signed-in views, download requests) is a row with a domain and a date and no name or
    address, plus the total, which is the same amount Free's analytics record and the same upsell

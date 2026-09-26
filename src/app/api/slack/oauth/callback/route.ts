@@ -9,6 +9,8 @@
  * becomes its default.
  *
  * Every failure redirects to the Slack page with `?slack=error&reason=…` and stores nothing.
+ * A workspace at its channel cap comes back with `reason=plan_limit`, which the page turns into
+ * the upgrade note rather than a Slack error.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -16,6 +18,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { recordActivity } from "@/lib/activity/log";
 import { SlackConnectionModel } from "@/lib/models/SlackConnection";
+import { checkLimit } from "@/lib/billing/planLimits";
 import { SLACK_OAUTH_ACCESS_URL, slackAppConfig, slackRedirectUri } from "@/lib/slack/config";
 import { encryptSlackSecret } from "@/lib/slack/crypto";
 import { verifySlackInstallState } from "@/lib/slack/state";
@@ -80,6 +83,19 @@ export async function GET(request: Request) {
   const userId = new Types.ObjectId(state.userId);
   await connectMongo();
   const others = await SlackConnectionModel.countDocuments({ orgId, channelId: { $ne: hook.channel_id } });
+  // The plan caps channels, not Slack (see FREE_SLACK_CHANNELS). Checked here rather than at
+  // "Add channel", because the install is Slack's own screen and a person can arrive at this
+  // callback from a link, a second tab or a bookmark without passing the button. Reconnecting a
+  // channel the workspace already has is an update, never a new one, so it is always allowed.
+  const reconnect = await SlackConnectionModel.countDocuments({ orgId, channelId: hook.channel_id });
+  if (!reconnect) {
+    const allowed = await checkLimit(orgId, "slack_channels");
+    // Nothing is stored, so nothing posts: the webhook Slack just minted is never read and the
+    // person can remove the app from Slack's side if they want it gone. Deliberately not revoking
+    // the token here, because this app installs once per channel into the same Slack workspace
+    // and `auth.revoke` on a shared grant would risk silencing the channel they already have.
+    if (!allowed.ok) return back("plan_limit");
+  }
   const teamName = (data.team.name ?? "").trim() || "Slack";
   await SlackConnectionModel.updateOne(
     { orgId, channelId: hook.channel_id },

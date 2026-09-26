@@ -33,6 +33,8 @@ export const FREE_PLAN_LIMITS_COPY = {
   documents: 10,
   projects: 2,
   analyticsDays: 7,
+  /** Slack channels. Free connects one and it posts everything; Pro adds channels and routing. */
+  slackChannels: 1,
 } as const;
 
 /**

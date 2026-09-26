@@ -9,8 +9,12 @@
  * recipients browse a document's versions on the share page, since 2026-09-13 the only version
  * feature that is plan-gated; the owner's history page and AI compare run on credits on every plan;
  * `analytics_history`: deep
- * analytics, i.e. viewer identities, per-viewer rows, per-page time and visit timelines). They never
+ * analytics, i.e. viewer identities, per-viewer rows, per-page time and visit timelines;
+ * `slack_routing`: sending one project to its own Slack channel). They never
  * carry usage or grace; Free is simply blocked and Pro is always ok.
+ *
+ * Slack is gated by scale, not as a feature: `slack_channels` is an ordinary cap (one on Free) and
+ * the channel a Free workspace has keeps posting everything. See `FREE_SLACK_CHANNELS`.
  *
  * Analytics tiers: Free gets BASIC analytics (totals, views-by-day series, total time on document,
  * a unique-viewer count, last `FREE_ANALYTICS_DAYS` days). Pro gets DEEP analytics (everything,
@@ -33,6 +37,7 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { SlackConnectionModel } from "@/lib/models/SlackConnection";
 import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { recordActivity, type ActivityActorKind } from "@/lib/activity/log";
 import { liveProjectFilter } from "@/lib/projects/scope";
@@ -78,6 +83,20 @@ export const PRO_INCLUDED_COLLABORATORS = 3;
  * "personal" workspace that never counted, plus one "team" workspace).
  */
 export const FREE_WORKSPACES = 2;
+/**
+ * Free plan: Slack channels a workspace may connect.
+ *
+ * The scale is the gate, not the feature. A Free workspace still gets Slack, still gets every one
+ * of the five kinds of post, and still learns the product by watching it work in the channel it
+ * uses all day; what Pro buys is a second channel and the routing that makes a second channel
+ * worth having. That matches the rest of this file, where the thing works and the amount is what
+ * is paid for, and it matches the shape of the need: sending one data room to its own channel is
+ * something a workspace with several rooms wants, and Free has two projects.
+ *
+ * Deliberately not a feature gate. A Free user who sees "Someone opened Series A deck" land in
+ * Slack every day is being shown what Pro is for, which is worth more than a locked page.
+ */
+export const FREE_SLACK_CHANNELS = 1;
 /** Days a grandfathered workspace may stay over a Free limit before it is blocked. */
 export const LIMIT_GRACE_DAYS = 14;
 
@@ -90,6 +109,7 @@ export type PlanLimits = {
   projects: number | null;
   analyticsDays: number | null;
   collaborators: number;
+  slackChannels: number | null;
 };
 
 /**
@@ -101,13 +121,15 @@ export type LimitKey =
   | "documents"
   | "projects"
   | "collaborators"
+  | "slack_channels"
   | "version_history"
   | "analytics_history"
   | "project_links"
+  | "slack_routing"
   | "team_workspaces";
 
 /** Limits that gate a Pro feature rather than count usage. */
-export type FeatureGateKey = Extract<LimitKey, "version_history" | "analytics_history" | "project_links">;
+export type FeatureGateKey = Extract<LimitKey, "version_history" | "analytics_history" | "project_links" | "slack_routing">;
 
 /** Limits that count usage against a cap. */
 export type CountedLimitKey = Exclude<LimitKey, FeatureGateKey>;
@@ -117,7 +139,7 @@ export type AnalyticsTier = "basic" | "deep";
 
 /** True for limits that gate a Pro feature rather than count usage. */
 function isFeatureGate(limit: LimitKey): limit is FeatureGateKey {
-  return limit === "version_history" || limit === "analytics_history" || limit === "project_links";
+  return limit === "version_history" || limit === "analytics_history" || limit === "project_links" || limit === "slack_routing";
 }
 
 /** Grace window for a workspace over a Free limit (ISO strings), or `null` when none. */
@@ -163,6 +185,7 @@ const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     projects: FREE_PROJECTS,
     analyticsDays: FREE_ANALYTICS_DAYS,
     collaborators: 0,
+    slackChannels: FREE_SLACK_CHANNELS,
   },
   pro: {
     plan: "pro",
@@ -170,6 +193,7 @@ const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     projects: null,
     analyticsDays: null,
     collaborators: PRO_INCLUDED_COLLABORATORS,
+    slackChannels: null,
   },
 };
 
@@ -291,6 +315,14 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
       return max === 0
         ? `Free workspaces are single-user. Pro includes ${PRO_INCLUDED_COLLABORATORS} people beyond the owner, plus unlimited free viewers.`
         : `Free workspaces can have ${max} collaborator${max === 1 ? "" : "s"}. Upgrade to Pro to invite more.`;
+    case "slack_channels":
+      // A cap, not a gate: the channel a Free workspace already has keeps working and keeps
+      // posting everything. What it cannot do is add a second one to split the traffic.
+      return max === 1
+        ? "Free workspaces can connect one Slack channel. Upgrade to Pro to add another and route projects to it."
+        : `Free workspaces can connect ${max} Slack channels. Upgrade to Pro to add another.`;
+    case "slack_routing":
+      return "Sending one project to its own Slack channel is a Pro feature.";
     case "version_history":
       return "Letting recipients browse versions is a Pro feature.";
     case "analytics_history":
@@ -362,6 +394,28 @@ export async function checkLimit(
 
   const limits = limitsForPlan(plan);
   const adding = typeof opts?.adding === "number" && Number.isFinite(opts.adding) ? Math.max(0, Math.floor(opts.adding)) : 1;
+
+  // Counted on its own, not through `getWorkspaceUsage`: channels are not part of the usage panel
+  // and every other check would pay for a fourth query to carry a number nothing else reads.
+  if (limit === "slack_channels") {
+    const max = limits.slackChannels ?? Number.POSITIVE_INFINITY;
+    await connectMongo();
+    const current = await SlackConnectionModel.countDocuments({ orgId: toOrgObjectId(orgId) });
+    return current + adding <= max
+      ? { ok: true, warning: null }
+      : {
+          ok: false,
+          code: "plan_limit",
+          limit,
+          used: current,
+          requested: adding,
+          max,
+          grace: null,
+          upgradeUrl: UPGRADE_URL,
+          message: limitMessage(limit, max, plan),
+        };
+  }
+
   const usage = await getWorkspaceUsage(orgId);
 
   let current: number;

@@ -21,7 +21,7 @@ export type PlanSnapshot = {
   /** Editing a link takes `member`; revealing its password takes `admin`. Derived server-side. */
   canManageLinks: boolean;
   canRevealPassword: boolean;
-  limits: { plan: "free" | "pro"; documents: number | null; projects: number | null; analyticsDays: number | null; collaborators: number };
+  limits: { plan: "free" | "pro"; documents: number | null; projects: number | null; analyticsDays: number | null; collaborators: number; slackChannels?: number | null };
   usage: { documents: number; projects: number; members: number };
   grace: { startedAt: string; endsAt: string; blockedAt: string | null } | null;
   /** True while a Free workspace is inside its unblocked launch grace window; `atLimit` is then all false. */

@@ -21,6 +21,7 @@ export type UpsellKey =
   | "collaborators"
   | "analytics_history"
   | "project_links"
+  | "slack_channels"
   | "team_workspaces"
   | "visit_briefs"
   | "credits";
@@ -119,6 +120,17 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
       "A separate link per audience, each with its own password and expiry",
       "See who came, what they opened and how long they read, per link",
       "Unlimited projects, documents and links across the workspace",
+    ],
+    secondaryLabel: "Compare plans",
+  },
+  slack_channels: {
+    title: "A second Slack channel is a Pro feature",
+    reason:
+      "Free connects one channel and posts everything to it. Pro connects as many as you like and sends each data room to the one its team is already watching, so a raise and a hiring round do not land in the same place.",
+    bullets: [
+      "A channel per data room, routed to the team that cares about it",
+      "Opens, visit briefs, replaced documents, received files and new documents, per channel",
+      "The reader's name on every post, where Free says someone",
     ],
     secondaryLabel: "Compare plans",
   },

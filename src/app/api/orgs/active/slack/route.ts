@@ -4,6 +4,8 @@
  * - `GET` (any member): `{ enabled, connections: SlackConnectionDto[] }`. Never the webhook URL.
  * - `PATCH` (owner/admin): `{ connectionId, events?: {…}, isDefault?: true, projectIds?: [] }`.
  *   Making one connection the default clears the flag on the others.
+ *   A non-empty `projectIds` is Pro (`slack_routing`): routing a project to its own channel is
+ *   what a second channel is for, and the second channel is what Pro buys. Clearing it is free.
  * - `DELETE` (owner/admin): `{ connectionId }` removes the row and tells Slack to revoke the
  *   webhook's token when it can. If the default was removed, the oldest remaining channel
  *   becomes the default so events still have somewhere to go.
@@ -18,6 +20,7 @@ import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SlackConnectionModel } from "@/lib/models/SlackConnection";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { slackEnabled } from "@/lib/slack/config";
 import { SLACK_EVENT_KEYS, listSlackConnections, serializeSlackConnection, type SlackEventKey } from "@/lib/slack/connections";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
@@ -71,6 +74,15 @@ export async function PATCH(request: Request) {
     }
     if (Array.isArray(body?.projectIds)) {
       const ids = body.projectIds.filter((p): p is string => typeof p === "string" && Types.ObjectId.isValid(p));
+      // Routing a project to its own channel is what a second channel is for, so it is gated with
+      // the second channel (docs/prds/lnkdrp-slack.md; FREE_SLACK_CHANNELS). Emptying the list is
+      // always allowed: a workspace that drops to Free must be able to undo its own routing.
+      if (ids.length) {
+        const allowed = await checkLimit(ctx.orgId, "slack_routing");
+        if (!allowed.ok) {
+          return planLimitResponse(allowed, { orgId: ctx.orgId, userId: ctx.userId, actorKind: "user", request });
+        }
+      }
       set.projectIds = ids.map((p) => new Types.ObjectId(p));
     }
 

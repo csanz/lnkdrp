@@ -1,6 +1,6 @@
 # PRD — Slack (workspace updates in a channel you choose)
 
-**Status:** Decisions 1–12 and open questions 1 and 4 locked 2026-09-24 (every plan; an Integrations sidebar entry and page). M1 built the same day: sidebar entry, `/integrations` and `/integrations/slack`, `SlackConnection`, install and callback routes with signed state, encrypted webhook storage, settings API, test message, activity rows, purge. M2 built 2026-09-24: `SlackOutbox` ledger, `enqueueSlackPosts` at the four event sites (posted from `after()` at the moment), `drainSlackOutbox` from the notification-emails and visit-briefs crons with the queue backoff ladder, project routing (`routeSlackConnections`), the 30-a-minute burst cap, the four Block Kit renderers with the plan-gated reader identity, purge coverage and tests. Waiting on the Slack app credentials (`SLACK_CLIENT_ID`/`SLACK_CLIENT_SECRET`) for the first real connect. M3 built 2026-09-24: the Projects section on each channel card (rooms and request inboxes; picking a project on one card pulls it from any other, one project posts to one channel), routing includes the request inbox a document arrived through. M4 built 2026-09-24: `integrations.slack` on `/api/agent/whoami` and `lnkdrp_whoami`, FEATURES.md section, CHANGELOG-2026-09-24, DEPLOY.md 4.7 and env rows, PRODUCTION.md ledger row. On 2026-09-25 the docUpdates switch grew to cover new documents, documents added to a data room and new share links, under the one "Document changes" switch.
+**Status:** Decisions 1–12 and open questions 1 and 4 locked 2026-09-24 (every plan; an Integrations sidebar entry and page). M1 built the same day: sidebar entry, `/integrations` and `/integrations/slack`, `SlackConnection`, install and callback routes with signed state, encrypted webhook storage, settings API, test message, activity rows, purge. M2 built 2026-09-24: `SlackOutbox` ledger, `enqueueSlackPosts` at the four event sites (posted from `after()` at the moment), `drainSlackOutbox` from the notification-emails and visit-briefs crons with the queue backoff ladder, project routing (`routeSlackConnections`), the 30-a-minute burst cap, the four Block Kit renderers with the plan-gated reader identity, purge coverage and tests. Waiting on the Slack app credentials (`SLACK_CLIENT_ID`/`SLACK_CLIENT_SECRET`) for the first real connect. M3 built 2026-09-24: the Projects section on each channel card (rooms and request inboxes; picking a project on one card pulls it from any other, one project posts to one channel), routing includes the request inbox a document arrived through. M4 built 2026-09-24: `integrations.slack` on `/api/agent/whoami` and `lnkdrp_whoami`, FEATURES.md section, CHANGELOG-2026-09-24, DEPLOY.md 4.7 and env rows, PRODUCTION.md ledger row. On 2026-09-25 the docUpdates switch grew to cover new documents, documents added to a data room and new share links, under the one "Document changes" switch. On 2026-09-26 the plan rule became scale, not feature: one channel on Free, more channels and project routing on Pro (see open question 1).
 **Owner:** chrissanz
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-view-notifications](./lnkdrp-view-notifications.md) · [lnkdrp-notification-queue](./lnkdrp-notification-queue.md) · [lnkdrp-visit-briefs](./lnkdrp-visit-briefs.md) · [REALTIME](../REALTIME.md) · [CRON](../CRON.md)
@@ -116,6 +116,22 @@ first integration listed there; the page is built to list more.
 8. **Block Kit with a plain-text fallback, one message per event, no threads.** A header line,
    a context line, one link. Reader name as text, never as a Slack mention. Under 300 characters
    of prose. The brief message is the exception: headline, the ≤80-word body, and the link.
+
+   Amended 2026-09-25: **two colours and one emoji**, because a channel of these had no hierarchy —
+   "Ana Lima opened Fundraising memo" and "Round terms was added · 1 page" were the same weight, the
+   same blue, the same grey second line, and Slack hides the app icon after the first of a run, so
+   nothing in the message carried the difference. The blocks now go inside an `attachment` whose
+   `color` is the accent green (`--chart-views`) for anything a **recipient** did — opened,
+   introduced themselves, finished reading, sent a file back — and grey for what the **workspace**
+   did to its own documents: added, replaced, a new link. That is decision 5's own line ("the channel
+   is for what recipients do"), drawn in colour. Two and not five: the point is that one class jumps
+   out, which stops being true once everything is coloured. Each kind also leads with one emoji, in
+   the blocks only and never in `text` — Slack reads `text` alone for mobile notifications and screen
+   readers, where a leading shortcode is announced before the sentence. `unfurl_links` and
+   `unfurl_media` are both false on every post: every URL here points into the signed-in app, so the
+   only card an unfurl could add is the logged-out marketing page. Nesting `blocks` in an attachment
+   is Slack's documented way to have both layout and a colour, and all of this works on the existing
+   incoming webhook — no new scope, no reinstall.
 
 9. **Slack's answer decides the connection's state.** `ok` → `lastPostAt`. `404`/`410` with
    `no_service`, `channel_not_found`, `invalid_token` → the connection becomes `revoked` with
@@ -284,7 +300,13 @@ CHANGELOG, DEPLOY.md env table and the Slack app checklist in section 4, PRODUCT
 ## Open questions
 
 1. **Plan gating.** Resolved 2026-09-24: every plan, with plan-shaped content. (Was: proposed, or Pro-only as
-   a reason to upgrade? The view email is on Free; matching it is the consistent answer.
+   a reason to upgrade? The view email is on Free; matching it is the consistent answer.)
+   Refined 2026-09-26: the scale is gated, not the feature. Free connects one channel
+   (`FREE_SLACK_CHANNELS`) and it posts all five kinds of message; the second channel
+   (`slack_channels`, a counted cap) and routing a project to its own channel (`slack_routing`, a
+   feature gate) are Pro. The reasoning is that a Free user watching the posts land every day is a
+   better argument for Pro than a locked page, and that routing a room to its own channel is a
+   want that arrives with several rooms, which Free does not have.
 2. **Return visits.** The view email fires on the first open only; return visits reach the owner
    through the brief. Should the Slack "opened" message also fire on a return after 24 hours
    quiet (a cheap "they're back")? Proposed no for v1; the brief says it better.

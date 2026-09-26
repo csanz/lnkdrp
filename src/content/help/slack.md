@@ -28,6 +28,8 @@ The first channel you connect is the **default**: anything not routed to another
 
 ## More than one channel
 
+More than one channel is a Pro feature, and so is routing a project to one. Free connects a single channel, and that channel posts everything: all five kinds of message, on every plan.
+
 Click **Add channel** to connect another one. Each channel has its own switches and its own projects.
 
 - **Projects**: on a channel's card, pick the projects (data rooms and request inboxes) that should post there. A project posts to one channel; picking it on another card moves it.

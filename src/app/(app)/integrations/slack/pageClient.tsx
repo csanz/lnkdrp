@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import { usePlan } from "@/lib/client/usePlan";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import type { SlackConnectionDto, SlackEventKey } from "@/lib/slack/connections";
 import { SlackMark, useSlackConnections, type SlackState } from "./slackShared";
 
@@ -32,6 +33,7 @@ const REASON_COPY: Record<string, string> = {
   code: "Slack did not send back a code. Start again from this page.",
   exchange: "Slack did not accept the install. Try again in a minute.",
   not_configured: "Slack is not set up on this deployment.",
+  plan_limit: "Nothing was connected: this workspace is at its Slack channel limit. Upgrade to Pro to add another channel and route projects to it.",
 };
 
 type RoutableProject = { id: string; name: string; isRequest: boolean };
@@ -67,7 +69,10 @@ export default function SlackPageClient({ initialSlack = null }: { initialSlack?
   const reason = params.get("reason") ?? "";
   const { data, error, loading, refresh, setData } = useSlackConnections(initialSlack);
   const { plan } = usePlan();
+  const { openUpgrade } = useUpgradeModal();
   const canManage = plan?.role === "owner" || plan?.role === "admin";
+  // Scale is the gate: Free keeps one channel that posts everything, and pays for the second.
+  const isPro = plan?.plan === "pro";
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(
     landed === "connected"
@@ -98,6 +103,11 @@ export default function SlackPageClient({ initialSlack = null }: { initialSlack?
   );
 
   const connections = data?.connections ?? [];
+  // The cap counts what Slack still has: a channel Slack removed is dead weight, and refusing a
+  // replacement because of it would be a wall with nothing behind it.
+  const liveChannels = connections.filter((c) => c.status !== "revoked").length;
+  const channelCap = plan?.limits?.slackChannels ?? null;
+  const atChannelCap = !isPro && channelCap !== null && liveChannels >= channelCap;
   const enabled = data?.enabled ?? true;
 
   // The picker's options. Loaded once there is a channel to route to; not on the empty state.
@@ -164,15 +174,27 @@ export default function SlackPageClient({ initialSlack = null }: { initialSlack?
         ) : (
           <div className="grid gap-4">
             {connections.map((c) => (
-              <ChannelRow key={c.id} c={c} all={connections} projects={projects} canManage={canManage} busy={busy} call={call} setNotice={setNotice} />
+              <ChannelRow key={c.id} c={c} all={connections} projects={projects} canManage={canManage} isPro={isPro} busy={busy} call={call} setNotice={setNotice} />
             ))}
             {canManage ? (
               <div>
-                <a href="/api/slack/install" className={`${BTN_SECONDARY} gap-2`}>
-                  <SlackMark className="h-4 w-4" /> Add channel
-                </a>
+                {atChannelCap ? (
+                  // The install is Slack's own screen, so a link here would take someone all the
+                  // way through it only to be turned back at the callback. The button says it
+                  // first instead.
+                  <button type="button" onClick={() => openUpgrade("slack_channels", { from: "slack" })} className={`${BTN_SECONDARY} gap-2`}>
+                    <SlackMark className="h-4 w-4" /> Add channel
+                    <span className="ml-1.5 rounded-md bg-[var(--fg)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--bg)]">Pro</span>
+                  </button>
+                ) : (
+                  <a href="/api/slack/install" className={`${BTN_SECONDARY} gap-2`}>
+                    <SlackMark className="h-4 w-4" /> Add channel
+                  </a>
+                )}
                 <p className="mt-2 max-w-[70ch] text-[12px] leading-5 text-[var(--muted-2)]">
-                  Want one project&apos;s activity in its own channel? Click Add channel, pick the channel on Slack&apos;s screen, then choose the project on the new card. Everything else keeps posting to the default channel. Each channel is its own install on Slack&apos;s side.
+                  {atChannelCap
+                    ? "This channel keeps posting everything. Pro adds channels and sends each data room to the one its team is watching, so a raise and a hiring round do not land in the same place."
+                    : "Want one project's activity in its own channel? Click Add channel, pick the channel on Slack's screen, then choose the project on the new card. Everything else keeps posting to the default channel. Each channel is its own install on Slack's side."}
                 </p>
               </div>
             ) : null}
@@ -193,6 +215,7 @@ function ChannelRow({
   all,
   projects,
   canManage,
+  isPro,
   busy,
   call,
   setNotice,
@@ -201,6 +224,7 @@ function ChannelRow({
   all: SlackConnectionDto[];
   projects: RoutableProject[] | null;
   canManage: boolean;
+  isPro: boolean;
   busy: string | null;
   call: (key: string, method: "PATCH" | "DELETE" | "POST", path: string, body: Record<string, unknown>) => Promise<unknown>;
   setNotice: (n: { tone: "ok" | "error"; text: string } | null) => void;
@@ -297,7 +321,7 @@ function ChannelRow({
           );
         })}
       </ul>
-      {!revoked ? <ProjectRouting c={c} all={all} projects={projects} canManage={canManage} busy={busy} call={call} /> : null}
+      {!revoked ? <ProjectRouting c={c} all={all} projects={projects} canManage={canManage} isPro={isPro} busy={busy} call={call} /> : null}
       {c.configurationUrl ? (
         <p className="mt-3 text-[12px] text-[var(--muted-2)]">
           Remove the app on Slack&apos;s side from its{" "}
@@ -321,6 +345,7 @@ function ProjectRouting({
   all,
   projects,
   canManage,
+  isPro,
   busy,
   call,
 }: {
@@ -328,6 +353,7 @@ function ProjectRouting({
   all: SlackConnectionDto[];
   projects: RoutableProject[] | null;
   canManage: boolean;
+  isPro: boolean;
   busy: string | null;
   call: (key: string, method: "PATCH" | "DELETE" | "POST", path: string, body: Record<string, unknown>) => Promise<unknown>;
 }) {
@@ -351,7 +377,9 @@ function ProjectRouting({
   // projects is told that rather than shown an empty picker.
   const explain = c.isDefault
     ? onlyChannel
-      ? "Everything posts here. To send one project's activity to its own channel, click Add channel below and pick the project on the new card."
+      ? isPro
+        ? "Everything posts here. To send one project's activity to its own channel, click Add channel below and pick the project on the new card."
+        : "Everything posts here. Pro adds a second channel and sends one data room to it, so a raise and a hiring round do not land in the same place."
       : mapped.length
         ? "The catch-all: these projects, plus anything not routed to another channel."
         : "The catch-all: anything not routed to another channel posts here."
@@ -362,7 +390,11 @@ function ProjectRouting({
         : options.length
           ? `Nothing posts here yet. Pick a project and its documents post here instead of ${defaultName}.`
           : `Nothing posts here yet. Every project is already routed; pick one from another card to move it here, or make this channel the default.`;
-  const showPicker = canManage && projects !== null && options.length > 0 && !(c.isDefault && onlyChannel);
+  // Routing is what a second channel is for, so it is Pro with the second channel. A workspace
+  // that dropped to Free keeps whatever it routed and can still take a project off a card; only
+  // adding one is refused, here and in the route.
+  const showPicker = canManage && isPro && projects !== null && options.length > 0 && !(c.isDefault && onlyChannel);
+  const showRoutingUpsell = canManage && !isPro && !(c.isDefault && onlyChannel);
 
   return (
     <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
@@ -394,6 +426,8 @@ function ProjectRouting({
               );
             })}
           </select>
+        ) : showRoutingUpsell ? (
+          <span className="rounded-md bg-[var(--fg)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--bg)]">Pro</span>
         ) : canManage && projects === null && !c.isDefault ? (
           <span className="text-[12px] text-[var(--muted-2)]">Loading projects…</span>
         ) : null}

@@ -144,6 +144,7 @@ export default async function PricingPage() {
                   "Version history, with AI compare from 2 credits",
                   "Password protection and download control",
                   "Built for Claude Code, Cursor, Codex, and any MCP client",
+                  "One Slack channel, posting every kind of update",
                   `${FREE_STARTER_CREDITS} credits to start, one time`,
                   "Single user",
                 ]}
@@ -197,6 +198,7 @@ export default async function PricingPage() {
                   "AI summary on every link, 1 credit; free when your agent writes it",
                   "Password protection and download control",
                   "Built for Claude Code, Cursor, Codex, and any MCP client",
+                  "Slack channels without limit, each data room routed to its own",
                 ]}
               />
               <div className="mt-8 flex-1" />

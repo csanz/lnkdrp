@@ -30,11 +30,12 @@ async function serverConstants() {
 
 describe("client copy mirrors the server plan constants", () => {
   test("the Free caps on screen are the Free caps enforced", async () => {
-    const { FREE_DOCUMENTS, FREE_PROJECTS, FREE_ANALYTICS_DAYS } = await serverConstants();
+    const { FREE_DOCUMENTS, FREE_PROJECTS, FREE_ANALYTICS_DAYS, FREE_SLACK_CHANNELS } = await serverConstants();
 
     expect(FREE_PLAN_LIMITS_COPY.documents).toBe(FREE_DOCUMENTS);
     expect(FREE_PLAN_LIMITS_COPY.projects).toBe(FREE_PROJECTS);
     expect(FREE_PLAN_LIMITS_COPY.analyticsDays).toBe(FREE_ANALYTICS_DAYS);
+    expect(FREE_PLAN_LIMITS_COPY.slackChannels).toBe(FREE_SLACK_CHANNELS);
   });
 
   test("the compare prices the copy divides by are the prices charged", async () => {
