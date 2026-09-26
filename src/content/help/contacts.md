@@ -46,7 +46,9 @@ Every control is in the address bar, so a filtered view survives a reload and ca
 
 **Download CSV** gives you the rows you are looking at, with the search and filters you have applied, not the whole list. The file carries the name, address, domain, whether the address is confirmed, the first and last dates, the documents and projects counts, the visits, the tags and how they last arrived. On Free the held-back names and addresses are empty cells in the file, never a placeholder.
 
-The file opens in a spreadsheet as it is, and imports into anything that reads CSV.
+The file opens in a spreadsheet as it is, and imports into anything that reads CSV. It arrives as it is built, so a long list starts downloading straight away instead of making you wait for the whole thing.
+
+One download holds 25,000 contacts. Past that the button says so and asks you to narrow the list first, rather than handing you a file that is quietly missing people.
 
 ## Tags and notes
 

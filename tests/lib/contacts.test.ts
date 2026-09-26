@@ -39,7 +39,7 @@ const findOneAndUpdate = vi.fn(() => {
 });
 const updateOne = vi.fn(async () => ({ matchedCount: state.matchedCount, modifiedCount: 1 }));
 const aggregate = vi.fn((_pipeline: Array<Record<string, unknown>>) => ({ collation: async () => state.aggregateDocs }));
-const countDocuments = vi.fn(async () => state.total);
+const countDocuments = vi.fn(async (_filter?: Record<string, unknown>) => state.total);
 const findOne = vi.fn(() => ({ lean: async () => state.contact }));
 const shareViewerEmailFind = vi.fn(() => ({ select: () => ({ lean: async () => state.verifiedRows }) }));
 const tagAssignmentFind = vi.fn(() => ({ select: () => ({ lean: async () => state.tagAssignmentRows }) }));
@@ -77,10 +77,12 @@ const {
   getContact,
   setContactNote,
   contactsCsv,
+  contactsCsvChunks,
+  countContacts,
   contactIdentityAllowed,
   CONTACT_TAG_TARGET_KIND,
 } = await import("@/lib/contacts/service");
-const { csvField, contactsToCsv, CONTACTS_CSV_COLUMNS } = await import("@/lib/contacts/csv");
+const { csvField, contactsToCsv, CONTACTS_CSV_COLUMNS, CONTACTS_CSV_MAX_ROWS } = await import("@/lib/contacts/csv");
 const { CONTACT_SOURCES_KEPT, CONTACT_DOC_IDS_KEPT } = await import("@/lib/models/Contact");
 const { TAG_TARGET_KINDS } = await import("@/lib/models/TagAssignment");
 
@@ -547,12 +549,52 @@ describe("CSV", () => {
     expect(full.split("\r\n")[1].startsWith("Priya Nair,priya@sequoiacap.com,sequoiacap.com,")).toBe(true);
   });
 
-  test("contactsCsv pages the query at 200 until a short page", async () => {
+  test("contactsCsv pages the query at 500 until a short page", async () => {
     state.aggregateDocs = [contactDoc()];
     await contactsCsv({ orgId: ORG, identity: true, sort: "name" });
     expect(aggregate).toHaveBeenCalledTimes(1);
     const pipeline = aggregate.mock.calls[0][0] as unknown as Array<Record<string, unknown>>;
-    expect(pipeline.find((s) => "$limit" in s)).toEqual({ $limit: 200 });
+    expect(pipeline.find((s) => "$limit" in s)).toEqual({ $limit: 500 });
     expect(pipeline.find((s) => "$sort" in s)).toEqual({ $sort: { name: 1, _id: 1 } });
+  });
+
+  /**
+   * The download streams so a long list never sits in the server's memory. What that asks of the
+   * generator: the header goes out before anything is read (so a browser has the file started
+   * even on an empty workspace), a batch is yielded as it arrives rather than accumulated, and a
+   * full page is followed by another query while a short one ends it.
+   */
+  test("contactsCsvChunks yields the header first, then a batch at a time", async () => {
+    state.aggregateDocs = [contactDoc()];
+    const it = contactsCsvChunks({ orgId: ORG, identity: true });
+    const first = await it.next();
+    expect(first.value).toBe(CONTACTS_CSV_COLUMNS.join(",") + "\r\n");
+    expect(aggregate).not.toHaveBeenCalled();
+
+    const second = await it.next();
+    expect(aggregate).toHaveBeenCalledTimes(1);
+    expect(String(second.value).endsWith("\r\n")).toBe(true);
+    expect(String(second.value).split("\r\n").filter(Boolean)).toHaveLength(1);
+    expect((await it.next()).done).toBe(true);
+  });
+
+  test("the stream stops at the cap however many rows the database would keep giving", async () => {
+    // Every page comes back full, so only the cap can end the walk.
+    state.aggregateDocs = Array.from({ length: 500 }, () => contactDoc());
+    let rows = 0;
+    for await (const chunk of contactsCsvChunks({ orgId: ORG, identity: true })) {
+      rows += chunk.split("\r\n").filter((l) => l && !l.startsWith("name,email")).length;
+    }
+    expect(rows).toBe(CONTACTS_CSV_MAX_ROWS);
+    expect(aggregate).toHaveBeenCalledTimes(CONTACTS_CSV_MAX_ROWS / 500);
+  });
+
+  test("countContacts counts through the same filter as the rows, and never reads one", async () => {
+    state.total = 7;
+    expect(await countContacts({ orgId: ORG, q: "nair" })).toBe(7);
+    expect(aggregate).not.toHaveBeenCalled();
+    const filter = countDocuments.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(filter.orgId).toEqual(ORG);
+    expect(filter.$or).toBeTruthy();
   });
 });

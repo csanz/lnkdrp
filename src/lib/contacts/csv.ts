@@ -78,9 +78,27 @@ export function contactCsvCells(row: ContactRow): string[] {
   ];
 }
 
+/**
+ * How many rows a download may carry.
+ *
+ * The file is streamed a batch at a time, so this is no longer a memory ceiling; it is the point
+ * past which a spreadsheet is the wrong answer, and where the export route says so rather than
+ * handing back a file that is quietly missing people. It lives here rather than in the service so
+ * the page can show the same number without importing anything that talks to a database.
+ */
+export const CONTACTS_CSV_MAX_ROWS = 25_000;
+
+/** The header line, without its terminator. */
+export const CONTACTS_CSV_HEADER = CONTACTS_CSV_COLUMNS.join(",");
+
+/** One contact as a CSV line, without its terminator. */
+export function contactCsvLine(row: ContactRow): string {
+  return contactCsvCells(row).map(csvField).join(",");
+}
+
 /** The whole file: header, then one line per row, CRLF-terminated as the RFC prefers. */
 export function contactsToCsv(rows: ReadonlyArray<ContactRow>): string {
-  const lines = [CONTACTS_CSV_COLUMNS.join(",")];
-  for (const row of rows) lines.push(contactCsvCells(row).map(csvField).join(","));
+  const lines = [CONTACTS_CSV_HEADER];
+  for (const row of rows) lines.push(contactCsvLine(row));
   return lines.join("\r\n") + "\r\n";
 }

@@ -48,6 +48,7 @@ import {
 } from "@/lib/client/useContacts";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
+import { CONTACTS_CSV_MAX_ROWS } from "@/lib/contacts/csv";
 import type { TagDTO } from "@/lib/tags/service";
 
 /** How many tag chips a row shows before the rest become "+N". */
@@ -215,6 +216,7 @@ export default function ContactsPageClient() {
   const identity = data ? data.identity : true;
 
   const exportHref = useMemo(() => contactsExportHref(effective), [effective]);
+  const tooManyToDownload = total > CONTACTS_CSV_MAX_ROWS;
 
   const clearFilters = () => {
     setSearch("");
@@ -229,14 +231,26 @@ export default function ContactsPageClient() {
         title="Contacts"
         description="Everyone this workspace has heard from: who introduced themselves, signed in to read, asked to download, or uploaded to a request."
         actions={
-          <a
-            href={exportHref}
-            download
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)]"
-          >
-            <ArrowDownTrayIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-            Download CSV
-          </a>
+          tooManyToDownload ? (
+            // The route refuses past the cap, and a link that answers 413 into a new tab is a
+            // worse way to learn that than a button that says so before it is clicked.
+            <span
+              className="inline-flex h-8 cursor-not-allowed items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--muted)]"
+              title={`A download holds ${CONTACTS_CSV_MAX_ROWS.toLocaleString("en-US")} contacts. Narrow the list with a search, a tag or how they arrived.`}
+            >
+              <ArrowDownTrayIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
+              Too many to download
+            </span>
+          ) : (
+            <a
+              href={exportHref}
+              download
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)]"
+            >
+              <ArrowDownTrayIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+              Download CSV
+            </a>
+          )
         }
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">

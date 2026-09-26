@@ -12,6 +12,8 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { Types } from "mongoose";
 
+import { CONTACTS_CSV_MAX_ROWS } from "@/lib/contacts/csv";
+
 const USER = new Types.ObjectId().toString();
 const ORG = new Types.ObjectId().toString();
 const CONTACT_ID = new Types.ObjectId().toString();
@@ -32,8 +34,21 @@ const listContacts = vi.fn();
 const getContact = vi.fn();
 const setContactNote = vi.fn();
 const contactsCsv = vi.fn();
+const contactsCsvChunks = vi.fn();
+const countContacts = vi.fn();
 const contactIdentityAllowed = vi.fn();
-vi.mock("@/lib/contacts/service", () => ({ listContacts, getContact, setContactNote, contactsCsv, contactIdentityAllowed }));
+vi.mock("@/lib/contacts/service", async (importOriginal) => ({
+  listContacts,
+  getContact,
+  setContactNote,
+  contactsCsv,
+  contactsCsvChunks,
+  countContacts,
+  contactIdentityAllowed,
+  // The cap is the real one. A test that invented its own number would pass while the route
+  // refused at a different count than the page promises.
+  CONTACTS_CSV_MAX_ROWS: (await importOriginal<typeof import("@/lib/contacts/csv")>()).CONTACTS_CSV_MAX_ROWS,
+}));
 
 const recordActivity = vi.fn(async () => undefined);
 vi.mock("@/lib/activity/log", () => ({ recordActivity }));
@@ -116,6 +131,11 @@ beforeEach(() => {
   contactIdentityAllowed.mockResolvedValue(true);
   listContacts.mockResolvedValue(EMPTY_PAGE);
   contactsCsv.mockResolvedValue("name,email\r\n");
+  countContacts.mockResolvedValue(2);
+  contactsCsvChunks.mockImplementation(async function* () {
+    yield "name,email\r\n";
+    yield "Priya Nair,priya@sequoiacap.com\r\n";
+  });
   getContact.mockResolvedValue(detail());
   setContactNote.mockResolvedValue(detail({ note: { text: "warm", byUserId: USER, byName: "Chris", at: "2026-09-25T00:00:00.000Z" } }));
 });
@@ -194,7 +214,8 @@ describe("GET /api/contacts/export", () => {
     resolveActor.mockResolvedValue(temp);
     const res = await exportGet(new Request("http://localhost/api/contacts/export"));
     expect(res.status).toBe(401);
-    expect(contactsCsv).not.toHaveBeenCalled();
+    expect(contactsCsvChunks).not.toHaveBeenCalled();
+    expect(countContacts).not.toHaveBeenCalled();
   });
 
   test("answers CSV as an attachment named after the workspace and the day", async () => {
@@ -204,7 +225,49 @@ describe("GET /api/contacts/export", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
     expect(res.headers.get("content-disposition")).toBe(`attachment; filename="contacts-acme-${today}.csv"`);
-    expect(await res.text()).toBe("name,email\r\n");
+    // The byte order mark is for Excel, which reads a UTF-8 file without one as the local code
+    // page. Asserted on the bytes, because `Response.text()` decodes per spec and swallows a
+    // leading BOM, which would make a file that lost it look identical to one that kept it.
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect([...bytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
+    expect(new TextDecoder().decode(bytes.slice(3))).toBe("name,email\r\nPriya Nair,priya@sequoiacap.com\r\n");
+  });
+
+  /**
+   * The cap has to be answered before the first byte: a download is a 200 the moment it starts,
+   * and a file that is quietly short is worse than a refusal that says how many there are.
+   */
+  test("past the cap it refuses with the count instead of streaming a short file", async () => {
+    countContacts.mockResolvedValue(CONTACTS_CSV_MAX_ROWS + 1);
+    const res = await exportGet(new Request("http://localhost/api/contacts/export"));
+    expect(res.status).toBe(413);
+    expect(contactsCsvChunks).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.total).toBe(CONTACTS_CSV_MAX_ROWS + 1);
+    expect(body.max).toBe(CONTACTS_CSV_MAX_ROWS);
+    expect(body.error).toContain("Narrow it");
+  });
+
+  test("exactly the cap still downloads", async () => {
+    countContacts.mockResolvedValue(CONTACTS_CSV_MAX_ROWS);
+    const res = await exportGet(new Request("http://localhost/api/contacts/export"));
+    expect(res.status).toBe(200);
+    expect(contactsCsvChunks).toHaveBeenCalledTimes(1);
+  });
+
+  test("the count is taken through the same filters as the rows, so the two cannot disagree", async () => {
+    const tagId = new Types.ObjectId().toString();
+    await exportGet(new Request(`http://localhost/api/contacts/export?q=nair&tagId=${tagId}&source=introduced`));
+    expect(countContacts).toHaveBeenCalledWith({
+      orgId: ORG,
+      q: "nair",
+      tagId,
+      docId: undefined,
+      projectId: undefined,
+      shareId: undefined,
+      domain: undefined,
+      source: "introduced",
+    });
   });
 
   test("falls back to the workspace id when there is no slug", async () => {
@@ -217,7 +280,7 @@ describe("GET /api/contacts/export", () => {
     contactIdentityAllowed.mockResolvedValue(false);
     const tagId = new Types.ObjectId().toString();
     await exportGet(new Request(`http://localhost/api/contacts/export?q=nair&tagId=${tagId}&source=introduced&sort=name&dir=asc&page=4`));
-    expect(contactsCsv).toHaveBeenCalledWith({
+    expect(contactsCsvChunks).toHaveBeenCalledWith({
       orgId: ORG,
       identity: false,
       q: "nair",

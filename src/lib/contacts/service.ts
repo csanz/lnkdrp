@@ -34,7 +34,10 @@ import { ShareViewerEmailModel } from "@/lib/models/ShareViewerEmail";
 import { TagAssignmentModel, type TagTargetKind } from "@/lib/models/TagAssignment";
 import { UserModel } from "@/lib/models/User";
 import { tagsForTarget, tagsForTargets, type TagDTO } from "@/lib/tags/service";
-import { contactsToCsv } from "./csv";
+import { contactCsvLine, CONTACTS_CSV_HEADER, CONTACTS_CSV_MAX_ROWS } from "./csv";
+
+/** What ends a line in the file. RFC 4180 asks for CRLF, and Excel is happier for it. */
+const CSV_EOL = "\r\n";
 
 export type { ContactSourceKind } from "@/lib/models/Contact";
 
@@ -540,29 +543,68 @@ export async function setContactNote(params: {
   return getContact({ orgId, contactId: params.contactId, identity });
 }
 
-/** How many rows a CSV may carry. A list past this is a database dump, not a spreadsheet. */
-export const CONTACTS_CSV_MAX_ROWS = 10_000;
+/** Rows read per query while a download streams. Large enough that 25,000 rows is 50 queries. */
+const CSV_BATCH = 500;
 
-/** The list as a CSV, every matching row, in the same order and with the same redaction as the page. */
-export async function contactsCsv(
+export { CONTACTS_CSV_MAX_ROWS } from "./csv";
+
+/**
+ * How many contacts a filter matches, without reading any of them.
+ *
+ * The export asks this before it starts, because once the first byte of a download is on the wire
+ * the status code is already 200 and there is no way left to say "this would have been short".
+ */
+export async function countContacts(
+  params: { orgId: string | Types.ObjectId } & ContactFilters,
+): Promise<number> {
+  const orgId = toObjectId(params.orgId);
+  if (!orgId) return 0;
+  await connectMongo();
+  const filter = await buildFilter(orgId, params);
+  if (!filter) return 0;
+  return ContactModel.countDocuments(filter);
+}
+
+/**
+ * The download, a piece at a time: the header, then batches of rows in the list's own order.
+ *
+ * Yielding rather than returning one string is what lets a long list leave the server without
+ * ever being held in it, and what lets the browser start writing the file while the database is
+ * still reading. The cap is still enforced here, so a caller that skipped `countContacts` cannot
+ * stream for ever; the route refuses past the cap instead of relying on it.
+ */
+export async function* contactsCsvChunks(
   params: { orgId: string | Types.ObjectId; identity: boolean } & ContactFilters & { sort?: ContactSort; dir?: "asc" | "desc" },
-): Promise<string> {
+): AsyncGenerator<string> {
+  yield CONTACTS_CSV_HEADER + CSV_EOL;
   const { sort, dir } = pageArgs(params);
   const orgId = toObjectId(params.orgId);
-  if (!orgId) return contactsToCsv([]);
+  if (!orgId) return;
   await connectMongo();
 
   const filter = await buildFilter(orgId, params);
-  if (!filter) return contactsToCsv([]);
+  if (!filter) return;
 
-  const rows: ContactRow[] = [];
-  const pageSize = 200;
-  for (let skip = 0; skip < CONTACTS_CSV_MAX_ROWS; skip += pageSize) {
-    const batch = await queryRows({ orgId, identity: params.identity, filter, sort, dir, skip, limit: pageSize });
-    rows.push(...batch);
-    if (batch.length < pageSize) break;
+  for (let skip = 0; skip < CONTACTS_CSV_MAX_ROWS; skip += CSV_BATCH) {
+    const limit = Math.min(CSV_BATCH, CONTACTS_CSV_MAX_ROWS - skip);
+    const batch = await queryRows({ orgId, identity: params.identity, filter, sort, dir, skip, limit });
+    if (batch.length) yield batch.map((row) => contactCsvLine(row) + CSV_EOL).join("");
+    if (batch.length < limit) return;
   }
-  return contactsToCsv(rows.slice(0, CONTACTS_CSV_MAX_ROWS));
+}
+
+/**
+ * The list as one CSV string.
+ *
+ * The route streams instead (`contactsCsvChunks`); this stays for callers that want the whole
+ * thing in hand, and is the same bytes in the same order.
+ */
+export async function contactsCsv(
+  params: { orgId: string | Types.ObjectId; identity: boolean } & ContactFilters & { sort?: ContactSort; dir?: "asc" | "desc" },
+): Promise<string> {
+  let out = "";
+  for await (const chunk of contactsCsvChunks(params)) out += chunk;
+  return out;
 }
 
 /** Whether this workspace may see who its contacts are: Pro, exactly as every other identity surface. */
