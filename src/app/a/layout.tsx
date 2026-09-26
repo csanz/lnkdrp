@@ -18,18 +18,25 @@
  * Router. It costs one cached actor resolve and one `_id`-keyed user read, which is what the
  * endpoints underneath were each going to do anyway.
  */
-import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
 import AdminShell from "@/components/admin/AdminShell";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
+import { serverComponentRequest } from "@/lib/gating/serverComponentRequest";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  // `requireAdmin` reads the session off a `Request`; a layout has the incoming headers instead, and
-  // they carry the cookie it needs. Building one here keeps a single implementation of the rule
-  // rather than a second copy that answers "is this an admin" slightly differently — which is the
-  // exact drift the helper was written to end (it replaced twenty-six copies).
-  const gate = await requireAdmin(new Request("https://lnkdrp.internal/a", { headers: await headers() }));
+  /**
+   * `requireAdmin` reads the session off a `Request`; a layout has no request, so one is built from
+   * this one's headers *and its cookie jar*. Keeping a single implementation of the rule is the
+   * point — a second copy answering "is this an admin" slightly differently is the drift the helper
+   * was written to end (it replaced twenty-six copies).
+   *
+   * The jar is not decoration. Headers alone left `getToken` unable to find the session cookie (see
+   * `serverComponentRequest`), so every admin resolved as signed out and this gate `notFound()` on
+   * them. It went unnoticed because the localhost bypass above answers first in development, and
+   * the bypass is off in production — which is the one place this was failing.
+   */
+  const gate = await requireAdmin(await serverComponentRequest("/a"));
   if (!gate.ok) notFound();
 
   return <AdminShell>{children}</AdminShell>;

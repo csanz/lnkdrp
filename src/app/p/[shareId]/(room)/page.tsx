@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
 import BrandHeader from "@/components/BrandHeader";
@@ -26,6 +26,7 @@ import PasswordGate from "@/components/PasswordGate";
 import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
 import IntroduceYourself from "../IntroduceYourself";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
+import { serverComponentRequest } from "@/lib/gating/serverComponentRequest";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { shareAuthCookieMatches } from "@/lib/share/cookieCompare";
@@ -167,14 +168,19 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
   // of the project stops being listed — and stops being openable — on the very next load.
   const docs = await listProjectDocuments(project);
   const name = typeof project.name === "string" ? project.name : "";
-  // The same rule every figure on this link uses: the owner and their teammates are recorded and
-  // never counted (`isOwnerSideViewer`), so they are never asked to introduce themselves either.
-  // A server component has no `Request`, and the session resolver reads the JWT out of one. The
-  // cookie header is the only part of it that matters here.
+  /**
+   * The same rule every figure on this link uses: the owner and their teammates are recorded and
+   * never counted (`isOwnerSideViewer`), so they are never asked to introduce themselves either.
+   *
+   * A server component has no `Request` and the session resolver reads the JWT out of one, so one
+   * is built here. It has to carry the cookie *jar* and not only the cookie header: `getToken`
+   * looks for the session on `req.cookies` and never parses the header, so the hand-built Request
+   * this used to pass resolved every owner as a stranger — and the room then asked them to
+   * introduce themselves to their own data room. See `serverComponentRequest`.
+   */
   const sessionUserId = await (async () => {
     try {
-      const h = await headers();
-      const session = await tryResolveAuthUserId(new Request("http://localhost/p", { headers: new Headers({ cookie: h.get("cookie") ?? "" }) }));
+      const session = await tryResolveAuthUserId(await serverComponentRequest("/p"));
       return session?.userId ?? null;
     } catch {
       return null;

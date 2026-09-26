@@ -58,8 +58,10 @@ describe("a server component's Request and the session cookie", () => {
 
   test("the pages that need an actor on the server go through the helper", () => {
     // `pageState` is the one this bug was found in; it must not go back to building its own.
-    const src = fs.readFileSync(path.join(ROOT, "src/lib/slack/pageState.ts"), "utf8");
-    expect(src).toContain("serverComponentRequest");
-    expect(src).not.toMatch(/new Request\(/);
+    for (const rel of ["src/lib/slack/pageState.ts", "src/app/a/layout.tsx", "src/app/p/[shareId]/(room)/page.tsx"]) {
+      const src = fs.readFileSync(path.join(ROOT, rel), "utf8");
+      expect(src, rel).toContain("serverComponentRequest");
+      expect(src, rel).not.toMatch(/new Request\(/);
+    }
   });
 });

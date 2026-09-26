@@ -19,8 +19,12 @@ const notFound = vi.fn(() => {
   throw new Error("NEXT_NOT_FOUND");
 });
 let incoming = new Headers();
+let jar: { name: string; value: string }[] = [];
 
-vi.mock("next/headers", () => ({ headers: async () => incoming }));
+vi.mock("next/headers", () => ({
+  headers: async () => incoming,
+  cookies: async () => ({ getAll: () => jar }),
+}));
 vi.mock("next/navigation", () => ({ notFound: () => notFound() }));
 vi.mock("@/lib/gating/requireAdmin", () => ({
   requireAdmin: (...a: unknown[]) => (requireAdmin as never as (...x: unknown[]) => unknown)(...a),
@@ -38,6 +42,7 @@ const render = () => AdminLayout({ children: null } as never);
 beforeEach(() => {
   vi.clearAllMocks();
   incoming = new Headers({ cookie: "next-auth.session-token=abc", host: "lnkdrp.com" });
+  jar = [{ name: "next-auth.session-token", value: "abc" }];
   requireAdmin.mockResolvedValue({ ok: true, userId: "u1", email: "a@b.c" });
 });
 
@@ -87,5 +92,16 @@ describe("how it decides", () => {
     // ...and `host` decides the development-only localhost bypass, so dropping it would silently
     // change behaviour on a developer's machine rather than in production.
     expect(req.headers.get("host")).toBe("lnkdrp.com");
+  });
+
+  test("the request carries the cookie jar, not just the cookie header", async () => {
+    // `getToken` reads the session from `req.cookies` only and never parses the `cookie` header,
+    // so a plain `new Request(url, { headers })` reads every admin as signed out in production.
+    await render();
+
+    const req = requireAdmin.mock.calls[0]?.[0] as Request & {
+      cookies?: { getAll: () => { name: string; value: string }[] };
+    };
+    expect(req.cookies?.getAll()).toEqual([{ name: "next-auth.session-token", value: "abc" }]);
   });
 });
