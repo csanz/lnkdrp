@@ -13,6 +13,7 @@
 import process from "node:process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 
@@ -114,7 +115,9 @@ async function main() {
       const startedAt = Date.now();
       console.log(`- run: ${file}`);
 
-      const mod = await import(fullPath);
+      // `import()` takes a URL, not a path: on Windows an absolute path is read as the "c:" protocol
+      // and the loader refuses it, so every migration run on a Windows machine died on the first file.
+      const mod = await import(pathToFileURL(fullPath).href);
       const up = mod?.up;
       if (typeof up !== "function") {
         throw new Error(`Migration ${file} must export async function up({ db, mongoose }).`);
