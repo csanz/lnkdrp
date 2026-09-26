@@ -22,6 +22,7 @@ import { z } from "zod";
 
 import { OPENAI_PROVIDER_OPTIONS } from "./openaiProviderOptions";
 import { completeAiRun, failAiRun, startAiRun } from "./aiRunRecorder";
+import { createAiUsageAccumulator } from "./usageTotals";
 
 /**
  * `gpt-4o` by default. The brief is asked to read a few pages of text and say what on them held
@@ -123,12 +124,23 @@ export type VisitBriefOutput = {
   followUp: string | null;
 };
 
+/**
+ * What the brief cost, in the field names `CreditLedger` stores.
+ *
+ * `visitBriefs.ts` hands this record straight to `markLedgerCharged({ telemetry })` and the ledger
+ * is a strict schema, so every key here must be a ledger path or it is dropped on save.
+ */
 export type VisitBriefTelemetry = {
   provider: "openai";
   modelRoute: string;
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;
+  /** Prompt tokens billed at the cached rate: the system prompt and the outline repeat across visits. */
+  cachedInputTokens: number | null;
+  modelCalls: number;
+  /** US dollars, or null when `VISIT_BRIEF_MODEL` points at a model the price table does not know. */
+  costUsdActual: number | null;
   latencyMs: number;
   retriesCount: number;
 };
@@ -294,8 +306,12 @@ export async function generateVisitBrief(params: GenerateVisitBriefParams): Prom
     },
   });
 
+  // One call, but the same accumulator as everywhere else: it is what prices the tokens, and a
+  // failed brief's tokens are recovered from the error below rather than lost.
+  const usage = createAiUsageAccumulator();
+
   try {
-    const { object, usage } = await generateObject({
+    const { object, usage: callUsage } = await generateObject({
       model: openai(VISIT_BRIEF_MODEL),
       providerOptions: OPENAI_PROVIDER_OPTIONS,
       schema: VisitBriefGenerationSchema,
@@ -305,25 +321,30 @@ export async function generateVisitBrief(params: GenerateVisitBriefParams): Prom
       prompt: userPrompt,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
     });
+    usage.add(VISIT_BRIEF_MODEL, callUsage);
     const output = normalizeVisitBriefOutput(object);
     const latencyMs = Date.now() - startedAt;
-    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : null);
+    const totals = usage.totals();
     const telemetry: VisitBriefTelemetry = {
       provider: "openai",
-      modelRoute: VISIT_BRIEF_MODEL,
-      promptTokens: num(usage?.inputTokens),
-      completionTokens: num(usage?.outputTokens),
-      totalTokens: num(usage?.totalTokens),
+      modelRoute: totals?.modelRoute || VISIT_BRIEF_MODEL,
+      promptTokens: totals?.promptTokens ?? null,
+      completionTokens: totals?.completionTokens ?? null,
+      totalTokens: totals?.totalTokens ?? null,
+      cachedInputTokens: totals?.cachedInputTokens ?? null,
+      modelCalls: totals?.modelCalls ?? 0,
+      costUsdActual: totals?.costUsdActual ?? null,
       latencyMs,
       retriesCount: 0,
     };
-    await completeAiRun(aiRunId, { durationMs: latencyMs, outputObject: object, outputText: JSON.stringify(output) });
+    await completeAiRun(aiRunId, { durationMs: latencyMs, outputObject: object, outputText: JSON.stringify(output), usage: totals });
     return { output, telemetry, aiRunId: aiRunId ? String(aiRunId) : null };
   } catch (err) {
     // `AI_NoObjectGeneratedError` carries the raw text the model returned; keep it on the run so a
     // schema mismatch can be read rather than guessed at.
     const raw = err && typeof err === "object" && typeof (err as { text?: unknown }).text === "string" ? (err as { text: string }).text : null;
-    await failAiRun(aiRunId, { durationMs: Date.now() - startedAt, error: err, outputText: raw });
+    usage.addFromError(VISIT_BRIEF_MODEL, err);
+    await failAiRun(aiRunId, { durationMs: Date.now() - startedAt, error: err, outputText: raw, usage: usage.totals() });
     throw err;
   }
 }

@@ -59,16 +59,20 @@ const creditLedgerSchema = new Schema(
     creditsCharged: { type: Number, min: 0, default: 0 },
 
     /**
-     * True-cost tracking. `costUnitsActual` is written; **`costUsdActual` is not, by anything.**
+     * True cost tracking.
      *
-     * Every row is created with it null (`src/lib/credits/mongooseStore.ts`) and no charge path
-     * ever sets it — the charge path fills provider and token telemetry, not dollars. It is kept
-     * because the aggregates and `/api/billing/usage` still read it and would have to be migrated
-     * together, not because it holds anything.
+     * `costUsdActual` is what this run cost us in US dollars, written at settle time by
+     * `markLedgerCharged` from the token telemetry beside it and the dated price table in
+     * `src/lib/ai/modelPricing.ts`. Before 2026-09-26 nothing wrote it and every row was null; rows
+     * older than that are still null and must not be back-filled with a guess. It stays null for a
+     * run whose model the price table does not know and for one whose provider reported no usage,
+     * so null means "not established" and never "free" — see `costUsdForLedgerTelemetry`.
+     *
+     * `costUnitsActual` is still written by nothing.
      *
      * Read this before touching `usageAggregation.ts`: invoice dollars come from credits times the
-     * flat rate *because* this is always null. That fallback is not redundant belt-and-braces —
-     * removing it is what made the billing header read $0.00 for a cycle Stripe had really metered.
+     * flat rate, and they must keep doing so. This field is our cost, not the customer's price; the
+     * two are different numbers and putting this one on an invoice would bill the wrong amount.
      */
     costUnitsActual: { type: Number, default: null, min: 0 },
     costUsdActual: { type: Number, default: null, min: 0 },
@@ -107,6 +111,20 @@ const creditLedgerSchema = new Schema(
      */
     imagesAttached: { type: Number, default: null, min: 0 },
     pagesAttached: { type: Number, default: null, min: 0 },
+    /**
+     * Prompt tokens the provider billed at its cached rate (a subset of `promptTokens`, not extra
+     * to it). Priced separately because the cached rate is half the full one, so a run with a large
+     * reused prefix costs materially less than its token total suggests.
+     */
+    cachedInputTokens: { type: Number, default: null, min: 0 },
+    /**
+     * How many provider calls this one charge spanned.
+     *
+     * One charge is not one call: a summary retries once on a bad parse, a review falls back from
+     * structured output to plain text, and both bill for the attempt that failed. Anything above 1
+     * is a run that cost more than its price implies, and this is the column that shows it.
+     */
+    modelCalls: { type: Number, default: null, min: 0 },
 
     // Internal bookkeeping for enforcing on-demand caps (not customer-facing).
     creditsFromTrial: { type: Number, default: 0, min: 0 },
@@ -187,6 +205,12 @@ if (ExistingCreditLedgerModel && !ExistingCreditLedgerModel.schema.path("reportB
   ExistingCreditLedgerModel.schema.add({
     reportBatchId: { type: String, trim: true, default: null, index: true },
     reportClaimedAt: { type: Date, default: null },
+  } as any);
+}
+if (ExistingCreditLedgerModel && !ExistingCreditLedgerModel.schema.path("cachedInputTokens")) {
+  ExistingCreditLedgerModel.schema.add({
+    cachedInputTokens: { type: Number, default: null, min: 0 },
+    modelCalls: { type: Number, default: null, min: 0 },
   } as any);
 }
 if (ExistingCreditLedgerModel && !ExistingCreditLedgerModel.schema.path("adminReason")) {

@@ -36,3 +36,33 @@ export function formatUsdOrNotAvailable(cents: number | null | undefined): strin
 }
 
 
+
+/**
+ * Formats a US dollar amount that may be a fraction of a cent.
+ *
+ * Exists because our own AI cost does not fit the invoice formatter above. One text summary costs
+ * about $0.0004 and `formatUsdFromCents` would print every one of them as "$0.00", which reads as
+ * free and is the exact impression the cost tracking exists to remove. Four decimals below a
+ * dollar, two above it, where the fourth decimal stops carrying information.
+ *
+ * Null is "Not recorded" and never "$0.00": a run whose model is not in the price table, or whose
+ * provider reported no usage, cost something we cannot state.
+ */
+export function formatUsdCost(usd: number | null | undefined): string {
+  if (typeof usd !== "number" || !Number.isFinite(usd)) return "Not recorded";
+  if (usd >= 1) return `$${usd.toFixed(2)}`;
+  if (usd > 0 && usd < 0.0001) return "<$0.0001";
+  return `$${usd.toFixed(4)}`;
+}
+
+/**
+ * Formats a ratio as a whole-number percentage, or a dash placeholder when there is no ratio.
+ *
+ * Exists so a margin column reads "62%" rather than "0.6231", and so the "no answer yet" case (a
+ * window in which nothing was charged, or nothing could be priced) is one shared string instead of
+ * a per-caller improvisation.
+ */
+export function formatRatioPct(ratio: number | null | undefined): string {
+  if (typeof ratio !== "number" || !Number.isFinite(ratio)) return "–";
+  return `${Math.round(ratio * 100)}%`;
+}

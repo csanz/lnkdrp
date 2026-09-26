@@ -6,8 +6,10 @@
  * one workspace with `?workspaceId=`.
  *
  * Telemetry and true-cost fields are contractually internal ("never returned in customer APIs");
- * this is an admin surface, so the cost columns are included and the token/provider telemetry is
- * left out because nothing on the page uses it yet.
+ * this is an admin surface, so they are included here: `costUsdActual` is what the run cost us,
+ * written at settle time from the tokens beside it and the dated table in `src/lib/ai/modelPricing`.
+ * Null is "not established" (no usage reported, or a model the table does not price) and never
+ * "free", and every row charged before 2026-09-26 is null because nothing wrote the field then.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -19,6 +21,17 @@ import { requireAdmin } from "@/lib/gating/requireAdmin";
 import { asNumber, isStalePending } from "@/lib/admin/creditsAdmin";
 
 export const runtime = "nodejs";
+
+/**
+ * A stored number, or null.
+ *
+ * Distinct from `asNumber`, which coerces a missing value to 0. Zero and "never recorded" are
+ * different facts about a token count, and collapsing them is how "we have no telemetry" becomes
+ * "this run used no tokens".
+ */
+function asNumberOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
 
 /** Positive integer from a query param, or null. */
 function asPositiveInt(v: unknown): number | null {
@@ -52,6 +65,12 @@ type LedgerLean = {
   adminReason?: string | null;
   adminActorEmail?: string | null;
   createdDate?: Date;
+  modelRoute?: string | null;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  modelCalls?: number | null;
+  costUsdActual?: number | null;
 };
 
 /**
@@ -113,6 +132,12 @@ export async function GET(request: Request) {
       adminReason: 1,
       adminActorEmail: 1,
       createdDate: 1,
+      modelRoute: 1,
+      promptTokens: 1,
+      completionTokens: 1,
+      totalTokens: 1,
+      modelCalls: 1,
+      costUsdActual: 1,
     })
     .lean()) as LedgerLean[];
 
@@ -152,6 +177,14 @@ export async function GET(request: Request) {
           purchased: asNumber(r.creditsFromPurchased),
           onDemand: asNumber(r.creditsFromOnDemand),
         },
+        // Our cost for this run, beside the credits it charged: a margin is only readable when the
+        // two sit on the same row. `modelCalls` above 1 is a run that paid for a failed attempt.
+        costUsdActual: typeof r.costUsdActual === "number" && Number.isFinite(r.costUsdActual) ? r.costUsdActual : null,
+        modelRoute: typeof r.modelRoute === "string" && r.modelRoute.trim() ? r.modelRoute : null,
+        promptTokens: asNumberOrNull(r.promptTokens),
+        completionTokens: asNumberOrNull(r.completionTokens),
+        totalTokens: asNumberOrNull(r.totalTokens),
+        modelCalls: asNumberOrNull(r.modelCalls),
         cycleKey: typeof r.cycleKey === "string" ? r.cycleKey : null,
         adminReason: typeof r.adminReason === "string" ? r.adminReason : null,
         adminActorEmail: typeof r.adminActorEmail === "string" ? r.adminActorEmail : null,

@@ -42,6 +42,8 @@ import {
 import { fetchJson } from "@/lib/http/fetchJson";
 import { ADMIN_NO_CONTENT_NOTE } from "@/lib/admin/docPrivacy";
 import { fmtDuration } from "@/lib/admin/format";
+import { formatUsdCost } from "@/lib/format/money";
+import type { AiRunSpend } from "@/lib/admin/aiRunSpend";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import {
   ADMIN_CODE_BLOCK,
@@ -52,7 +54,7 @@ import {
   type AdminTone,
 } from "@/lib/admin/ui";
 
-type AiRunRow = {
+type AiRunRow = AiRunSpend & {
   id: string;
   kind: string | null;
   status: string | null;
@@ -73,7 +75,7 @@ type AiRunRow = {
   createdDate: string | null;
 };
 
-type AiRunDetail = {
+type AiRunDetail = AiRunSpend & {
   id: string;
   kind: string | null;
   status: string | null;
@@ -107,7 +109,28 @@ type AiRunDetail = {
   createdDate: string | null;
 };
 
-const COLUMN_COUNT = 5;
+const COLUMN_COUNT = 6;
+
+/**
+ * A run's own cost, next to the run.
+ *
+ * "Not recorded" and not "$0.00": a run on a model the dated price table does not know, or one
+ * whose provider reported no usage, cost something nobody can state, and a zero there would read
+ * as free. Rows written before 2026-09-26 carry no usage at all and all say this.
+ */
+function CostCell({ usd }: { usd: number | null }) {
+  if (typeof usd !== "number") return <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>;
+  return <span title={`$${usd}`}>{formatUsdCost(usd)}</span>;
+}
+
+/** "12,043 in / 388 out", or the dash when the provider reported nothing. */
+function tokensLabel(spend: AiRunSpend): string {
+  const { promptTokens, completionTokens } = spend;
+  if (promptTokens === null && completionTokens === null) return ADMIN_DASH;
+  const inn = promptTokens === null ? "?" : promptTokens.toLocaleString();
+  const out = completionTokens === null ? "?" : completionTokens.toLocaleString();
+  return `${inn} in / ${out} out`;
+}
 
 /** A run's state as a tone: completed is the boring case, failed is the one worth seeing. */
 function runTone(status: string | null): AdminTone {
@@ -277,7 +300,7 @@ export default function AdminAiRunsPage() {
       <div className={ADMIN_PAGE_CONTAINER}>
         <AdminPageHeader
           title="AI runs"
-          description="Every model call the product made: its parameters, its timing and how it failed."
+          description="Every model call the product made: its parameters, its timing, what it cost us and how it failed."
         />
 
         <AdminFilterBar
@@ -315,6 +338,7 @@ export default function AdminAiRunsPage() {
             <option value="reviewDocText">reviewDocText</option>
             <option value="analyzePdfText">analyzePdfText</option>
             <option value="requestReviewInvestorFocused">requestReviewInvestorFocused</option>
+            <option value="visitBrief">visitBrief</option>
           </AdminSelect>
           <AdminSelect
             ariaLabel="Filter by status"
@@ -351,6 +375,9 @@ export default function AdminAiRunsPage() {
                 <AdminTh width="w-[120px]">Status</AdminTh>
                 <AdminTh align="right" width="w-[90px]">
                   Dur
+                </AdminTh>
+                <AdminTh align="right" width="w-[96px]" title="What this run cost us, from its tokens and the dated model price table">
+                  Cost
                 </AdminTh>
                 <AdminTh align="right" sticky>
                   Actions
@@ -393,6 +420,9 @@ export default function AdminAiRunsPage() {
                     </AdminTd>
                     <AdminTd align="right" numeric>
                       {fmtDuration(r.durationMs) || ADMIN_DASH}
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      <CostCell usd={r.costUsdActual} />
                     </AdminTd>
                     <AdminTd align="right" sticky actions>
                       <RowActions>
@@ -462,6 +492,29 @@ export default function AdminAiRunsPage() {
                       </Fact>
                       <Fact label="Duration">
                         <span className="tabular-nums">{fmtDuration(detail.durationMs) || ADMIN_DASH}</span>
+                      </Fact>
+                      {/* What ran, as opposed to what was configured: the summary and the compare
+                          pick their model by modality, so a page-image run goes to the dearer model
+                          whatever quality level the customer paid for. */}
+                      <Fact label="Model used">
+                        <span className="font-mono text-[12px]" title={detail.modelRoute ?? undefined}>
+                          {detail.modelRoute ?? ADMIN_DASH}
+                        </span>
+                      </Fact>
+                      <Fact label="Tokens">
+                        <span className="tabular-nums" title={tokensLabel(detail)}>
+                          {tokensLabel(detail)}
+                        </span>
+                      </Fact>
+                      <Fact label="Model calls">
+                        <span className="tabular-nums">
+                          {typeof detail.modelCalls === "number" ? detail.modelCalls : ADMIN_DASH}
+                        </span>
+                      </Fact>
+                      <Fact label="Cost">
+                        <span className="tabular-nums">
+                          <CostCell usd={detail.costUsdActual} />
+                        </span>
                       </Fact>
                       <Fact label="Created">
                         <span className="tabular-nums">

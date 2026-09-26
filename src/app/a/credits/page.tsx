@@ -62,6 +62,8 @@ import {
   toneStyle,
 } from "@/lib/admin/ui";
 import { fetchJson } from "@/lib/http/fetchJson";
+import { formatRatioPct, formatUsdCost } from "@/lib/format/money";
+import type { MarginRow, UnbilledSpend } from "@/lib/credits/marginReport";
 
 type CreditRules = {
   starterGrant: number;
@@ -106,6 +108,26 @@ type LedgerRow = {
   adminReason: string | null;
   createdDate: string | null;
   stalePending: boolean;
+  /** What the run cost us. Null is "not established", never free: see `src/lib/ai/modelPricing.ts`. */
+  costUsdActual: number | null;
+  modelRoute: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  /** Provider calls behind this one charge. Above 1 means it paid for an attempt that failed. */
+  modelCalls: number | null;
+};
+
+/** The margin report served by `/api/admin/credits/margin`. */
+type MarginResponse = {
+  days: number;
+  listRateUsdPerCredit: number;
+  pricesAsOf: string;
+  pricedModels: string[];
+  byAction: MarginRow[];
+  byModel: MarginRow[];
+  total: MarginRow;
+  unbilled: UnbilledSpend;
 };
 
 type PurchaseRow = {
@@ -181,7 +203,9 @@ type MutateAction = "grant_included" | "grant_on_demand" | "burn";
 const BALANCES_PAGE_SIZE = 50;
 const ANOMALY_COLUMNS = 7;
 const BALANCE_COLUMNS = 12;
-const LEDGER_COLUMNS = 10;
+const LEDGER_COLUMNS = 11;
+/** Bucket, credits, cost, cost per credit, at list rate, margin, not priced. */
+const MARGIN_COLUMNS = 7;
 const PURCHASE_COLUMNS = 8;
 const ON_DEMAND_COLUMNS = 4;
 
@@ -224,6 +248,57 @@ function ledgerTone(status: string): AdminTone {
   if (status === "refunded") return "warning";
   if (status === "pending") return "neutral";
   return "quiet";
+}
+
+/**
+ * The tokens and model behind a ledger row's cost, as a tooltip.
+ *
+ * The column itself is one number because a table of fifty rows has no room for six, but the
+ * number is meaningless without what produced it: which model ran (the summary and the compare
+ * choose by modality, not by the tier that was paid for) and whether the charge covered more than
+ * one call.
+ */
+function ledgerCostTitle(r: LedgerRow): string | undefined {
+  if (typeof r.costUsdActual !== "number") {
+    return "No cost recorded: charged before cost tracking, or the provider reported no usage.";
+  }
+  const parts: string[] = [];
+  if (r.modelRoute) parts.push(r.modelRoute);
+  if (r.promptTokens !== null || r.completionTokens !== null) {
+    parts.push(`${(r.promptTokens ?? 0).toLocaleString()} in / ${(r.completionTokens ?? 0).toLocaleString()} out`);
+  }
+  if (typeof r.modelCalls === "number" && r.modelCalls > 1) parts.push(`${r.modelCalls} calls`);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
+/**
+ * A dollar sum, or null when the bucket has nothing priced in it.
+ *
+ * A bucket where no run could be priced sums to exactly 0, and "$0.0000" in a cost column reads as
+ * "these runs were free" rather than "we cannot say". The one bucket that hits this today is the
+ * rows that predate telemetry entirely, and they are the ones a reader must not mistake for free.
+ */
+function pricedOrNull(row: MarginRow, value: number): number | null {
+  return row.pricedRuns > 0 ? value : null;
+}
+
+/**
+ * A margin, as a percentage with the dollars behind it.
+ *
+ * Coloured only when it is bad news. A healthy margin on every row is a column of green that stops
+ * being read; a negative one, where an action costs more than it charges, is the single thing this
+ * table exists to surface.
+ */
+function MarginCell({ row }: { row: MarginRow }) {
+  if (row.marginUsd === null) return <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>;
+  if (row.marginUsd < 0) {
+    return (
+      <StatusPill tone="danger" title="This action costs more than it charges at the list rate">
+        {formatRatioPct(row.marginRatio)}
+      </StatusPill>
+    );
+  }
+  return <span title={formatUsdCost(row.marginUsd)}>{formatRatioPct(row.marginRatio)}</span>;
 }
 
 /** One labelled figure in the snapshot panel. */
@@ -273,6 +348,13 @@ export default function AdminCreditsPage() {
   const [ledgerLoading, setLedgerLoading] = useState(false);
   const [ledgerError, setLedgerError] = useState<string | null>(null);
 
+  // AI cost and margin.
+  const [margin, setMargin] = useState<MarginResponse | null>(null);
+  const [marginDays, setMarginDays] = useState(7);
+  const [marginBreakdown, setMarginBreakdown] = useState<"action" | "model">("action");
+  const [marginLoading, setMarginLoading] = useState(false);
+  const [marginError, setMarginError] = useState<string | null>(null);
+
   // Purchases + on-demand.
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
   const [onDemand, setOnDemand] = useState<OnDemandBlock | null>(null);
@@ -294,6 +376,11 @@ export default function AdminCreditsPage() {
   const [simReason, setSimReason] = useState("");
 
   const normalizedSnapshot = useMemo(() => data?.snapshot ?? null, [data]);
+  /** The rows the margin table draws: by action or by model, whichever the picker asks for. */
+  const marginRows = useMemo<MarginRow[]>(
+    () => (marginBreakdown === "model" ? (margin?.byModel ?? []) : (margin?.byAction ?? [])),
+    [margin, marginBreakdown],
+  );
   const typedWorkspaceId = workspaceId.trim();
   // The ledger and purchases routes answer 400 to a workspaceId that is not an ObjectId, and this
   // field is typed into by hand — scoping on every keystroke put a validation error in both panels
@@ -386,6 +473,25 @@ export default function AdminCreditsPage() {
       }
     })();
   }, [canUseAdmin, scopedWorkspaceId, ledgerEventType, ledgerStatus, reloadKey]);
+
+  useEffect(() => {
+    if (!canUseAdmin) return;
+    setMarginLoading(true);
+    setMarginError(null);
+    const qs = new URLSearchParams({ days: String(marginDays) });
+    if (scopedWorkspaceId) qs.set("workspaceId", scopedWorkspaceId);
+    void (async () => {
+      try {
+        const res = await fetchJson<MarginResponse>(`/api/admin/credits/margin?${qs.toString()}`, { method: "GET" });
+        setMargin(res);
+      } catch (e) {
+        setMarginError(e instanceof Error ? e.message : "Failed to load the margin report");
+        setMargin(null);
+      } finally {
+        setMarginLoading(false);
+      }
+    })();
+  }, [canUseAdmin, scopedWorkspaceId, marginDays, reloadKey]);
 
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -930,6 +1036,167 @@ export default function AdminCreditsPage() {
             Sorted on a computed total no index can serve, so only the first{" "}
             {balancesReachableTotal.toLocaleString()} of {balancesTotal.toLocaleString()} rows can be paged through.
           </p>
+        ) : null}
+
+        {/* -------------------------------------------------------------- margin */}
+        <h2 className={`${ADMIN_SECTION_GAP} ${ADMIN_SECTION_TITLE}`}>AI cost and margin ({scopeSuffix})</h2>
+        <p className={ADMIN_SECTION_DESC}>
+          What each action charged against what it cost us, for charged AI runs in the window. Cost per credit is
+          computed over the priced runs alone, so it describes the same runs on both sides.
+        </p>
+
+        <div className={`mt-3 ${ADMIN_SUBBAR}`}>
+          <AdminSelect
+            ariaLabel="Margin window"
+            value={String(marginDays)}
+            onChange={(e) => setMarginDays(Number(e.target.value) || 7)}
+          >
+            <option value="1">Last 24 hours</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </AdminSelect>
+          <AdminSelect
+            ariaLabel="Margin breakdown"
+            value={marginBreakdown}
+            onChange={(e) => setMarginBreakdown(e.target.value === "model" ? "model" : "action")}
+          >
+            <option value="action">By action</option>
+            <option value="model">By model</option>
+          </AdminSelect>
+        </div>
+
+        {marginError ? <AdminAlert className="mt-3">{marginError}</AdminAlert> : null}
+
+        <AdminTable
+          className="mt-3"
+          ariaLabel="AI cost and margin"
+          head={
+            <>
+              <AdminTh>{marginBreakdown === "model" ? "Model" : "Action"}</AdminTh>
+              <AdminTh align="right" title="Runs in the window, and the credits they charged">
+                Runs / credits
+              </AdminTh>
+              <AdminTh align="right">Cost</AdminTh>
+              <AdminTh align="right" title="Our cost divided by the credits those same runs charged">
+                Cost / credit
+              </AdminTh>
+              <AdminTh
+                align="right"
+                title="What those credits would earn at the on-demand list rate. A ceiling, not realized revenue."
+              >
+                At list rate
+              </AdminTh>
+              <AdminTh align="right">Margin</AdminTh>
+              <AdminTh
+                align="right"
+                sticky
+                title="Runs with no cost on the row: no usage reported, or a model the price table does not know"
+              >
+                Not priced
+              </AdminTh>
+            </>
+          }
+        >
+          {marginLoading && !margin ? (
+            <AdminTableMessage colSpan={MARGIN_COLUMNS}>Loading margin…</AdminTableMessage>
+          ) : marginRows.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={MARGIN_COLUMNS}
+              title="No charged AI runs in this window"
+              hint="Widen the window, or clear the workspace scope."
+            />
+          ) : (
+            <>
+              {marginRows.map((row) => (
+                <AdminTr key={row.key}>
+                  <AdminTd primary truncate="max-w-[200px]">
+                    <span title={row.key}>{row.key}</span>
+                  </AdminTd>
+                  <AdminTd align="right" numeric title={`${row.creditsCharged} credits over ${row.runs} runs`}>
+                    {row.runs.toLocaleString()} / {fmtCredits(row.creditsCharged)}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {formatUsdCost(pricedOrNull(row, row.costUsd))}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {formatUsdCost(row.costPerCreditUsd)}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {formatUsdCost(pricedOrNull(row, row.listRateUsd))}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    <MarginCell row={row} />
+                  </AdminTd>
+                  <AdminTd align="right" numeric sticky>
+                    {row.unpricedRuns > 0 ? (
+                      <StatusPill tone="warning" title="These runs charged credits but carry no cost we can state">
+                        {row.unpricedRuns.toLocaleString()}
+                      </StatusPill>
+                    ) : (
+                      <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                    )}
+                  </AdminTd>
+                </AdminTr>
+              ))}
+              {margin ? (
+                <AdminTr>
+                  <AdminTd primary>All actions</AdminTd>
+                  <AdminTd align="right" numeric>
+                    {margin.total.runs.toLocaleString()} / {fmtCredits(margin.total.creditsCharged)}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {formatUsdCost(pricedOrNull(margin.total, margin.total.costUsd))}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {formatUsdCost(margin.total.costPerCreditUsd)}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {formatUsdCost(pricedOrNull(margin.total, margin.total.listRateUsd))}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    <MarginCell row={margin.total} />
+                  </AdminTd>
+                  <AdminTd align="right" numeric sticky>
+                    {margin.total.unpricedRuns > 0 ? margin.total.unpricedRuns.toLocaleString() : ADMIN_DASH}
+                  </AdminTd>
+                </AdminTr>
+              ) : null}
+            </>
+          )}
+        </AdminTable>
+
+        {margin ? (
+          <div className={`mt-3 ${ADMIN_NOTE_PANEL}`}>
+            <dl className="grid grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-3 xl:grid-cols-5">
+              <Fact label="Prices dated">{margin.pricesAsOf}</Fact>
+              {/* The share of the total that rests on today's rates rather than on a cost written
+                  at charge time. Falls to zero on its own as new traffic accumulates. */}
+              <Fact label="Priced at read time">
+                {margin.total.estimatedRuns.toLocaleString()} of {margin.total.pricedRuns.toLocaleString()} runs
+              </Fact>
+              <Fact label="Priced models">{margin.pricedModels.join(", ") || ADMIN_DASH}</Fact>
+              <Fact label="List rate">{formatUsdCost(margin.listRateUsdPerCredit)}/credit</Fact>
+              {/* Runs nobody was charged for still cost money: a failed run is refunded, and a
+                  recipient's upload is free by design. The ledger cannot show this, so the AiRun
+                  log is read for it. Fleet-wide: an AiRun row carries no workspace. */}
+              <Fact label="Unbilled runs (all workspaces)">
+                {margin.unbilled.runs.toLocaleString()} for {formatUsdCost(margin.unbilled.costUsd)}
+              </Fact>
+              <Fact label="Failed runs (all workspaces)">
+                {margin.unbilled.failedRuns.toLocaleString()} for {formatUsdCost(margin.unbilled.failedCostUsd)}
+              </Fact>
+            </dl>
+            <p className={`mt-2 ${ADMIN_NOTE}`}>
+              Cost is priced from recorded tokens against a dated table in the repo, not billed by the provider, so it
+              drifts the moment a provider price changes. Rows charged before cost tracking shipped hold no cost of
+              their own; where they recorded their tokens and their model, the cost is computed here at today&apos;s
+              rates and counted under Priced at read time, and where they recorded neither they are counted under Not
+              priced rather than treated as free. Nothing is written back. At list rate is the on-demand ceiling of{" "}
+              {formatUsdCost(margin.listRateUsdPerCredit)} a credit; most credits are spent out of a Pro allowance or a
+              starter grant and earn less than that.
+            </p>
+          </div>
         ) : null}
 
         {/* ------------------------------------------------------------- ledger */}

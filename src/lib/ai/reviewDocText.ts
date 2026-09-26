@@ -11,6 +11,7 @@ import { OPENAI_PROVIDER_OPTIONS } from "./openaiProviderOptions";
 import { z } from "zod";
 import { Types } from "mongoose";
 import { completeAiRun, failAiRun, startAiRun } from "@/lib/ai/aiRunRecorder";
+import { createAiUsageAccumulator, type AiUsageTotals } from "@/lib/ai/usageTotals";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -209,7 +210,7 @@ export async function reviewDocText(input: {
     reviewId?: string | null;
     uploadVersion?: number | null;
   } | null;
-}): Promise<{ markdown: string; prompt: string; model: string; intel?: unknown } | null> {
+}): Promise<{ markdown: string; prompt: string; model: string; intel?: unknown; usage: AiUsageTotals | null } | null> {
   // If key isn't configured, treat as "AI disabled" rather than failing uploads.
   if (!process.env.OPENAI_API_KEY) return null;
 
@@ -237,6 +238,14 @@ export async function reviewDocText(input: {
     meta,
   });
 
+  /**
+   * One review is up to two paid calls: the structured attempt, and the plain-text fallback that
+   * runs only because the structured one failed. Both are billed, and before this neither was
+   * recorded at all. Summing them here is what makes a review's cost a fact rather than a guess at
+   * the structured call alone.
+   */
+  const usage = createAiUsageAccumulator();
+
   const ItemSchema = z.object({
     title: z.string().min(1),
     detail: z.string().nullable().optional(),
@@ -263,7 +272,7 @@ export async function reviewDocText(input: {
   });
 
   try {
-    const { object } = await generateObject({
+    const { object, usage: objectUsage } = await generateObject({
       model: openai(modelName),
       providerOptions: OPENAI_PROVIDER_OPTIONS,
       system: systemPrompt,
@@ -272,6 +281,7 @@ export async function reviewDocText(input: {
       temperature,
       maxRetries,
     });
+    usage.add(modelName, objectUsage);
     const markdown = (object.reviewMarkdown ?? "").trim();
     if (!markdown) return null;
     const { reviewMarkdown: _rm, ...intelRaw } = object;
@@ -330,19 +340,23 @@ export async function reviewDocText(input: {
     }
     const finalMarkdown = earlyStage ? sanitizeReviewMarkdownForEarlyStage(markdown) : markdown;
 
+    const totals = usage.totals();
     if (aiRunId) {
       await completeAiRun(aiRunId, {
         durationMs: Date.now() - startedAt,
         outputObject: object,
         outputText: finalMarkdown,
+        usage: totals,
       });
     }
 
-    return { markdown: finalMarkdown, prompt, model: modelName, intel };
-  } catch {
+    return { markdown: finalMarkdown, prompt, model: modelName, intel, usage: totals };
+  } catch (structuredError) {
+    // The structured attempt generated output the schema rejected, and it was billed for it.
+    usage.addFromError(modelName, structuredError);
     // Fallback: keep uploads working even if the model can't satisfy structured output.
     try {
-      const { text } = await generateText({
+      const { text, usage: textUsage } = await generateText({
         model: openai(modelName),
         providerOptions: OPENAI_PROVIDER_OPTIONS,
         system: systemPrompt,
@@ -350,6 +364,7 @@ export async function reviewDocText(input: {
         temperature,
         maxRetries,
       });
+      usage.add(modelName, textUsage);
       const markdown = (text ?? "").trim();
       if (!markdown) return null;
 
@@ -382,14 +397,18 @@ export async function reviewDocText(input: {
         suggestedRewrites: null,
       };
 
+      const totals = usage.totals();
       if (aiRunId) {
-        await completeAiRun(aiRunId, { durationMs: Date.now() - startedAt, outputText: markdown });
+        await completeAiRun(aiRunId, { durationMs: Date.now() - startedAt, outputText: markdown, usage: totals });
       }
 
-      return { markdown, prompt, model: modelName, intel };
+      return { markdown, prompt, model: modelName, intel, usage: totals };
     } catch (e) {
+      usage.addFromError(modelName, e);
       if (aiRunId) {
-        await failAiRun(aiRunId, { durationMs: Date.now() - startedAt, error: e });
+        // Two failed calls, both paid for, and the caller refunds the credit: the AiRun row is the
+        // only record that this review cost anything.
+        await failAiRun(aiRunId, { durationMs: Date.now() - startedAt, error: e, usage: usage.totals() });
       }
       return null;
     }

@@ -3,6 +3,7 @@ import { cycleKeyForUsage, startOfUtcMonth, usageCycleStart } from "./cycleKey";
 import { creditsForRun } from "@/lib/credits/schedule";
 import type { CreditStore, LedgerTransition, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
+import { costUsdForLedgerTelemetry } from "@/lib/ai/modelPricing";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { onDemandEligible } from "@/lib/billing/subscriptionState";
 
@@ -24,6 +25,27 @@ async function defaultIsProWorkspace(workspaceId: string): Promise<boolean> {
     .select({ status: 1, kind: 1, interval: 1 })
     .lean();
   return onDemandEligible(sub as { status?: unknown; kind?: unknown; interval?: unknown } | null);
+}
+
+/**
+ * Fills in the dollar cost of a charge from the token telemetry the run already reported.
+ *
+ * This is the one place a run's cost is written, and it is here rather than at the four call sites
+ * on purpose: the sites disagree about which telemetry fields they can produce (a compare reports
+ * images and pages, a summary reports retries, a review reports nothing the ledger sees), and each
+ * one that had to remember a cost line is one that could forget it. Settling is the moment every
+ * charge passes through, so pricing it here means a new AI feature gets its cost for free.
+ *
+ * A caller that already knows the cost, because it summed calls that ran on different models and a
+ * single row of token fields cannot express that, sends `costUsdActual` itself and this leaves it
+ * untouched. When the cost cannot be established the field is left off entirely, so the row keeps
+ * its null instead of being stamped with a zero that would read as "this run was free".
+ */
+function withCostUsd(telemetry: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!telemetry) return null;
+  const usd = costUsdForLedgerTelemetry(telemetry);
+  if (usd === null) return telemetry;
+  return { ...telemetry, costUsdActual: usd };
 }
 
 /**
@@ -307,7 +329,7 @@ export function createCreditService(store: CreditStore) {
       status: "charged",
       expectedStatus: SETTLEABLE_FROM,
       creditsCharged: clampNonNegInt(params.creditsCharged),
-      telemetry: params.telemetry ?? null,
+      telemetry: withCostUsd(params.telemetry ?? null),
     });
     return readTransition(transition);
   }

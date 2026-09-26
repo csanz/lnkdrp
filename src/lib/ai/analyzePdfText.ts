@@ -11,6 +11,7 @@ import { OPENAI_PROVIDER_OPTIONS } from "./openaiProviderOptions";
 import { z } from "zod";
 import { Types } from "mongoose";
 import { completeAiRun, failAiRun, startAiRun } from "@/lib/ai/aiRunRecorder";
+import { createAiUsageAccumulator, type AiUsageTotals } from "@/lib/ai/usageTotals";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -89,13 +90,26 @@ export function isFallbackAnalysis(analysis: unknown): boolean {
   return typeof analysis === "object" && analysis !== null && fallbackAnalyses.has(analysis);
 }
 
-/** Provider usage for a successful analysis, keyed by the returned object (see `analysisTelemetry`). */
+/**
+ * Provider usage for a successful analysis, keyed by the returned object (see `analysisTelemetry`).
+ *
+ * Every field name is a `CreditLedger` path, because the charge site spreads this record straight
+ * onto the ledger row and the ledger is a strict schema: a key it does not declare is dropped on
+ * save without a word.
+ *
+ * The token counts are the run's whole spend, not the last call's. A summary that failed its first
+ * parse and succeeded on the retry made two paid calls, and both are in here.
+ */
 export type AnalysisTelemetry = {
   provider: string;
   modelRoute: string;
   promptTokens: number | null;
   completionTokens: number | null;
   totalTokens: number | null;
+  cachedInputTokens: number | null;
+  modelCalls: number;
+  /** US dollars for the whole charge, or null when the model is not in the dated price table. */
+  costUsdActual: number | null;
   latencyMs: number;
   retriesCount: number;
 };
@@ -107,17 +121,21 @@ const analysisUsage = new WeakMap<object, AnalysisTelemetry>();
 export function analysisTelemetry(analysis: unknown): AnalysisTelemetry | null {
   return typeof analysis === "object" && analysis !== null ? (analysisUsage.get(analysis) ?? null) : null;
 }
-function usageToTelemetry(
-  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null | undefined,
+/** The accumulated totals as a ledger-shaped record, with the timing the accumulator does not track. */
+function totalsToTelemetry(
+  totals: AiUsageTotals | null,
   args: { model: string; latencyMs: number; retriesCount: number },
 ): AnalysisTelemetry {
-  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : null);
   return {
-    provider: "openai",
-    modelRoute: args.model,
-    promptTokens: num(usage?.inputTokens),
-    completionTokens: num(usage?.outputTokens),
-    totalTokens: num(usage?.totalTokens),
+    provider: totals?.provider ?? "openai",
+    // The model asked for, when not one call reported usage: it is still the truest thing known.
+    modelRoute: totals?.modelRoute || args.model,
+    promptTokens: totals?.promptTokens ?? null,
+    completionTokens: totals?.completionTokens ?? null,
+    totalTokens: totals?.totalTokens ?? null,
+    cachedInputTokens: totals?.cachedInputTokens ?? null,
+    modelCalls: totals?.modelCalls ?? 0,
+    costUsdActual: totals?.costUsdActual ?? null,
     latencyMs: Math.max(0, Math.floor(args.latencyMs)),
     retriesCount: args.retriesCount,
   };
@@ -650,8 +668,19 @@ export async function analyzePdfText(input: {
   // Built once, so the retry below shares the first attempt's budget instead of doubling it.
   const abortSignal = input.abortSignal ?? AbortSignal.timeout(ANALYZE_TIMEOUT_MS);
 
+  /**
+   * Both attempts land here, so the charge carries what the charge really cost.
+   *
+   * The retry below exists because the first call failed, and a `generateObject` that fails on a
+   * parse or a schema mismatch has already generated (and been billed for) its output. That call
+   * used to leave no trace at all: the telemetry was rebuilt from the second call and the first
+   * one's tokens were simply gone, so the runs that cost the most were recorded as costing the
+   * least. `addFromError` recovers them from `AI_NoObjectGeneratedError.usage`.
+   */
+  const usage = createAiUsageAccumulator();
+
   try {
-    const { object, usage } = await generateObject({
+    const { object, usage: attemptUsage } = await generateObject({
       model: openai(modelId),
       providerOptions: OPENAI_PROVIDER_OPTIONS,
       schema: AiDocAnalysisGenerationSchema,
@@ -669,18 +698,23 @@ export async function analyzePdfText(input: {
       ...(typeof maxTokensCfg === "number" ? { maxOutputTokens: maxTokensCfg } : {}),
       abortSignal,
     });
+    usage.add(modelId, attemptUsage);
     const normalized = normalizeAiDocAnalysis(object, input.pages);
-    analysisUsage.set(normalized, usageToTelemetry(usage, { model: modelId, latencyMs: Date.now() - startedAt, retriesCount: 0 }));
+    const totals = usage.totals();
+    analysisUsage.set(normalized, totalsToTelemetry(totals, { model: modelId, latencyMs: Date.now() - startedAt, retriesCount: 0 }));
     await completeAiRun(aiRunId, {
       durationMs: Date.now() - startedAt,
       outputObject: object,
       outputText: JSON.stringify(normalized),
+      usage: totals,
     });
     return normalized;
-  } catch {
+  } catch (e1) {
+    // The first attempt generated something the schema rejected, and we paid for it. Keep it.
+    usage.addFromError(modelId, e1);
     // Retry once with a higher token budget to reduce truncation-related JSON/schema failures.
     try {
-      const { object, usage } = await generateObject({
+      const { object, usage: retryUsage } = await generateObject({
         model: openai(modelId),
         providerOptions: OPENAI_PROVIDER_OPTIONS,
         schema: AiDocAnalysisGenerationSchema,
@@ -691,15 +725,19 @@ export async function analyzePdfText(input: {
         ...(typeof maxTokensRetry === "number" ? { maxOutputTokens: maxTokensRetry } : {}),
         abortSignal,
       });
+      usage.add(modelId, retryUsage);
       const normalized = normalizeAiDocAnalysis(object, input.pages);
-      analysisUsage.set(normalized, usageToTelemetry(usage, { model: modelId, latencyMs: Date.now() - startedAt, retriesCount: 1 }));
+      const totals = usage.totals();
+      analysisUsage.set(normalized, totalsToTelemetry(totals, { model: modelId, latencyMs: Date.now() - startedAt, retriesCount: 1 }));
       await completeAiRun(aiRunId, {
         durationMs: Date.now() - startedAt,
         outputObject: object,
         outputText: JSON.stringify(normalized),
+        usage: totals,
       });
       return normalized;
     } catch (e2) {
+      usage.addFromError(modelId, e2);
       // Last resort: return a valid snapshot so downstream normalization logic can still populate
       // fields (ask/key_metrics/meta) without treating AI as "missing".
       const fallback = normalizeAiDocAnalysis({}, input.pages);
@@ -708,10 +746,13 @@ export async function analyzePdfText(input: {
       console.warn("[analyzePdfText] failed; returning fallback snapshot", {
         message: e2 instanceof Error ? e2.message : String(e2),
       });
+      // Two paid calls and no summary: cost with no charge behind it, and the credit is refunded
+      // by the caller. The AiRun row is the only place that spend is written down.
       await failAiRun(aiRunId, {
         durationMs: Date.now() - startedAt,
         outputText: JSON.stringify(fallback),
         error: e2,
+        usage: usage.totals(),
       });
       fallbackAnalyses.add(fallback);
       return fallback;

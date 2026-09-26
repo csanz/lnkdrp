@@ -49,6 +49,28 @@ const aiRunSchema = new Schema(
     outputText: { type: String, default: null },
     outputObject: { type: Schema.Types.Mixed, default: null },
 
+    /**
+     * What the run actually spent, summed over every provider call it made.
+     *
+     * The row above records what was *asked for* (`model` is the configured model, `maxRetries` the
+     * ceiling); these record what happened. They are here and not only on the credit ledger because
+     * not every run is a charge: a recipient's upload, an agent's own summary and a failed run all
+     * cost real money and bill nobody, and this is the only place that fact is written down.
+     *
+     * `modelRoute` is the model or models that actually ran, which is not always `model`: the
+     * summary and the compare both pick by modality, so a page-image run goes to the dearer model
+     * whatever tier was paid for. `modelCalls` above 1 means an attempt failed and was paid for.
+     * `costUsdActual` is null, never 0, when the model is not in `src/lib/ai/modelPricing.ts` or
+     * the provider reported no usage.
+     */
+    modelRoute: { type: String, trim: true, default: null },
+    promptTokens: { type: Number, min: 0, default: null },
+    completionTokens: { type: Number, min: 0, default: null },
+    totalTokens: { type: Number, min: 0, default: null },
+    cachedInputTokens: { type: Number, min: 0, default: null },
+    modelCalls: { type: Number, min: 0, default: null },
+    costUsdActual: { type: Number, min: 0, default: null },
+
     // Debug/error info
     error: { type: Schema.Types.Mixed, default: null },
     durationMs: { type: Number, min: 0, default: null },
@@ -78,5 +100,20 @@ export type AiRun = InferSchemaType<typeof aiRunSchema>;
 
 export const AiRunModel: Model<AiRun> =
   (mongoose.models.AiRun as Model<AiRun> | undefined) ?? mongoose.model<AiRun>("AiRun", aiRunSchema);
+
+// Dev safety: patch the cost fields in during hot reload, so an already-registered model still
+// persists them instead of silently dropping the update.
+const ExistingAiRunModel = mongoose.models.AiRun as Model<AiRun> | undefined;
+if (ExistingAiRunModel && !ExistingAiRunModel.schema.path("costUsdActual")) {
+  ExistingAiRunModel.schema.add({
+    modelRoute: { type: String, trim: true, default: null },
+    promptTokens: { type: Number, min: 0, default: null },
+    completionTokens: { type: Number, min: 0, default: null },
+    totalTokens: { type: Number, min: 0, default: null },
+    cachedInputTokens: { type: Number, min: 0, default: null },
+    modelCalls: { type: Number, min: 0, default: null },
+    costUsdActual: { type: Number, min: 0, default: null },
+  } as any);
+}
 
 

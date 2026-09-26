@@ -21,6 +21,7 @@ import { OPENAI_PROVIDER_OPTIONS } from "./openaiProviderOptions";
 import { z } from "zod";
 
 import { completeAiRun, failAiRun, startAiRun, type AiRunMeta } from "@/lib/ai/aiRunRecorder";
+import { createAiUsageAccumulator } from "@/lib/ai/usageTotals";
 
 /**
  * Output schema for the investor-focused request review agent.
@@ -204,8 +205,12 @@ export async function runRequestReviewInvestorFocused(input: {
     meta: input.meta ?? null,
   });
 
+  // Recorded even though this path charges nobody: an unbilled run is still a run we paid for, and
+  // the AiRun row is the only place it is written down.
+  const usage = createAiUsageAccumulator();
+
   try {
-    const { text } = await generateText({
+    const { text, usage: callUsage } = await generateText({
       model: openai(modelName),
       providerOptions: OPENAI_PROVIDER_OPTIONS,
       system,
@@ -213,13 +218,16 @@ export async function runRequestReviewInvestorFocused(input: {
       temperature,
       maxRetries,
     });
+    usage.add(modelName, callUsage);
     const rawOutputText = (text ?? "").toString().trim();
     const parsed = extractJsonObject(rawOutputText);
     const output = RequestReviewInvestorFocusedSchema.parse(parsed);
-    await completeAiRun(aiRunId, { durationMs: Date.now() - startedAt, outputText: rawOutputText, outputObject: output });
+    await completeAiRun(aiRunId, { durationMs: Date.now() - startedAt, outputText: rawOutputText, outputObject: output, usage: usage.totals() });
     return { model: modelName, system, prompt, rawOutputText, output };
   } catch (e) {
-    await failAiRun(aiRunId, { durationMs: Date.now() - startedAt, outputText: null, error: e });
+    // The call may have succeeded and the parse failed; either way the tokens were billed.
+    usage.addFromError(modelName, e);
+    await failAiRun(aiRunId, { durationMs: Date.now() - startedAt, outputText: null, error: e, usage: usage.totals() });
     throw e;
   }
 }

@@ -8,6 +8,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { AiRunModel } from "@/lib/models/AiRun";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
+import { AI_RUN_SPEND_FIELDS, aiRunSpend } from "@/lib/admin/aiRunSpend";
 
 export const runtime = "nodejs";
 
@@ -77,6 +78,7 @@ export async function GET(request: Request) {
       inputTextChars: 1,
       createdDate: 1,
       updatedDate: 1,
+      ...AI_RUN_SPEND_FIELDS,
     })
     .lean();
 
@@ -112,6 +114,8 @@ export async function GET(request: Request) {
           ? (r as { userPrompt: string }).userPrompt.length
           : 0,
       inputTextChars: typeof (r as { inputTextChars?: unknown }).inputTextChars === "number" ? (r as { inputTextChars: number }).inputTextChars : null,
+      // What the run spent, not what it was configured to spend. Admin-only: our cost, never a price.
+      ...aiRunSpend(r as unknown as Record<string, unknown>),
       updatedDate: r.updatedDate ? new Date(r.updatedDate).toISOString() : null,
       createdDate: r.createdDate ? new Date(r.createdDate).toISOString() : null,
     })),

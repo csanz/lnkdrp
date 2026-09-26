@@ -1,6 +1,7 @@
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { AiRunModel } from "@/lib/models/AiRun";
+import type { AiUsageTotals } from "@/lib/ai/usageTotals";
 
 /**
  * Shared "AI run" recorder helpers.
@@ -97,17 +98,43 @@ export async function startAiRun(args: {
 }
 
 /**
+ * The run's accumulated usage, flattened onto the row.
+ *
+ * Every field is written, `null` included, so a run that reported nothing is visibly unknown
+ * rather than looking like a row from before these columns existed. Called by both the completed
+ * and the failed path: a run that failed still burned tokens, and those are the ones most worth
+ * seeing.
+ */
+function usageFields(usage: AiUsageTotals | null | undefined): Record<string, unknown> {
+  if (!usage) return {};
+  return {
+    modelRoute: usage.modelRoute || null,
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    totalTokens: usage.totalTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    modelCalls: usage.modelCalls,
+    costUsdActual: usage.costUsdActual,
+  };
+}
+
+/**
  * Mark an AiRun as completed (best-effort).
+ *
+ * `usage` is the run's whole spend, summed across every provider call it made, not the last call's
+ * (see `createAiUsageAccumulator`). Optional because a caller that cannot observe usage should
+ * still be able to close the row.
  */
 export async function completeAiRun(
   aiRunId: Types.ObjectId | null,
-  args: { durationMs: number; outputText?: string | null; outputObject?: unknown },
+  args: { durationMs: number; outputText?: string | null; outputObject?: unknown; usage?: AiUsageTotals | null },
 ): Promise<void> {
   if (!aiRunId) return;
   try {
     const update: Record<string, unknown> = {
       status: "completed",
       durationMs: args.durationMs,
+      ...usageFields(args.usage),
     };
     if (typeof args.outputText === "string") update.outputText = trimForStorage(args.outputText, 220_000);
     if (typeof args.outputObject !== "undefined") update.outputObject = args.outputObject;
@@ -119,16 +146,20 @@ export async function completeAiRun(
 
 /**
  * Mark an AiRun as failed (best-effort).
+ *
+ * `usage` matters most here: a run that failed after two model calls is pure cost with no charge
+ * behind it, and it is invisible in the credit ledger because the ledger row was refunded.
  */
 export async function failAiRun(
   aiRunId: Types.ObjectId | null,
-  args: { durationMs: number; outputText?: string | null; error: unknown },
+  args: { durationMs: number; outputText?: string | null; error: unknown; usage?: AiUsageTotals | null },
 ): Promise<void> {
   if (!aiRunId) return;
   try {
     const update: Record<string, unknown> = {
       status: "failed",
       durationMs: args.durationMs,
+      ...usageFields(args.usage),
       error:
         args.error instanceof Error
           ? { message: args.error.message, name: args.error.name, stack: args.error.stack }

@@ -12,6 +12,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { AiRunModel } from "@/lib/models/AiRun";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
 import { AI_RUN_CONTENT_FIELDS, describeAiRunContent } from "@/lib/admin/docPrivacy";
+import { aiRunSpend } from "@/lib/admin/aiRunSpend";
 
 export const runtime = "nodejs";
 
@@ -65,6 +66,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ runId: stri
       // was. That answers the questions the page is for — did it run, did the model return empty,
       // was the prompt truncated — without reproducing the customer's document.
       content,
+      // What the run spent, summed over every provider call it made. `modelRoute` can differ from
+      // `model` above: the summary and the compare pick their model by modality, so a page-image
+      // run goes to the dearer one whatever tier was paid for.
+      ...aiRunSpend(raw),
       error: (r as { error?: unknown }).error ?? null,
       updatedDate: r.updatedDate ? new Date(r.updatedDate).toISOString() : null,
       createdDate: r.createdDate ? new Date(r.createdDate).toISOString() : null,
