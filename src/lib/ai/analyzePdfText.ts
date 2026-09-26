@@ -452,6 +452,16 @@ function buildProjectsContextBlock(params: {
   ].join("\n");
 }
 /**
+ * Hard ceiling on the summary's model calls when the caller supplies no signal of its own.
+ *
+ * The same 90 seconds the AI compare uses (`COMPARE_TIMEOUT_MS` in the upload process route,
+ * `DIFF_TIMEOUT_MS` in the compare rerun route), and deliberately well under the 300 second
+ * function limit: the summary runs inside `after()` ahead of the write that marks the upload ready,
+ * so a call that outlives the function takes the whole job with it and strands the reservation.
+ */
+export const ANALYZE_TIMEOUT_MS = 90_000;
+
+/**
  * Analyze extracted PDF text and return a normalized `AiDocAnalysis`.
  *
  * Returns null when AI is disabled (`OPENAI_API_KEY` missing) or when there is no usable text.
@@ -474,6 +484,20 @@ export async function analyzePdfText(input: {
   existingProjectIds?: string[] | null;
   isReplacement?: boolean;
   qualityTier?: "basic" | "standard" | "advanced";
+  /**
+   * Hard ceiling on the model calls, as `@/lib/ai/docChangeDiff` takes one.
+   *
+   * What went wrong without it: neither `generateObject` call below set `abortSignal`, so a hung
+   * provider call ran until the function itself was killed at its 300 second limit. The summary is
+   * reserved against the workspace's credits before this is called and charged or refunded after
+   * it returns, so a call that outlives the function resolves neither: the credits stay deducted
+   * against a `pending` ledger row until the hourly stale sweep returns them, and the upload sits
+   * unfinished meanwhile. The AI compare on the same job has had a ceiling for this reason.
+   *
+   * One signal covers both attempts, so the retry cannot extend the budget past it. Defaults to
+   * `AbortSignal.timeout(ANALYZE_TIMEOUT_MS)` when the caller passes nothing.
+   */
+  abortSignal?: AbortSignal;
   meta?: {
     userId?: string | null;
     projectId?: string | null;
@@ -623,6 +647,9 @@ export async function analyzePdfText(input: {
    */
   const modelId = imageUrlByPage.size ? "gpt-4o" : cfg.model;
 
+  // Built once, so the retry below shares the first attempt's budget instead of doubling it.
+  const abortSignal = input.abortSignal ?? AbortSignal.timeout(ANALYZE_TIMEOUT_MS);
+
   try {
     const { object, usage } = await generateObject({
       model: openai(modelId),
@@ -640,6 +667,7 @@ export async function analyzePdfText(input: {
       ...(imageUrlByPage.size ? { messages } : { prompt: userPrompt }),
       // AI SDK v5: `maxOutputTokens` (the v4 `maxTokens` option is ignored).
       ...(typeof maxTokensCfg === "number" ? { maxOutputTokens: maxTokensCfg } : {}),
+      abortSignal,
     });
     const normalized = normalizeAiDocAnalysis(object, input.pages);
     analysisUsage.set(normalized, usageToTelemetry(usage, { model: modelId, latencyMs: Date.now() - startedAt, retriesCount: 0 }));
@@ -661,6 +689,7 @@ export async function analyzePdfText(input: {
         system,
         ...(imageUrlByPage.size ? { messages } : { prompt: userPrompt }),
         ...(typeof maxTokensRetry === "number" ? { maxOutputTokens: maxTokensRetry } : {}),
+        abortSignal,
       });
       const normalized = normalizeAiDocAnalysis(object, input.pages);
       analysisUsage.set(normalized, usageToTelemetry(usage, { model: modelId, latencyMs: Date.now() - startedAt, retriesCount: 1 }));

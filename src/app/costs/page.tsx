@@ -15,13 +15,22 @@ import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
 /** "from $7": the entry pack, so this never has to be retyped when packs are repriced. */
 const CHEAPEST_PACK_PRICE = formatPackPrice(Math.min(...CREDIT_PACKS.map((p) => p.priceCents)));
 import PublicHeader from "@/components/PublicHeader";
-import { COST_CATALOG, FREE_ACTIONS, QUALITY_BLURBS, QUALITY_LABELS, QUALITY_TIERS, costAnchorId } from "@/lib/credits/costCatalog";
+import {
+  COST_CATALOG,
+  FREE_ACTIONS,
+  QUALITY_BLURBS,
+  QUALITY_LABELS,
+  QUALITY_TIERS,
+  costAnchorId,
+  flatPriceOf,
+  hasQualityLevels,
+} from "@/lib/credits/costCatalog";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 
 export const metadata: Metadata = {
   title: "What credits cost",
   description:
-    "What each AI action in lnkdrp costs in credits, at basic, standard and advanced quality: the summary on every link, AI compare between versions, and what never costs credits.",
+    "What each AI action in lnkdrp costs in credits: one credit for the summary on every link, AI compare between versions at basic, standard or advanced, and what never costs credits.",
   alternates: { canonical: "/costs" },
 };
 
@@ -90,12 +99,23 @@ export default function CostsPage() {
                         </ul>
                       ) : null}
                     </td>
-                    {QUALITY_TIERS.map((t) => (
-                      <td key={t} className="whitespace-nowrap py-4 pl-4 text-right align-top tabular-nums">
-                        <span className={row.released ? "text-white/90" : "text-white/45"}>{row.costs[t]}</span>{" "}
-                        <span className="text-white/45">{row.costs[t] === 1 ? "credit" : "credits"}</span>
+                    {/* A row with no level to choose prints one price across the level columns,
+                        rather than repeating the same number three times under three headings that
+                        imply a choice nobody can make. */}
+                    {hasQualityLevels(row) ? (
+                      QUALITY_TIERS.map((t) => (
+                        <td key={t} className="whitespace-nowrap py-4 pl-4 text-right align-top tabular-nums">
+                          <span className={row.released ? "text-white/90" : "text-white/45"}>{row.costs[t]}</span>{" "}
+                          <span className="text-white/45">{row.costs[t] === 1 ? "credit" : "credits"}</span>
+                        </td>
+                      ))
+                    ) : (
+                      <td colSpan={QUALITY_TIERS.length} className="whitespace-nowrap py-4 pl-4 text-right align-top tabular-nums">
+                        <span className={row.released ? "text-white/90" : "text-white/45"}>{flatPriceOf(row)}</span>{" "}
+                        <span className="text-white/45">{flatPriceOf(row) === 1 ? "credit" : "credits"}</span>
+                        <div className="mt-0.5 text-[11px] font-normal text-white/40">One price, no level</div>
                       </td>
-                    ))}
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -103,6 +123,10 @@ export default function CostsPage() {
           </div>
 
           <h2 className="mt-16 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">What the levels mean</h2>
+          <p className="mt-3 max-w-lg text-[13px] leading-5 text-white/50">
+            Levels apply to AI compare, the one run you choose a level for. The summary and the visit brief have a single
+            price each.
+          </p>
           <dl className="mt-4 grid gap-4 sm:grid-cols-3 md:gap-5">
         {QUALITY_TIERS.map((t) => (
           <div key={t} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">

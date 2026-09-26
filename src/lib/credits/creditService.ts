@@ -172,14 +172,44 @@ export async function failAndRefundLedger(params: { workspaceId: string; ledgerI
   await svc.failAndRefundLedger({ ledgerId: params.ledgerId });
 }
 
+/** How many times `recordUnbilledRun` tries to write its row before giving up and reporting. */
+export const UNBILLED_RUN_ATTEMPTS = 3;
+
+/** Backoff before each retry inside `recordUnbilledRun`, in milliseconds, indexed by attempt. */
+const UNBILLED_RUN_RETRY_DELAYS_MS = [100, 400] as const;
+
+/** Whether a Mongo error is the duplicate-key error (E11000) raised by a unique index. */
+function isDuplicateKeyError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  if ((err as { code?: unknown }).code === 11000) return true;
+  return /E11000|duplicate key/i.test(String((err as { message?: unknown }).message ?? ""));
+}
+
+/** Sleep, for the backoff between write attempts. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Records an AI run that was performed for the workspace but must not be billed to it.
  *
- * Exists for recipient uploads (request/replace links): the automatic summary still runs so the
- * owner gets a summarized document, but the owner never pays for a stranger's upload. The row
- * carries `source: "recipient"` and 0 credits, touches no balance bucket, and is idempotent on
- * `idempotencyKey` (a retried job returns the existing row).
- * Errors: throws on invalid ids; DB failures propagate.
+ * Exists for recipient uploads (request/replace links) and agent-written summaries: the run still
+ * happens so the owner gets a summarized document, but the owner never pays for a stranger's
+ * upload or for work their own agent did. The row carries `source: "recipient"` or `"agent"` and 0
+ * credits, touches no balance bucket, and is idempotent on `idempotencyKey` (a retried job returns
+ * the existing row).
+ *
+ * Retries, and why: this row is the *only* record that an unbilled run happened. It moves no money,
+ * so both call sites in the upload processing job attach `.catch()` and carry on with nothing but a
+ * `debugLog` - off by default in production - and a transient Mongo blip therefore erased the run
+ * from usage silently, leaving a summary on a document that the Usage tab says was never produced.
+ * Nothing downstream retries, so the retry belongs here: up to `UNBILLED_RUN_ATTEMPTS` passes, each
+ * re-reading first so a duplicate-key race (the unique `workspaceId + idempotencyKey` index) settles
+ * as the existing row rather than an error. A run of attempts that all fail is reported with
+ * `console.error` before the error is rethrown, so the loss is visible even to a caller that
+ * swallows it.
+ *
+ * Errors: throws on invalid ids; the last DB failure propagates after the attempts are spent.
  */
 export async function recordUnbilledRun(params: {
   workspaceId: string;
@@ -198,20 +228,49 @@ export async function recordUnbilledRun(params: {
 
   await connectMongo();
   const workspaceId = new Types.ObjectId(params.workspaceId);
-  const existing = await CreditLedgerModel.findOne({ workspaceId, idempotencyKey }).select({ _id: 1 }).lean();
-  if (existing) return { ledgerId: String(existing._id), created: false };
-  const created = await CreditLedgerModel.create({
-    workspaceId,
-    userId: new Types.ObjectId(params.userId),
-    docId: params.docId ? new Types.ObjectId(params.docId) : null,
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= UNBILLED_RUN_ATTEMPTS; attempt += 1) {
+    try {
+      const existing = await CreditLedgerModel.findOne({ workspaceId, idempotencyKey }).select({ _id: 1 }).lean();
+      if (existing) return { ledgerId: String(existing._id), created: false };
+      const created = await CreditLedgerModel.create({
+        workspaceId,
+        userId: new Types.ObjectId(params.userId),
+        docId: params.docId ? new Types.ObjectId(params.docId) : null,
+        actionType: params.actionType,
+        qualityTier: params.qualityTier,
+        status: "charged",
+        source: params.source,
+        idempotencyKey,
+        creditsEstimated: 0,
+        creditsReserved: 0,
+        creditsCharged: 0,
+      });
+      return { ledgerId: String(created._id), created: true };
+    } catch (e) {
+      lastError = e;
+      // A concurrent writer won the unique index: the row exists, so the next pass reads it back
+      // and this call reports `created: false` instead of failing on a row it asked for.
+      const retryable = attempt < UNBILLED_RUN_ATTEMPTS;
+      if (!retryable) break;
+      const wait = isDuplicateKeyError(e) ? 0 : (UNBILLED_RUN_RETRY_DELAYS_MS[attempt - 1] ?? 400);
+      if (wait > 0) await delay(wait);
+    }
+  }
+
+  // Reported here rather than left to the caller: both call sites swallow this into a debug log,
+  // and an unbilled run that never reached the ledger is invisible everywhere else.
+  // eslint-disable-next-line no-console
+  console.error("[credits] recordUnbilledRun failed; this AI run is missing from the ledger", {
+    workspaceId: params.workspaceId,
+    docId: params.docId ?? null,
     actionType: params.actionType,
     qualityTier: params.qualityTier,
-    status: "charged",
     source: params.source,
     idempotencyKey,
-    creditsEstimated: 0,
-    creditsReserved: 0,
-    creditsCharged: 0,
+    attempts: UNBILLED_RUN_ATTEMPTS,
+    message: lastError instanceof Error ? lastError.message : String(lastError),
   });
-  return { ledgerId: String(created._id), created: true };
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }

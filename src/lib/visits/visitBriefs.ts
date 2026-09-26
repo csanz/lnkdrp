@@ -6,7 +6,8 @@
  *
  * - `scheduleVisitBrief()` — the ingest hook. Every `POST /api/share/:shareId/stats` upserts one
  *   `VisitBrief` row per sitting with `dueAt = lastEventAt + VISIT_QUIET_MS`. Best-effort, never
- *   throws, one write.
+ *   throws, and bounded: only so many NEW sittings per link per hour, because the visit id is the
+ *   caller's to invent and every row it plants becomes a charged run here.
  * - `runVisitBriefs()` — the tick. Recovers stale claims, claims due rows, settles each one
  *   (postpone, skip, recap or brief), enqueues the emails it owes, and sends them in the same tick.
  * - `settleVisitBrief()` — one row, start to finish. Exported so a worker can run exactly this.
@@ -30,6 +31,7 @@ import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
+import { RateLimitModel } from "@/lib/models/RateLimit";
 import { recordActivity } from "@/lib/activity/log";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { getAiAutomation } from "@/lib/credits/aiAutomation";
@@ -54,13 +56,23 @@ import { debugError } from "@/lib/debug";
 export const BRIEF_MIN_VISIT_MS = 20 * 1000;
 /** …unless it covered at least this many pages, which is a skim rather than a glance. */
 export const BRIEF_MIN_PAGES = 2;
-/** Briefs a workspace can write in one UTC day; past it the recap goes out without the write-up. */
+/**
+ * Briefs a workspace can write in one UTC day; past it the recap goes out without the write-up.
+ *
+ * Held by {@link claimDailyBriefSlot}, not by a count read, for the reason recorded there.
+ */
 export const BRIEFS_PER_DAY = 100;
 /** A visit still receiving events this long after it started is briefed "so far" rather than never. */
 export const MAX_VISIT_OPEN_MS = 6 * 60 * 60 * 1000;
 /** A row `generating` this long belongs to a run that died mid-model-call. */
 export const CLAIM_STALE_MS = 10 * 60 * 1000;
-/** Model failures before the row is `failed` and the recap goes out without a brief. */
+/**
+ * Model failures before the row is `failed` and the recap goes out without a brief.
+ *
+ * A stale claim recovered by {@link recoverStaleVisitBriefClaims} counts as one of these: the run
+ * that died had already reserved a credit under that attempt's key, so the next try must be a new
+ * attempt or it reserves under the identical key and is handed the dead run's ledger row back.
+ */
 export const MAX_ATTEMPTS = 3;
 /** Wait before retrying a model failure: attempt 1 → 1 min, attempt 2 → 5 min. */
 export const RETRY_BACKOFF_MS: readonly number[] = [60_000, 5 * 60_000];
@@ -85,14 +97,24 @@ export type { ScheduleVisitBriefInput } from "@/lib/visits/scheduleVisitBrief";
 // Claiming
 // ---------------------------------------------------------------------------------------------
 
-/** Hand back rows a dead run left `generating`. Returns how many. */
+/**
+ * Hand back rows a dead run left `generating`. Returns how many.
+ *
+ * `attempts` is bumped here, and that is not bookkeeping. The credit reservation is keyed
+ * `brief:<rowId>:<attempts>`; what went wrong is that recovery handed the row back under its
+ * ORIGINAL attempt number, so the retry reserved under the identical idempotency key and the
+ * credit service returned the dead run's ledger row instead of a fresh reservation. The retry then
+ * charged, refunded or double-settled whatever that run had left behind, and a row that had
+ * already burnt a credit could be charged again under the same key without a second reservation
+ * ever existing. Each attempt is now its own key, so the ledger and the row agree.
+ */
 export async function recoverStaleVisitBriefClaims(params?: { now?: Date; staleMs?: number }): Promise<number> {
   const now = params?.now ?? new Date();
   const staleMs = params?.staleMs ?? CLAIM_STALE_MS;
   await connectMongo();
   const res = await VisitBriefModel.updateMany(
     { status: "generating", claimedAt: { $lte: new Date(now.getTime() - staleMs) } },
-    { $set: { status: "scheduled", dueAt: now, claimedAt: null, claimToken: null } },
+    { $set: { status: "scheduled", dueAt: now, claimedAt: null, claimToken: null }, $inc: { attempts: 1 } },
   );
   return Number(res.modifiedCount ?? 0);
 }
@@ -465,6 +487,9 @@ async function resolveBillingUserId(orgId: Types.ObjectId): Promise<string | nul
   return org?.createdByUserId ? String(org.createdByUserId) : null;
 }
 
+/** One UTC day, for the brake's bucket lifetime. */
+const UTC_DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  *
  */
@@ -472,11 +497,75 @@ function startOfUtcDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
-/**
- *
- */
-async function briefsWrittenToday(orgId: Types.ObjectId, now: Date): Promise<number> {
+/** Briefs this workspace has actually stored today. Durable, and the brake's backstop. */
+export async function briefsWrittenToday(orgId: Types.ObjectId, now: Date): Promise<number> {
   return VisitBriefModel.countDocuments({ orgId, status: "briefed", closedAt: { $gte: startOfUtcDay(now) } });
+}
+
+/** The fixed-window bucket one workspace's brief allowance for one UTC day is counted in. */
+export function dailyBriefSlotKey(orgId: Types.ObjectId | string, now: Date): string {
+  return `visitbrief:day:${String(orgId)}:${now.toISOString().slice(0, 10)}`;
+}
+
+/**
+ * Take one of the day's {@link BRIEFS_PER_DAY} slots, or report that the day is spent.
+ *
+ * What went wrong: the brake was a lock-free count read. `countDocuments({status: "briefed"})` ran,
+ * then a model call took several seconds, then the row was written - and three settle workers run
+ * at once. Three rows could each read 99, each pass the gate and each write a brief, so a
+ * workspace overshot its own advertised ceiling by two and paid for the overshoot. Reading a
+ * number nobody is holding cannot bound a number three writers are moving.
+ *
+ * The brake is now a counter nobody has to read and act on separately: one atomic
+ * `findOneAndUpdate` `$inc` on a bucket keyed by workspace and UTC day, seeded on creation from
+ * the durable count of briefs already stored today. However many workers ask at the same instant,
+ * exactly one is handed the hundredth slot. The slot is given back by
+ * {@link releaseDailyBriefSlot} on every path that does not end in a stored brief, so a refused
+ * reservation or a failed model call does not eat the day's allowance, which is the one thing the
+ * count read did get right.
+ */
+export async function claimDailyBriefSlot(params: { orgId: Types.ObjectId; now: Date; cap?: number }): Promise<boolean> {
+  const cap = Math.max(0, Math.floor(params.cap ?? BRIEFS_PER_DAY));
+  const key = dailyBriefSlotKey(params.orgId, params.now);
+  try {
+    const written = await briefsWrittenToday(params.orgId, params.now);
+    if (written >= cap) return false;
+    // Seed and increment are two statements because one update cannot both `$setOnInsert` and
+    // `$inc` the same field. The seed is what makes the bucket mean "briefs written today"
+    // rather than "briefs written since this bucket appeared": the first claim of the day (or the
+    // first after a deploy, or after the bucket was cleared) starts the counter at the durable row
+    // count, so a fresh bucket can never hand back an allowance the workspace has already spent.
+    const expiresAt = new Date(startOfUtcDay(params.now).getTime() + UTC_DAY_MS);
+    try {
+      await RateLimitModel.updateOne({ key }, { $setOnInsert: { key, count: written, windowStart: params.now, expiresAt } }, { upsert: true });
+    } catch (err) {
+      // Two workers seeding at once: one insert wins with the same value, and the loser continues.
+      if ((err as { code?: unknown } | null)?.code !== 11000) throw err;
+    }
+    const doc = (await RateLimitModel.findOneAndUpdate({ key }, { $inc: { count: 1 } }, { new: true }).lean()) as { count?: unknown } | null;
+    const count = typeof doc?.count === "number" && Number.isFinite(doc.count) ? doc.count : cap + 1;
+    if (count <= cap) return true;
+    // Over the ceiling: hand the slot straight back, so repeated refusals cannot inflate the
+    // bucket. It can never fall below the number of live claims, because a caller only ever gives
+    // back an increment it made itself.
+    await releaseDailyBriefSlot(params.orgId, params.now);
+    return false;
+  } catch (err) {
+    // A brake that cannot be read must not become a brake that is not there: refuse, and the
+    // visit still gets its recap and its email.
+    debugError(1, "[visit-briefs] daily brake unavailable; refusing the brief", { key, message: err instanceof Error ? err.message : String(err) });
+    return false;
+  }
+}
+
+/** Give back a slot claimed for an attempt that did not end in a stored brief. */
+export async function releaseDailyBriefSlot(orgId: Types.ObjectId, now: Date): Promise<void> {
+  try {
+    await RateLimitModel.updateOne({ key: dailyBriefSlotKey(orgId, now), count: { $gt: 0 } }, { $inc: { count: -1 } });
+  } catch (err) {
+    // Losing a slot back is a brief fewer today, never a brief too many.
+    debugError(1, "[visit-briefs] releasing the daily slot failed", { message: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 /** One `credits.exhausted` feed row per workspace per UTC day for briefs, not one per visit. */
@@ -504,10 +593,22 @@ async function noteCreditsExhaustedOnce(params: { orgId: Types.ObjectId; docId: 
 type ClaimedRow = VisitBrief & { _id: Types.ObjectId };
 
 /**
+ * Write a terminal state onto the row THIS run still holds, and say whether it landed.
  *
+ * What went wrong: this returned nothing and every caller looked away. The filter is deliberately
+ * narrow - `claimToken` pins the write to the claim this run took - and a claim stolen in the
+ * meantime by {@link recoverStaleVisitBriefClaims} does not make Mongo throw: a filter that
+ * matches no row answers `matchedCount: 0` and resolves happily. So the one case the write order
+ * in {@link generateAndStoreBrief} exists to cover, a claim lost while the model was running, read
+ * as a successful store, and the workspace was charged for a brief that was never written. The
+ * boolean is the only signal there is; false means the row moved on without us.
  */
-async function finish(row: ClaimedRow, set: Record<string, unknown>): Promise<void> {
-  await VisitBriefModel.updateOne({ _id: row._id, claimToken: row.claimToken }, { $set: { ...set, claimedAt: null, claimToken: null } });
+async function finish(row: ClaimedRow, set: Record<string, unknown>): Promise<boolean> {
+  const res = (await VisitBriefModel.updateOne(
+    { _id: row._id, claimToken: row.claimToken },
+    { $set: { ...set, claimedAt: null, claimToken: null } },
+  )) as { matchedCount?: number } | null;
+  return Number(res?.matchedCount ?? 0) > 0;
 }
 
 export { pickReaderIdentity };
@@ -518,6 +619,57 @@ async function loadAccountName(viewerUserId: unknown): Promise<string | null> {
   const u = (await UserModel.findById(viewerUserId).select({ name: 1, email: 1 }).lean()) as { name?: string; email?: string } | null;
   const name = typeof u?.name === "string" ? u.name.trim() : "";
   return name || (typeof u?.email === "string" ? u.email.trim() : "") || null;
+}
+
+/** A live member of the workspace, or the account that created it (legacy orgs carry no owner row). */
+async function isWorkspaceMember(orgId: Types.ObjectId, userId: Types.ObjectId): Promise<boolean> {
+  if (await OrgMembershipModel.exists({ orgId, userId, isDeleted: { $ne: true } })) return true;
+  const org = (await OrgModel.findById(orgId).select({ createdByUserId: 1 }).lean()) as { createdByUserId?: unknown } | null;
+  return Boolean(org?.createdByUserId && String(org.createdByUserId) === String(userId));
+}
+
+/**
+ * Is this sitting on the owning side, by a signal that does not need a session?
+ *
+ * What went wrong: the only owner test was `isOwnerPreview`, and the ingest derives that from
+ * `isOwnerSideViewer`, which reads the request's signed-in session and nothing else. An owner or a
+ * teammate who opens their own link in a private window, or on a phone that is not signed in,
+ * arrives with no session at all, so the flag was false, the sitting looked like a recipient's and
+ * the workspace was charged a credit for a brief about itself. The catalog promised those opens
+ * were free.
+ *
+ * The address on the sitting is the signal that survives a sessionless read. It is either the
+ * account's or the one the reader typed into the "introduce yourself" gate, it is already resolved
+ * from the link's share views a few lines above this call, and it is matched here against the live
+ * membership of the workspace that owns the link. The account id is checked the same way first,
+ * because a sitting can carry one that the ingest, reading only this request, never saw.
+ *
+ * Deliberately still best-effort. A signed-out reader who volunteers nothing is indistinguishable
+ * from a recipient, and guessing "owner" for every unknown reader would silence the feature for
+ * the people it exists for. This narrows the hole to signed out AND anonymous; it does not close
+ * it, and the promise should be read as "their own opens, whenever we can tell it is them".
+ */
+export async function isOwnerSideSitting(params: {
+  orgId: Types.ObjectId;
+  /** What the ingest already flagged: this row, or any `ShareVisit` of the sitting. */
+  flagged: boolean;
+  viewerUserId?: unknown;
+  viewerEmail?: string | null;
+}): Promise<boolean> {
+  if (params.flagged) return true;
+  try {
+    const raw = params.viewerUserId ? String(params.viewerUserId) : "";
+    if (raw && Types.ObjectId.isValid(raw) && (await isWorkspaceMember(params.orgId, new Types.ObjectId(raw)))) return true;
+    const email = typeof params.viewerEmail === "string" ? params.viewerEmail.trim().toLowerCase() : "";
+    if (!email) return false;
+    const user = (await UserModel.findOne({ email }).select({ _id: 1 }).lean()) as { _id?: unknown } | null;
+    if (!user?._id) return false;
+    return await isWorkspaceMember(params.orgId, new Types.ObjectId(String(user._id)));
+  } catch (err) {
+    // A lookup that fails must not turn a real recipient's visit into a skipped one.
+    debugError(1, "[visit-briefs] owner-side lookup failed; treating as a recipient", { message: err instanceof Error ? err.message : String(err) });
+    return false;
+  }
 }
 
 /**
@@ -568,15 +720,21 @@ export async function settleVisitBrief(row: ClaimedRow, params: { now: Date; dry
   const previousSittings = await loadPreviousSittings({ shareId: row.shareId, botIdHash: row.botIdHash, visitIdHash: row.visitIdHash, before: earliest });
   const downloadsByDoc = await loadDownloadsByDoc(row.shareId, row.botIdHash);
   const stats = buildSittingStats({ visits, titles, pageCounts, downloadsByDoc, previousSittings });
-  const ownerPreview = Boolean(row.isOwnerPreview) || visits.some((v) => v.isOwnerPreview);
   // A data-room reader introduces themselves once on the landing page, and that lands on the
   // link's ShareView rows, never on this row (the viewer's timing posts carry no name). Without
   // this the brief, its email and its Slack post said "Someone" for every document the reader
   // opened after introducing themselves, while the open email named them. Filled here, once, so
-  // the row itself carries the reader and every surface reads the same name.
+  // the row itself carries the reader and every surface reads the same name. It runs before the
+  // owner test on purpose: the address it resolves is what that test needs.
   const identity = pickReaderIdentity(row, await loadShareViewIdentities(row.shareId, row.botIdHash));
   Object.assign(row, identity);
   const base = { lastEventAt: latest, startedAt: earliest, stats, closedAt: now, ...identity };
+  const ownerPreview = await isOwnerSideSitting({
+    orgId: row.orgId,
+    flagged: Boolean(row.isOwnerPreview) || visits.some((v) => v.isOwnerPreview),
+    viewerUserId: row.viewerUserId,
+    viewerEmail: row.viewerEmail,
+  });
 
   if (ownerPreview) {
     if (!dryRun) await finish(row, { ...base, status: "skipped", recapReason: "owner_preview" });
@@ -616,45 +774,71 @@ export async function settleVisitBrief(row: ClaimedRow, params: { now: Date; dry
     return { outcome: "skipped", reason: "plan", creditsCharged: 0 };
   }
   if (!(await getAiAutomation(row.orgId)).brief) return recap("auto_off");
-  if ((await briefsWrittenToday(row.orgId, now)) >= BRIEFS_PER_DAY) return recap("daily_cap");
 
-  if (dryRun) return { outcome: "briefed", creditsCharged: 0 };
+  // A dry run reports what would happen and takes nothing: no slot, no reservation, no credit.
+  if (dryRun) {
+    if ((await briefsWrittenToday(row.orgId, now)) >= BRIEFS_PER_DAY) return recap("daily_cap");
+    return { outcome: "briefed", creditsCharged: 0 };
+  }
+  // The day's ceiling, held atomically. Given back in the `finally` below unless a brief is stored.
+  if (!(await claimDailyBriefSlot({ orgId: row.orgId, now }))) return recap("daily_cap");
 
-  // ---- Reserve, generate, charge ------------------------------------------------------------
-  const billingUserId = await resolveBillingUserId(row.orgId);
-  if (!billingUserId) return recap("out_of_credits");
-  const written = await generateAndStoreBrief({
-    row,
-    stats,
-    link,
-    title,
-    docId,
-    projectId,
-    billingUserId,
-    // Per row and per attempt: a refunded reservation must not be handed back on the retry.
-    idempotencyKey: `brief:${String(row._id)}:${row.attempts}`,
-    base,
-    now,
-  });
-  if (written.ok) return { outcome: "briefed", creditsCharged: written.creditsCharged };
-  if (written.kind === "daily_cap") {
-    await noteCreditsExhaustedOnce({ orgId: row.orgId, docId, projectId, title, now, code: "daily_cap" });
-    return recap("daily_cap");
+  /**
+   * ---- Reserve, generate, charge ------------------------------------------------------------
+   *
+   * Everything that runs while the slot is held lives inside this try, and the slot goes back in
+   * the `finally` unless a brief was actually stored.
+   *
+   * What went wrong: the releases were three calls on three `return` paths, which covered every
+   * exit that RETURNS and no exit that THROWS. `generateAndStoreBrief` deliberately rethrows a
+   * reservation error that is not out-of-credits or the daily cap, so a database blip or a timeout
+   * left the slot held for the rest of the UTC day. Worse, it compounded: the tick's settle-threw
+   * catch reschedules the row a minute later, so a persistent infrastructure fault ate one of the
+   * workspace's hundred slots per row per minute until every visit degraded to a `daily_cap` recap
+   * without a single brief having been written. A `finally` cannot be forgotten by a future exit.
+   */
+  let stored = false;
+  try {
+    const billingUserId = await resolveBillingUserId(row.orgId);
+    if (!billingUserId) return recap("out_of_credits");
+    const written = await generateAndStoreBrief({
+      row,
+      stats,
+      link,
+      title,
+      docId,
+      projectId,
+      billingUserId,
+      // Per row and per attempt: a refunded reservation must not be handed back on the retry.
+      idempotencyKey: `brief:${String(row._id)}:${row.attempts}`,
+      base,
+      now,
+    });
+    if (written.ok) {
+      stored = true;
+      return { outcome: "briefed", creditsCharged: written.creditsCharged };
+    }
+    if (written.kind === "daily_cap") {
+      await noteCreditsExhaustedOnce({ orgId: row.orgId, docId, projectId, title, now, code: "daily_cap" });
+      return recap("daily_cap");
+    }
+    if (written.kind === "out_of_credits") {
+      await noteCreditsExhaustedOnce({ orgId: row.orgId, docId, projectId, title, now, code: "out_of_credits" });
+      return recap("out_of_credits");
+    }
+    const attempts = (row.attempts ?? 0) + 1;
+    const message = written.kind === "model_failed" ? written.message : "";
+    if (attempts >= MAX_ATTEMPTS) {
+      await finish(row, { ...base, status: "failed", recapReason: "model_failed", attempts, lastError: message.slice(0, 500) });
+      await announceAndEnqueue({ row, stats, link, title, docId, projectId, headline: null, reason: "model_failed", now });
+      return { outcome: "failed", reason: "model_failed", creditsCharged: 0 };
+    }
+    const backoff = RETRY_BACKOFF_MS[Math.min(attempts - 1, RETRY_BACKOFF_MS.length - 1)]!;
+    await finish(row, { ...base, status: "scheduled", attempts, lastError: message.slice(0, 500), dueAt: new Date(now.getTime() + backoff) });
+    return { outcome: "retry", reason: "model_failed", creditsCharged: 0 };
+  } finally {
+    if (!stored) await releaseDailyBriefSlot(row.orgId, now);
   }
-  if (written.kind === "out_of_credits") {
-    await noteCreditsExhaustedOnce({ orgId: row.orgId, docId, projectId, title, now, code: "out_of_credits" });
-    return recap("out_of_credits");
-  }
-  const attempts = (row.attempts ?? 0) + 1;
-  const message = written.kind === "model_failed" ? written.message : "";
-  if (attempts >= MAX_ATTEMPTS) {
-    await finish(row, { ...base, status: "failed", recapReason: "model_failed", attempts, lastError: message.slice(0, 500) });
-    await announceAndEnqueue({ row, stats, link, title, docId, projectId, headline: null, reason: "model_failed", now });
-    return { outcome: "failed", reason: "model_failed", creditsCharged: 0 };
-  }
-  const backoff = RETRY_BACKOFF_MS[Math.min(attempts - 1, RETRY_BACKOFF_MS.length - 1)]!;
-  await finish(row, { ...base, status: "scheduled", attempts, lastError: message.slice(0, 500), dueAt: new Date(now.getTime() + backoff) });
-  return { outcome: "retry", reason: "model_failed", creditsCharged: 0 };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -677,7 +861,11 @@ function describeSitting(row: Pick<VisitBrief, "docId" | "projectId">, stats: Si
 }
 
 /**
- * Reserve one credit, call the model, charge with usage, store the brief and announce it.
+ * Build the prompt, reserve one credit, call the model, store the brief, charge, announce it.
+ *
+ * That order is load-bearing twice over and both orderings were once wrong: the reservation used
+ * to be taken before the blob fetches and PDF extraction that build the prompt, and the charge used
+ * to be taken before the row was written. See the comments at each step.
  *
  * The row must be claimed (`claimToken` set) so `finish` lands on the row this run holds. On a
  * refused reservation nothing is written and the caller decides between recap and 402; on a model
@@ -701,6 +889,32 @@ async function generateAndStoreBrief(params: {
 }): Promise<GenerateAndStoreResult> {
   const { row, stats, link, title, docId, projectId, now } = params;
   const credits = creditsForRun({ actionType: BRIEF_ACTION, qualityTier: BRIEF_TIER });
+
+  /**
+   * The prompt is built BEFORE the reservation, and the order is the point.
+   *
+   * What went wrong: the reservation was taken first and the per-document outline work ran inside
+   * the window it opens. `getPageOutline` is not cheap on a cold document: it fetches the blob and
+   * runs a full pdfjs text extraction, once per document, so a data room whose outlines had gone
+   * stale (a replacement upload invalidates them) could spend minutes there and be killed at the
+   * function's time limit with a live reservation on the workspace's balance and no run to show
+   * for it. The reservation then sat until the sweeper released it. Everything that can be slow,
+   * fail or be killed now happens before a single credit is held, and the reservation is taken
+   * immediately before the model call it pays for.
+   */
+  let record: VisitBriefRecord;
+  try {
+    const outlineByDoc = new Map<string, Array<{ pageNumber: number; heading: string | null; excerpt: string | null; text?: string | null }>>();
+    for (const d of stats.docs) {
+      const outline = await getPageOutline(d.docId);
+      if (outline) outlineByDoc.set(String(d.docId), outline);
+    }
+    record = buildVisitBriefRecord({ row, stats, link, viewerAccountName: await loadAccountName(row.viewerUserId), outlineByDoc });
+  } catch (err) {
+    // No credit was held, so there is nothing to refund: the caller retries or gives up.
+    return { ok: false, kind: "model_failed", message: err instanceof Error ? err.message : String(err) };
+  }
+
   let ledgerId: string | null = null;
   try {
     const reserved = await reserveCreditsOrThrow({
@@ -720,13 +934,8 @@ async function generateAndStoreBrief(params: {
     throw err;
   }
 
+  let creditsCharged = 0;
   try {
-    const outlineByDoc = new Map<string, Array<{ pageNumber: number; heading: string | null; excerpt: string | null; text?: string | null }>>();
-    for (const d of stats.docs) {
-      const outline = await getPageOutline(d.docId);
-      if (outline) outlineByDoc.set(String(d.docId), outline);
-    }
-    const record = buildVisitBriefRecord({ row, stats, link, viewerAccountName: await loadAccountName(row.viewerUserId), outlineByDoc });
     const result = await generateVisitBrief({ record, meta: { userId: params.billingUserId, docId, projectId } });
     result.output.headline = strongerHeadline({
       headline: result.output.headline,
@@ -735,8 +944,24 @@ async function generateAndStoreBrief(params: {
       documentShort: documentShortName(title ?? (stats.docs.length > 1 ? "data room" : null)),
     });
 
-    await markLedgerCharged({ workspaceId: String(row.orgId), ledgerId, creditsCharged: credits, telemetry: result.telemetry });
-    await finish(row, {
+    /**
+     * The row first, the charge second.
+     *
+     * What went wrong: the credit was charged and the brief was written afterwards, and the catch
+     * below cannot refund an already-charged ledger row - `failAndRefundLedger` only gives back a
+     * reservation. A write that failed (a claim lost to the stale sweeper, a validation error, a
+     * dropped connection) therefore billed the workspace for a brief nobody ever received, and the
+     * retry billed it again. In this order a failed write still lands in the catch with the credit
+     * only RESERVED, which does refund; and a failed charge leaves the brief stored and delivered
+     * with a reservation the credit sweeper releases, which costs the workspace nothing. Of the two
+     * ways to be wrong, giving a brief away is the one to choose.
+     *
+     * And the write has to be CHECKED, not just awaited: the stolen-claim case above is precisely
+     * the one that does not throw. `finish` matches on the claim token, and a row whose claim the
+     * stale sweeper took back matches nothing, which Mongo reports as `matchedCount: 0` and no
+     * error. Unchecked, that fell through to the charge and the announcement with nothing stored.
+     */
+    const stored = await finish(row, {
       ...params.base,
       status: "briefed",
       recapReason: null,
@@ -755,8 +980,30 @@ async function generateAndStoreBrief(params: {
       aiRunId: result.aiRunId && Types.ObjectId.isValid(result.aiRunId) ? new Types.ObjectId(result.aiRunId) : null,
       lastError: null,
     });
-    await announceAndEnqueue({ row, stats, link, title, docId, projectId, headline: result.output.headline, reason: null, now, email: params.email ?? true });
-    return { ok: true, headline: result.output.headline, creditsCharged: credits };
+    // Into the catch below, where the still-reserved credit is refunded and neither the charge nor
+    // the announcement runs. There is no brief to charge for and nobody to tell about one.
+    if (!stored) throw new Error("the claim was lost before the brief could be stored");
+    try {
+      await markLedgerCharged({ workspaceId: String(row.orgId), ledgerId, creditsCharged: credits, telemetry: result.telemetry });
+      creditsCharged = credits;
+    } catch (chargeErr) {
+      // The brief exists and is about to go out. Reported as 0 so the tick's totals stay honest.
+      debugError(1, "[visit-briefs] charge failed after the brief was stored; the reservation will be swept", {
+        ledgerId,
+        message: chargeErr instanceof Error ? chargeErr.message : String(chargeErr),
+      });
+    }
+    try {
+      await announceAndEnqueue({ row, stats, link, title, docId, projectId, headline: result.output.headline, reason: null, now, email: params.email ?? true });
+    } catch (announceErr) {
+      // Past this point the brief is written and paid for; a queue that will not take the
+      // notification must not roll the row back into a retry that writes and pays a second time.
+      debugError(1, "[visit-briefs] announce failed after the brief was stored", {
+        id: String(row._id),
+        message: announceErr instanceof Error ? announceErr.message : String(announceErr),
+      });
+    }
+    return { ok: true, headline: result.output.headline, creditsCharged };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     try {
@@ -1186,7 +1433,14 @@ export async function runVisitBriefs(params: RunVisitBriefsParams = {}): Promise
         debugError(1, "[visit-briefs] settle failed", { id: String(row._id), message: err instanceof Error ? err.message : String(err) });
         if (!dryRun) {
           try {
-            await finish(row, { status: "scheduled", dueAt: new Date(Date.now() + RETRY_BACKOFF_MS[0]!), lastError: (err instanceof Error ? err.message : String(err)).slice(0, 500) });
+            // `attempts` moves with the row, for the same reason the stale sweep bumps it: the
+            // next try must reserve under a key of its own, not be handed this one's ledger row.
+            await finish(row, {
+              status: "scheduled",
+              attempts: (row.attempts ?? 0) + 1,
+              dueAt: new Date(Date.now() + RETRY_BACKOFF_MS[0]!),
+              lastError: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+            });
           } catch {
             // the stale sweep will recover it
           }

@@ -31,7 +31,11 @@ import { DISMISSED_PROMPT_NOTE, docIdSchema, existsUnlessNotFound, OBJECT_ID_RE,
 /** Mirrors `MAX_PROJECT_NAME_LENGTH` in `src/app/api/projects/[projectSlug]/route.ts`. */
 const MAX_PROJECT_NAME = 80;
 const MAX_PROJECT_DESCRIPTION = 2000;
-/** Pages of 50 scanned when resolving a slug the name search did not find (2,500 projects). */
+/**
+ * Pages of 50 scanned when `GET /api/projects/:slug` reports the workspace still has slug-less
+ * legacy projects (2,500 projects). Listing is what backfills their slugs, so the scan doubles as
+ * the migration for that one workspace.
+ */
 const SLUG_SCAN_MAX_PAGES = 50;
 /** Membership writes run a few at a time: 50 documents is two API calls each. */
 const ADD_CONCURRENCY = 4;
@@ -175,15 +179,23 @@ export function requireOneProjectRef(ref: ProjectRef): void {
 }
 
 /**
- * Turn a slug into a project id. `GET /api/projects?q=` searches names, not slugs, so this first
- * searches for the slug with its hyphens as spaces (a slug is the lower-cased name), then falls
- * back to scanning the list, which is still one page for most workspaces.
+ * Turn a slug into a project id: one `GET /api/projects/:slug` against the workspace's unique
+ * slug index.
+ *
+ * It used to search the slug as words through `GET /api/projects?q=` (which matches names, not
+ * slugs) and then page through the whole list, up to fifty requests on a large workspace for
+ * every tool call that named a project by slug. The scan survives for exactly one case: the route
+ * answers 404 with `reason: "slug_backfill_pending"` when the workspace still holds live projects
+ * that have no stored slug. Those predate slugs, and `GET /api/projects` is what gives them one,
+ * so listing is both the lookup and the fix. Any other 404 is a real miss and fails right away.
  */
 async function projectIdForSlug(api: ApiClient, slug: string): Promise<string> {
   const wanted = slug.toLowerCase();
-  const guess = await api.listProjects({ q: wanted.replace(/-+/g, " ").trim(), page: 1, limit: 50 });
-  const hit = guess.projects.find((p) => p.slug.toLowerCase() === wanted);
-  if (hit) return hit.id;
+  try {
+    return (await api.getProjectBySlug(wanted)).id;
+  } catch (err) {
+    if (!(isToolError(err) && err.code === "not_found" && err.details?.reason === "slug_backfill_pending")) throw err;
+  }
   for (let page = 1; page <= SLUG_SCAN_MAX_PAGES; page++) {
     const res = await api.listProjects({ page, limit: 50 });
     const found = res.projects.find((p) => p.slug.toLowerCase() === wanted);

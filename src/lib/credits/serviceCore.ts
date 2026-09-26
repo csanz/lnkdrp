@@ -1,7 +1,7 @@
 import type { ActionType, CreditBucket, LedgerStatus, QualityTier } from "@/lib/credits/types";
 import { cycleKeyForUsage, startOfUtcMonth, usageCycleStart } from "./cycleKey";
 import { creditsForRun } from "@/lib/credits/schedule";
-import type { CreditStore, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
+import type { CreditStore, LedgerTransition, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { onDemandEligible } from "@/lib/billing/subscriptionState";
@@ -24,6 +24,45 @@ async function defaultIsProWorkspace(workspaceId: string): Promise<boolean> {
     .select({ status: 1, kind: 1, interval: 1 })
     .lean();
   return onDemandEligible(sub as { status?: unknown; kind?: unknown; interval?: unknown } | null);
+}
+
+/**
+ * The only status a ledger row may be settled or refunded from.
+ *
+ * A row is legal to move along exactly two edges: pending -> charged, and pending -> failed or
+ * refunded. Anything already charged, failed or refunded is terminal, and a later call must not move it.
+ */
+const SETTLEABLE_FROM = ["pending"] as const;
+
+/**
+ * Result of a settle attempt.
+ *
+ * Exists so callers can tell a real settle from a replay: before this, `markLedgerCharged` returned
+ * nothing and a caller had no way to know whether it had just charged the run or had re-stamped a
+ * row the stale-reservation sweeper had already refunded.
+ */
+export type LedgerSettleResult = {
+  /** True when this call is the one that moved the row to `charged`. */
+  moved: boolean;
+  /** Status the row held before the call, or null when the store cannot report it. */
+  previousStatus: LedgerStatus | null;
+};
+
+/** Result of a refund attempt: as `LedgerSettleResult`, plus what was actually returned. */
+export type LedgerRefundResult = LedgerSettleResult & {
+  /** Credits returned to the workspace balance by this call. 0 when the row did not move. */
+  creditsRefunded: number;
+};
+
+/**
+ * Reads a store's transition result, tolerating stores that report nothing.
+ *
+ * A store built before the guard existed returns `void`; treating that as "moved" keeps those
+ * stores behaving exactly as they did.
+ */
+function readTransition(result: LedgerTransition | void): LedgerSettleResult {
+  if (!result || typeof result !== "object") return { moved: true, previousStatus: null };
+  return { moved: Boolean(result.moved), previousStatus: result.previousStatus ?? null };
 }
 
 function startOfUtcDay(d: Date): Date {
@@ -79,6 +118,15 @@ function allocateBuckets(params: {
   return { ok: true, byBucket: out };
 }
 
+/**
+ * Builds the credit service over a store: reserve, settle and refund for one workspace.
+ *
+ * The store is the only thing that talks to the database, which is what lets the same rules run
+ * against Mongo in production and against an in-memory store in tests. Every status move goes
+ * through the store guarded by the status it expects to find, so the legal edges (pending to
+ * charged, pending to failed or refunded) are enforced by the write itself rather than by a
+ * check the caller could race.
+ */
 export function createCreditService(store: CreditStore) {
   async function reserveCreditsOrThrow(params: {
     workspaceId: string;
@@ -236,24 +284,59 @@ export function createCreditService(store: CreditStore) {
     });
   }
 
+  /**
+   * Settles a reserved row: pending -> charged.
+   *
+   * The credits were already taken off the balance at reserve time, so settling debits nothing
+   * further; what it does is finalize the row and let the store apply the usage aggregates for it.
+   * That is exactly why the guard matters. This used to flip the row to `charged` with no look at
+   * its current status, so a row the stale-reservation sweeper (or a failure path) had already
+   * refunded could be flipped to charged by a late settle, and because such a row had never had
+   * its usage aggregates applied, the flip billed usage for credits that were back in the balance.
+   * The same hole let a second settle of an already-charged row re-stamp it. The move is now a
+   * guarded, atomic transition in the store, and the result says whether this call is the one that
+   * moved the row.
+   */
   async function markLedgerCharged(params: {
     ledgerId: string;
     creditsCharged: number;
     telemetry?: Record<string, unknown> | null;
-  }): Promise<void> {
-    await store.setLedgerStatus({
+  }): Promise<LedgerSettleResult> {
+    const transition = await store.setLedgerStatus({
       ledgerId: params.ledgerId,
       status: "charged",
+      expectedStatus: SETTLEABLE_FROM,
       creditsCharged: clampNonNegInt(params.creditsCharged),
       telemetry: params.telemetry ?? null,
     });
+    return readTransition(transition);
   }
 
-  async function failAndRefundLedger(params: { ledgerId: string }): Promise<void> {
-    await store.withTransaction(async () => {
+  /**
+   * Fails a reserved row and returns its credits: pending -> failed.
+   *
+   * The status move is claimed first, and the balance is credited only when that claim wins. The
+   * old order (credit the balance, then write the status) left the refund resting on a
+   * read-then-write check of `status`, so two refunds racing - typically a run's own failure path
+   * and the stale-reservation sweeper - could both read `pending` and both hand the credits back.
+   */
+  async function failAndRefundLedger(params: { ledgerId: string }): Promise<LedgerRefundResult> {
+    return await store.withTransaction(async () => {
       const ledger = await store.getLedgerById({ ledgerId: params.ledgerId });
-      if (!ledger) return;
-      if (ledger.status !== "pending") return;
+      if (!ledger) return { moved: false, previousStatus: null, creditsRefunded: 0 };
+      if (ledger.status !== "pending") return { moved: false, previousStatus: ledger.status, creditsRefunded: 0 };
+
+      // Claim the row before touching money: if this does not move it, someone else already
+      // finished it and the credits are not ours to give back.
+      const claim = readTransition(
+        await store.setLedgerStatus({
+          ledgerId: params.ledgerId,
+          status: "failed",
+          expectedStatus: SETTLEABLE_FROM,
+          creditsCharged: 0,
+        }),
+      );
+      if (!claim.moved) return { ...claim, creditsRefunded: 0 };
 
       const balance = await store.getOrCreateBalance({
         workspaceId: ledger.workspaceId,
@@ -273,12 +356,19 @@ export function createCreditService(store: CreditStore) {
         }),
       });
       const next: WorkspaceBalanceSnapshot = { ...balance };
-      next.trialCreditsRemaining += clampNonNegInt(ledger.creditsFrom.trial);
-      next.subscriptionCreditsRemaining += clampNonNegInt(ledger.creditsFrom.subscription);
-      next.purchasedCreditsRemaining += clampNonNegInt(ledger.creditsFrom.purchased);
+      const refundTrial = clampNonNegInt(ledger.creditsFrom.trial);
+      const refundSubscription = clampNonNegInt(ledger.creditsFrom.subscription);
+      const refundPurchased = clampNonNegInt(ledger.creditsFrom.purchased);
+      next.trialCreditsRemaining += refundTrial;
+      next.subscriptionCreditsRemaining += refundSubscription;
+      next.purchasedCreditsRemaining += refundPurchased;
       await store.saveBalance({ workspaceId: ledger.workspaceId, next });
 
-      await store.setLedgerStatus({ ledgerId: params.ledgerId, status: "failed", creditsCharged: 0 });
+      return {
+        moved: true,
+        previousStatus: claim.previousStatus ?? "pending",
+        creditsRefunded: refundTrial + refundSubscription + refundPurchased,
+      };
     });
   }
 

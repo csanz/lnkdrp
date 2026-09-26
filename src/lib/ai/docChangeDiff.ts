@@ -234,6 +234,66 @@ function modelForCompare(hasImages: boolean): string {
 }
 
 /**
+ * Whether these two versions are provably the same document, decided without spending anything.
+ *
+ * Exported because the caller has to reach the same verdict *before* it decides whether to reserve
+ * credits, and keeping a second copy of this rule in the caller is what broke twice.
+ * `POST /api/uploads/:uploadId/process` carried its own weaker paraphrase - normalized text equal
+ * and no page reporting `imageChanged` - which does not know about the page count or about there
+ * being no evidence either way. On the case the page-count clause exists for (identical
+ * extractable text, a page appended with no text layer) the caller said "free" and this function
+ * said "run the model": first an uncapped, unbilled paid compare, and then, once the charge was
+ * settled on observed usage rather than predicted, a retroactive charge landing on paths that are
+ * documented never to bill - a recipient's upload, and a workspace with automatic compares off.
+ * One rule in one place is what stops a third version of that.
+ *
+ * Callers that want the record without the risk of a model call should pass `noModel` to
+ * `runDocChangeDiff` rather than gate the call on this themselves.
+ */
+export function isUnchangedWithoutModel(input: {
+  previousText: string;
+  newText: string;
+  changedPages?: Array<{ imageChanged?: boolean | null }>;
+  previousPageCount?: number | null;
+  newPageCount?: number | null;
+}): boolean {
+  // `imageChanged` must be the perceptual verdict from `@/lib/history/changedPages`, not a byte
+  // comparison: every MCP upload is re-encoded by Ghostscript (`mcp/src/optimize.ts`) and every page
+  // is re-rendered here, so the bytes of an unchanged page differ on every single run. Fed a byte
+  // verdict, this short-circuit never fires and the whole deck comes back as "graphics changed".
+  const pagesIn = Array.isArray(input.changedPages) ? input.changedPages : [];
+  const prevNorm = normalizeForCompare(input.previousText);
+  const nextNorm = normalizeForCompare(input.newText);
+
+  /**
+   * A page count that moved settles it on its own.
+   *
+   * A version that gained five pages did not read the same as the previous one, however the text
+   * compares - and it did compare equal, because pages appended with no extractable text change
+   * neither side of the concatenation. Real rows said "No changes: this version reads the same as
+   * the previous one" beside "13 to 18 pages" in the same sentence.
+   */
+  const pageCount = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : null);
+  const prevPages = pageCount(input.previousPageCount);
+  const nextPages = pageCount(input.newPageCount);
+  const pageCountMoved = prevPages !== null && nextPages !== null && prevPages !== nextPages;
+
+  /**
+   * No text on either side and no image verdict either is not evidence of sameness.
+   *
+   * Two empty strings compare equal, so a document nothing could read - a scan with no text layer,
+   * a failed extraction - satisfied the text half of this test for free. With `imageChanged` null
+   * on every page (no fingerprints, or none usable), the escape hatch below could not fire either,
+   * and the answer came back as a confident "nothing changed" derived from having looked at
+   * nothing. Falling through to the model is the honest outcome: it either reads the images or the
+   * empty-text guard returns null and the credits are refunded.
+   */
+  const noEvidence = !prevNorm && !nextNorm && !pagesIn.some((p) => typeof p.imageChanged === "boolean");
+
+  return !pageCountMoved && !noEvidence && prevNorm === nextNorm && !pagesIn.some((p) => p.imageChanged === true);
+}
+
+/**
  * Compare two versions of extracted doc text and return a structured summary.
  *
  * Returns null when AI is disabled (`OPENAI_API_KEY` not configured) or when
@@ -278,62 +338,29 @@ export async function runDocChangeDiff(input: {
    * the model (an identical re-upload, a missing API key, empty text) - those cost nothing.
    */
   onUsage?: (usage: DocChangeDiffUsage) => void;
+  /**
+   * Answer from the short-circuit below or not at all: never call the model.
+   *
+   * For a caller that has already decided this compare is free. Without it the caller has to
+   * predict whether the short-circuit will fire, and a caller that predicts wrong spends real
+   * money on a path holding no reservation. That is how an identical-looking replacement with a
+   * page appended ran an uncapped, unbilled paid compare, and then - once the charge was settled
+   * on observed usage instead - how a recipient's upload and a workspace with automatic compares
+   * switched off could be billed for one. Returns null when the two versions are not provably
+   * unchanged, so the caller records nothing rather than a "no changes" it never verified.
+   */
+  noModel?: boolean;
 }): Promise<DocChangeDiff | null> {
   // A re-upload of the same file: the model was asked to compare two identical texts and duly
   // invented "reorganized sections" and "updated terminology" (owner, 2026-09-17). Answered here,
   // before the model and before the API-key check, unless a page's image changed (same words, new
   // artwork) - that is a real change the text cannot show.
-  //
-  // `imageChanged` must be the perceptual verdict from `@/lib/history/changedPages`, not a byte
-  // comparison: every MCP upload is re-encoded by Ghostscript (`mcp/src/optimize.ts`) and every page
-  // is re-rendered here, so the bytes of an unchanged page differ on every single run. Fed a byte
-  // verdict, this short-circuit never fires and the whole deck comes back as "graphics changed".
-  const pagesIn = Array.isArray(input.changedPages) ? input.changedPages : [];
-  const prevNorm = normalizeForCompare(input.previousText);
-  const nextNorm = normalizeForCompare(input.newText);
-
-  /**
-   * A page count that moved settles it on its own.
-   *
-   * A version that gained five pages did not read the same as the previous one, however the text
-   * compares - and it did compare equal, because pages appended with no extractable text change
-   * neither side of the concatenation. Real rows said "No changes: this version reads the same as
-   * the previous one" beside "13 to 18 pages" in the same sentence.
-   */
-  const pageCount = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : null);
-  const prevPages = pageCount(input.previousPageCount);
-  const nextPages = pageCount(input.newPageCount);
-  const pageCountMoved = prevPages !== null && nextPages !== null && prevPages !== nextPages;
-
-  /**
-   * No text on either side and no image verdict either is not evidence of sameness.
-   *
-   * Two empty strings compare equal, so a document nothing could read - a scan with no text layer,
-   * a failed extraction - satisfied the text half of this test for free. With `imageChanged` null
-   * on every page (no fingerprints, or none usable), the escape hatch below could not fire either,
-   * and the answer came back as a confident "nothing changed" derived from having looked at
-   * nothing. Falling through to the model is the honest outcome: it either reads the images or the
-   * empty-text guard returns null and the credits are refunded.
-   */
-  const noEvidence = !prevNorm && !nextNorm && !pagesIn.some((p) => typeof p.imageChanged === "boolean");
-
-  // A re-upload of the same file: the model was asked to compare two identical texts and duly
-  // invented "reorganized sections" and "updated terminology" (owner, 2026-09-17). Answered here,
-  // before the model and before the API-key check, unless a page's image changed (same words, new
-  // artwork) - that is a real change the text cannot show.
-  //
-  // `imageChanged` must be the perceptual verdict from `@/lib/history/changedPages`, not a byte
-  // comparison: every MCP upload is re-encoded by Ghostscript (`mcp/src/optimize.ts`) and every page
-  // is re-rendered here, so the bytes of an unchanged page differ on every single run. Fed a byte
-  // verdict, this short-circuit never fires and the whole deck comes back as "graphics changed".
-  if (
-    !pageCountMoved &&
-    !noEvidence &&
-    prevNorm === nextNorm &&
-    !pagesIn.some((p) => p.imageChanged === true)
-  ) {
+  if (isUnchangedWithoutModel(input)) {
     return { summary: NO_CHANGE_SUMMARY, changes: [], pagesThatChanged: [] };
   }
+
+  // The caller asked for a record, not a compare. Anything past this line costs money.
+  if (input.noModel) return null;
 
   if (!process.env.OPENAI_API_KEY) return null;
 

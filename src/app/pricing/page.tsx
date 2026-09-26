@@ -26,7 +26,7 @@ import {
   PRO_INCLUDED_COLLABORATORS,
 } from "@/lib/billing/planLimits";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
-import { COST_CATALOG, QUALITY_TIERS } from "@/lib/credits/costCatalog";
+import { COST_CATALOG, QUALITY_TIERS, flatPriceOf, hasQualityLevels } from "@/lib/credits/costCatalog";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 import { comparesFor, plural } from "@/lib/client/planNumbers";
 import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
@@ -276,6 +276,9 @@ export default async function PricingPage() {
                       label: entry.label,
                       sub: [entry.detail, ...(entry.notes ?? []).slice(0, 1)].join(" "),
                       costs: QUALITY_TIERS.map((tier) => String(entry.costs[tier])),
+                      // One price and no level to pick: printed once across the three level
+                      // columns, so the table stops implying a choice that does not exist.
+                      flat: hasQualityLevels(entry) ? null : String(flatPriceOf(entry)),
                       soon: !entry.released,
                     })).map((row) => (
                       <tr key={row.label} className={row.soon ? "text-white/45" : undefined}>
@@ -286,17 +289,26 @@ export default async function PricingPage() {
                             {row.sub}
                           </div>
                         </td>
-                        {row.costs.map((c, i) => (
-                          <td key={i} className={["whitespace-nowrap py-3 text-right tabular-nums align-top", i < 2 ? "pr-4" : ""].join(" ")}>
-                            {c === "Included" ? (
-                              <span className="text-white/50">Included</span>
-                            ) : (
-                              <span>
-                                {c} <span className="text-white/45">{c === "1" ? "credit" : "credits"}</span>
-                              </span>
-                            )}
+                        {row.flat === null ? (
+                          row.costs.map((c, i) => (
+                            <td key={i} className={["whitespace-nowrap py-3 text-right tabular-nums align-top", i < 2 ? "pr-4" : ""].join(" ")}>
+                              {c === "Included" ? (
+                                <span className="text-white/50">Included</span>
+                              ) : (
+                                <span>
+                                  {c} <span className="text-white/45">{c === "1" ? "credit" : "credits"}</span>
+                                </span>
+                              )}
+                            </td>
+                          ))
+                        ) : (
+                          <td colSpan={QUALITY_TIERS.length} className="whitespace-nowrap py-3 text-right align-top tabular-nums">
+                            <span>
+                              {row.flat} <span className="text-white/45">{row.flat === "1" ? "credit" : "credits"}</span>
+                            </span>
+                            <div className="mt-0.5 text-[11px] font-normal text-white/40">One price, no level</div>
                           </td>
-                        ))}
+                        )}
                       </tr>
                     ))}
                   </tbody>

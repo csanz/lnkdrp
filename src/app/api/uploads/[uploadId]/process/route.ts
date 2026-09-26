@@ -25,7 +25,7 @@ import {
   buildDocPageThumbPathname,
 } from "@/lib/blob/clientUpload";
 import { analyzePdfText, isFallbackAnalysis, analysisTelemetry } from "@/lib/ai/analyzePdfText";
-import { normalizeForCompare, runDocChangeDiff, type DocChangeDiffUsage } from "@/lib/ai/docChangeDiff";
+import { isUnchangedWithoutModel, normalizeForCompare, runDocChangeDiff, type DocChangeDiffUsage } from "@/lib/ai/docChangeDiff";
 import { attachPageContext, extractPdfTextByPage, fetchPdfBytes, loadChangedPages, type ChangedPage } from "@/lib/history/changedPages";
 import { computePageFingerprint } from "@/lib/history/pageFingerprint";
 import { reviewDocText } from "@/lib/ai/reviewDocText";
@@ -93,8 +93,118 @@ function compareTelemetry(u: DocChangeDiffUsage | null): Record<string, unknown>
   };
 }
 
+/**
+ * A version's page count, for the compare's no-change short-circuit.
+ *
+ * `metadata.pages` first; the rendered slide count is the fallback for rows written before that
+ * field, and 0 reads as unknown rather than as an empty document.
+ *
+ * Module-level because both compare blocks need it and only the replacement one had it: the
+ * completed-upload backfill passed no page counts at all, so `runDocChangeDiff` could not apply
+ * its page-count guard there and a re-upload that only gained pages came back as "no changes".
+ */
+function countPagesForCompare(meta: unknown, slides: unknown): number | null {
+  const m = (meta as { pages?: unknown } | null | undefined)?.pages;
+  if (typeof m === "number" && Number.isFinite(m) && m > 0) return Math.floor(m);
+  return Array.isArray(slides) && slides.length ? slides.length : null;
+}
+
 /** An upload stuck in `processing` longer than this is considered abandoned and may be re-claimed. */
 const PROCESSING_STALE_MS = 20 * 60 * 1000;
+
+/**
+ * How long one caller's claim on a forced review is honoured before another may take it over.
+ *
+ * Comfortably past the 90s ceiling inside `ensureReviewForUpload`, so a claim only goes stale when
+ * the function that held it died.
+ */
+const REVIEW_CLAIM_STALE_MS = 5 * 60 * 1000;
+
+/**
+ * Take the run for one `(docId, version)` review, so only one caller can reach the model.
+ *
+ * What went wrong without it: a forced review reserved credits and then ran, and the reservation is
+ * idempotent on its key. The route treated only a `charged` replay as "somebody else did this", so
+ * two concurrent requests carrying the same caller-supplied `x-idempotency-key` both got the *same
+ * pending* row back, both believed they had reserved, and both called the model - one charge, two
+ * paid calls. The completed-upload path has no upload claim to fall back on either (a completed
+ * upload is never claimed), so this is the only mutual exclusion that path has.
+ *
+ * The transition is one atomic `findOneAndUpdate` against the unique `(docId, version)` index:
+ * either it moves the row to `processing` or, when another caller is already running it, it matches
+ * nothing and the upsert collides on that index. Returns what the row held before (so a caller that
+ * bails can put it back) or null when somebody else holds the run.
+ */
+async function claimReviewRun(params: {
+  docId: Types.ObjectId;
+  uploadId: string;
+  version: number;
+  /** Stamped on a row this claim creates, so `ensureReviewForUpload` skipping its own insert loses nothing. */
+  inputTextChars?: number | null;
+}): Promise<{ previousStatus: string | null; created: boolean } | null> {
+  const { docId, uploadId, version } = params;
+  const now = new Date();
+  const staleBefore = new Date(now.getTime() - REVIEW_CLAIM_STALE_MS);
+  /** A row nobody is running, or one whose holder died. `updatedDate: null` also matches a missing field. */
+  const unclaimedOrStale = [
+    { status: { $ne: "processing" } },
+    { status: "processing", updatedDate: { $lt: staleBefore } },
+    { status: "processing", updatedDate: null },
+  ];
+
+  const before = await ReviewModel.findOne({ docId, version }).select({ status: 1 }).lean();
+  const previousStatus = before ? String((before as { status?: unknown }).status ?? "") || null : null;
+
+  try {
+    const claimed = await ReviewModel.findOneAndUpdate(
+      { docId, version, $or: unclaimedOrStale },
+      {
+        $setOnInsert: {
+          docId,
+          uploadId: new Types.ObjectId(uploadId),
+          version,
+          ...(typeof params.inputTextChars === "number" ? { inputTextChars: params.inputTextChars } : {}),
+        },
+        $set: { status: "processing" },
+      },
+      { upsert: true, new: true },
+    );
+    if (!claimed) return null;
+  } catch (e) {
+    // The unique index refused the upsert: the row exists and the filter did not match it, which
+    // means another caller is running it right now.
+    if (isDuplicateKeyError(e)) return null;
+    throw e;
+  }
+  return { previousStatus, created: !before };
+}
+
+/**
+ * Put a claimed review row back when the caller bailed before running anything.
+ *
+ * Without this a run that could not reserve credits would leave the row stuck in `processing`, and
+ * the review UI polls that status forever. A row this caller created is removed rather than left
+ * behind as a phantom queued review.
+ */
+async function releaseReviewRun(params: {
+  docId: Types.ObjectId;
+  version: number;
+  claim: { previousStatus: string | null; created: boolean };
+}): Promise<void> {
+  const { docId, version, claim } = params;
+  try {
+    if (claim.created) {
+      await ReviewModel.deleteOne({ docId, version, status: "processing" });
+      return;
+    }
+    await ReviewModel.updateOne(
+      { docId, version, status: "processing" },
+      { $set: { status: claim.previousStatus ?? "queued" } },
+    );
+  } catch {
+    // best-effort: the stale window above releases it anyway.
+  }
+}
 
 /**
  * Hard ceiling on the automatic compare's model call, matching the manual rerun's.
@@ -583,6 +693,14 @@ async function ensureReviewForUpload(params: {
   stageHint?: string | null;
   agentKind?: "reviewDocText" | "requestReviewInvestorFocused";
   force?: boolean;
+  /**
+   * The caller already holds this `(docId, version)` through `claimReviewRun`.
+   *
+   * Without it the forced path would drop its own claim: the force reset below put the row back to
+   * `queued` and the lock then moved it to `processing` again, and in the gap a second request
+   * could take the claim and make a second paid model call on one reservation.
+   */
+  claimed?: boolean;
   meta?: {
     userId?: string | null;
     projectId?: string | null;
@@ -612,13 +730,15 @@ async function ensureReviewForUpload(params: {
     .lean();
   if (!force && existing && (existing as { status?: unknown }).status === "completed") return;
 
-  // Force re-run: reset the review record to queued and clear outputs (best-effort).
+  // Force re-run: reset the review record and clear outputs (best-effort). A caller holding the
+  // claim keeps it here (`processing`); dropping to `queued` would open the door it just closed.
+  const holdsClaim = Boolean(params.claimed);
   if (force) {
     try {
       await ReviewModel.updateOne(
         { docId, version },
         {
-          $set: { status: "queued" },
+          $set: { status: holdsClaim ? "processing" : "queued" },
           $unset: {
             outputMarkdown: "",
             intel: "",
@@ -636,30 +756,37 @@ async function ensureReviewForUpload(params: {
     }
   }
 
-  // Acquire a per-(docId, version) "lock" by transitioning to processing.
+  // Acquire a per-(docId, version) "lock" by transitioning to processing. A caller that already
+  // holds the claim skips the transition: the row is `processing` because of that claim, and the
+  // filter below would not match it.
   let reviewIdForMeta: string | null = null;
-  try {
-    const locked = await ReviewModel.findOneAndUpdate(
-      { docId, version, status: { $in: ["queued", "failed", "skipped", null] } },
-      {
-        $setOnInsert: {
-          docId,
-          uploadId: new Types.ObjectId(uploadId),
-          version,
-          inputTextChars: extractedText.length,
+  if (holdsClaim) {
+    const held = await ReviewModel.findOne({ docId, version }).select({ _id: 1 }).lean();
+    reviewIdForMeta = (held as { _id?: unknown } | null)?._id ? String((held as { _id: unknown })._id) : null;
+  } else {
+    try {
+      const locked = await ReviewModel.findOneAndUpdate(
+        { docId, version, status: { $in: ["queued", "failed", "skipped", null] } },
+        {
+          $setOnInsert: {
+            docId,
+            uploadId: new Types.ObjectId(uploadId),
+            version,
+            inputTextChars: extractedText.length,
+          },
+          // Avoid Mongo update path conflicts: don't set `uploadId` in both $setOnInsert and $set.
+          $set: { status: "processing" },
         },
-        // Avoid Mongo update path conflicts: don't set `uploadId` in both $setOnInsert and $set.
-        $set: { status: "processing" },
-      },
-      { upsert: true, new: true },
-    ).lean();
+        { upsert: true, new: true },
+      ).lean();
 
-    // If another worker is already processing/completed, this upsert can collide; handle below.
-    if (!locked) return;
-    reviewIdForMeta = (locked as { _id?: unknown })._id ? String((locked as { _id: unknown })._id) : null;
-  } catch (e) {
-    if (isDuplicateKeyError(e)) return;
-    throw e;
+      // If another worker is already processing/completed, this upsert can collide; handle below.
+      if (!locked) return;
+      reviewIdForMeta = (locked as { _id?: unknown })._id ? String((locked as { _id: unknown })._id) : null;
+    } catch (e) {
+      if (isDuplicateKeyError(e)) return;
+      throw e;
+    }
   }
 
   debugLog(1, "[review] locked; generating", {
@@ -1072,13 +1199,35 @@ export async function POST(
   // Only a user-initiated paid action (forced review) is preflighted. The automatic summary and the
   // replacement compare reserve inside the job and fail soft: an upload always completes, the AI
   // step is skipped and the skip is recorded on the upload (`ai`) so the UI can explain it.
-  const needsPaidAi = forceReview && creditsForRun({ actionType: "review", qualityTier: forceReviewQualityTier }) > 0;
+  const forceReviewCreditsNeeded = creditsForRun({ actionType: "review", qualityTier: forceReviewQualityTier });
+  const needsPaidAi = forceReview && forceReviewCreditsNeeded > 0;
   if (needsPaidAi) {
     try {
       const snap = await getCreditsSnapshot({ workspaceId: actor.orgId });
-      if (snap.blocked) {
+      /**
+       * Affordability, not just "is this workspace switched off".
+       *
+       * This asked `snap.blocked` alone, which is the hard stop - so a workspace holding 1 credit
+       * was told 200 OK for a review costing 2, 5 or 12, and the shortfall only surfaced as a
+       * throw inside `after()` that nothing renders: the page sat on a spinner. The sibling
+       * summary route already asks the question the right way round, and this is its shape.
+       * `spendableRemaining` is null on Pro with uncapped on-demand, where the run may go past the
+       * credits held, so only a non-null number can refuse.
+       */
+      const cannotAffordReview =
+        snap.blocked || (snap.spendableRemaining !== null && snap.spendableRemaining < forceReviewCreditsNeeded);
+      if (cannotAffordReview) {
         return applyTempUserHeaders(
-          NextResponse.json({ error: "Out of credits", code: OUT_OF_CREDITS_CODE, traceId }, { status: 402 }),
+          NextResponse.json(
+            {
+              error: "Out of credits",
+              code: OUT_OF_CREDITS_CODE,
+              creditsNeeded: forceReviewCreditsNeeded,
+              creditsRemaining: snap.creditsRemaining,
+              traceId,
+            },
+            { status: 402 },
+          ),
           actor,
         );
       }
@@ -1352,10 +1501,13 @@ export async function POST(
                 version: toVersion - 1,
                 isDeleted: { $ne: true },
               })
-                .select({ _id: 1, rawExtractedText: 1, pdfText: 1, blobUrl: 1, slideNodes: 1 })
+                .select({ _id: 1, rawExtractedText: 1, pdfText: 1, blobUrl: 1, slideNodes: 1, "metadata.pages": 1 })
                 .lean();
               const previousText = (prev?.rawExtractedText ?? (prev as any)?.pdfText ?? "").toString();
               const newText = (upload.rawExtractedText ?? upload.pdfText ?? "").toString();
+              /** Page counts for the no-change short-circuit, which cannot see them otherwise. */
+              const previousPageCount = countPagesForCompare((prev as any)?.metadata, (prev as any)?.slideNodes);
+              const newPageCount = countPagesForCompare((upload as any)?.metadata, (upload as any)?.slideNodes);
             // Credits: the automatic compare runs at the workspace default tier (Basic on Free,
             // Standard on Pro unless pinned). The idempotency key carries no tier so changing the
             // default cannot bill the same version twice.
@@ -1374,6 +1526,16 @@ export async function POST(
              * drifted apart for good. `creditsReserved` is what was actually taken.
              */
             let historyChargedCredits = historyCredits;
+            /**
+             * An earlier attempt paid for this version's compare and stored nothing. Re-run it free.
+             *
+             * This block only runs when no DocChange exists for the version, so a `charged` replay
+             * here means exactly one thing: an attempt reserved, called the model, was charged, and
+             * died before the upsert below. Reading `charged` as "already done" left the workspace
+             * paid with nothing stored and wrote an empty diff over the top, and because the
+             * reservation stays charged for ever no later retry could put it right either.
+             */
+            let historyAlreadyPaid = false;
             // Credit-gated on every plan (no plan check): the reservation below is the gate. Recipient
             // uploads (request/replace links) never bill the owner, so they get no compare.
             // ...and the workspace's own switch. Failing open on a read error keeps a database
@@ -1406,9 +1568,10 @@ export async function POST(
                  * compare for nothing.
                  *
                  * So: reserve again under a retry key when the row holds no credits, and when it is
-                 * already `charged` leave the model alone. That version's compare was paid for and
-                 * produced something; the DocChange written below records the version either way and
-                 * version history can rerun the compare on purpose.
+                 * already `charged` run the compare again without charging for it - see
+                 * `historyAlreadyPaid`. Nothing is stored for this version (that is the only reason
+                 * this block runs), so the paid attempt died before its upsert and the result has
+                 * to be produced again rather than replaced with an empty diff.
                  */
                 const reserved = await reserveForAttempt({
                   workspaceId: actor.orgId,
@@ -1419,7 +1582,8 @@ export async function POST(
                   idempotencyKey: historyIdempotencyKey,
                 });
                 if (reserved.status === "charged") {
-                  debugLog(1, "[process] history compare already charged for this version, skipping the run", {
+                  historyAlreadyPaid = true;
+                  debugLog(1, "[process] history compare already charged but nothing stored; re-running free", {
                     uploadId,
                     docId: String(docId),
                     version: toVersion,
@@ -1434,9 +1598,14 @@ export async function POST(
             }
 
             let diff = null as any;
-            /** What this backfill run cost, for the ledger. See `compareTelemetry`. */
-            let backfillUsage: DocChangeDiffUsage | null = null;
-            if (historyLedgerId) {
+            /**
+             * What this backfill run cost, for the ledger, and the only honest answer to "did the
+             * model actually run". `runDocChangeDiff` calls `onUsage` once after a model call and
+             * never on the paths that skip it, so a null here means nothing was bought.
+             */
+            const backfillRun: { usage: DocChangeDiffUsage | null } = { usage: null };
+            const backfillShouldRun = historyLedgerId !== null || historyAlreadyPaid;
+            if (backfillShouldRun) {
               try {
                 const backfillPages = await loadChangedPages({ prevUpload: prev, newUpload: upload }).catch(() => []);
                 diff = attachPageContext(
@@ -1444,6 +1613,16 @@ export async function POST(
                     previousText,
                     newText,
                     changedPages: backfillPages,
+                    /**
+                     * Passed so the callee can apply its own no-change short-circuit properly.
+                     *
+                     * This path sent no page counts and made no no-change test of its own, so an
+                     * identical re-upload reserved and was charged the full history price for a
+                     * compare that produced nothing - and without the counts the callee could not
+                     * even tell a version that had only gained pages from one that had not moved.
+                     */
+                    previousPageCount,
+                    newPageCount,
                     qualityTier: historyTier,
                     /**
                      * The same ceiling its sibling compare carries, for the same reason.
@@ -1457,27 +1636,39 @@ export async function POST(
                      */
                     abortSignal: AbortSignal.timeout(COMPARE_TIMEOUT_MS),
                     onUsage: (u) => {
-                      backfillUsage = u;
+                      backfillRun.usage = u;
                     },
                   }),
                   backfillPages,
                 );
-                if (!diff) {
-                  await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
-                  diff = null;
-                } else {
-                  await markLedgerCharged({
-                    workspaceId: actor.orgId,
-                    ledgerId: historyLedgerId,
-                    creditsCharged: historyChargedCredits,
-                    // This branch recorded no telemetry at all, so backfilled compares were
-                    // invisible in the cost data the ledger was widened to collect.
-                    telemetry: compareTelemetry(backfillUsage),
-                  });
-                  creditsUsedThisRun += historyChargedCredits;
+                /**
+                 * Charge for what the model was actually asked to do, not for having got here.
+                 *
+                 * The caller cannot predict the callee's short-circuit - the conditions drifted
+                 * apart once already - so nothing here tries to. `usage` is set only after a real
+                 * model call, which makes it the one test the two sides cannot disagree about: a
+                 * re-upload whose compare short-circuited is refunded to zero and still gets its
+                 * "no changes" record, and anything that reached the model is charged with its
+                 * telemetry attached.
+                 */
+                const backfillChargeable = Boolean(diff) && backfillRun.usage !== null;
+                if (historyLedgerId) {
+                  if (backfillChargeable) {
+                    await markLedgerCharged({
+                      workspaceId: actor.orgId,
+                      ledgerId: historyLedgerId,
+                      creditsCharged: historyChargedCredits,
+                      // This branch recorded no telemetry at all, so backfilled compares were
+                      // invisible in the cost data the ledger was widened to collect.
+                      telemetry: compareTelemetry(backfillRun.usage),
+                    });
+                    creditsUsedThisRun += historyChargedCredits;
+                  } else {
+                    await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
+                  }
                 }
               } catch {
-                await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
+                if (historyLedgerId) await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
                 diff = null;
               }
             }
@@ -1592,6 +1783,31 @@ export async function POST(
             const isRequestDoc = Boolean(requestProjectId);
             if (!isRequestDoc) {
               // Non-request docs: rerun the legacy review agent.
+              /**
+               * Take the run before reserving, because the reservation is not mutual exclusion.
+               *
+               * A reservation is idempotent on its key, and `requestIdempotencyKey` lets the caller
+               * choose that key. Two requests carrying the same `x-idempotency-key` therefore got
+               * the same *pending* row back, and the only replay this branch refused was `charged`:
+               * both believed they had reserved, both called the model, and the workspace paid
+               * once for two. A completed upload is never claimed either (see the upload claim
+               * above), so on this path there was nothing else stopping them. The loser of the
+               * claim does no work and spends nothing.
+               */
+              const reviewClaim = await claimReviewRun({
+                docId,
+                uploadId,
+                version: uploadVersion,
+                inputTextChars: extractedText.length,
+              });
+              if (!reviewClaim) {
+                debugLog(1, "[process] forceReview=1; another caller is already running this review", {
+                  uploadId,
+                  docId: String(docId),
+                  version: uploadVersion,
+                });
+                return;
+              }
               let ledgerId: string | null = null;
               // Settle at what the reservation took, not at this call's price. The deterministic key
               // pins the tier, but `requestIdempotencyKey` overrides it, so two calls sharing one
@@ -1625,6 +1841,7 @@ export async function POST(
                 // Already paid for and already done: do not run the model again on somebody
                 // else's money, and do not re-mark a charged row.
                 if (reserved.status === "charged") {
+                  await releaseReviewRun({ docId, version: uploadVersion, claim: reviewClaim });
                   debugLog(1, "[process] forceReview=1; this attempt is already charged, skipping the run", {
                     uploadId,
                     docId: String(docId),
@@ -1635,6 +1852,7 @@ export async function POST(
                 ledgerId = reserved.ledgerId;
                 reviewChargedCredits = reserved.creditsReserved;
               } catch (e) {
+                await releaseReviewRun({ docId, version: uploadVersion, claim: reviewClaim });
                 debugLog(1, "[process] forceReview=1; insufficient credits (skipping)", {
                   uploadId,
                   docId: String(docId),
@@ -1652,6 +1870,7 @@ export async function POST(
                   qualityTier: reviewTier,
                   instructions: null,
                   force: true,
+                  claimed: true,
                   meta: {
                     userId: actor.userId,
                     projectId: null,
@@ -1661,11 +1880,23 @@ export async function POST(
                 // Same as the request-review path below: `ensureReviewForUpload` swallows its own
                 // failures, so "it returned" is not "it worked".
                 const outcome = await ReviewModel.findOne({ docId, version: uploadVersion })
-                  .select({ status: 1 })
+                  .select({ status: 1, outputMarkdown: 1 })
                   .lean();
-                if (String((outcome as { status?: unknown } | null)?.status ?? "") === "failed") {
+                const outcomeStatus = String((outcome as { status?: unknown } | null)?.status ?? "");
+                const outcomeMarkdown = String((outcome as { outputMarkdown?: unknown } | null)?.outputMarkdown ?? "").trim();
+                /**
+                 * Charge for output, not for the absence of a crash.
+                 *
+                 * This asked only whether the row said `failed`, and `failed` is one of three ways
+                 * a run ends with nothing to read. The other two were charged in full: the model
+                 * returning null (no API key configured, or both attempts threw) writes `skipped`,
+                 * and output that parses with an empty summary writes `completed` carrying no
+                 * markdown. Both left the owner 2, 5 or 12 credits down in front of a blank review.
+                 */
+                const reviewProducedOutput = outcomeStatus === "completed" && outcomeMarkdown.length > 0;
+                if (!reviewProducedOutput) {
                   await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
-                  debugLog(1, "[process] forceReview=1; legacy review failed, credits refunded", {
+                  debugLog(1, "[process] forceReview=1; legacy review produced no output, credits refunded", {
                     uploadId,
                     docId: String(docId),
                     version: uploadVersion,
@@ -1690,6 +1921,27 @@ export async function POST(
                 docId: String(docId),
                 version: uploadVersion,
               });
+              /**
+               * Take the run before reserving; see the sibling branch above for what went wrong.
+               *
+               * Same defect, same shape: a caller-supplied `x-idempotency-key` makes two concurrent
+               * requests share one reservation, and refusing only a `charged` replay let both of
+               * them call the model on a single charge.
+               */
+              const reviewClaim = await claimReviewRun({
+                docId,
+                uploadId,
+                version: uploadVersion,
+                inputTextChars: extractedText.length,
+              });
+              if (!reviewClaim) {
+                debugLog(1, "[process] forceReview=1; another caller is already running this review", {
+                  uploadId,
+                  docId: String(docId),
+                  version: uploadVersion,
+                });
+                return;
+              }
               let ledgerId: string | null = null;
               // Settle at what the reservation took, not at this call's price: see the sibling
               // branch above. A caller-supplied `x-idempotency-key` can replay a reservation made
@@ -1722,6 +1974,7 @@ export async function POST(
                 // Already paid for and already done: do not run the model again on somebody
                 // else's money, and do not re-mark a charged row.
                 if (reserved.status === "charged") {
+                  await releaseReviewRun({ docId, version: uploadVersion, claim: reviewClaim });
                   debugLog(1, "[process] forceReview=1; this attempt is already charged, skipping the run", {
                     uploadId,
                     docId: String(docId),
@@ -1732,6 +1985,7 @@ export async function POST(
                 ledgerId = reserved.ledgerId;
                 reviewChargedCredits = reserved.creditsReserved;
               } catch (e) {
+                await releaseReviewRun({ docId, version: uploadVersion, claim: reviewClaim });
                 debugLog(1, "[process] forceReview=1; insufficient credits (skipping)", {
                   uploadId,
                   docId: String(docId),
@@ -1752,6 +2006,7 @@ export async function POST(
                   guideText: requestGuideDocText,
                   stageHint,
                   force: true,
+                  claimed: true,
                   meta: {
                     userId: actor.userId,
                     projectId: requestProjectId,
@@ -1766,14 +2021,22 @@ export async function POST(
                  * so the catch below never fires and this line finalised a 5-credit charge (12 on
                  * Advanced) for a review that produced nothing. The page then said "Review failed.
                  * Try Rerun review" over a button the owner had already paid for.
+                 *
+                 * Asking only for `failed` was half the fix, and this agent path is where the other
+                 * half bites: `runRequestReviewInvestorFocused` output that parses with an empty
+                 * `summary_markdown` is written as `completed` with null markdown, and the model
+                 * returning nothing at all writes `skipped`. Neither is a failure and neither is
+                 * worth 5 credits, so the test is whether there is something to read.
                  */
                 const outcome = await ReviewModel.findOne({ docId, version: uploadVersion })
-                  .select({ status: 1 })
+                  .select({ status: 1, outputMarkdown: 1 })
                   .lean();
-                const reviewFailed = String((outcome as { status?: unknown } | null)?.status ?? "") === "failed";
-                if (reviewFailed) {
+                const outcomeStatus = String((outcome as { status?: unknown } | null)?.status ?? "");
+                const outcomeMarkdown = String((outcome as { outputMarkdown?: unknown } | null)?.outputMarkdown ?? "").trim();
+                const reviewProducedOutput = outcomeStatus === "completed" && outcomeMarkdown.length > 0;
+                if (!reviewProducedOutput) {
                   await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
-                  debugLog(1, "[process] forceReview=1; review failed, credits refunded", {
+                  debugLog(1, "[process] forceReview=1; review produced no output, credits refunded", {
                     uploadId,
                     docId: String(docId),
                     version: uploadVersion,
@@ -2343,18 +2606,11 @@ export async function POST(
                 .select({ _id: 1, blobUrl: 1, slideNodes: 1, "metadata.pages": 1 })
                 .lean();
               previousUploadId = prevUpload?._id ?? null;
-              /**
-               * Page counts for the no-change short-circuit, which cannot see them otherwise.
-               * `metadata.pages` first; the rendered slide count is the fallback for rows written
-               * before that field, and 0 reads as unknown rather than as an empty document.
-               */
-              const countPages = (meta: unknown, slides: unknown) => {
-                const m = (meta as { pages?: unknown } | null | undefined)?.pages;
-                if (typeof m === "number" && Number.isFinite(m) && m > 0) return Math.floor(m);
-                return Array.isArray(slides) && slides.length ? slides.length : null;
-              };
-              previousPageCount = countPages((prevUpload as any)?.metadata, (prevUpload as any)?.slideNodes);
-              newPageCount = countPages((upload as any)?.metadata, slideNodes) ?? (extractedPages?.length || null);
+              // Page counts for the no-change short-circuit, which cannot see them otherwise.
+              // Shared with the completed-upload backfill, which had none at all.
+              previousPageCount = countPagesForCompare((prevUpload as any)?.metadata, (prevUpload as any)?.slideNodes);
+              newPageCount =
+                countPagesForCompare((upload as any)?.metadata, slideNodes) ?? (extractedPages?.length || null);
               changedPages = await loadChangedPages({
                 prevUpload,
                 newUpload: { slideNodes: Array.isArray(slideNodes) ? slideNodes : [] },
@@ -2386,17 +2642,42 @@ export async function POST(
              * drifted apart for good. `creditsReserved` is what was actually taken.
              */
             let historyChargedCredits = historyCredits;
-            /** The compare for this version was already charged by an earlier attempt; keep its DocChange. */
+            /** The compare for this version was charged by an earlier attempt *and* stored; keep its DocChange. */
             let historyAlreadyDone = false;
+            /**
+             * An earlier attempt paid for this version's compare and stored nothing. Re-run it free.
+             *
+             * A `charged` replay was read as proof the compare had been stored, and it is not: an
+             * attempt that reserved, called the model, was charged and then died before the
+             * DocChange upsert leaves exactly that state. The retry then neither re-ran the compare
+             * nor kept anything, and wrote the empty placeholder diff over the version instead, so
+             * the workspace had paid and version history showed nothing - permanently, because the
+             * reservation stays charged and every later retry made the same deduction.
+             */
+            let historyAlreadyPaid = false;
             // Credit-gated on every plan (no plan check): a Free workspace with credits gets the compare
             // at its default tier (Basic unless pinned); short of credits the reservation fails and the
             // compare is skipped with `out_of_credits`. Recipient uploads never bill the owner: no compare.
-            // The same file uploaded again: no model call and no credits. runDocChangeDiff answers
-            // this case itself, so the DocChange is still written and history reads "no changes"
-            // instead of an invented list of edits (owner, 2026-09-17).
-            const nothingChanged =
-              normalizeForCompare(previousText) === normalizeForCompare(newText) &&
-              !changedPages.some((p) => p.imageChanged === true);
+            /**
+             * The same file uploaded again: no model call and no credits (owner, 2026-09-17).
+             *
+             * Asked of the rule `runDocChangeDiff` itself short-circuits on, not of a local
+             * paraphrase of it. The paraphrase that used to live here knew only about the text and
+             * the per-page image verdicts; the real rule also requires that the page count held and
+             * that there was evidence either way. Replacing a PDF whose extractable text is
+             * identical while the page count moved therefore looked free to this block and was not
+             * free inside the callee - a real paid compare that nobody was charged for, and then,
+             * once the charge was settled on observed usage instead, a retroactive charge reaching
+             * paths this file says outright must never bill (a recipient upload, a workspace with
+             * automatic compares switched off).
+             */
+            const nothingChanged = isUnchangedWithoutModel({
+              previousText,
+              newText,
+              changedPages,
+              previousPageCount,
+              newPageCount,
+            });
             /**
              * The workspace switch, which gates only this automatic run.
              *
@@ -2408,16 +2689,37 @@ export async function POST(
              * gate above honoured its flag, which made this look like the compare toggle was broken
              * rather than simply never wired in.
              *
-             * Only asked when it can matter, in the shape the summary uses: a recipient upload and an
-             * identical re-upload are already not running the model. Fails open on a read error, so a
-             * database blip cannot silently drop a compare the owner is paying for.
+             * Skipped only for a recipient upload, whose answer cannot matter: the owner's switch
+             * does not govern a run the owner is never billed for. It used to be skipped for an
+             * identical re-upload too, which left the flag unread on that path and `true` standing
+             * in for it - harmless while nothing downstream read it, and wrong the moment the settle
+             * below needed to know whether this workspace may be billed at all. One `_id`-keyed read
+             * is not worth a value that lies. Fails open on a read error, so a database blip cannot
+             * silently drop a compare the owner is paying for.
              */
-            const automationCompareOn =
-              viaUploadSecret || nothingChanged
-                ? true
-                : await getAiAutomation(String(existingDocOrgId))
-                    .then((a) => a.compare)
-                    .catch(() => true);
+            const automationCompareOn = viaUploadSecret
+              ? true
+              : await getAiAutomation(String(existingDocOrgId))
+                  .then((a) => a.compare)
+                  .catch(() => true);
+            /**
+             * Whether this workspace may be charged for this compare at all - before asking whether
+             * there is anything to compare.
+             *
+             * Split out of `historyAllowed` because the two answer different questions and only one
+             * of them was ever asked when the money moved. `historyAllowed` also carries
+             * `!nothingChanged`, so on the free path it is false for a reason that has nothing to do
+             * with who uploaded or whether the feature is on - and the retroactive charge further
+             * down, which exists precisely for the free path having reached the model, had no other
+             * gate on it. A recipient's replacement and a workspace that had switched automatic
+             * compares off could both be billed there.
+             */
+            const historyBillable = !viaUploadSecret && automationCompareOn;
+            // Written out rather than composed from `historyBillable`: this declaration is read
+            // literally out of the source by `processCompareCredits.test.ts`, which compiles both
+            // copies of the reservation gate and runs them. `processCompareSettle.test.ts` pins the
+            // two gates against each other over every combination of inputs, so they cannot quietly
+            // come to say different things.
             const historyAllowed = !viaUploadSecret && !nothingChanged && automationCompareOn;
             if (nothingChanged) {
               debugLog(1, "[process] history compare skipped: identical text", { uploadId, docId: String(docId), version: uploadVersion });
@@ -2431,11 +2733,15 @@ export async function POST(
               warningDetails.historyPlan = "recipient upload; AI compare is not run on the owner's credits";
               debugLog(1, "[process] history compare skipped (recipient upload)", { uploadId, docId: String(docId), version: uploadVersion });
             }
-            if (!automationCompareOn) {
+            if (!automationCompareOn && !nothingChanged) {
               // Named, not silent, the same way the summary names its own switch: the version history
               // page offers "compare these versions" and the reader should know the empty compare is a
               // setting rather than a failure or a missing credit. `??` because both switches can be
               // off at once and the summary's reason was written first.
+              //
+              // `!nothingChanged` because the identical re-upload still writes its "no changes"
+              // record, free, whatever the switch says - and ends this block as `done`. Saying the
+              // compare was skipped for a setting and then reporting it done describes neither.
               aiState.compare = "skipped";
               aiState.reason = aiState.reason ?? "automatic compares are turned off for this workspace";
               aiState.code = aiState.code ?? "turned_off";
@@ -2453,8 +2759,12 @@ export async function POST(
                   idempotencyKey: historyIdempotencyKey,
                 });
                 if (reserved.status === "charged") {
+                  // Paid already. Stored is a separate question, and the answer decides whether the
+                  // work has to be done again: a charged reservation with no DocChange behind it is
+                  // an attempt that died between the charge and the upsert.
                   historyAlreadyDone = Boolean(await DocChangeModel.exists({ docId, toUploadId: upload._id }));
-                  aiState.compare = "done";
+                  historyAlreadyPaid = !historyAlreadyDone;
+                  if (historyAlreadyDone) aiState.compare = "done";
                 } else {
                   historyLedgerId = reserved.ledgerId;
                   historyChargedCredits = reserved.creditsReserved;
@@ -2474,20 +2784,38 @@ export async function POST(
             }
 
             let diff = null as any;
-            let compareUsage: DocChangeDiffUsage | null = null;
-            if (nothingChanged) {
-              // Free path: the fixed "no changes" record, without touching the model.
-              diff = await runDocChangeDiff({
-                previousText,
-                newText,
-                changedPages,
-                previousPageCount,
-                newPageCount,
-                qualityTier: historyTier,
-              }).catch(() => null);
-              aiState.compare = "done";
-            }
-            if (historyLedgerId) {
+            /**
+             * What the compare cost, and the only authority on whether it reached the model.
+             *
+             * `runDocChangeDiff` calls `onUsage` once after a model call and never on the paths
+             * that skip it, so this is a fact about what happened rather than a guess about what
+             * would happen. Every credit decision below reads it.
+             */
+            const compareRun: { usage: DocChangeDiffUsage | null } = { usage: null };
+            /**
+             * One call site, so every compare carries the ceiling, the page counts and the telemetry.
+             *
+             * The free "nothing changed" path used to call `runDocChangeDiff` separately with none
+             * of them, trusting the callee to answer from its short-circuit. The caller's test for
+             * that was weaker than the callee's, so when they disagreed - identical text, page
+             * count moved - a real paid compare ran with no timeout, no usage recorded and nobody
+             * charged. Reserving is still decided up front, but running is decided here and the
+             * settle follows what the call actually did, so the two tests can no longer disagree.
+             */
+            const compareShouldRun =
+              !historyAlreadyDone && (historyLedgerId !== null || historyAlreadyPaid || nothingChanged);
+            /**
+             * This run holds no money, so it may not reach the model - said out loud, not hoped for.
+             *
+             * The third leg of `compareShouldRun` is the only one with nothing behind it: no
+             * reservation taken, and no earlier attempt that already paid. It is reached on the
+             * caller's reading of "nothing changed", and when that reading turns out weaker than the
+             * callee's, the call is a real paid compare on a path that never agreed to buy one -
+             * including, since a recipient upload and a compare-off workspace reach exactly this
+             * leg, on the two paths this file guarantees cost the owner nothing.
+             */
+            const compareRecordOnly = historyLedgerId === null && !historyAlreadyPaid;
+            if (compareShouldRun) {
               try {
                 /**
                  * The same 90s ceiling the manual rerun has always had, and for a worse case.
@@ -2507,43 +2835,108 @@ export async function POST(
                   previousPageCount,
                   newPageCount,
                   qualityTier: historyTier,
+                  noModel: compareRecordOnly,
                   abortSignal: AbortSignal.timeout(COMPARE_TIMEOUT_MS),
                   onUsage: (u) => {
-                    compareUsage = u;
+                    compareRun.usage = u;
                   },
                 });
-                if (!diff) {
-                  await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
-                  aiState.compare = "failed";
-                  // Say why: "AI compare failed: an error occurred." gave an agent nothing to act on.
-                  warningDetails.historyDiff = "the compare returned no result (credits refunded)";
-                  if (!aiState.code) {
-                    aiState.code = "error";
-                    aiState.reason = "the compare model returned no result; credits were refunded";
+                /**
+                 * Chargeable means a model call that produced something, and nothing else.
+                 *
+                 * Not "we got this far", and not "the caller expected to pay": either of those can
+                 * disagree with what `runDocChangeDiff` decided to do, and both have.
+                 */
+                const compareChargeable = Boolean(diff) && compareRun.usage !== null;
+                if (historyLedgerId) {
+                  if (compareChargeable) {
+                    await markLedgerCharged({
+                      workspaceId: String(existingDocOrgId),
+                      ledgerId: historyLedgerId,
+                      creditsCharged: historyChargedCredits,
+                      // What the tier actually bought. Until this was recorded, the only answer to
+                      // "is 2/5/12 the right price, and what do the extra pages cost?" was arithmetic
+                      // over a provider tiling rule nobody here has measured.
+                      telemetry: compareTelemetry(compareRun.usage),
+                    });
+                    creditsUsedThisRun += historyChargedCredits;
+                    aiState.compare = "done";
+                  } else {
+                    await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
+                    if (diff) {
+                      // The callee answered from its short-circuit after all: a real record, and
+                      // nothing was bought, so the reservation goes straight back.
+                      aiState.compare = "done";
+                    } else {
+                      aiState.compare = "failed";
+                      // Say why: "AI compare failed: an error occurred." gave an agent nothing to act on.
+                      warningDetails.historyDiff = "the compare returned no result (credits refunded)";
+                      if (!aiState.code) {
+                        aiState.code = "error";
+                        aiState.reason = "the compare model returned no result; credits were refunded";
+                      }
+                      diff = null;
+                    }
                   }
-                  diff = null;
+                } else if (compareRun.usage !== null && !historyAlreadyPaid && historyBillable) {
+                  /**
+                   * The path that expected to be free reached the model, so it was not free.
+                   *
+                   * This is the disagreement itself, caught after the fact instead of predicted:
+                   * the workspace is billed for the call it actually made rather than handed a paid
+                   * compare for nothing. A workspace that cannot pay keeps the result and the
+                   * shortfall is recorded on the upload rather than swallowed.
+                   *
+                   * `historyBillable` because "it reached the model" is not on its own permission to
+                   * charge anyone. The free leg above is also the leg a recipient upload and a
+                   * compare-off workspace land on, and without this clause the first disagreement
+                   * between caller and callee billed the document's owner for a stranger's upload -
+                   * over the top of the `skipped` state and the "not run on the owner's credits"
+                   * note this same block had written a few lines up. `noModel` should mean nothing
+                   * ever arrives here with usage; this is what happens if that stops being true.
+                   */
+                  try {
+                    const late = await reserveForAttempt({
+                      workspaceId: String(existingDocOrgId),
+                      userId: actor.userId,
+                      docId: String(docId),
+                      actionType: "history",
+                      qualityTier: historyTier,
+                      idempotencyKey: historyIdempotencyKey,
+                    });
+                    if (late.status !== "charged") {
+                      await markLedgerCharged({
+                        workspaceId: String(existingDocOrgId),
+                        ledgerId: late.ledgerId,
+                        creditsCharged: late.creditsReserved,
+                        telemetry: compareTelemetry(compareRun.usage),
+                      });
+                      creditsUsedThisRun += late.creditsReserved;
+                    }
+                  } catch (e) {
+                    warningDetails.historyCredits = e instanceof Error ? e.message : String(e);
+                  }
+                  aiState.compare = "done";
                 } else {
-                  await markLedgerCharged({
-                    workspaceId: String(existingDocOrgId),
-                    ledgerId: historyLedgerId,
-                    creditsCharged: historyChargedCredits,
-                    // What the tier actually bought. Until this was recorded, the only answer to
-                    // "is 2/5/12 the right price, and what do the extra pages cost?" was arithmetic
-                    // over a provider tiling rule nobody here has measured.
-                    telemetry: compareTelemetry(compareUsage),
-                  });
-                  creditsUsedThisRun += historyChargedCredits;
+                  // Nothing was bought: the identical re-upload's fixed record, or a compare that
+                  // an earlier attempt already paid for and failed to store.
                   aiState.compare = "done";
                 }
               } catch (e) {
-                await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
+                if (historyLedgerId) {
+                  await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
+                }
                 aiState.compare = "failed";
                 const message = e instanceof Error ? e.message : String(e);
                 warningDetails.historyDiff = message;
                 debugError(1, "[process] history compare failed", { uploadId, docId: String(docId), message });
                 if (!aiState.code) {
                   aiState.code = "error";
-                  aiState.reason = `the compare failed (${message.slice(0, 160)}); credits were refunded`;
+                  // Only say "refunded" when there was a reservation to refund: a re-run that an
+                  // earlier attempt already paid for holds none, and neither does the free path.
+                  aiState.reason = historyLedgerId
+                    ? `the compare failed (${message.slice(0, 160)}); credits were refunded`
+                    : `the compare failed (${message.slice(0, 160)})`;
                 }
                 diff = null;
               }

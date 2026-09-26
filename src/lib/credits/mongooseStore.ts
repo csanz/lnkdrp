@@ -1,6 +1,7 @@
 import mongoose, { Types } from "mongoose";
 
-import type { CreditStore, CreditsUsageSums, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
+import type { CreditStore, CreditsUsageSums, LedgerTransition, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
+import type { LedgerStatus } from "@/lib/credits/types";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { UsageAggDailyModel } from "@/lib/models/UsageAggDaily";
@@ -41,6 +42,14 @@ function snapshotBalance(doc: any, now: Date): WorkspaceBalanceSnapshot {
   };
 }
 
+/**
+ * Builds the Mongo-backed `CreditStore` for one workspace.
+ *
+ * Every method runs on the session opened by `withTransaction`, so a reserve or a refund commits
+ * its balance write and its ledger write together. Status moves are guarded inside the update
+ * filter (see `setLedgerStatus`) rather than by reading the row first, which is what makes a
+ * replayed settle or a racing refund a no-op instead of a second charge.
+ */
 export function createMongooseCreditStore(params: { workspaceId: string }): CreditStore {
   const workspaceId = params.workspaceId;
   if (!Types.ObjectId.isValid(workspaceId)) throw new Error("Invalid workspaceId");
@@ -242,9 +251,21 @@ export function createMongooseCreditStore(params: { workspaceId: string }): Cred
       };
     },
 
-    async setLedgerStatus({ ledgerId, status, creditsCharged, telemetry }): Promise<void> {
+    /**
+     * Moves one ledger row to a new status, and for a settle applies its usage aggregates once.
+     *
+     * The status filter is the guard, and it lives in the update itself. The previous version
+     * matched on `_id` alone and leaned on `usageAggAppliedAt: null` to decide whether to apply
+     * usage, which is not the same question: a row that had been refunded (by the failure path or
+     * by the stale-reservation sweeper) had never applied aggregates, so a late settle flipped it
+     * to `charged` and billed usage for credits that were already back in the workspace balance.
+     * Now the row moves only from a status the caller expects to find, and the aggregate claim is
+     * attempted only when this call is the one that moved it.
+     */
+    async setLedgerStatus({ ledgerId, status, expectedStatus, creditsCharged, telemetry }): Promise<LedgerTransition> {
       const s = mustSession();
-      if (!Types.ObjectId.isValid(ledgerId)) return;
+      if (!Types.ObjectId.isValid(ledgerId)) return { moved: false, previousStatus: null };
+      const _id = new Types.ObjectId(ledgerId);
       const nextCreditsCharged = typeof creditsCharged === "number" ? clampNonNegInt(creditsCharged) : null;
       const update: Record<string, unknown> = { status };
       if (nextCreditsCharged !== null) update.creditsCharged = nextCreditsCharged;
@@ -252,21 +273,39 @@ export function createMongooseCreditStore(params: { workspaceId: string }): Cred
         Object.assign(update, telemetry);
       }
 
-      // Fast path: non-charged status updates don't need aggregate work.
-      if (status !== "charged") {
-        await CreditLedgerModel.updateOne({ _id: new Types.ObjectId(ledgerId) }, { $set: update }, { session: s });
-        return;
-      }
+      const guard =
+        expectedStatus && expectedStatus.length > 0 ? { status: { $in: [...expectedStatus] } } : {};
 
-      // Claim the ledger for aggregate application exactly once (concurrency-safe).
-      // If this doesn't match, someone already applied aggregates (or this isn't an ai_run row).
+      /** Reads back the status of a row this call refused to move, for the caller's report. */
+      const currentStatus = async (): Promise<LedgerStatus | null> => {
+        const row = await CreditLedgerModel.findById(_id).select({ _id: 1, status: 1 }).session(s).lean();
+        const found = (row as any)?.status;
+        return typeof found === "string" ? (found as LedgerStatus) : null;
+      };
+
+      // One guarded write moves the row. `findOneAndUpdate` returns the document as it was before
+      // the update, so a match both proves the move happened and reports the status it moved from.
+      const moved = await CreditLedgerModel.findOneAndUpdate(
+        { _id, ...guard },
+        { $set: update },
+        { session: s, projection: { _id: 1, status: 1 } } as any,
+      ).lean();
+
+      if (!moved?._id) return { moved: false, previousStatus: await currentStatus() };
+      const previousStatus = (typeof (moved as any).status === "string" ? (moved as any).status : null) as LedgerStatus | null;
+
+      // Non-settle transitions carry no usage aggregates.
+      if (status !== "charged") return { moved: true, previousStatus };
+
+      // Claim the row for aggregate application exactly once (concurrency-safe). A miss here means
+      // the aggregates were already applied, or this is not an ai_run row (a grant, say).
       const claimed = await CreditLedgerModel.findOneAndUpdate(
         {
-          _id: new Types.ObjectId(ledgerId),
+          _id,
           eventType: "ai_run",
           usageAggAppliedAt: null,
         },
-        { $set: { ...update, usageAggAppliedAt: new Date(0) } },
+        { $set: { usageAggAppliedAt: new Date(0) } },
         {
           session: s,
           new: true,
@@ -285,11 +324,7 @@ export function createMongooseCreditStore(params: { workspaceId: string }): Cred
         } as any,
       ).lean();
 
-      if (!claimed?._id) {
-        // Still persist status/telemetry/creditsCharged (but don't touch aggregates).
-        await CreditLedgerModel.updateOne({ _id: new Types.ObjectId(ledgerId) }, { $set: update }, { session: s });
-        return;
-      }
+      if (!claimed?._id) return { moved: true, previousStatus };
 
       const createdAt = (claimed as any)?.createdDate instanceof Date ? (claimed as any).createdDate : new Date();
       const day = createdAt.toISOString().slice(0, 10); // UTC day key
@@ -347,11 +382,9 @@ export function createMongooseCreditStore(params: { workspaceId: string }): Cred
       }
 
       // Finalize appliedAt marker (overwrite the sentinel).
-      await CreditLedgerModel.updateOne(
-        { _id: new Types.ObjectId(ledgerId) },
-        { $set: { usageAggAppliedAt: new Date() } },
-        { session: s },
-      );
+      await CreditLedgerModel.updateOne({ _id }, { $set: { usageAggAppliedAt: new Date() } }, { session: s });
+
+      return { moved: true, previousStatus };
     },
   };
 }

@@ -285,7 +285,15 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
         return new ToolError("not_found", LINK_NOT_FOUND_ON_PROJECT, { status });
       }
       if (/^\/api\/projects\//.test(path)) {
-        return new ToolError("not_found", "No such project in this workspace. lnkdrp_list_projects lists the projects you can use.", { status });
+        // `GET /api/projects/:slug` says *why* a slug missed when it can: `reason:
+        // "slug_backfill_pending"` means a pre-slug project may still be waiting for the list
+        // route to give it one. Carried in `details` so `projectIdForSlug` can fall back to the
+        // list scan for exactly that case and nothing else.
+        const reason = str(body.reason);
+        return new ToolError("not_found", "No such project in this workspace. lnkdrp_list_projects lists the projects you can use.", {
+          status,
+          ...(reason ? { details: { reason } } : {}),
+        });
       }
       // Link routes 404 when the link is not on that document, even though the document exists;
       // "No such document" sent agents looking for a document problem that was not there.

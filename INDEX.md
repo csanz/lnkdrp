@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 986 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 984 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -578,7 +578,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/ai/analyzePdfText.ts` · AiDocAnalysis, AiDocAnalysisSchema, analysisTelemetry, AnalysisTelemetry, ANALYZE_TIMEOUT_MS, analyzePdfText, isFallbackAnalysis, normalizeAiDocAnalysis
 - `src/lib/ai/askFromText.ts` · extractAskDetailFromText, extractDollarAmounts, findRaiseAmount, resolveAsk
 - `src/lib/ai/constants.ts` · CATEGORY_LABELS, CATEGORY_VALUES, CategoryValue, CONFIDENCE_VALUES, ConfidenceValue, INTENDED_AUDIENCE_LABELS, INTENDED_AUDIENCE_VALUES, IntendedAudienceValue, …
-- `src/lib/ai/docChangeDiff.ts` · DocChangeDiff, DocChangeDiffSchema, DocChangeDiffUsage, isNoChangeSummary, NO_CHANGE_SUMMARY, normalizeForCompare, runDocChangeDiff, shapeDiff
+- `src/lib/ai/docChangeDiff.ts` · DocChangeDiff, DocChangeDiffSchema, DocChangeDiffUsage, isNoChangeSummary, isUnchangedWithoutModel, NO_CHANGE_SUMMARY, normalizeForCompare, runDocChangeDiff, …
 - `src/lib/ai/docChangeSummary.ts` · isNoChangeSummary, NO_CHANGE_SUMMARY
 - `src/lib/ai/openaiProviderOptions.ts` · OPENAI_PROVIDER_OPTIONS
 - `src/lib/ai/requestReviewInvestorFocused.ts` · RequestReviewInvestorFocusedOutput, RequestReviewInvestorFocusedSchema, runRequestReviewInvestorFocused
@@ -661,7 +661,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/credits/adminMutations.ts` · AdminCreditMutationAction, adminMutateCredits, adminSimulateNewBillingCycle
 - `src/lib/credits/aiAutomation.ts` · AI_AUTOMATION_DEFAULT, AiAutomation, getAiAutomation, isAutomationOn, parseAutomationFlag, resolveAiAutomation
 - `src/lib/credits/costCatalog.ts` · COST_CATALOG, costAnchorId, CostCatalogEntry, costEntryForAction, flatPriceOf, FREE_ACTIONS, hasQualityLevels, QUALITY_BLURBS, …
-- `src/lib/credits/creditService.ts` · defaultBalanceForWorkspace, failAndRefundLedger, FREE_DAILY_CREDIT_CAP, markLedgerCharged, recordUnbilledRun, reserveCreditsOrThrow, starterCreditsForWorkspace
+- `src/lib/credits/creditService.ts` · defaultBalanceForWorkspace, failAndRefundLedger, FREE_DAILY_CREDIT_CAP, markLedgerCharged, recordUnbilledRun, reserveCreditsOrThrow, starterCreditsForWorkspace, UNBILLED_RUN_ATTEMPTS
 - `src/lib/credits/cycleKey.ts` · cycleKeyForUsage, startOfUtcMonth, usageCycleStart
 - `src/lib/credits/errors.ts` · DAILY_CAP_CODE, isDailyCapError, isOutOfCreditsError, OUT_OF_CREDITS_CODE
 - `src/lib/credits/grants.ts` · buildCycleKey, creditMonthIndex, creditWindowIndex, FREE_STARTER_CREDITS, grantCycleIncludedCredits, INCLUDED_CREDITS_PER_CYCLE
@@ -732,7 +732,6 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/gating/entryGate.ts` · enforceEntryGates
 - `src/lib/gating/forbidApiKey.ts` · forbidApiKey
 - `src/lib/gating/requireAdmin.ts` · AdminGate, requireAdmin
-- `src/lib/gating/serverComponentRequest.ts` · serverComponentRequest
 - `src/lib/gating/tempUserClient.ts` · captureTempUserFromResponse, clearTempUser, fetchWithTempUser, getTempUser, setTempUser, TEMP_USER_STORAGE_KEY, tempUserHeaders, TempUserStored, …
 - `src/lib/gating/tempUserHeaders.ts` · TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER
 - `src/lib/gating/waitlist.ts` · accessStatusChanged, forbidWaitlisted, isWaitlistedActor, readAccessStatus
@@ -970,7 +969,6 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `scripts/docchange-from-upload-repair.ts`
 - `scripts/gen-env-secrets.mjs`
 - `scripts/home-shot-brief.ts`
-- `scripts/home-shot-slack.ts`
 - `scripts/lib/exit.ts` · exit
 - `scripts/lib/time.mjs` · safeTimestamp
 - `scripts/measure-image-tokens.ts`

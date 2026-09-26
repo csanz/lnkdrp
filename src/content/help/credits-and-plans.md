@@ -33,17 +33,22 @@ See [Pricing](/pricing) for the full comparison.
 
 Credits are only spent when the AI reads a document. Uploads, replacements, links, passwords, downloads and analytics never cost credits.
 
+| Per run | Credits |
+| --- | --- |
+| Summary and key points | 1 |
+| Visit brief | 1 |
+
+One price each, and no level to choose. AI compare is the only run you pick a level for:
+
 | Per run | Basic | Standard | Advanced |
 | --- | --- | --- | --- |
-| Summary and key points | 1 | 2 | 5 |
 | AI compare (what changed between versions) | 2 | 5 | 12 |
-| Visit brief | 1 | 1 | 1 |
 
-- The summary runs automatically at Basic on every upload. Ask for a better one from the document page.
+- The summary is written automatically on every upload. If it was skipped or it failed, write it again from the document page for the same 1 credit.
 - The summary costs 0 credits when your own agent writes it over MCP, and for files recipients upload through a replace link.
 - AI compare runs automatically when you replace a PDF: at Basic on Free, at Standard on Pro. You can change the default level, or run it by hand from the version history page.
 
-**Quality levels**: Basic is a quick pass for short documents and everyday changes. Standard reads more carefully. Advanced is the deepest reading, for long or high-stakes documents.
+**Quality levels** apply to AI compare: Basic is a quick pass for short documents and everyday changes. Standard reads more carefully. Advanced is the deepest reading, for long or high-stakes documents.
 
 See [/costs](/costs) for the full table. Every run is listed on the dashboard Usage tab.
 
