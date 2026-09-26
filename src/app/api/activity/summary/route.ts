@@ -20,6 +20,8 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { agentLabel } from "@/lib/activity/log";
 import { windowStartUtc } from "@/lib/analytics/shareViewAggregates";
+import { buildActorFilter } from "@/lib/people/actorFilter";
+import { parseContributorKey } from "@/lib/people/contributorKey";
 import {
   ACTIVITY_WORK_TYPES,
   buildActivitySeries,
@@ -50,13 +52,34 @@ function emptySummary(days: number, since: Date) {
 /**
  * `GET /api/activity/summary`
  *
- * Query: `days` (1–365, default 30). Response:
+ * Query: `days` (1–365, default 30), `actor` (one contributor key, optional). Response:
  * `{ days, since, counts: { docsAdded, docsReplaced, linksCreated, docsRemoved, projectsCreated },
  *    actors: { total, people, agents, slices: [{ key, kind, client, label, count }] },
  *    series: [{ day, total, people, agents, ...counts }] }` - one point per day, gaps filled.
  * `since` is midnight UTC of the window's first day, so it names `series[0].day` and the counts,
  * the donut and the chart are all measured over the same days.
- * Errors: 403 when the caller is not a workspace member; 400 for unexpected failures.
+ * Errors: 403 when the caller is not a workspace member; 400 for an unparsable `actor`.
+ *
+ * **`actor`.** The same parameter `GET /api/activity` takes (`user:<id>` or
+ * `agent:<client>@<ownerUserId>`), narrowing every number here to one contributor so the chart on
+ * a person's or an agent's page is the series of their work rather than the workspace's. It shares
+ * the feed's clauses through `buildActorFilter`, which is the point: a page that draws a line from
+ * this route and pages its rows from the feed must not get two different answers about what that
+ * contributor did.
+ *
+ * Three guarantees ride on that sharing, and each is the feed's:
+ *
+ * 1. **A reader's history stays unreachable.** `buildActorFilter`'s person branch excludes
+ *    viewer-kind and secret rows by construction, on every plan, before any gating question is
+ *    asked - so `actor=user:<id>` cannot be turned into "what did this recipient read". The
+ *    `ACTIVITY_WORK_TYPES` match is a second, independent wall: reading types were never in it.
+ * 2. **A contributor's page is not the workspace feed.** The feed drops rows for documents kept
+ *    inside a room, and skips that exclusion when an actor is named, because a person's own work
+ *    must not vanish from their own page over where a document happens to be filed. This route
+ *    has never applied that exclusion at all, to any query, so there is nothing to skip - and the
+ *    two surfaces agree for a named actor either way.
+ * 3. **Tenancy is the session's.** `orgId` comes from `resolveActor`, never from the query, so an
+ *    actor key naming someone in another workspace selects nothing rather than crossing into it.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -70,9 +93,17 @@ export async function GET(request: Request) {
   // under a `since` naming a day the series does not contain. A reader would have read that as the
   // chart losing a day of work. Snapped, the match and the buckets cover the same days.
   const since = windowStartUtc(days);
+  // Parsed before any work is done, so a typo answers 400 rather than reaching Mongo as a filter on
+  // nothing and coming back as a plausible flat line. Same wording as the feed: one bad key, one
+  // message, wherever it was typed.
+  const actorRaw = (url.searchParams.get("actor") ?? "").trim();
+  const actorKey = actorRaw ? parseContributorKey(actorRaw) : null;
+  if (actorRaw && !actorKey) {
+    return NextResponse.json({ error: "Invalid actor. Pass user:<userId> or agent:<client>@<ownerUserId>." }, { status: 400 });
+  }
 
   try {
-    debugLog(2, "[api/activity/summary] GET", { days });
+    debugLog(2, "[api/activity/summary] GET", { days, actor: Boolean(actorKey) });
 
     const actor = await resolveActor(request);
     if (actor.kind !== "user") {
@@ -90,18 +121,29 @@ export async function GET(request: Request) {
 
     await connectMongo();
     const orgId = new Types.ObjectId(actor.orgId);
+    // `orgId` first and last: the actor clauses are spread over a match that is already this
+    // workspace's, and they carry no tenancy of their own.
+    const match: Record<string, unknown> = {
+      orgId,
+      createdDate: { $gte: since },
+      type: { $in: ACTIVITY_WORK_TYPES },
+      ...(actorKey ? buildActorFilter(actorKey) : {}),
+    };
 
     // `{ orgId, type, createdDate }` is an existing index; the group's cardinality is bounded by
     // the work-type list times the number of agent clients, so a page of rows never reaches Node.
     // Two groups over the same match: totals by type and client for the counts and the legend, and
     // one row per day and actor kind for the chart. Both stay small (types x clients, days x 2).
     const [grouped, byDay] = await Promise.all([
-      ActivityEventModel.aggregate<{ _id: { type?: string; client?: string | null }; count?: number }>([
-        { $match: { orgId, createdDate: { $gte: since }, type: { $in: ACTIVITY_WORK_TYPES } } },
-        { $group: { _id: { type: "$type", client: "$agent.client" }, count: { $sum: 1 } } },
+      ActivityEventModel.aggregate<{ _id: { type?: string; client?: string | null; userId?: unknown }; count?: number }>([
+        { $match: match },
+        // `userId` joins the key so the legend knows who connected each client: an agent's page is
+        // addressed by client and owner together, and a client two members connected has no single
+        // page. The group is still bounded by types x clients x the few members who connect one.
+        { $group: { _id: { type: "$type", client: "$agent.client", userId: "$userId" }, count: { $sum: 1 } } },
       ]),
       ActivityEventModel.aggregate<{ _id: { day?: string; type?: string; agent?: boolean }; count?: number }>([
-        { $match: { orgId, createdDate: { $gte: since }, type: { $in: ACTIVITY_WORK_TYPES } } },
+        { $match: match },
         {
           $group: {
             _id: {
@@ -123,11 +165,13 @@ export async function GET(request: Request) {
 
     const rows: ActivityGroupRow[] = grouped.map((g) => {
       const client = typeof g._id?.client === "string" && g._id.client.trim() ? g._id.client.trim() : null;
+      const ownerUserId = g._id?.userId ? String(g._id.userId) : null;
       return {
         type: typeof g._id?.type === "string" ? g._id.type : "",
         client,
         // "claude-code" -> "Claude Code", the same label the feed rows carry.
         label: client ? agentLabel({ client, version: null }) : null,
+        ownerUserId: client ? ownerUserId : null,
         count: typeof g.count === "number" ? g.count : 0,
       };
     });

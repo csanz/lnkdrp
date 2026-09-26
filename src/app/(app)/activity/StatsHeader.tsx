@@ -20,13 +20,14 @@
  * answers "agents or us", which a "Who: agents" filter would reduce to a single slice.
  */
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
-import { CartesianGrid, Cell, Label, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
+import { Cell, Label, Pie, PieChart, Tooltip } from "recharts";
 
-import { formatDayKey } from "@/lib/format/date";
+import WorkChart, { TOOLTIP_STYLE } from "@/components/activity/WorkChart";
 import { useKnownEmpty } from "@/lib/client/knownEmpty";
 import { formatShare } from "@/lib/charts/donut";
 import {
@@ -42,22 +43,9 @@ const DAYS = 30;
 /** Minimum spacing between refreshes triggered by live activity frames. */
 const REFRESH_MIN_MS = 15_000;
 
-/** At most this many dates under the chart, evenly picked, so 30 days stays readable. */
-const TICK_COUNT = 5;
-
 /** Outer size and ring thickness of the actor donut, in px. */
 const DONUT_SIZE = 104;
 const DONUT_THICKNESS = 14;
-
-/** The tooltip surface every chart in the app uses. */
-const TOOLTIP_STYLE = {
-  background: "var(--panel)",
-  border: "1px solid var(--border)",
-  borderRadius: 10,
-  padding: "6px 8px",
-  fontSize: 12,
-  color: "var(--fg)",
-} as const;
 
 /**
  * Slice colours, in the order the API returns slices (people first, then agent clients by volume).
@@ -67,14 +55,6 @@ const TOOLTIP_STYLE = {
  */
 const SLICE_COLORS = ["var(--chart-actor-1)", "var(--chart-actor-2)", "var(--chart-actor-3)"] as const;
 
-/** One colour per counted kind of work, in the order the tiles are shown. */
-const BUCKET_COLORS: Record<ActivitySummaryCountKey, string> = {
-  docsAdded: "var(--chart-views)",
-  docsReplaced: "var(--chart-work-2)",
-  linksCreated: "var(--chart-work-3)",
-  docsRemoved: "var(--chart-work-4)",
-  projectsCreated: "var(--chart-work-5)",
-};
 const REST_COLOR = "var(--chart-actor-rest)";
 
 /** Colour for the slice at `index`: its hue while the hues last, the de-emphasis grey after that. */
@@ -285,7 +265,25 @@ function ActorDonut({ slices, total, days }: { slices: ActorSlice[]; total: numb
                 Agent
               </span>
             )}
-            <span className="min-w-0 truncate text-[var(--muted)]">{s.label}</span>
+            {/* The name is the way in: an agent's slice links to that agent's page, which lists
+                everything it changed and who connected it. A client two members connected has no
+                single page, so it stays plain rather than picking one of them. */}
+            {s.href ? (
+              <Link
+                href={s.href}
+                className="min-w-0 truncate text-[var(--muted)] underline decoration-dotted underline-offset-2 hover:text-[var(--fg)]"
+                title={`Everything ${s.label} changed here`}
+              >
+                {s.label}
+              </Link>
+            ) : (
+              <span
+                className="min-w-0 truncate text-[var(--muted)]"
+                title={s.kind === "agent" ? "More than one member connected this one, so it has no single page" : undefined}
+              >
+                {s.label}
+              </span>
+            )}
             <span className="ml-auto shrink-0 pl-2 tabular-nums font-medium text-[var(--fg)]">{s.count.toLocaleString()}</span>
             <span className="w-9 shrink-0 text-right tabular-nums text-[var(--muted-2)]">{formatShare(s.count / total)}</span>
           </li>
@@ -293,101 +291,4 @@ function ActorDonut({ slices, total, days }: { slices: ActorSlice[]; total: numb
       </ul>
     </div>
   );
-}
-
-/**
- * Each kind of work by day, one line per tile in the tile's colour.
- *
- * Lines rather than one stacked shape: the reader's question here is "which of these is happening",
- * and five kinds on one axis only separate if each keeps its own line. A kind with nothing in the
- * window is left out entirely rather than drawn flat along the floor. The wrapper is measured with
- * a ResizeObserver, like the metrics hero, so the card keeps its height while the data loads.
- */
-function WorkChart({
-  series,
-  counts,
-  days,
-}: {
-  series: ActivityDayPoint[];
-  counts: Record<ActivitySummaryCountKey, number>;
-  days: number;
-}) {
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
-  const roRef = useRef<ResizeObserver | null>(null);
-  const setWrap = useCallback((el: HTMLDivElement | null) => {
-    roRef.current?.disconnect();
-    roRef.current = null;
-    if (!el) return;
-    const update = () => {
-      const r = el.getBoundingClientRect();
-      const w = Math.floor(r.width);
-      const h = Math.floor(r.height);
-      if (w > 0 && h > 0) setSize({ w, h });
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    roRef.current = ro;
-  }, []);
-  useEffect(() => () => roRef.current?.disconnect(), []);
-
-  const shown = ACTIVITY_SUMMARY_BUCKETS.filter((b) => counts[b.id] > 0);
-  if (!shown.length) return null;
-  const ticks = pickTicks(series, TICK_COUNT);
-
-  return (
-    <div className="mt-4">
-      <div ref={setWrap} className="h-32 w-full">
-        {size ? (
-          <LineChart width={size.w} height={size.h} data={series} margin={{ top: 10, right: 6, bottom: 2, left: 6 }}>
-            <YAxis hide domain={[0, "dataMax"]} allowDecimals={false} />
-            <XAxis dataKey="day" hide />
-            <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
-            <Tooltip
-              cursor={{ stroke: "var(--border)", strokeOpacity: 0.35 }}
-              contentStyle={TOOLTIP_STYLE}
-              labelStyle={{ color: "var(--muted-2)" }}
-              itemStyle={{ color: "var(--fg)" }}
-              labelFormatter={(label: unknown) => formatDayKey(String(label ?? ""))}
-              formatter={(value: unknown, name: unknown) => [typeof value === "number" ? value.toLocaleString() : String(value), String(name ?? "")]}
-            />
-            {shown.map((b) => (
-              <Line
-                key={b.id}
-                type="monotone"
-                dataKey={b.id}
-                name={b.label}
-                stroke={BUCKET_COLORS[b.id]}
-                strokeWidth={1.5}
-                dot={false}
-                activeDot={{ r: 3, strokeWidth: 1.5 }}
-                isAnimationActive={false}
-              />
-            ))}
-          </LineChart>
-        ) : null}
-      </div>
-      <div aria-hidden="true" className="mt-1 flex justify-between px-1 text-[10px] tabular-nums text-[var(--muted-2)]">
-        {ticks.map((t) => (
-          <span key={t}>{formatDayKey(t)}</span>
-        ))}
-      </div>
-      <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-        {shown.map((b) => (
-          <li key={b.id} className="flex items-center gap-1.5 text-[11px] leading-4 text-[var(--muted-2)]">
-            <span aria-hidden="true" className="h-[3px] w-4 shrink-0 rounded-full" style={{ background: BUCKET_COLORS[b.id] }} />
-            {b.label}
-          </li>
-        ))}
-      </ul>
-      <span className="sr-only">{`Each kind of work by day over the last ${days} days.`}</span>
-    </div>
-  );
-}
-
-/** At most `count` evenly spaced day keys, first and last always included. */
-function pickTicks(series: ActivityDayPoint[], count: number): string[] {
-  if (series.length <= count) return series.map((p) => p.day);
-  const step = (series.length - 1) / (count - 1);
-  return Array.from({ length: count }, (_, i) => series[Math.round(i * step)]!.day);
 }

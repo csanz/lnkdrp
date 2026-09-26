@@ -57,6 +57,7 @@ import {
   FREE_DOCUMENTS,
   FREE_ANALYTICS_DAYS,
   FREE_PROJECTS,
+  FREE_SLACK_CHANNELS,
   LIMIT_GRACE_DAYS,
   PRO_INCLUDED_COLLABORATORS,
   analyticsTierForPlan,
@@ -90,6 +91,7 @@ describe("billing/planLimits limitsForPlan", () => {
       projects: FREE_PROJECTS,
       analyticsDays: FREE_ANALYTICS_DAYS,
       collaborators: 0,
+      slackChannels: FREE_SLACK_CHANNELS,
     });
   });
 
@@ -100,6 +102,7 @@ describe("billing/planLimits limitsForPlan", () => {
       projects: null,
       analyticsDays: null,
       collaborators: PRO_INCLUDED_COLLABORATORS,
+      slackChannels: null,
     });
   });
 

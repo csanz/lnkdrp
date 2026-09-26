@@ -35,15 +35,64 @@ import {
   groupByDay,
 } from "@/components/activity/ActivityRows";
 import { useActivityPages } from "@/components/activity/useActivityPages";
+import WorkChart from "@/components/activity/WorkChart";
 import { ACTIVITY_FILTERS, type ActivityFilterId } from "@/lib/activity/labels";
-import { ACTIVITY_SUMMARY_BUCKETS } from "@/lib/activity/summary";
+import {
+  ACTIVITY_SUMMARY_BUCKETS,
+  type ActivityDayPoint,
+  type ActivitySummaryCountKey,
+} from "@/lib/activity/summary";
 import { formatRelative } from "@/lib/analytics/reading/format";
+import { formatDayKey } from "@/lib/format/date";
 import { cn } from "@/lib/cn";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import type { ActorProfile, ActorProfileDoc, ActorProfileProject } from "@/lib/people/types";
 
 /** What the profile request came back as. `missing` is the 404 every unknown key lands on. */
 type LoadState = "loading" | "ready" | "missing" | "error";
+
+/** The part of `GET /api/activity/summary?actor=` the chart under the tiles needs. */
+type ActorSummary = {
+  days: number;
+  counts: Record<ActivitySummaryCountKey, number>;
+  series: ActivityDayPoint[];
+};
+
+/**
+ * Bounds on the chart's window.
+ *
+ * The floor exists because a line of four points is a sparkline of nothing: an agent that arrived
+ * on Tuesday still gets a fortnight of axis to be read against. The ceiling is the summary route's
+ * own maximum, so the page can never ask for a window the API will silently shrink under it.
+ */
+const CHART_MIN_DAYS = 14;
+const CHART_MAX_DAYS = 365;
+
+/** Midnight UTC of the day a timestamp falls in, as milliseconds; NaN for anything unparsable. */
+function utcDayStart(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+}
+
+/**
+ * How many days the chart should cover for a contributor whose first action was `firstAt`.
+ *
+ * Taken from the contributor's own span rather than fixed at the header's 30 days, because these
+ * tiles say "All time" and the two must not contradict each other: an agent that did 498 things
+ * last month and nothing since would have drawn a flat empty line under a page full of numbers,
+ * which reads as a broken chart rather than as a finished job. The window still ends today (the
+ * series the API fills always does), so it is "everything since they started", capped; when the cap
+ * bites, the caption under the chart names the days it actually covers.
+ *
+ * Null when there is no first action to measure from: nothing to draw, so nothing is fetched.
+ */
+function chartDaysFor(firstAt: string | null | undefined, nowMs: number): number | null {
+  const t = firstAt ? Date.parse(firstAt) : Number.NaN;
+  if (!Number.isFinite(t)) return null;
+  const span = Math.floor((utcDayStart(nowMs) - utcDayStart(t)) / 86_400_000) + 1;
+  if (!Number.isFinite(span)) return null;
+  return Math.min(CHART_MAX_DAYS, Math.max(CHART_MIN_DAYS, span));
+}
 
 /** The chip that marks an agent, identical to the one on the donut legend and the contributors card. */
 function AgentChip() {
@@ -138,6 +187,7 @@ export default function ActorPageClient({ actorKey }: { actorKey: string }) {
   const [profile, setProfile] = useState<ActorProfile | null>(null);
   const [state, setState] = useState<LoadState>("loading");
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<ActorSummary | null>(null);
   // Relative times are pinned to the moment the profile landed, not to each render: reading the
   // clock during render is impure, and a row that ages between renders while its neighbour does
   // not is the visible symptom (same reasoning as `ContributorsCard`).
@@ -147,6 +197,7 @@ export default function ActorPageClient({ actorKey }: { actorKey: string }) {
     let cancelled = false;
     setState("loading");
     setProfileError(null);
+    setSummary(null);
     void (async () => {
       try {
         const res = await fetchWithTempUser(`/api/activity/actor?key=${encodeURIComponent(actorKey)}`, {
@@ -179,6 +230,52 @@ export default function ActorPageClient({ actorKey }: { actorKey: string }) {
       cancelled = true;
     };
   }, [actorKey]);
+
+  // The chart's series, over this contributor's own span. Separate from the profile request
+  // because the window it needs is computed from the profile's `firstAt`: one round trip decides
+  // what the second one should ask for, and a chart that fails to load must leave the tiles alone.
+  const firstAt = profile?.firstAt ?? null;
+  useEffect(() => {
+    const days = chartDaysFor(firstAt, Date.now());
+    if (!days) {
+      setSummary(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetchWithTempUser(
+          `/api/activity/summary?days=${days}&actor=${encodeURIComponent(actorKey)}`,
+          { cache: "no-store" },
+        );
+        if (cancelled || !res.ok) return;
+        const json = (await res.json().catch(() => null)) as ActorSummary | null;
+        if (cancelled || !json || !Array.isArray(json.series) || !json.counts) return;
+        setSummary({ days: typeof json.days === "number" ? json.days : days, counts: json.counts, series: json.series });
+      } catch {
+        // The tiles and the feed are unaffected; the card simply has no chart in it.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [actorKey, firstAt]);
+
+  /**
+   * What the chart covers, in words, or null when there is nothing to draw.
+   *
+   * The caption is not decoration. The tiles above it are all time and the line is a window, so
+   * without a period named on the line the two sets of numbers read as the same measurement
+   * disagreeing with itself. `WorkChart` renders nothing when every bucket is zero, and this goes
+   * null on exactly the same condition so the caption cannot outlive its chart.
+   */
+  const chartPeriod = useMemo(() => {
+    if (!summary?.series.length) return null;
+    if (!ACTIVITY_SUMMARY_BUCKETS.some((b) => (summary.counts[b.id] ?? 0) > 0)) return null;
+    const from = formatDayKey(summary.series[0]!.day);
+    const to = formatDayKey(summary.series[summary.series.length - 1]!.day);
+    return `By day, ${from} to ${to}. The numbers above are all time.`;
+  }, [summary]);
 
   const [filter, setFilter] = useState<ActivityFilterId>("all");
   const [pageSize, setPageSize] = useState<number>(DEFAULT_ACTIVITY_PAGE_SIZE);
@@ -318,6 +415,16 @@ export default function ActorPageClient({ actorKey }: { actorKey: string }) {
                     <StatTile key={t.key} value={t.value} label={t.label} title={t.title} />
                   ))}
                 </dl>
+                {/* A little graph of the same work the tiles count, in the same card and the same
+                    component the `/activity` header draws, so the two pages agree about what a
+                    week of work looks like. Absent entirely, frame and all, when the window holds
+                    no work of a counted kind. */}
+                {summary && chartPeriod ? (
+                  <>
+                    <WorkChart series={summary.series} counts={summary.counts} days={summary.days} />
+                    <p className="mt-2 text-[11px] leading-4 text-[var(--muted-2)]">{chartPeriod}</p>
+                  </>
+                ) : null}
                 <p className="mt-3 text-[11px] leading-4 text-[var(--muted-2)]">
                   {isAgent
                     ? "What this agent did here. What the member who connected it did in the app is on their own page."

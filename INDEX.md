@@ -3,7 +3,7 @@
 **Generated — do not edit by hand.** Run `npm run index` after adding, moving or removing a
 file; `npm run index -- --check` (and `tests/lib/indexMap.test.ts`) fail when it is stale.
 
-Covers 984 source files. Each entry is a path, the URL it serves where it is a route,
+Covers 995 source files. Each entry is a path, the URL it serves where it is a route,
 and its exported names. For *what a thing is for*, read the file's own header comment, or
 `docs/FEATURES.md` for the product map.
 
@@ -12,6 +12,7 @@ and its exported names. For *what a thing is for*, read the file's own header co
 Files under `src/app` that render. Route groups `(name)` are not URL segments.
 
 - `src/app/(app)/activity/page.tsx` — `/activity` · default
+- `src/app/(app)/agents/[client]/[ownerUserId]/page.tsx` — `/agents/:client/:ownerUserId` · default, dynamic, metadata, runtime
 - `src/app/(app)/connect/page.tsx` — `/connect` · default
 - `src/app/(app)/contacts/[contactId]/page.tsx` — `/contacts/:contactId` · default, dynamic, metadata, runtime
 - `src/app/(app)/contacts/page.tsx` — `/contacts` · default, dynamic, metadata, runtime
@@ -25,6 +26,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 - `src/app/(app)/integrations/slack/page.tsx` — `/integrations/slack` · default, dynamic, metadata
 - `src/app/(app)/layout.tsx` · default
 - `src/app/(app)/metrics/page.tsx` — `/metrics` · default, metadata
+- `src/app/(app)/people/[userId]/page.tsx` — `/people/:userId` · default, dynamic, metadata, runtime
 - `src/app/(app)/project/[projectSlug]/links/page.tsx` — `/project/:projectSlug/links` · default
 - `src/app/(app)/project/[projectSlug]/metrics/page.tsx` — `/project/:projectSlug/metrics` · default
 - `src/app/(app)/project/[projectSlug]/metrics/viewer/[viewerKey]/page.tsx` — `/project/:projectSlug/metrics/viewer/:viewerKey` · default, dynamic, metadata, runtime
@@ -109,6 +111,7 @@ Files under `src/app` that render. Route groups `(name)` are not URL segments.
 `route.ts` handlers, with the path each one answers on.
 
 - `src/app/api/account/delete/route.ts` — `/api/account/delete` · POST, runtime
+- `src/app/api/activity/actor/route.ts` — `/api/activity/actor` · dynamic, GET, runtime
 - `src/app/api/activity/route.ts` — `/api/activity` · dynamic, GET, runtime
 - `src/app/api/activity/summary/route.ts` — `/api/activity/summary` · dynamic, GET, runtime
 - `src/app/api/admin/ai-runs/[runId]/route.ts` — `/api/admin/ai-runs/:runId` · GET, runtime
@@ -430,7 +433,9 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/UploadCompletionPanel.tsx` · default
 - `src/components/WorkspaceIcon.tsx` · default
 - `src/components/WorkspacePill.tsx` · default
+- `src/components/activity/ActivityRows.tsx` · ACTIVITY_PAGE_SIZES, ActivityDayGroup, ActivityDayGroups, ActivityFeedSkeleton, ActivityPager, ActivityRow, ActivitySubject, activityTabClass, …
 - `src/components/activity/ChangePreviewModal.tsx` · default
+- `src/components/activity/useActivityPages.ts` · ActivityPage, ActivityPages, PAGE_TRANSITION_MIN_MS, useActivityPages, UseActivityPagesOptions
 - `src/components/admin/AdminAccessState.tsx` · default, AdminAccessStateProps
 - `src/components/admin/AdminAlert.tsx` · default, AdminAlertProps
 - `src/components/admin/AdminDetail.tsx` · default, DetailGrid, DetailGridProps, DetailPanelProps, DetailRow, DetailRowProps, DetailSection, DetailSectionProps, …
@@ -506,6 +511,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/components/onboarding/FirstRunWelcome.tsx` · default
 - `src/components/onboarding/GetStartedActions.tsx` · default
 - `src/components/onboarding/OnboardingTopBar.tsx` · default
+- `src/components/people/ActorPageClient.tsx` · default
 - `src/components/people/ContributorsCard.tsx` · default
 - `src/components/project/ProjectHeaderActions.tsx` · default, ProjectHeaderPage
 - `src/components/project/ProjectIdentityRow.tsx` · default
@@ -825,7 +831,11 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/orgsCache.ts` · clearOrgsCache, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, OrgsCacheOrg, OrgsCacheSnapshot, readOrgsCacheSnapshot, refreshOrgsCache, setCachedActiveOrgId, …
 - `src/lib/pdf/renderPage.ts` · getPdfJsLib, openPdfDocument, PdfJsDocument, PdfJsGetDocumentOptions, PdfJsLib, PdfJsPage, renderPdfPageToPng
 - `src/lib/pendingUpload.tsx`
+- `src/lib/people/actorFilter.ts` · buildActorFilter
+- `src/lib/people/contributorKey.ts` · agentKey, contributorHref, ContributorKey, formatContributorKey, isClientId, isObjectIdHex, keyFromActivityRow, keyFromRoute, …
 - `src/lib/people/contributors.ts` · Authorship, Contributor, loadAuthorship
+- `src/lib/people/profile.ts` · loadActorProfile, resolveAgentOwner
+- `src/lib/people/types.ts` · ACTOR_PROFILE_LIST_LIMIT, ActorProfile, ActorProfileAgent, ActorProfileDoc, ActorProfileOwner, ActorProfileProject
 - `src/lib/preflight/env.ts` · Group, Result, runEnvPreflight, Status, summarise
 - `src/lib/projects/docCountFilter.ts` · projectDocCountFilter
 - `src/lib/projects/requestSettings.ts` · botIdHashPrefixFilter, requestUploadPathFor
@@ -1029,4 +1039,5 @@ Run with `npm run <name>`; see the NPM Scripts Reference in `docs/DEV.md`.
 - `db/migration/20260925_0004_airuns_ttl.mjs` · up
 - `db/migration/20260925_0005_request_repos_is_request.mjs` · up
 - `db/migration/20260925_0006_contacts_backfill.mjs` · up
+- `db/migration/20260925_0007_activity_actor_index.mjs` · up
 - `db/migration/run.mjs`

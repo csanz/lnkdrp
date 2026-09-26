@@ -9,6 +9,7 @@
  * purpose — see `ACTIVITY_WORK_TYPES` below.
  */
 import { ACTIVITY_FILTERS } from "@/lib/activity/labels";
+import { agentKey, contributorHref } from "@/lib/people/contributorKey";
 
 /** One count in the header strip: a bucket id, its label, and the event types that feed it. */
 export type ActivitySummaryBucket = {
@@ -99,7 +100,19 @@ export function emptyCounts(): Record<ActivitySummaryCountKey, number> {
 }
 
 /** One `{ type, client, count }` group as Mongo returns it (client is null for a browser action). */
-export type ActivityGroupRow = { type: string; client: string | null; label?: string | null; count: number };
+export type ActivityGroupRow = {
+  type: string;
+  client: string | null;
+  label?: string | null;
+  /**
+   * The member whose credential the agent used, for an agent row.
+   *
+   * An agent is only a contributor as "this client, connected by this person", so the owner has to
+   * survive the grouping or the legend has a name it cannot link anywhere.
+   */
+  ownerUserId?: string | null;
+  count: number;
+};
 
 /** Who a donut slice stands for: the people in the app, one agent client, or the folded tail. */
 export type ActorSliceKind = "people" | "agent" | "other";
@@ -110,6 +123,17 @@ export type ActorSlice = {
   kind: ActorSliceKind;
   /** Agent client id (`claude-code`) for an agent slice, else null. */
   client: string | null;
+  /**
+   * The one member who connected this client in the window, or null when nobody did, when more
+   * than one did, or when the slice is not a single agent.
+   *
+   * Null on more than one is the honest answer rather than a nuisance: two members who each
+   * connected Claude Code are two contributors with two pages, and the slice adds their work
+   * together, so there is no single page it could point at.
+   */
+  ownerUserId: string | null;
+  /** That agent's own page, when {@link ownerUserId} names exactly one member. */
+  href: string | null;
   label: string;
   count: number;
 };
@@ -135,6 +159,20 @@ function byCountThenLabel(a: { count: number; label: string }, b: { count: numbe
   return b.count - a.count || a.label.localeCompare(b.label);
 }
 
+/** One agent client's slice, linked to its page when exactly one member connected it. */
+function agentSlice(a: { client: string; label: string; count: number; owners: Set<string> }): ActorSlice {
+  const ownerUserId = a.owners.size === 1 ? [...a.owners][0]! : null;
+  return {
+    key: `agent:${a.client}`,
+    kind: "agent",
+    client: a.client,
+    ownerUserId,
+    href: ownerUserId ? contributorHref(agentKey(a.client, ownerUserId)) : null,
+    label: a.label,
+    count: a.count,
+  };
+}
+
 /**
  * Group work actions by who did them.
  *
@@ -149,7 +187,7 @@ export function groupActorSlices(
 ): ActivitySummary["actors"] {
   const maxNamed = Math.max(1, opts.maxNamedAgents ?? MAX_NAMED_AGENT_SLICES);
   let people = 0;
-  const byClient = new Map<string, { client: string; label: string; count: number }>();
+  const byClient = new Map<string, { client: string; label: string; count: number; owners: Set<string> }>();
 
   for (const row of rows) {
     const count = Number.isFinite(row.count) ? Math.max(0, Math.trunc(row.count)) : 0;
@@ -161,7 +199,12 @@ export function groupActorSlices(
     }
     const prev = byClient.get(client);
     const label = (row.label ?? "").trim() || prev?.label || client;
-    byClient.set(client, { client, label, count: (prev?.count ?? 0) + count });
+    // Every owner this client was seen under, so the slice can tell "one member connected it" from
+    // "two did" without a second query.
+    const owners = prev?.owners ?? new Set<string>();
+    const owner = typeof row.ownerUserId === "string" ? row.ownerUserId.trim() : "";
+    if (owner) owners.add(owner);
+    byClient.set(client, { client, label, count: (prev?.count ?? 0) + count, owners });
   }
 
   const agentsSorted = Array.from(byClient.values()).sort(byCountThenLabel);
@@ -177,14 +220,14 @@ export function groupActorSlices(
    * two were agents working through the MCP, so the legend was three names of unclear kind. The
    * label is plain now and the legend marks the agents; see `StatsHeader`.
    */
-  if (people > 0) slices.push({ key: "people", kind: "people", client: null, label: "People", count: people });
-  for (const a of named) slices.push({ key: `agent:${a.client}`, kind: "agent", client: a.client, label: a.label, count: a.count });
+  if (people > 0) slices.push({ key: "people", kind: "people", client: null, ownerUserId: null, href: null, label: "People", count: people });
+  for (const a of named) slices.push(agentSlice(a));
   if (tail.length === 1) {
-    const only = tail[0]!;
-    slices.push({ key: `agent:${only.client}`, kind: "agent", client: only.client, label: only.label, count: only.count });
+    slices.push(agentSlice(tail[0]!));
   } else if (tail.length > 1) {
     const count = tail.reduce((sum, a) => sum + a.count, 0);
-    slices.push({ key: "agents:other", kind: "other", client: null, label: `${tail.length} other agents`, count });
+    // The folded tail is several clients at once; no single page stands for it.
+    slices.push({ key: "agents:other", kind: "other", client: null, ownerUserId: null, href: null, label: `${tail.length} other agents`, count });
   }
 
   const agents = slices.filter((s) => s.kind !== "people").reduce((sum, s) => sum + s.count, 0);
