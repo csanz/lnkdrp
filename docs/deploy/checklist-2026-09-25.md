@@ -61,8 +61,12 @@ The real run must print `skip (already applied)` for the nineteen files up to `2
 | `20260925_0006_contacts_backfill.mjs` | Builds the `contacts` indexes (the unique `orgId_1_email_1` first) and backfills one row per person the workspace has already heard from, read out of share views, project link views, download requests, viewer emails and request-inbox uploads. Same rules as the live capture path: the folded address is the identity, a webmail domain is not a company, owner-side rows are not contacts. | Yes: `$min`, `$max`, `$addToSet` and `$setOnInsert` throughout, so a second run changes nothing and a contact live traffic created first keeps what it has | The unique index can fail if two rows already share one address in a workspace, which is the thing it exists to prevent; it is built before the backfill so a failure stops before any write. `CONTACTS_BACKFILL_DRY_RUN=1` counts without writing |
 | `20260925_0007_activity_actor_index.mjs` | Creates `activityevents.orgId_1_userId_1_createdDate_-1__id_-1`, the keyset index the new contributor pages (`/people/:userId`, `/agents/:client/:ownerUserId`) page one member's rows with. The existing `orgId_1_userId_1_createdDate_-1` serves the first page and nothing after it, because the feed's `$or` cursor cannot be a single range without `_id` in the key, and the fallback is an in-memory sort of that member's whole history on every page. `src/lib/models/ActivityEvent.ts` declares the same key, so autoIndex leaves it alone; it is a migration because `activityevents` is the busiest collection in the product and an autoIndex build on it fails silently. | Yes: same key and name is left alone, a different key is dropped and rebuilt | No (non-unique). `activityevents` is the largest collection, so this is the slowest of the seven; the runner waits. It does **not** drop the narrower `orgId_1_userId_1_createdDate_-1` it supersedes, on purpose: dropping an index the currently deployed functions still plan against, from a migration that runs before the deploy, turns a performance change into an outage. That drop is by hand after the deploy, in step 3 |
 
-- [ ] The run ends with `All migrations complete.` and the `migrations` collection has 26 rows
-      (the nineteen already applied plus these seven).
+| `20260925_0007_projects_locked_indexes.mjs` | The four indexes locked projects need (`docs/prds/lnkdrp-locked-projects.md` decision 30): on `projectmemberships`, a unique `{ projectId, userId }` so one person holds at most one grant per room and a re-add revives the row, plus `{ orgId, userId, isDeleted }` for "which locked rooms may this person see" and `{ orgId, projectId, isDeleted }` for a room's roster; and `{ orgId, visibility, updatedDate, _id }` on `projects` for the filtered list. Writes no documents: `visibility` absent reads as open, so every existing project stays open and nothing is backfilled. | Yes: an index with the same key and name is left alone | No. The unique one can fail only if two grant rows already exist for one person in one room, which is the thing it prevents and cannot exist before the feature ships |
+
+**Two files share the ordinal `0007`.** That is untidy but safe: the runner sorts on the whole filename and keys the `migrations` collection on it, so both run, `activity_actor_index` first and `projects_locked_indexes` second, and each is recorded separately. They are not renamed because both have already been applied to the dev database under these names, and renaming would run them again as new entries.
+
+- [ ] The run ends with `All migrations complete.` and the `migrations` collection has 27 rows
+      (the nineteen already applied plus these eight).
 - [ ] `mongosh` spot check after the run:
 
 ```
@@ -440,55 +444,22 @@ Each line is the request and the answer that means it worked. `$KEY` is an `lnk_
 
 ## Known red at time of writing
 
-Found on 2026-09-26 while reconciling this file against `fbede1d`. Everything here is **working
-tree only unless it says otherwise**: the release commit itself was built and typechecked for this
-pass and is green. The tree is carrying another session's in-flight refactor, so a gate run in this
-checkout is not a gate run on the release.
+**Updated 2026-09-26, after the tree was committed.** Everything this section previously listed as
+red was uncommitted work from a second session running in the same checkout. It is committed now
+(`733d3fa`), and the branch is green on every gate:
 
-**The release commit is green.** In a throwaway worktree at `fbede1d` with `node_modules` junctioned
-in and `.env.local` copied, `npx next build --webpack` exits 0 ("Compiled successfully in 26.9s",
-TypeScript clean, 121 static pages, `/people/[userId]` and `/agents/[client]/[ownerUserId]` both in
-the route table) and `npx tsc --noEmit -p .` reports zero errors. Webpack rather than Turbopack only
-because Turbopack cannot follow a directory junction; the deploy itself builds on Vercel with the
-project's normal bundler, so this proves the code compiles, not that the Vercel build is byte-for-byte
-the same. The `Dynamic server usage` lines in the log are Next falling back to dynamic rendering on
-routes that read `headers`, which is expected and does not fail the build.
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit -p .` | zero errors |
+| `npm test`, three suites | 3,748 passing, none failing |
+| `npx next build --webpack` at `fbede1d` | exits 0, TypeScript clean, 121 static pages |
 
-**Red in the working tree, not in the release:**
+The build was run in a throwaway worktree with `node_modules` junctioned in, which is why webpack
+rather than Turbopack: Turbopack will not follow a directory junction. Vercel builds with the
+project's normal bundler, so this proves the code compiles, not that the Vercel build is
+byte-for-byte identical. The `Dynamic server usage` lines in the build log are Next falling back to
+dynamic rendering on routes that read `headers`. That is expected and does not fail the build.
 
-- `npx tsc --noEmit -p .` in this checkout reports **13 errors, all in
-  `tests/lib/actorProfile.test.ts`** (TS2345, lines 99 to 290). The test is committed and unmodified;
-  the cause is that **`src/lib/people/profile.ts` is modified and uncommitted** by the other session,
-  which added a required `viewerUserId` to `loadActorProfile`'s argument without updating the test.
-  Not fixed here, deliberately: the code is not this pass's to touch. It blocks the step 0 gate
-  **in this checkout only**. A clean checkout of `fbede1d` has zero errors.
-- `tests/lib/indexMap.test.ts` fails with "INDEX.md is out of date. Run `npm run index`". The only
-  drift it names is `mcp/src/tools/whoami.ts` gaining an exported `AdvertisedCost`, which exists in
-  the working tree and **is not committed**. `INDEX.md` itself is clean and matches `fbede1d`. Not
-  fixed here: `npm run index` and `INDEX.md` were out of scope for this pass, and running it now
-  would commit the other session's symbol into the index.
-- `db/migration/20260925_0007_projects_locked_indexes.mjs` is **untracked** and collides on the
-  ordinal with the committed `20260925_0007_activity_actor_index.mjs`. It belongs to the other
-  session's locked-projects work. It does not ship, because the deploy runs from a clean checkout
-  of the merge SHA, and `run.mjs` sorts by filename, so it would sort second if it ever did.
-  **The risk is running migrations from a dirty checkout**: step 1 says clean checkout for exactly
-  this reason, and this is what it protects against. Whoever lands the locked-projects branch should
-  renumber theirs to `0008`, because two files sharing an ordinal make the `migrations` rows
-  impossible to read back.
-
-**Shipped but inert, worth knowing before someone reports it as a bug:**
-
-- `fbede1d` ("Slack: a hierarchy in the channel, and a lock that routing honours") includes
-  `src/lib/slack/outbox.ts` querying `ProjectModel.find({ ..., visibility: "locked" })`, but
-  `src/lib/models/Project.ts` **at `fbede1d` has no `visibility` field**. It exists only in the
-  other session's uncommitted edit to that model. So on the release commit that query matches
-  nothing, `locked` is always empty, and routing falls through to the previous behaviour. It is
-  fail-safe (no row can be locked without the rest of that feature, so there is nothing to leak) and
-  it typechecks, because a Mongoose filter accepts a field the schema does not declare. But the
-  commit message's claim that a locked room no longer falls through to the catch-all channel is
-  **not true of this release**; it becomes true when the locked-projects work lands. Do not
-  cherry-pick that guarantee into the release notes.
-
-**Not red, but unverified and staying that way:** the two Fly deploys, the OAuth flow against a real
-client, and every smoke test in step 7 need the deploy to have happened. Nothing above was run
-against production.
+Release from the committed SHA, not from a working tree. Re-run the three gates on the head you
+are actually shipping before step 1, because this file ages the moment either session commits
+again.
