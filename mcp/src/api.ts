@@ -9,9 +9,12 @@
  * - `GET  /api/agent/whoami`                   -> `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client, integrations }`
  * - `POST /api/docs` `{ title }`               -> 201 `{ doc: { id, shareId, title, status, shareEnabled, … }, planWarning? }`; 402 `{ code: "plan_limit", … }` at the Free shared-document cap
  * - `GET  /api/docs?q=&ids=&page=&limit=`     -> `{ total, page, limit, docs: [{ id, shareId, title, status, version, one_liner, … }] }` (`q` matches a title or any link slug; `ids` is a direct lookup)
- * - `GET  /api/activity?limit=&cursor=&type=&docId=&projectId=&who=` -> `{ items: [{ id, type, createdDate, actor, agent, doc, project, meta }], nextCursor }`
+ * - `GET  /api/activity?limit=&cursor=&type=&docId=&projectId=&who=&actor=` -> `{ items: [{ id, type, createdDate, actor, agent, doc, project, meta }], nextCursor }`
  *                                                  (`who=agents` = anything an MCP/API client did; `projectId` is one data room's
- *                                                  own feed, the only view that carries the rows of documents kept inside it)
+ *                                                  own feed, the only view that carries the rows of documents kept inside it;
+ *                                                  `actor=user:<id>|agent:<client>@<owner>` is one contributor's own feed and
+ *                                                  overrides `who`. Rows carry `actor.key`/`actor.href` and, when an agent acted,
+ *                                                  `agent.key`/`agent.href`/`agent.ownerUserId`.)
  * - `GET  /api/docs/:id?lite=1`                -> `{ doc: { id, shareId, title, status, shareEnabled, shareAllowPdfDownload,
  *                                                  shareAllowRevisionHistory, sharePasswordEnabled, previewImageUrl,
  *                                                  currentUploadId, aiOutput, isArchived, … } }`
@@ -68,6 +71,9 @@
  */
 import { API_TIMEOUT_MS } from "./config";
 import { isToolError, mapApiError, ToolError } from "./errors";
+// The one definition of a contributor key and of the page it links to. The MCP spells keys the
+// same way the web app does or an agent hands a human a URL the app cannot open.
+import { agentKey, contributorHref, isClientId, isObjectIdHex, personKey } from "../../src/lib/people/contributorKey";
 
 export type Whoami = {
   ok: true;
@@ -141,6 +147,7 @@ export type ApiRevisionItem = {
   pagesChanged: number;
 };
 
+/** One member in the contributor tally. `key`/`href` address the page listing everything they changed. */
 export type ApiRevisionContributor = {
   userId: string | null;
   name: string | null;
@@ -149,9 +156,28 @@ export type ApiRevisionContributor = {
   documents: number;
   firstAt: string | null;
   lastAt: string | null;
+  key: string | null;
+  href: string | null;
 };
 
-export type ApiRevisionAgent = { client: string; userId: string | null; name: string | null; replacements: number; lastAt: string | null };
+/**
+ * One client in the contributor tally, under the member who connected it.
+ *
+ * `name` has always been the OWNER's name on this route, not the client's, and stays that way for
+ * callers that read it; `ownerName` is the same value under a name that says whose it is, so a
+ * reader stops having to know that a field on an agent row describes a person. The client's own
+ * display name is `client`, title-cased by whoever renders it.
+ */
+export type ApiRevisionAgent = {
+  client: string;
+  userId: string | null;
+  name: string | null;
+  ownerName: string | null;
+  replacements: number;
+  lastAt: string | null;
+  key: string | null;
+  href: string | null;
+};
 
 export type ApiRevisionPage = {
   items: ApiRevisionItem[];
@@ -275,13 +301,19 @@ export type ApiDocsPageItem = ApiDocListItem & {
 
 export type ApiDocsPage = { total: number; page: number; limit: number; docs: ApiDocsPageItem[] };
 
-/** One row of `GET /api/activity`. `meta` is the event's raw payload; its text fields are untrusted. */
+/**
+ * One row of `GET /api/activity`. `meta` is the event's raw payload; its text fields are untrusted.
+ *
+ * `actor.key`/`agent.key` are the contributor the row belongs to, and `href` is that contributor's
+ * page: the one place that lists everything they changed. They are null for rows with no
+ * addressable contributor (a system action) and for recipient rows whose identity the plan withholds.
+ */
 export type ApiActivityItem = {
   id: string;
   type: string;
   createdDate: string;
-  actor: { userId: string | null; name: string | null; email: string | null; kind: string };
-  agent: { client: string; label: string | null; version: string | null } | null;
+  actor: { userId: string | null; name: string | null; email: string | null; kind: string; key: string | null; href: string | null };
+  agent: { client: string; label: string | null; version: string | null; key: string | null; href: string | null; ownerUserId: string | null } | null;
   doc: { id: string; title: string | null; shareId: string | null } | null;
   project: { id: string; name: string | null } | null;
   meta: Record<string, unknown>;
@@ -626,6 +658,37 @@ function num(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+/**
+ * The contributor key of a member, or null when the id is not one we can address.
+ *
+ * Guarding on the id shape rather than trusting the route matters because the key is handed back
+ * to the agent as something it may pass to `actor`: an unparsable key would be a 400 on the next
+ * call, blamed on the agent, for a value this client invented.
+ */
+function personKeyOrNull(userId: string | null): string | null {
+  return userId && isObjectIdHex(userId) ? personKey(userId) : null;
+}
+
+/** The contributor key of a client under the member who connected it, or null when unaddressable. */
+function agentKeyOrNull(client: string | null, ownerUserId: string | null): string | null {
+  if (!client || !isClientId(client)) return null;
+  return agentKey(client, ownerUserId && isObjectIdHex(ownerUserId) ? ownerUserId : null);
+}
+
+/**
+ * The key a route sent, or the one its row implies.
+ *
+ * `key`/`href` are additive fields on responses this client has read for a year, and an older
+ * deployment (or a route not yet updated) simply omits them. Rather than blank every contributor
+ * URL in that case, the mapper falls back to deriving the key from the ids the row has always
+ * carried, through the shared helpers, so the spelling cannot drift. A route that sends the field
+ * wins even when it sends null: that null is a decision (a recipient row whose identity is withheld
+ * on Free), not an omission, and this client must not talk around it.
+ */
+function sentOrDerived(row: Record<string, unknown>, field: string, derive: () => string | null): string | null {
+  return field in row ? strOrNull(row[field]) : derive();
+}
+
 /** Normalise a doc from `GET/POST/PATCH /api/docs…` (`{ doc }` envelope already unwrapped). */
 function asDoc(raw: unknown): ApiDoc {
   const d = rec(raw);
@@ -968,6 +1031,18 @@ export class ApiClient {
     return `${this.baseUrl}/project/${encodeURIComponent(projectId)}`;
   }
 
+  /**
+   * A contributor's page inside the app, from the `href` a response carried: everything that
+   * member or agent changed, in one place. Null when the row named no addressable contributor, so
+   * a tool can omit the field rather than hand a human a link to nowhere.
+   *
+   * It takes the href rather than the key because the routes own the mapping from one to the other
+   * (`contributorHref`), and this client should not be the second place that knows the path shape.
+   */
+  contributorUrl(href: string | null): string | null {
+    return href ? `${this.baseUrl}${href}` : null;
+  }
+
   /** A contact's page inside the app: identity, note, tags and everything they read. */
   contactAppUrl(contactId: string): string {
     return `${this.baseUrl}/contacts/${encodeURIComponent(contactId)}`;
@@ -1063,21 +1138,39 @@ export class ApiClient {
     const contributors = Array.isArray(body.contributors)
       ? body.contributors.map((raw) => {
           const c = rec(raw);
+          const userId = strOrNull(c.userId);
+          const key = sentOrDerived(c, "key", () => personKeyOrNull(userId));
           return {
-            userId: strOrNull(c.userId),
+            userId,
             name: strOrNull(c.name),
             email: strOrNull(c.email),
             replacements: num(c.replacements),
             documents: num(c.documents),
             firstAt: strOrNull(c.firstAt),
             lastAt: strOrNull(c.lastAt),
+            key,
+            href: sentOrDerived(c, "href", () => (key ? contributorHref(key) : null)),
           };
         })
       : null;
     const agents = Array.isArray(body.agents)
       ? body.agents.map((raw) => {
           const a = rec(raw);
-          return { client: strOrNull(a.client) ?? "", userId: strOrNull(a.userId), name: strOrNull(a.name), replacements: num(a.replacements), lastAt: strOrNull(a.lastAt) };
+          const client = strOrNull(a.client) ?? "";
+          const userId = strOrNull(a.userId);
+          const key = sentOrDerived(a, "key", () => agentKeyOrNull(client, userId));
+          return {
+            client,
+            userId,
+            name: strOrNull(a.name),
+            // `name` has carried the owner's name here since this route shipped, so an older
+            // deployment that sends no `ownerName` still fills the owner line rather than blanking it.
+            ownerName: sentOrDerived(a, "ownerName", () => strOrNull(a.name)),
+            replacements: num(a.replacements),
+            lastAt: strOrNull(a.lastAt),
+            key,
+            href: sentOrDerived(a, "href", () => (key ? contributorHref(key) : null)),
+          };
         })
       : null;
     return { items, nextCursor: strOrNull(body.nextCursor), since: strOrNull(body.since), note: strOrNull(body.note), contributors, agents };
@@ -1284,6 +1377,7 @@ export class ApiClient {
     docId?: string | undefined;
     projectId?: string | undefined;
     who?: "me" | "team" | "agents" | undefined;
+    actor?: string | undefined;
   }): Promise<ApiActivityPage> {
     const body = rec(
       await this.request("GET", "/api/activity", {
@@ -1294,6 +1388,9 @@ export class ApiClient {
           docId: input.docId,
           projectId: input.projectId,
           who: input.who,
+          // One contributor's own feed. The route reads it as a narrowing of `who` (and ignores
+          // `who` when both are sent), so it is passed through rather than reconciled here.
+          actor: input.actor,
         },
       }),
     );
@@ -1306,12 +1403,40 @@ export class ApiClient {
         const agent = r.agent ? rec(r.agent) : null;
         const doc = r.doc ? rec(r.doc) : null;
         const project = r.project ? rec(r.project) : null;
+        const actorUserId = strOrNull(actor.userId);
+        const actorKind = strOrNull(actor.kind) ?? "";
+        const agentClient = agent ? strOrNull(agent.client) ?? "" : "";
+        const agentOwnerUserId = agent ? sentOrDerived(agent, "ownerUserId", () => actorUserId) : null;
+        // `actor` is the member on the row and `agent` the client that acted for them: on an agent's
+        // row both are filled and they address two different pages, which is the pair a reader
+        // wants ("Claude Code, connected by Christian"). A recipient row (`viewer`, and the internal
+        // `secret` kind) has no addressable contributor at all - the contributor pages exclude those
+        // rows by construction, so a link built from one would open a page that 404s, and on a
+        // recipient it would be the wrong page entirely. Same rule as the route's own mapper.
+        const actorKey = sentOrDerived(actor, "key", () => (actorKind === "viewer" || actorKind === "secret" ? null : personKeyOrNull(actorUserId)));
+        const agentKeyValue = agent ? sentOrDerived(agent, "key", () => agentKeyOrNull(agentClient, agentOwnerUserId)) : null;
         return {
           id: strOrNull(r.id) ?? "",
           type: strOrNull(r.type) ?? "",
           createdDate: strOrNull(r.createdDate) ?? "",
-          actor: { userId: strOrNull(actor.userId), name: strOrNull(actor.name), email: strOrNull(actor.email), kind: strOrNull(actor.kind) ?? "" },
-          agent: agent ? { client: strOrNull(agent.client) ?? "", label: strOrNull(agent.label), version: strOrNull(agent.version) } : null,
+          actor: {
+            userId: actorUserId,
+            name: strOrNull(actor.name),
+            email: strOrNull(actor.email),
+            kind: actorKind,
+            key: actorKey,
+            href: sentOrDerived(actor, "href", () => (actorKey ? contributorHref(actorKey) : null)),
+          },
+          agent: agent
+            ? {
+                client: agentClient,
+                label: strOrNull(agent.label),
+                version: strOrNull(agent.version),
+                key: agentKeyValue,
+                href: sentOrDerived(agent, "href", () => (agentKeyValue ? contributorHref(agentKeyValue) : null)),
+                ownerUserId: agentOwnerUserId,
+              }
+            : null,
           doc: doc ? { id: strOrNull(doc.id) ?? "", title: strOrNull(doc.title), shareId: strOrNull(doc.shareId) } : null,
           project: project ? { id: strOrNull(project.id) ?? "", name: strOrNull(project.name) } : null,
           meta: r.meta && typeof r.meta === "object" ? (r.meta as Record<string, unknown>) : {},

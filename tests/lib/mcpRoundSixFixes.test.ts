@@ -185,6 +185,9 @@ describe("get_activity meta", () => {
     // text under linkLabel arrived wrapped — and share_link.updated hides the edited label one key
     // deeper, under meta.values.
     const call = await connect(registerGetActivityTool, {
+      // Every activity row now carries its contributor's page URL, which the tool builds through
+      // the client rather than by concatenating a base URL itself.
+      contributorUrl: (href: string | null) => (href ? `https://app.test${href}` : null),
       listActivity: async () => ({
         items: [
           {
@@ -236,6 +239,9 @@ describe("get_activity meta", () => {
     // wrapped, so a model was told to distrust one copy of a stranger-chosen name and handed the
     // other as plain text.
     const call = await connect(registerGetActivityTool, {
+      // Every activity row now carries its contributor's page URL, which the tool builds through
+      // the client rather than by concatenating a base URL itself.
+      contributorUrl: (href: string | null) => (href ? `https://app.test${href}` : null),
       listActivity: async () => ({
         items: [
           {

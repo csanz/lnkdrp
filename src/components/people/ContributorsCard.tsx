@@ -18,6 +18,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { UsersIcon } from "@heroicons/react/24/outline";
 
 import { formatRelative } from "@/lib/analytics/reading/format";
@@ -31,9 +32,24 @@ type Contributor = {
   email: string | null;
   actions: number;
   lastAt: string;
+  /**
+   * The page listing everything this contributor did, or null when the key cannot be addressed.
+   *
+   * The card used to be the end of the road: it named an agent and left you with no way to ask
+   * what else it had touched. Built by `contributorHref`, never here, so this row and the feed
+   * and the metrics list all point at the same page.
+   */
+  href: string | null;
+  /** Agents only: the member who connected the client. Null for people, and for an unknown owner. */
+  ownerUserId: string | null;
 };
 
 type Authorship = { author: Contributor | null; contributors: Contributor[] };
+
+const NAME_CLASS = "truncate text-[13px] font-medium text-[var(--fg)]";
+/** The feed's link treatment, copied so a name that leads somewhere looks the same on both screens. */
+const LINK_CLASS =
+  "underline decoration-dotted decoration-[var(--muted-2)] underline-offset-4 transition-colors hover:decoration-solid hover:decoration-[var(--fg)]";
 
 /** One row: a mark, a name, and what they last did. */
 function Person({ person, role, now }: { person: Contributor; role?: string; now: number }) {
@@ -59,7 +75,21 @@ function Person({ person, role, now }: { person: Contributor; role?: string; now
 
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
-          <span className="truncate text-[13px] font-medium text-[var(--fg)]">{person.name}</span>
+          {/* A dotted rule, the same one the activity feed puts under a name it can follow: enough
+              to say the name goes somewhere, not enough to turn a quiet card in the rail into a
+              row of buttons. Unlinked when there is no page to open, which is a tombstoned member
+              or a key this build cannot address, never a styling choice. */}
+          {person.href ? (
+            <Link
+              href={person.href}
+              title={isAgent ? "See everything this agent changed" : "See everything they changed"}
+              className={[NAME_CLASS, LINK_CLASS].join(" ")}
+            >
+              {person.name}
+            </Link>
+          ) : (
+            <span className={NAME_CLASS}>{person.name}</span>
+          )}
           {isAgent ? (
             <span
               className="shrink-0 rounded px-1 py-px text-[9px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)] ring-1 ring-[var(--border)]"

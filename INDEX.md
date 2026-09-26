@@ -656,7 +656,7 @@ Clients, helpers and components that live beside the page that uses them.
 - `src/lib/client/useSkeletonDelay.ts` · DEFAULT_SKELETON_DELAY_MS, useSkeletonDelay
 - `src/lib/client/useTargetTags.ts` · RowTag, useTargetTags
 - `src/lib/cn.ts` · cn
-- `src/lib/contacts/csv.ts` · contactCsvCells, CONTACTS_CSV_COLUMNS, contactsToCsv, csvField
+- `src/lib/contacts/csv.ts` · contactCsvCells, contactCsvLine, CONTACTS_CSV_COLUMNS, CONTACTS_CSV_HEADER, CONTACTS_CSV_MAX_ROWS, contactsToCsv, csvField
 - `src/lib/contacts/service.ts` · CONTACT_SORTS, CONTACT_TAG_TARGET_KIND, ContactDetail, ContactFilters, contactIdentityAllowed, ContactRow, CONTACTS_CSV_MAX_ROWS, contactsCsv, …
 - `src/lib/credits/adminMutations.ts` · AdminCreditMutationAction, adminMutateCredits, adminSimulateNewBillingCycle
 - `src/lib/credits/aiAutomation.ts` · AI_AUTOMATION_DEFAULT, AiAutomation, getAiAutomation, isAutomationOn, parseAutomationFlag, resolveAiAutomation

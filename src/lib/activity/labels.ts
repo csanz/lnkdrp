@@ -68,8 +68,18 @@ export type ActivityItem = {
   id: string;
   type: string;
   createdDate: string;
-  actor: { userId: string | null; name: string | null; email: string | null; kind: string };
-  agent: { client: string; label: string; version: string | null } | null;
+  /**
+   * Who acted. `key`/`href` are the contributor page for that person (`src/lib/people/contributorKey.ts`),
+   * present only when the row names a member acting in the workspace: a recipient's row is a
+   * reader, not a contributor, and is addressed by `readerHref` instead, on every plan.
+   */
+  actor: { userId: string | null; name: string | null; email: string | null; kind: string; key?: string | null; href?: string | null };
+  /**
+   * The client that acted, when one did. `key`/`href` address the agent's own page and
+   * `ownerUserId` the member who connected it, because an agent's work is the agent's: two members
+   * who each connect the same client are two contributors.
+   */
+  agent: { client: string; label: string; version: string | null; key?: string | null; href?: string | null; ownerUserId?: string | null } | null;
   doc: { id: string; title: string | null; shareId: string | null; deleted?: boolean } | null;
   project: { id: string; name: string | null } | null;
   meta: Record<string, unknown>;

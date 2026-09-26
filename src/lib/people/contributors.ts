@@ -20,12 +20,14 @@
  */
 import { Types } from "mongoose";
 
+import { agentLabel } from "@/lib/activity/log";
 import { ACTIVITY_WORK_TYPES } from "@/lib/activity/summary";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { UserModel } from "@/lib/models/User";
+import { agentKey, contributorHref, personKey } from "@/lib/people/contributorKey";
 
 export type Contributor = {
-  /** A user id, or `agent:<client>` for an MCP client. */
+  /** `user:<id>` or `agent:<client>@<ownerUserId|unknown>` (see `src/lib/people/contributorKey.ts`). */
   key: string;
   kind: "person" | "agent";
   name: string;
@@ -34,6 +36,10 @@ export type Contributor = {
   /** How many pieces of work are attributed to them — enough to order by, not a statistic. */
   actions: number;
   lastAt: string;
+  /** The page listing everything this contributor did; null when the key cannot be addressed. */
+  href: string | null;
+  /** Agents only: the member who connected the client. Null for people, and for an unknown owner. */
+  ownerUserId: string | null;
 };
 
 export type Authorship = {
@@ -68,15 +74,6 @@ function displayName(name: unknown, email: unknown): string {
   const e = typeof email === "string" ? email.trim() : "";
   // The address beats "Someone", and its local part beats the whole address in a dense list.
   return e ? e.split("@")[0]! : "Someone";
-}
-
-/** Title Case a client id, the way the activity donut renders one. */
-function agentName(client: string): string {
-  return client
-    .split(/[-_.\s]+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
 }
 
 export async function loadAuthorship(params: {
@@ -123,11 +120,15 @@ export async function loadAuthorship(params: {
     const client = typeof r?.agent?.client === "string" ? r.agent.client.trim().toLowerCase() : "";
     const userId = r?.userId ? String(r.userId) : "";
     /**
-     * An agent acts under a key, and the key is the identity worth showing: two people sharing one
-     * MCP key are one contributor as far as the product can tell, and pretending otherwise would
-     * attribute an agent's work to whichever human happened to mint the credential.
+     * Credit goes to the client, under the member who connected it.
+     *
+     * An agent is only meaningful as "this client, connected by this person": two members who each
+     * connect Claude Code are two contributors, and crediting both to `agent:claude-code` would
+     * print one member's filing under the other's name. The owner is the credential's creator
+     * (`src/lib/gating/apiKeyActor.ts` puts it on the row as `userId`), so the same key reaches the
+     * agent's page; a credential with no recorded creator groups under `@unknown`.
      */
-    const key = client ? `agent:${client}` : userId;
+    const key = client ? agentKey(client, userId || null) : userId ? personKey(userId) : "";
     if (!key) continue;
 
     const prev = byKey.get(key);
@@ -166,29 +167,37 @@ export async function loadAuthorship(params: {
     }
   }
 
-  const creatorWork = creatorId ? byKey.get(creatorId) : undefined;
+  const creatorKey = creatorId ? personKey(creatorId) : "";
+  const creatorWork = creatorKey ? byKey.get(creatorKey) : undefined;
   const author: Contributor | null =
     creatorId && people.has(creatorId)
       ? {
-          key: creatorId,
+          key: creatorKey,
           kind: "person",
           name: people.get(creatorId)!.name,
           email: people.get(creatorId)!.email,
           actions: creatorWork?.actions ?? 0,
           lastAt: (creatorWork?.lastAt ?? new Date(0)).toISOString(),
+          href: contributorHref(creatorKey),
+          ownerUserId: null,
         }
       : null;
 
   const contributors = Array.from(byKey.entries())
     // The author is shown in their own right; repeating them below reads as two people.
-    .filter(([key]) => key !== creatorId)
-    .map(([key, v]) => ({
+    .filter(([key]) => key !== creatorKey)
+    .map(([key, v]): Contributor => ({
       key,
       kind: v.kind,
-      name: v.kind === "agent" ? agentName(v.client) : (people.get(v.userId)?.name ?? "Someone"),
+      name:
+        v.kind === "agent"
+          ? (agentLabel({ client: v.client, version: null }) ?? v.client)
+          : (people.get(v.userId)?.name ?? "Someone"),
       email: v.kind === "agent" ? null : (people.get(v.userId)?.email ?? null),
       actions: v.actions,
       lastAt: v.lastAt.toISOString(),
+      href: contributorHref(key),
+      ownerUserId: v.kind === "agent" ? (v.userId || null) : null,
     }))
     .sort((a, b) => (a.lastAt < b.lastAt ? 1 : a.lastAt > b.lastAt ? -1 : b.actions - a.actions))
     .slice(0, MAX_CONTRIBUTORS);

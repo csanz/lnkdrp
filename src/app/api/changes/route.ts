@@ -16,6 +16,7 @@
  *   `createdDate`, then `_id`, so a replacement landing mid-page never shifts the next one).
  * - `contributors=1`: adds `contributors` (per member: replacements, documents touched, last at)
  *   and `agents` (per MCP/API client, from the `doc.replaced` activity rows) for the same window.
+ *   Every row carries the shared contributor `key` and the `href` of that contributor's page.
  *
  * Tenancy: rows are selected through the workspace's live documents rather than by
  * `DocChange.orgId`, because older rows can carry no `orgId` or a stale one (the per-document
@@ -38,6 +39,7 @@ import { DocChangeModel } from "@/lib/models/DocChange";
 import { UserModel } from "@/lib/models/User";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { errorJson } from "@/lib/http/errorResponse";
+import { agentKey, contributorHref, personKey } from "@/lib/people/contributorKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -173,8 +175,23 @@ export async function GET(request: Request) {
         { $limit: 50 },
       ])) as Array<{ _id: { client: string; userId: Types.ObjectId | null }; replacements: number; lastAt: Date }>;
       for (const a of byAgent) if (a._id.userId) userIds.add(String(a._id.userId));
-      contributors = tally.map((t) => ({ userId: t._id ? String(t._id) : null, replacements: t.replacements, documents: t.docs.length, firstAt: t.firstAt.toISOString(), lastAt: t.lastAt.toISOString() }));
-      agents = byAgent.map((a) => ({ client: a._id.client, userId: a._id.userId ? String(a._id.userId) : null, replacements: a.replacements, lastAt: a.lastAt.toISOString() }));
+      // `key`/`href` make each row addressable: the same contributor key the activity feed and the
+      // metrics card use (`src/lib/people/contributorKey.ts`), so "who changed this" can be
+      // followed to everything else they changed instead of being a name printed at a dead end.
+      // Built through the serialised key rather than by hand, so a row whose stored `agent.client`
+      // predates `normalizeClientId` answers a null href rather than a link to a 404.
+      contributors = tally.map((t) => {
+        const userId = t._id ? String(t._id) : null;
+        const key = userId ? personKey(userId) : null;
+        return { userId, key, href: key ? contributorHref(key) : null, replacements: t.replacements, documents: t.docs.length, firstAt: t.firstAt.toISOString(), lastAt: t.lastAt.toISOString() };
+      });
+      agents = byAgent.map((a) => {
+        const ownerUserId = a._id.userId ? String(a._id.userId) : null;
+        // The owner is part of the key, not a decoration on it: two members who each connect Claude
+        // Code are two contributors, and the aggregate above already groups on the pair.
+        const key = agentKey(a._id.client, ownerUserId);
+        return { client: a._id.client, userId: ownerUserId, key, href: contributorHref(key), replacements: a.replacements, lastAt: a.lastAt.toISOString() };
+      });
     }
 
     const users = userIds.size
@@ -190,7 +207,10 @@ export async function GET(request: Request) {
       return { userId: key, name: u?.name ?? null, email: u?.email ?? null };
     };
     if (contributors) for (const c of contributors) Object.assign(c, { name: by(c.userId)?.name ?? null, email: by(c.userId)?.email ?? null });
-    if (agents) for (const a of agents) Object.assign(a, { name: by(a.userId)?.name ?? null });
+    // `name` stays the owner's name: it has always meant that here and clients read it. `ownerName`
+    // is the same value under the name it should have had, so a surface that prints an agent row
+    // can say "Claude Code, by Christian Sanz" without guessing what `name` refers to.
+    if (agents) for (const a of agents) Object.assign(a, { name: by(a.userId)?.name ?? null, ownerName: by(a.userId)?.name ?? null });
 
     const items = page.map((r) => {
       const d = docById.get(String(r.docId));

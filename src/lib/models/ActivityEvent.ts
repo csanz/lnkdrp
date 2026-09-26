@@ -90,9 +90,27 @@ activityEventSchema.index({ type: 1, createdDate: -1 });
  * `agent.client: {$exists: true}` (the `who=agents` case) still cannot use an index. Fixing that
  * needs a real boolean on the row and a backfill, which is a change worth making deliberately
  * rather than as a footnote to an index.
+ *
+ * `actor=` (a contributor's page, `src/lib/people/actorFilter.ts`) narrows on `userId` and pages
+ * with the same keyset cursor as the feed, so it is served by the `_id`-carrying index below rather
+ * than by `orgId_1_userId_1_createdDate_-1`. `actor=agent:<client>@<owner>` adds `agent.client` as
+ * an equality: that stays a residual filter applied after the index scan, which is acceptable
+ * because the scan is already narrowed to one member's rows and a member's own volume is the bound.
  */
 activityEventSchema.index({ orgId: 1, actorKind: 1, createdDate: -1 });
 activityEventSchema.index({ orgId: 1, userId: 1, createdDate: -1 });
+/**
+ * The per-actor keyset cursor: `{orgId, userId}` equality, then `createdDate`/`_id` as one range.
+ *
+ * Exactly the reason `{orgId, createdDate, _id}` exists above, one equality deeper. A contributor's
+ * page is an infinite-scroll feed like `/activity`, so without `_id` on the end the `$or` that
+ * fetches page two cannot be a range on this index and Mongo falls back to sorting that member's
+ * whole history in memory, every page, for the life of the workspace. `orgId_1_userId_1_createdDate_-1`
+ * is a prefix of this and may be dropped by hand once this one is built; see the index check in
+ * DEPLOY.md. Built ahead of traffic by `db/migration/20260925_0007`, because `activityevents` is
+ * one of the collections where a silent `autoIndex` build on live data is not good enough.
+ */
+activityEventSchema.index({ orgId: 1, userId: 1, createdDate: -1, _id: -1 });
 activityEventSchema.index({ orgId: 1, type: 1, createdDate: -1 });
 activityEventSchema.index({ docId: 1, createdDate: -1 });
 

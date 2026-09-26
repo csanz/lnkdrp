@@ -13,7 +13,9 @@
  *
  * An agent is credited to its client, never to the person whose key it used: "Claude Code created
  * nine links" and "Christian created nine links" are different facts, and the first is the one this
- * product exists to show.
+ * product exists to show. The client is still qualified by the member who connected it, because an
+ * agent is only meaningful as "this client, connected by this person" — two members who each
+ * connect Claude Code are two contributors, and the row names the owner on its second line.
  */
 import { Types } from "mongoose";
 
@@ -21,6 +23,7 @@ import { ACTIVITY_WORK_TYPES, bucketForType } from "@/lib/activity/summary";
 import { agentLabel } from "@/lib/activity/log";
 import { ActivityEventModel } from "@/lib/models/ActivityEvent";
 import { UserModel } from "@/lib/models/User";
+import { agentKey, contributorHref, personKey } from "@/lib/people/contributorKey";
 import { WORKSPACE_CONTRIBUTORS_LIMIT, type WorkspaceContributor } from "./types";
 
 /** One `{ actor, type }` bucket as Mongo returns it. */
@@ -34,6 +37,7 @@ type ContributorRow = {
 type Draft = {
   key: string;
   kind: "person" | "agent";
+  /** The person for a person row; the member who connected the client for an agent row. */
   userId: string | null;
   client: string | null;
   actions: number;
@@ -83,9 +87,11 @@ export async function loadContributors(params: {
   for (const row of rows) {
     const client = typeof row?._id?.client === "string" ? row._id.client.trim().toLowerCase() : "";
     const userId = row?._id?.userId ? String(row._id.userId) : "";
-    // An agent row is credited to the client; a row with neither an agent nor a user is a system
-    // action (a cron, a webhook) and belongs to nobody, so it is dropped rather than attributed.
-    const key = client ? `agent:${client}` : userId ? `user:${userId}` : "";
+    // An agent row is credited to the client under the member who connected it, which is what makes
+    // two members who each connect Claude Code two rows rather than one. A row with neither an agent
+    // nor a user is a system action (a cron, a webhook) and belongs to nobody, so it is dropped
+    // rather than attributed.
+    const key = client ? agentKey(client, userId || null) : userId ? personKey(userId) : "";
     if (!key) continue;
 
     const count = typeof row.n === "number" && Number.isFinite(row.n) ? Math.max(0, Math.trunc(row.n)) : 0;
@@ -95,7 +101,8 @@ export async function loadContributors(params: {
     const draft = drafts.get(key) ?? {
       key,
       kind: client ? ("agent" as const) : ("person" as const),
-      userId: client ? null : userId,
+      // Kept on agent drafts too: it is the owner, and the row's second line names them.
+      userId: userId || null,
       client: client || null,
       actions: 0,
       docsAdded: 0,
@@ -125,15 +132,26 @@ export async function loadContributors(params: {
   const ranked = [...drafts.values()].sort(byActionsThenRecency).slice(0, limit);
   if (!ranked.length) return [];
 
-  const userIds = ranked
-    .filter((d) => d.kind === "person" && d.userId && Types.ObjectId.isValid(d.userId))
-    .map((d) => new Types.ObjectId(String(d.userId)));
+  // Agents' owners go into the same `$in` as the people: the list has to name them too, and a
+  // second query for one extra id per agent row would be a query per agent.
+  const userIds = Array.from(
+    new Set(ranked.filter((d) => d.userId && Types.ObjectId.isValid(d.userId)).map((d) => String(d.userId))),
+  ).map((id) => new Types.ObjectId(id));
   const users = userIds.length
     ? ((await UserModel.find({ _id: { $in: userIds } })
         .select({ _id: 1, name: 1, email: 1 })
         .lean()) as Array<{ _id: Types.ObjectId; name?: unknown; email?: unknown }>)
     : [];
   const userById = new Map(users.map((u) => [String(u._id), u]));
+
+  /** What is left of a member to print: their name, else their address, else a placeholder. */
+  function displayName(id: string | null): string {
+    const user = id ? userById.get(id) : null;
+    const name = typeof user?.name === "string" && user.name.trim() ? user.name.trim() : "";
+    const email = typeof user?.email === "string" && user.email.trim() ? user.email.trim() : "";
+    // A deleted or purged teammate keeps their work on the page, named by what is left of them.
+    return name || email || "Someone in this workspace";
+  }
 
   return ranked.map((d): WorkspaceContributor => {
     if (d.kind === "agent") {
@@ -143,28 +161,34 @@ export async function loadContributors(params: {
         name: agentLabel({ client: d.client ?? "", version: null }) ?? d.client ?? "Agent",
         email: null,
         client: d.client,
+        ownerUserId: d.userId,
+        // Null rather than a placeholder when the credential has no recorded creator: the row says
+        // "by an unknown member" in the UI, which is not the same sentence as a missing name.
+        ownerName: d.userId ? displayName(d.userId) : null,
         actions: d.actions,
         docsAdded: d.docsAdded,
         linksCreated: d.linksCreated,
         docsReplaced: d.docsReplaced,
         lastActiveAt: d.lastAt ? new Date(d.lastAt).toISOString() : null,
+        href: contributorHref({ kind: "agent", client: d.client ?? "", ownerUserId: d.userId }),
       };
     }
     const user = d.userId ? userById.get(d.userId) : null;
-    const name = typeof user?.name === "string" && user.name.trim() ? user.name.trim() : "";
     const email = typeof user?.email === "string" && user.email.trim() ? user.email.trim() : "";
     return {
       key: d.key,
       kind: "person",
-      // A deleted or purged teammate keeps their work on the page, named by what is left of them.
-      name: name || email || "Someone in this workspace",
+      name: displayName(d.userId),
       email: email || null,
       client: null,
+      ownerUserId: null,
+      ownerName: null,
       actions: d.actions,
       docsAdded: d.docsAdded,
       linksCreated: d.linksCreated,
       docsReplaced: d.docsReplaced,
       lastActiveAt: d.lastAt ? new Date(d.lastAt).toISOString() : null,
+      href: contributorHref({ kind: "person", userId: d.userId ?? "" }),
     };
   });
 }

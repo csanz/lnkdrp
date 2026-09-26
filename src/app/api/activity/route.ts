@@ -23,6 +23,8 @@ import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { splitProjectViewerKey, viewerKeyMatchClause } from "@/lib/share/projectPublic";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { feedHiddenClauses } from "@/lib/activity/feedVisibility";
+import { buildActorFilter } from "@/lib/people/actorFilter";
+import { agentKey, contributorHref, parseContributorKey, personKey } from "@/lib/people/contributorKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,9 +62,23 @@ function decodeCursor(raw: string | null): Cursor | null {
 /**
  * `GET /api/activity`
  *
- * Query: `limit` (1–100, default 40), `cursor` (opaque, from `nextCursor`), `type` (comma list),
- * `docId`. Response: `{ items, nextCursor }` with actor/doc/project resolved via one `$in` each.
+ * Query: `limit` (1-100, default 40), `cursor` (opaque, from `nextCursor`), `type` (comma list),
+ * `docId`, `projectId`, `who`, `actor`. Response: `{ items, nextCursor }` with actor/doc/project
+ * resolved via one `$in` each.
  * Errors: 403 when the caller is not a workspace member; 400 for unexpected failures.
+ *
+ * **`actor` vs `who`.** `actor` is one named contributor (`user:<id>` or `agent:<client>@<owner>`,
+ * see `src/lib/people/contributorKey.ts`); `who` is a coarse bucket of the caller's own making
+ * ("me", "team", "agents"). They answer the same axis of the question, so when `actor` is present
+ * `who` is ignored rather than rejected: the pages that page a contributor's feed pass `actor` into
+ * the same hook the workspace feed uses, and a stale `who` left in a URL must not 400 a page that
+ * is otherwise perfectly well specified. Everything else (`limit`, `cursor`, `type`, `docId`,
+ * `projectId`) still ANDs with it.
+ *
+ * `actor` also turns off the workspace feed's "documents kept inside a room" exclusion. That rule
+ * keeps a room's traffic out of the workspace-wide list; a contributor's page is not that list, and
+ * applying it there would hide a person's own work from their own page because of where the
+ * document happens to be filed.
  */
 /**
  * Events written by a recipient rather than by someone in the workspace.
@@ -137,8 +153,15 @@ export async function GET(request: Request) {
     // "agents" (anything an MCP/API client did, whoever owns the key). Anything else = everyone.
     const whoRaw = (url.searchParams.get("who") ?? "").trim();
     const who: "me" | "team" | "agents" | null = whoRaw === "me" || whoRaw === "team" || whoRaw === "agents" ? whoRaw : null;
+    // One named contributor. Parsed here, before any work is done, so a typo answers 400 rather
+    // than reaching Mongo as a filter on nothing and coming back as a plausible empty feed.
+    const actorRaw = (url.searchParams.get("actor") ?? "").trim();
+    const actorKey = actorRaw ? parseContributorKey(actorRaw) : null;
+    if (actorRaw && !actorKey) {
+      return NextResponse.json({ error: "Invalid actor. Pass user:<userId> or agent:<client>@<ownerUserId>." }, { status: 400 });
+    }
 
-    debugLog(2, "[api/activity] GET", { limit, hasCursor: Boolean(cursor), types: types.length, docId: Boolean(docId) });
+    debugLog(2, "[api/activity] GET", { limit, hasCursor: Boolean(cursor), types: types.length, docId: Boolean(docId), actor: Boolean(actorKey) });
 
     const actor = await resolveActor(request);
     if (actor.kind !== "user") {
@@ -166,11 +189,18 @@ export async function GET(request: Request) {
     // A project's own feed; otherwise the workspace feed, which leaves out the rows of documents
     // kept inside their room (docs/prds/lnkdrp-project-home.md, decision 5).
     if (projectId) filter.projectId = projectId;
-    else if (!docId) {
+    // `!actorKey`: a contributor's page lists everything they did, room-contained documents
+    // included. See the route comment; without this a person's page silently drops their own work.
+    else if (!docId && !actorKey) {
       const contained = await containedDocIds(orgId);
       if (contained.length) filter.docId = { $nin: contained };
     }
-    if (who === "agents") filter["agent.client"] = { $exists: true, $ne: null };
+    // One contributor wins over the `who` bucket; the two are the same axis (see the route comment).
+    // `buildActorFilter` is shared with the profile endpoint so the header and the feed under it
+    // cannot come to different conclusions, and its person branch excludes viewer-kind rows by
+    // construction, so `actor=user:<id>` can never be turned into a reader's reading history.
+    if (actorKey) Object.assign(filter, buildActorFilter(actorKey));
+    else if (who === "agents") filter["agent.client"] = { $exists: true, $ne: null };
     else if (who === "me") {
       filter.userId = new Types.ObjectId(actor.userId);
       filter["agent.client"] = { $exists: false };
@@ -352,6 +382,21 @@ export async function GET(request: Request) {
       const pid = r.projectId ? String(r.projectId) : null;
       const p = pid ? projectById.get(pid) ?? null : null;
       const agent = r.agent && typeof r.agent.client === "string" ? { client: r.agent.client, version: r.agent.version ?? null } : null;
+      /**
+       * The contributor page for the member on this row, when the row is theirs to own.
+       *
+       * Built from `uid`, which is already null on a recipient row whose identity this workspace
+       * may not see, so the Free identity gate blanks the link as well as the name: a key is an
+       * addressable identity, and handing one out for a row whose name is withheld would be the
+       * gate with an extra step.
+       *
+       * Withheld on viewer and secret rows on every plan, which is the same exclusion
+       * `buildActorFilter` applies to a person: those rows are not that person's work in the
+       * workspace, so the page this would point at does not list them, and on a recipient it is
+       * the wrong page entirely (theirs is `readerHref`).
+       */
+      const actorKeyForRow = uid && r.actorKind !== "viewer" && r.actorKind !== "secret" ? personKey(uid) : null;
+      const agentKeyForRow = agent ? agentKey(agent.client, uid) : null;
       const createdDate = r.createdDate instanceof Date ? r.createdDate : new Date(String(r.createdDate));
       // Events whose `title` is the PROJECT's name rather than a document's, so the fallback used
       // when the project row is gone names the right thing.
@@ -366,8 +411,19 @@ export async function GET(request: Request) {
           name: u?.name ?? null,
           email: u?.email ?? null,
           kind: r.actorKind,
+          key: actorKeyForRow,
+          href: actorKeyForRow ? contributorHref(actorKeyForRow) : null,
         },
-        agent: agent ? { client: agent.client, label: agentLabel(agent) ?? agent.client, version: agent.version } : null,
+        agent: agent
+          ? {
+              client: agent.client,
+              label: agentLabel(agent) ?? agent.client,
+              version: agent.version,
+              key: agentKeyForRow,
+              href: agentKeyForRow ? contributorHref(agentKeyForRow) : null,
+              ownerUserId: uid,
+            }
+          : null,
         doc: did
           ? {
               id: did,

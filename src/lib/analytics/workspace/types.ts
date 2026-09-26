@@ -269,7 +269,7 @@ export type WorkspaceOutput = { docsShared: number; linksCreated: number; upload
  * (`ACTIVITY_WORK_TYPES`), so the two surfaces can never disagree about what counts as work.
  */
 export type WorkspaceContributor = {
-  /** `user:<id>` or `agent:<client>`. */
+  /** `user:<id>` or `agent:<client>@<ownerUserId|unknown>` (see `src/lib/people/contributorKey.ts`). */
   key: string;
   kind: "person" | "agent";
   /** A person's name (or email when unnamed), or the agent's client label. */
@@ -278,12 +278,24 @@ export type WorkspaceContributor = {
   email: string | null;
   /** Agents only: the MCP client id, for the glyph and for grouping. */
   client: string | null;
+  /**
+   * Agents only: the member who connected the client, and what to call them.
+   *
+   * The row still says "Claude Code", not the member's name — the agent did the work. This is the
+   * second line ("by Christian"), and it is on the row rather than only on the agent's page because
+   * two members who each connect Claude Code produce two rows with the same label, and without the
+   * owner the list would print the same name twice with no way to tell them apart.
+   */
+  ownerUserId: string | null;
+  ownerName: string | null;
   /** Every counted action, including types with no tile of their own. */
   actions: number;
   docsAdded: number;
   linksCreated: number;
   docsReplaced: number;
   lastActiveAt: string | null;
+  /** The page listing everything this contributor did, so the row can be a link. */
+  href: string;
 };
 
 /** `GET /api/metrics/workspace?range=7d|30d|90d`. */

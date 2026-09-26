@@ -2,7 +2,7 @@
 
 **Status:** Draft 2026-09-17, building (metis `prd__c4PtqUjxI`)
 **Owner:** chrissanz
-**Last updated:** 2026-09-17
+**Last updated:** 2026-09-25
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-multi-links](./lnkdrp-multi-links.md) · [lnkdrp-plan-limits](./lnkdrp-plan-limits.md) · [METRICS](../METRICS.md)
 
@@ -87,6 +87,18 @@ qualifies it, this page does the same.
    - **Gone quiet.** Documents with at least one enabled, unexpired link and no recipient activity
      in the range, newest link first, so the sender knows whom to nudge. Archived documents are
      excluded from this list; they still count in the totals if they were read in the range.
+   - **Who contributed.** The workspace's own side of the period: the members who added, replaced
+     and shared documents, and the agents they connected, ranked by actions. An agent is kept apart
+     from the person whose key it used, and carries that person on its second line ("by Christian"),
+     because two members who each connect Claude Code otherwise produce two rows with the same name
+     and nothing to tell them apart. Every row links to that contributor's page, which lists
+     everything they changed. A contributor is identified by one key, `user:<userId>` or
+     `agent:<client>@<ownerUserId|unknown>`, defined once in `src/lib/people/contributorKey.ts`, and
+     the key decides the route: `/people/<userId>` for a member, `/agents/<client>/<ownerUserId>`
+     for an agent, with `unknown` in the owner segment when the credential has no recorded creator.
+     No surface builds those paths itself; the API sends each row's `href`. This section is on both
+     plans: it names the workspace's own members and their agents, never recipients, so the
+     [[viewer identity gate]] does not reach it.
 7. **Workspace output, secondary.** A compact line under the ranked sections: documents shared,
    links created and uploads in the range.
 8. **Plan gating.** Free is limited to its analytics window (`FREE_ANALYTICS_DAYS`, 7 days): the 30- and
@@ -122,7 +134,9 @@ qualifies it, this page does the same.
   from the viewer modal.
 - Page-level reading analytics on this page (it stays on documents).
 - Custom date ranges, CSV export, scheduled email digests.
-- Team-member activity or audit (who on the team did what).
+- Team-member activity or audit (who on the team did what). Partly superseded after v1: the "Who
+  contributed" section and the contributor pages it links to answer this from the activity log for
+  the selected range. A full audit trail, with sign-ins and permission changes, is still out.
 - Rollups across several workspaces.
 - An MCP tool for workspace metrics (see Future).
 
